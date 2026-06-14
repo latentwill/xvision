@@ -109,7 +109,7 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
   useEffect(() => {
     useTraceDock
       .getState()
-      .setActiveRun(selectedId || null, selectedId ? "live" : "post-hoc");
+      .setActiveRun("live", selectedId || null, selectedId ? "live" : "post-hoc");
   }, [selectedId]);
 
   // ONE SSE per selected run, lifted here and shared by (a) the pill's

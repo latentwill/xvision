@@ -47,7 +47,6 @@ const EXPECTED_MCP_TOOLS: &[&str] = &[
     "xvn_rsi",
     "xvn_scenario_inspect_card",
     "xvn_scenarios_select",
-    "xvn_set_mechanical_param",
     "xvn_set_risk_config",
     "xvn_sma",
     "xvn_strategy_create_atomic",

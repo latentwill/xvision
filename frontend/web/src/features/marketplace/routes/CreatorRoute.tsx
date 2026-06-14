@@ -465,9 +465,11 @@ interface WalletViewOut {
 }
 
 function OnChainCreatorListingCard({ listing }: { listing: IndexedListing }) {
+  // Part A (.7): route via agent_id (ULID) when available for stable deep-links.
+  const routingId = listing.agent_id || listing.listing_id;
   return (
     <Link
-      to={`/marketplace/lineage/${listing.listing_id}`}
+      to={`/marketplace/lineage/${routingId}`}
       data-testid="onchain-creator-listing"
       className="block border border-border rounded-[5px] overflow-hidden bg-surface-card hover:border-border-strong transition-colors"
     >

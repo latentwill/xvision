@@ -287,14 +287,13 @@ pub async fn aggregate_optimizer_cost_since(
     pool: &SqlitePool,
     since: chrono::DateTime<chrono::Utc>,
 ) -> Option<f64> {
-    let result: Option<f64> = sqlx::query_scalar(
-        "SELECT SUM(cost_usd) FROM cycle_cost WHERE created_at >= ?",
-    )
-    .bind(since.to_rfc3339())
-    .fetch_one(pool)
-    .await
-    .ok()
-    .flatten();
+    let result: Option<f64> =
+        sqlx::query_scalar("SELECT SUM(cost_usd) FROM cycle_cost WHERE created_at >= ?")
+            .bind(since.to_rfc3339())
+            .fetch_one(pool)
+            .await
+            .ok()
+            .flatten();
     result.filter(|&v| v > 0.0 && v.is_finite())
 }
 
@@ -304,14 +303,12 @@ pub async fn aggregate_optimizer_cost_since(
 /// The dashboard renders no denominator (em-dash) in that case; it must NEVER
 /// fall back to a faked ceiling. A missing table also degrades to `None`.
 pub async fn get_daily_budget_cap(pool: &SqlitePool) -> Option<f64> {
-    let result: Option<f64> = sqlx::query_scalar(
-        "SELECT daily_cap_usd FROM cost_budget WHERE id = 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let result: Option<f64> = sqlx::query_scalar("SELECT daily_cap_usd FROM cost_budget WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
     // A persisted cap is finite + positive by construction (the API rejects
     // non-positive / NaN before write), but re-guard defensively.
     result.filter(|&v| v > 0.0 && v.is_finite())
@@ -321,18 +318,12 @@ pub async fn get_daily_budget_cap(pool: &SqlitePool) -> Option<f64> {
 /// (single row, id = 1) via `INSERT OR REPLACE`. The caller (API boundary)
 /// MUST have already validated `cap` is finite and `> 0` (400 otherwise);
 /// this function does no validation of its own.
-pub async fn set_daily_budget_cap(
-    pool: &SqlitePool,
-    cap: f64,
-    updated_at: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT OR REPLACE INTO cost_budget (id, daily_cap_usd, updated_at) VALUES (1, ?, ?)",
-    )
-    .bind(cap)
-    .bind(updated_at)
-    .execute(pool)
-    .await?;
+pub async fn set_daily_budget_cap(pool: &SqlitePool, cap: f64, updated_at: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT OR REPLACE INTO cost_budget (id, daily_cap_usd, updated_at) VALUES (1, ?, ?)")
+        .bind(cap)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -693,12 +684,14 @@ mod tests {
     /// Insert one agent run with a single priced model call. `cost` is bound
     /// straight into `model_calls.cost_usd`; pass `None` for an unpriced call.
     async fn seed_agent_run_cost(pool: &SqlitePool, run_id: &str, started_at: &str, cost: Option<f64>) {
-        sqlx::query("INSERT INTO agent_runs (id, eval_run_id, status, started_at) VALUES (?, NULL, 'completed', ?)")
-            .bind(run_id)
-            .bind(started_at)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_runs (id, eval_run_id, status, started_at) VALUES (?, NULL, 'completed', ?)",
+        )
+        .bind(run_id)
+        .bind(started_at)
+        .execute(pool)
+        .await
+        .unwrap();
         let span_id = format!("span-{run_id}");
         sqlx::query("INSERT INTO spans (id, run_id, kind, started_at) VALUES (?, ?, 'model.call', ?)")
             .bind(&span_id)
@@ -707,12 +700,14 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO model_calls (span_id, provider, model, cost_usd) VALUES (?, 'openrouter', 'm', ?)")
-            .bind(&span_id)
-            .bind(cost)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO model_calls (span_id, provider, model, cost_usd) VALUES (?, 'openrouter', 'm', ?)",
+        )
+        .bind(&span_id)
+        .bind(cost)
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn seed_cycle_cost(pool: &SqlitePool, cycle_id: &str, cost: f64, created_at: &str) {
@@ -729,7 +724,9 @@ mod tests {
     }
 
     fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc)
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
     }
 
     #[tokio::test]
@@ -809,7 +806,9 @@ mod tests {
         // Fresh table, no row → unset → None (em-dash on the UI, no faked cap).
         assert_eq!(get_daily_budget_cap(&pool).await, None, "unset cap must be None");
 
-        set_daily_budget_cap(&pool, 25.0, "2026-06-13T00:00:00Z").await.unwrap();
+        set_daily_budget_cap(&pool, 25.0, "2026-06-13T00:00:00Z")
+            .await
+            .unwrap();
         assert_eq!(
             get_daily_budget_cap(&pool).await,
             Some(25.0),
@@ -817,7 +816,9 @@ mod tests {
         );
 
         // INSERT OR REPLACE on id=1 overwrites, not duplicates.
-        set_daily_budget_cap(&pool, 40.0, "2026-06-13T01:00:00Z").await.unwrap();
+        set_daily_budget_cap(&pool, 40.0, "2026-06-13T01:00:00Z")
+            .await
+            .unwrap();
         assert_eq!(get_daily_budget_cap(&pool).await, Some(40.0));
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cost_budget")
             .fetch_one(&pool)

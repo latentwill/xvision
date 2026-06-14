@@ -413,6 +413,56 @@ describe("HomeRoute", () => {
     expect(called).toBe(true);
   });
 
+  // bead s78.2: the home passes the SAME last-visit boundary (the jlm
+  // delta/cost rollup boundary) as `?since` on the deployments poll, so the
+  // backend can count REAL risk vetoes since that boundary.
+  it("passes the last-visit boundary as since on the deployments poll", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockClear();
+    const boundary = "2026-06-12T00:00:00.000Z";
+    try {
+      localStorage.setItem(LAST_VISIT_LS, boundary);
+    } catch {
+      /* storage may be blocked in some environments */
+    }
+    // Re-snapshot so the route reads the seeded boundary (beforeEach reset it).
+    __resetVisitSessionForTest();
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => expect(vi.mocked(listDeployments)).toHaveBeenCalled());
+    const calledWithSince = vi
+      .mocked(listDeployments)
+      .mock.calls.some((c) => {
+        const p = c[0] as { since?: string } | undefined;
+        return p?.since === boundary;
+      });
+    expect(calledWithSince).toBe(true);
+  });
+
+  // bead s78.2: on a first visit (no boundary) the home omits `since` so the
+  // backend leaves the per-deployment veto count null (can't count since an
+  // unknown time) and the chip shows "—".
+  it("omits since on the deployments poll when there is no last-visit boundary", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    // Mock call history accumulates across this file's tests (no global
+    // clearMocks); clear it so this assertion only sees THIS render's calls.
+    vi.mocked(listDeployments).mockClear();
+    // beforeEach already cleared localStorage + reset the snapshot — first visit.
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => expect(vi.mocked(listDeployments)).toHaveBeenCalled());
+    const everCalledWithSince = vi
+      .mocked(listDeployments)
+      .mock.calls.some((c) => {
+        const p = c[0] as { since?: string } | undefined;
+        return p?.since != null && p.since !== "";
+      });
+    expect(everCalledWithSince).toBe(false);
+  });
+
   // 8s4: the home capital-risk strip mounts from the SAME live-deployments
   // poll (no second fetch) and aggregates the broker-sourced capital fields.
   it("mounts the capital-risk strip from the live-deployments poll", async () => {
@@ -433,6 +483,8 @@ describe("HomeRoute", () => {
         unrealized_pnl_usd: null,
         drawdown_pct: 3.2,
         daily_loss_limit_remaining_usd: 1800,
+        daily_loss_budget_usd: null,
+        stop_at: null,
         risk_veto_count_since_last_visit: null,
         paused: false,
         flatten_requested: false,
@@ -490,6 +542,8 @@ describe("HomeRoute", () => {
         unrealized_pnl_usd: null,
         drawdown_pct: null,
         daily_loss_limit_remaining_usd: null,
+        daily_loss_budget_usd: null,
+        stop_at: null,
         risk_veto_count_since_last_visit: null,
         paused: false,
         flatten_requested: false,

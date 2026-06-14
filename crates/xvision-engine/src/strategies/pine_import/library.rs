@@ -18,8 +18,8 @@
 //! a compile-time snapshot. The source texts are not included in the JSON
 //! list endpoint (summaries only), but are available for import.
 
-use serde::Serialize;
 use super::{import_pine, ImportOutcome, PineImportError};
+use serde::Serialize;
 
 // ── LibraryEntry ─────────────────────────────────────────────────────────────
 
@@ -64,28 +64,17 @@ impl From<&LibraryEntry> for LibraryEntrySummary {
 
 // ── Embedded library scripts ──────────────────────────────────────────────────
 
-const SRC_RSI_THRESHOLD: &str =
-    include_str!("library_scripts/rsi_threshold.pine");
-const SRC_MA_CROSS: &str =
-    include_str!("library_scripts/ma_cross.pine");
-const SRC_EMA_CROSS_RSI: &str =
-    include_str!("library_scripts/ema_cross_rsi_filter.pine");
-const SRC_ADX_TREND: &str =
-    include_str!("library_scripts/adx_trend_filter.pine");
-const SRC_SUPERTREND: &str =
-    include_str!("library_scripts/supertrend_follow.pine");
-const SRC_RSI_MEAN_REVERT: &str =
-    include_str!("library_scripts/rsi_mean_revert.pine");
-const SRC_MACD_CROSS: &str =
-    include_str!("library_scripts/macd_signal_cross.pine");
-const SRC_TRIPLE_MA: &str =
-    include_str!("library_scripts/triple_ma_trend.pine");
-const SRC_RSI_EMA_BREAKOUT: &str =
-    include_str!("library_scripts/rsi_ema_breakout.pine");
-const SRC_STOCH_CROSS: &str =
-    include_str!("library_scripts/stoch_cross.pine");
-const SRC_DONCHIAN_BREAKOUT: &str =
-    include_str!("library_scripts/donchian_breakout.pine");
+const SRC_RSI_THRESHOLD: &str = include_str!("library_scripts/rsi_threshold.pine");
+const SRC_MA_CROSS: &str = include_str!("library_scripts/ma_cross.pine");
+const SRC_EMA_CROSS_RSI: &str = include_str!("library_scripts/ema_cross_rsi_filter.pine");
+const SRC_ADX_TREND: &str = include_str!("library_scripts/adx_trend_filter.pine");
+const SRC_SUPERTREND: &str = include_str!("library_scripts/supertrend_follow.pine");
+const SRC_RSI_MEAN_REVERT: &str = include_str!("library_scripts/rsi_mean_revert.pine");
+const SRC_MACD_CROSS: &str = include_str!("library_scripts/macd_signal_cross.pine");
+const SRC_TRIPLE_MA: &str = include_str!("library_scripts/triple_ma_trend.pine");
+const SRC_RSI_EMA_BREAKOUT: &str = include_str!("library_scripts/rsi_ema_breakout.pine");
+const SRC_STOCH_CROSS: &str = include_str!("library_scripts/stoch_cross.pine");
+const SRC_DONCHIAN_BREAKOUT: &str = include_str!("library_scripts/donchian_breakout.pine");
 
 // ── Public functions ──────────────────────────────────────────────────────────
 
@@ -176,12 +165,11 @@ pub fn pine_library() -> Vec<LibraryEntry> {
 ///   source is malformed — this should never happen for the curated corpus.
 pub fn import_library_entry(id: &str) -> Result<ImportOutcome, PineImportError> {
     let library = pine_library();
-    let entry = library
-        .iter()
-        .find(|e| e.id == id)
-        .ok_or_else(|| PineImportError::NothingMappable(
-            format!("library entry '{id}' not found — use GET /api/strategy/pine-library for valid ids")
-        ))?;
+    let entry = library.iter().find(|e| e.id == id).ok_or_else(|| {
+        PineImportError::NothingMappable(format!(
+            "library entry '{id}' not found — use GET /api/strategy/pine-library for valid ids"
+        ))
+    })?;
 
     import_pine(entry.source)
 }

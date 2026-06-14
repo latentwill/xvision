@@ -252,10 +252,8 @@ async fn seed_strategies(
         }],
         pipeline: PipelineDef::single(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({"ema_fast": 12, "ema_slow": 26}),
         decision_mode: Default::default(),
         mechanistic_config: None,
         activation_mode: ActivationMode::EveryBar,
@@ -266,6 +264,7 @@ async fn seed_strategies(
         // filter once they understand the cost model.
         acknowledge_no_filter: true,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     store
@@ -487,7 +486,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),
@@ -496,13 +494,13 @@ mod tests {
                 model: None,
             }),
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({"ema_fast": 12}),
             decision_mode: Default::default(),
             mechanistic_config: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

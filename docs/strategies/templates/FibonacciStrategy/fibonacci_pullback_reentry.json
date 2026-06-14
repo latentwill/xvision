@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Fibonacci Pullback Reentry",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_pullback_reentry",
   "plain_summary": "Strong trends often retrace before continuing. This strategy waits for a pullback into common Fibonacci retracement zones, then re-enters only when trend structure is still intact and momentum stops weakening.",
   "regime_fit": [

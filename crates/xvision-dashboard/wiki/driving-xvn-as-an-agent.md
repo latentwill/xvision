@@ -323,9 +323,25 @@ POST /api/chat-rail/sessions/:id/mode   { "mode": "research" | "act" }
 
 Enforcement reads the **persisted mode column** before every write tool — the
 client cannot assert its own mode at execution time. A write tool attempted in
-research mode is denied and emits a `tool_denied` row with a stable code
-(e.g. `write_tool_in_research_mode`); it never runs. Setting an invalid mode is
-a validation error; an unknown session id is `404`.
+research mode is denied and emits typed events with a stable code
+(e.g. `write_tool_in_research_mode`); the tool never runs. Setting an invalid
+mode is a validation error; an unknown session id is `404`.
+
+#### Where to observe policy denials
+
+A policy denial produces **two** typed events on the **unified session stream**
+(`GET /api/chat-rail/sessions/:id/stream`):
+
+| SSE `event:` name | Payload kind | When |
+|---|---|---|
+| `tool_denied` | `ToolDenied` | Tool-level denial row; carries `tool_name` and stable `code`. |
+| `error_policy_denied` | `ErrorPolicyDenied` | Typed error row; same `code` for programmatic branching. |
+
+The **legacy** `POST /api/chat-rail/chat` SSE carries only a
+`tool_result`(denied) shim — it does **not** emit `tool_denied` or
+`error_policy_denied` frames. **Harnesses that instrument the legacy SSE will
+never see the typed denial events.** To observe policy denials, consume the
+unified stream at `/api/chat-rail/sessions/:id/stream`.
 
 ### Three-state tool policy
 
@@ -345,7 +361,12 @@ The `(enabled, auto_approve)` pair encodes three states:
 | Disabled | false | — | Hidden from the model; denied if called anyway. |
 
 A tool absent from the list uses its **class default**: read tools default to
-Auto, write tools default to Ask. The classifier fails safe — an unknown tool is
+Auto, **write tools default to Auto** (they auto-run in Act mode with no approval
+round-trip; Research mode denies all write tools regardless of policy), and
+Dangerous-class tools default to Disabled. To require an approval prompt for a
+write tool, set its policy to the **Ask** state (`auto_approve:false`). Note
+`run_eval` is Write-class, so by default it launches a backtest in Act mode
+without a confirmation step. The classifier fails safe — an unknown tool is
 treated as a write. Policy is keyed by scope and scopes are isolated.
 
 ### Focus chain

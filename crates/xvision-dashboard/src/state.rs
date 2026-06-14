@@ -688,12 +688,22 @@ impl AppState {
                 token_id     TEXT NOT NULL,
                 listing_id   TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
-                published_at TEXT NOT NULL
+                published_at TEXT NOT NULL,
+                name         TEXT
             )"#,
         )
         .execute(&self.pool)
         .await
         .context("create publish_receipts table")?;
+
+        // `name`: the creator-chosen listing name captured at publish time
+        // (defaults to the strategy's display name). Added after the original
+        // table shipped, so ALTER any pre-existing table idempotently — a
+        // "duplicate column name" error on a table that already has it is
+        // expected and ignored.
+        let _ = sqlx::query("ALTER TABLE publish_receipts ADD COLUMN name TEXT")
+            .execute(&self.pool)
+            .await;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_publish_receipts_token_id ON publish_receipts (token_id)",

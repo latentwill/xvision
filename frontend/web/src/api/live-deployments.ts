@@ -44,6 +44,12 @@ export type ListDeploymentsParams = {
   mode?: string;
   /// Page size. Server defaults to 20, caps at 100.
   limit?: number;
+  /// bead s78.2: the operator's last-visit boundary (RFC-3339). When present,
+  /// the backend populates `risk_veto_count_since_last_visit` with a REAL count
+  /// of recorded risk-veto supervisor notes whose `created_at >= since`. Absent
+  /// (first visit) => the field stays `null` (can't count "since an unknown
+  /// time"). Invalid RFC-3339 => the endpoint returns 400.
+  since?: string;
 };
 
 export const deploymentKeys = {
@@ -59,7 +65,9 @@ export const deploymentKeys = {
       params?.status ?? "",
       params?.mode ?? "",
       params?.limit ?? null,
+      params?.since ?? "",
     ] as const,
+  one: (id: string) => [...deploymentKeys.all, "one", id] as const,
 };
 
 export function buildDeploymentsListUrl(params?: ListDeploymentsParams): string {
@@ -72,6 +80,9 @@ export function buildDeploymentsListUrl(params?: ListDeploymentsParams): string 
   }
   if (params?.limit !== undefined) {
     qs.set("limit", String(params.limit));
+  }
+  if (params?.since) {
+    qs.set("since", params.since);
   }
   const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
   return `/api/live/deployments${suffix}`;
@@ -88,6 +99,12 @@ export function listDeployments(
 ): Promise<LiveDeploymentSummary[]> {
   return apiFetch<DeploymentsListResponse>(buildDeploymentsListUrl(params)).then(
     (r) => r.items ?? [],
+  );
+}
+
+export function getDeployment(id: string): Promise<LiveDeploymentSummary> {
+  return apiFetch<LiveDeploymentSummary>(
+    `/api/live/deployments/${encodeURIComponent(id)}`,
   );
 }
 

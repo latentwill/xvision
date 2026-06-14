@@ -46,12 +46,15 @@ export function GradientHeadline({
       {suffix ? " " : ""}
       {suffix}
       {emphasis && (
-        <span
-          className="inline-block ml-3 text-[26px] text-gold tabular-nums"
-          style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
-        >
-          {emphasis}
-        </span>
+        <>
+          {" "}
+          <span
+            className="inline-block ml-2 text-[26px] text-gold tabular-nums"
+            style={{ fontFamily: 'Geist Mono, ui-monospace, monospace' }}
+          >
+            {emphasis}
+          </span>
+        </>
       )}
     </h1>
   );

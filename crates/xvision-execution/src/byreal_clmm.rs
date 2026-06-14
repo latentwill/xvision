@@ -137,13 +137,10 @@ impl SubprocessByrealClmmApi {
             .spawn()
             .map_err(|e| ExecutorError::Io(format!("spawn npx byreal-cli: {e}")))?;
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            child.wait_with_output(),
-        )
-        .await
-        .map_err(|_| ExecutorError::Timeout("byreal-cli timed out after 120s".to_string()))?
-        .map_err(|e| ExecutorError::Io(format!("byreal-cli process error: {e}")))?;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(120), child.wait_with_output())
+            .await
+            .map_err(|_| ExecutorError::Timeout("byreal-cli timed out after 120s".to_string()))?
+            .map_err(|e| ExecutorError::Io(format!("byreal-cli process error: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -310,8 +307,19 @@ mod tests {
         assert_eq!(
             argv(&a),
             vec![
-                "positions", "open", "--pool", "POOL1", "--price-lower", "0.95", "--price-upper",
-                "1.05", "--amount-usd", "50", "--slippage", "50", "--confirm"
+                "positions",
+                "open",
+                "--pool",
+                "POOL1",
+                "--price-lower",
+                "0.95",
+                "--price-upper",
+                "1.05",
+                "--amount-usd",
+                "50",
+                "--slippage",
+                "50",
+                "--confirm"
             ]
         );
     }

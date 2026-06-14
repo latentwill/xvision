@@ -320,6 +320,305 @@ pub async fn validate_request(req: &CreateScenarioRequest, ctx: &ApiContext) -> 
     Ok(())
 }
 
+/// Set operator-authored regime labels on a scenario (regime_derived = false).
+///
+/// At least one of `regime_label`, `volatility_label`, or `trend_direction`
+/// must be `Some`. Omitted fields inherit the current stored value.
+/// Returns the updated `Scenario`.
+pub async fn set_regime(
+    ctx: &ApiContext,
+    id: &str,
+    regime_label: Option<&str>,
+    volatility_label: Option<&str>,
+    trend_direction: Option<&str>,
+) -> ApiResult<Scenario> {
+    if regime_label.is_none() && volatility_label.is_none() && trend_direction.is_none() {
+        return Err(ApiError::Validation(
+            "set_regime: specify at least one of regime_label, volatility_label, or trend_direction".into(),
+        ));
+    }
+    // Validate provided values.
+    if let Some(v) = regime_label {
+        validate_regime_label(v)?;
+    }
+    if let Some(v) = volatility_label {
+        validate_volatility_label(v)?;
+    }
+    if let Some(v) = trend_direction {
+        validate_trend_direction(v)?;
+    }
+    // Merge unset fields with current stored values.
+    let current = get(ctx, id).await?;
+    let merged_regime = regime_label.or(current.regime_label.as_deref());
+    let merged_volatility = volatility_label.or(current.volatility_label.as_deref());
+    let merged_direction = trend_direction.or(current.trend_direction.as_deref());
+    scenario_store::update_regime_labels(ctx, id, merged_regime, merged_volatility, merged_direction, false)
+        .await?;
+    get(ctx, id).await
+}
+
+fn validate_regime_label(v: &str) -> ApiResult<()> {
+    match v {
+        "trend" | "chop" | "crash" | "expansion" | "recovery" => Ok(()),
+        other => Err(ApiError::Validation(format!(
+            "unknown regime_label '{other}'; expected one of: trend | chop | crash | expansion | recovery"
+        ))),
+    }
+}
+
+fn validate_volatility_label(v: &str) -> ApiResult<()> {
+    match v {
+        "low" | "normal" | "high" | "extreme" => Ok(()),
+        other => Err(ApiError::Validation(format!(
+            "unknown volatility_label '{other}'; expected one of: low | normal | high | extreme"
+        ))),
+    }
+}
+
+fn validate_trend_direction(v: &str) -> ApiResult<()> {
+    match v {
+        "up" | "down" | "sideways" => Ok(()),
+        other => Err(ApiError::Validation(format!(
+            "unknown trend_direction '{other}'; expected one of: up | down | sideways"
+        ))),
+    }
+}
+
+/// Result returned by [`classify`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassifyResult {
+    /// `true` when labels were derived and written to the DB.
+    pub classified: bool,
+    /// Human-readable reason when classification was skipped.
+    pub skipped_reason: Option<String>,
+    /// The scenario after classification (may be unchanged if skipped).
+    pub scenario: Scenario,
+}
+
+/// Auto-derive regime labels for a scenario from its bar window.
+///
+/// Loads bars from the local bar cache (must have been warmed via
+/// `xvn bars fetch`; this fn never fetches live). Returns a
+/// [`ClassifyResult`] indicating whether labels were written or skipped.
+///
+/// If `force` is `false`, skips scenarios that already have operator-set
+/// labels (`regime_derived == false && regime_label.is_some()`).
+pub async fn classify(ctx: &ApiContext, id: &str, force: bool) -> ApiResult<ClassifyResult> {
+    let s = get(ctx, id).await?;
+
+    // Skip operator-set labels unless force.
+    if !force && !s.regime_derived && s.regime_label.is_some() {
+        return Ok(ClassifyResult {
+            classified: false,
+            skipped_reason: Some("operator-set labels present; pass force=true to overwrite".into()),
+            scenario: s,
+        });
+    }
+
+    // Load bars from cache. Use BTC/USD as the asset_pair placeholder
+    // (scenario bar cache is asset-independent via compute_scenario_cache_key;
+    // this symbol is only used if a live-fetch miss were triggered, which
+    // classify never does — it bails out on missing cache).
+    let bars_result = crate::eval::bars::load_bars(
+        ctx,
+        &crate::eval::bars::BarCacheArgs {
+            cache_key: s.bar_cache_policy.cache_key.clone(),
+            asset_pair: "BTC/USD".to_string(),
+            granularity: s.granularity,
+            start: s.time_window.start,
+            end: s.time_window.end,
+            data_source_tag: "alpaca-historical-v1".to_string(),
+        },
+    )
+    .await;
+
+    let bars = match bars_result {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(ClassifyResult {
+                classified: false,
+                skipped_reason: Some(format!("bars not available ({e}); run `xvn bars fetch` first")),
+                scenario: s,
+            });
+        }
+    };
+
+    if bars.len() < 2 {
+        return Ok(ClassifyResult {
+            classified: false,
+            skipped_reason: Some("fewer than 2 bars in cache (window too short for classification)".into()),
+            scenario: s,
+        });
+    }
+
+    let labels = crate::eval::regime::derive_regime_labels(&bars);
+    let regime_label = labels.regime_label.as_deref();
+    let volatility_label = labels.volatility_label.as_deref();
+    let trend_direction = labels.trend_direction.as_deref();
+
+    scenario_store::update_regime_labels(ctx, id, regime_label, volatility_label, trend_direction, true)
+        .await?;
+
+    let updated = get(ctx, id).await?;
+    Ok(ClassifyResult {
+        classified: true,
+        skipped_reason: None,
+        scenario: updated,
+    })
+}
+
+/// One row returned by [`select`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectRow {
+    pub id: String,
+    pub name: String,
+    pub timeframe: String,
+    pub decision_count: u64,
+}
+
+/// Compute the decision bar count for a scenario: total bars in the window.
+fn scenario_decision_count(s: &Scenario) -> u64 {
+    let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
+    let bar_secs = s.granularity.seconds();
+    if bar_secs == 0 {
+        return 0;
+    }
+    window_secs / bar_secs
+}
+
+/// Stateless scenario selector — filters the scenario library by timeframe,
+/// regime, and decision-count proximity. No mutation; always read-only.
+///
+/// Two selection modes (at least one required):
+/// - **Mode A** (`target_decisions = Some(N)`): select scenarios within ±10% of N.
+/// - **Mode B** (`same_decisions = true`, `max_decisions = Some(N)`): find the
+///   largest common decision count ≤ N in the candidate set.
+///
+/// When neither mode is requested, `target_decisions = None && !same_decisions`,
+/// all candidates (up to `count`) are returned in stable order.
+pub async fn select(
+    ctx: &ApiContext,
+    timeframe_minutes: Option<u32>,
+    regimes: &[String],
+    target_decisions: Option<u64>,
+    same_decisions: bool,
+    max_decisions: Option<u64>,
+    count: usize,
+) -> ApiResult<Vec<SelectRow>> {
+    let all = list(
+        ctx,
+        ListScenariosFilter {
+            include_archived: false,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let candidates: Vec<&Scenario> = all
+        .iter()
+        .filter(|s| {
+            // Timeframe filter.
+            if let Some(tf_min) = timeframe_minutes {
+                let bar_min = (s.granularity.seconds() / 60) as u32;
+                if bar_min != tf_min {
+                    return false;
+                }
+            }
+            // Regime filter.
+            if !regimes.is_empty() {
+                let matched = if let Some(ref col_label) = s.regime_label {
+                    regimes
+                        .iter()
+                        .any(|want| col_label.eq_ignore_ascii_case(want) || col_label.contains(want.as_str()))
+                } else {
+                    let tag_labels: Vec<String> = s
+                        .tags
+                        .iter()
+                        .filter_map(|t| t.strip_prefix("regime:").map(|r| r.to_string()))
+                        .collect();
+                    regimes.iter().any(|want| {
+                        tag_labels
+                            .iter()
+                            .any(|l| l.eq_ignore_ascii_case(want) || l.contains(want.as_str()))
+                    })
+                };
+                if !matched {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    // Determine target count for decision-count mode.
+    let target_count: u64 = if same_decisions {
+        let max = max_decisions.unwrap_or(u64::MAX);
+        let counts: Vec<u64> = candidates
+            .iter()
+            .map(|s| scenario_decision_count(s))
+            .filter(|&c| c <= max)
+            .collect();
+        let mut freq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+        for c in &counts {
+            *freq.entry(*c).or_insert(0) += 1;
+        }
+        let best = freq
+            .iter()
+            .filter(|(_, &f)| f >= count)
+            .map(|(&c, _)| c)
+            .max()
+            .or_else(|| freq.keys().copied().max());
+        match best {
+            Some(c) => c,
+            None => return Ok(vec![]),
+        }
+    } else if let Some(t) = target_decisions {
+        t
+    } else {
+        0
+    };
+
+    // Filter by decision count.
+    let mut filtered: Vec<&Scenario> = candidates
+        .into_iter()
+        .filter(|s| {
+            if same_decisions {
+                scenario_decision_count(s) == target_count
+            } else if let Some(t) = target_decisions {
+                let lo = (t as f64 * 0.9).floor() as u64;
+                let hi = (t as f64 * 1.1).ceil() as u64;
+                let dc = scenario_decision_count(s);
+                dc >= lo && dc <= hi
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Sort by closeness to target count.
+    filtered.sort_by_key(|s| {
+        let dc = scenario_decision_count(s);
+        if target_decisions.is_some() || same_decisions {
+            (dc as i64 - target_count as i64).unsigned_abs()
+        } else {
+            0u64
+        }
+    });
+
+    let selected: Vec<SelectRow> = filtered
+        .into_iter()
+        .take(count)
+        .map(|s| SelectRow {
+            id: s.id.clone(),
+            name: s.display_name.clone(),
+            timeframe: s.granularity.to_string(),
+            decision_count: scenario_decision_count(s),
+        })
+        .collect();
+
+    Ok(selected)
+}
+
 async fn ensure_display_name_available(ctx: &ApiContext, display_name: &str) -> ApiResult<()> {
     let candidate = display_name.trim();
     let existing = scenario_store::list_scenarios(

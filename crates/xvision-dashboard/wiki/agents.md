@@ -7,9 +7,9 @@ strategies — the same agent can appear in multiple strategies simultaneously.
 Editing an agent propagates to every strategy that references it on its next
 run.
 
-> **Rename in progress** — the "intern" role is being renamed to "default
-> agent" in the wizard, rail, and settings UI. Both terms remain valid during
-> the crossover period; strategies written with either name continue to work.
+> **Capability set update** — the Capability enum is now exactly { Trader,
+> Filter, Router }. The Intern and Critic stages have been retired and
+> folded into the single-stage agent model.
 
 ---
 
@@ -163,10 +163,9 @@ launch readiness and for what can be optimized. The recognized set:
 |---|---|---|---|
 | `trader` | Proposes a sized trade decision. | `ohlcv` | yes (DSPy signature) |
 | `filter` | Deterministic / model gate over candidate cycles. | (per filter) | yes (DSPy signature) |
+| `router` | Routes decisions to downstream agents. | — | no |
 | `decision_grader` | Scores a decision against an outcome (used as an optimizer metric). | — | no |
-| `intern` | General-purpose default decision slot. | — | no |
 | `chat_authoring` | Composes strategies/agents from the chat rail. | — | no |
-| `critic` / `router` | Recognized but **unsupported** at runtime; required → blocks launch. | — | no |
 
 Only `trader` and `filter` have DSPy signatures today, so only those can be
 fed to `xvn optimize`. The rest are reported by diagnostics but cannot be

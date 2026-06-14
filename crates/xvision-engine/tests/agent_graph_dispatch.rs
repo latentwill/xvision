@@ -3,8 +3,8 @@
 //! Covers the first acceptance test from
 //! `team/contracts/agent-graph-capability-dispatch.md`:
 //!
-//!   round-trip a `kind: Sequential` strategy with 3 capability-typed
-//!   agents (Trader+Filter+Critic); assert each dispatched via the
+//!   round-trip a `kind: Sequential` strategy with 2 capability-typed
+//!   agents (Trader+Filter); assert each dispatched via the
 //!   right handler.
 //!
 //! Also pins the A/B cache-pairing acceptance criterion: every
@@ -87,16 +87,15 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
             edges: Vec::new(),
         },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -122,24 +121,17 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
     }
 }
 
-// ── Round-trip: Trader + Filter + Critic each route through dispatch_capability ──
+// ── Round-trip: Trader + Filter each route through dispatch_capability ──
 
 #[tokio::test]
 async fn three_capability_pipeline_routes_each_kind_correctly() {
-    // Three agents: filter → critic → trader. Filter and Critic are
-    // stubs (no LLM dispatch); Trader is the real path.
+    // Two agents: filter → trader. Filter is a stub (no LLM dispatch);
+    // Trader is the real path.
     let agents = vec![
         AgentRef {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-            prompt_override: None,
-            model_override: None,
-        },
-        AgentRef {
-            agent_id: "01HZC".into(),
-            role: "critic".into(),
-            activates: Some(Capability::Critic),
             prompt_override: None,
             model_override: None,
         },
@@ -152,7 +144,7 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         },
     ];
     let strategy = fixture_strategy(agents);
-    let slots = vec![resolved("regime_filter"), resolved("critic"), resolved("trader")];
+    let slots = vec![resolved("regime_filter"), resolved("trader")];
 
     let dispatch = Arc::new(RecordingDispatch::new(
         r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
@@ -179,26 +171,25 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
 
-    // Trader populated; Filter / Critic stubs are not exposed on the
+    // Trader populated; Filter stub is not exposed on the
     // legacy `PipelineOutputs` struct (Phase D will widen this).
     assert!(outs.trader.is_some(), "trader output must be populated");
     assert!(outs.regime.is_none());
-    assert!(outs.intern.is_none());
 
     // Phase C: Filter now makes a real LLM call (one for the Filter,
-    // one for the Trader). Critic stays a stub in Phase C — Phase D
-    // wires the Critic semantics. So we expect TWO dispatches:
+    // one for the Trader). So we expect TWO dispatches:
     // Filter + Trader. (The fixture's filter response is malformed
     // JSON; the parse error fires but the cycle continues.)
     let requests = dispatch.requests();
     assert_eq!(
         requests.len(),
         2,
-        "Phase C: Filter + Trader dispatch; Critic still a stub (got {} requests)",
+        "Phase C: Filter + Trader dispatch (got {} requests)",
         requests.len(),
     );
 }
@@ -246,6 +237,7 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         run_id: "run-cache-key".into(),
         scenario_id: scenario_id.clone(),
         cycle_idx,
+        invocation_suffix: None,
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
@@ -257,6 +249,7 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("dispatch_capability runs");

@@ -46,7 +46,12 @@ export function HomeDeltaSubtitle({ delta }: HomeDeltaSubtitleProps) {
       {hoursAgo !== null ? (
         <span className="text-text-4">
           {" "}
-          · <span className="font-mono tabular-nums">{hoursAgo}h</span> ago
+          ·{" "}
+          {hoursAgo === 0 ? (
+            <span>just now</span>
+          ) : (
+            <span className="font-mono tabular-nums">{hoursAgo}h ago</span>
+          )}
         </span>
       ) : null}
     </span>

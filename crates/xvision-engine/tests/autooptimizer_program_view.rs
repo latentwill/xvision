@@ -35,16 +35,15 @@ fn fixture_strategy() -> Strategy {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({"ema_fast": 12, "ema_slow": 50}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -55,10 +54,6 @@ fn to_markdown_produces_all_section_headers() {
     assert!(md.contains("# Strategy "), "missing H1: {md}");
     assert!(md.contains("## Manifest"), "missing Manifest: {md}");
     assert!(md.contains("## Agents"), "missing Agents: {md}");
-    assert!(
-        md.contains("## Mechanical params"),
-        "missing Mechanical params: {md}"
-    );
     assert!(md.contains("## Risk config"), "missing Risk config: {md}");
 }
 

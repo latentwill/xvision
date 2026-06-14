@@ -25,6 +25,8 @@ fn sample_tool_call() -> ToolCallRow {
         tool_hash: None,
         input_hash: "sha256:0".into(),
         output_hash: None,
+        input_text: None,
+        output_text: None,
         input_payload_ref: None,
         output_payload_ref: None,
         side_effect_level: "pure".into(),
@@ -114,16 +116,15 @@ fn sample_artifact() -> ArtifactRow {
 }
 
 /// Helper that simulates a `dispatch_capability` invocation for each
-/// of the 5 capabilities. Each variant emits a representative set of
+/// of the 3 capabilities. Each variant emits a representative set of
 /// rows through the recorder — the test asserts the right `record_*`
 /// methods fired the expected number of times per variant.
 ///
 /// This mirrors the shape the Phase D dispatcher's per-capability
 /// handlers will adopt: Trader emits a tool_call + an event + a
-/// checkpoint; Filter emits an event; Critic emits a supervisor_note;
-/// Intern emits an event; Router emits an event. Adjust as the actual
-/// handlers gain semantics — the test pins the trait surface, not the
-/// per-handler emission policy.
+/// checkpoint; Filter emits an event; Router emits an event. Adjust
+/// as the actual handlers gain semantics — the test pins the trait
+/// surface, not the per-handler emission policy.
 fn simulate_dispatch(kind: &str, recorder: &dyn Recorder) {
     match kind {
         "trader" => {
@@ -132,12 +133,6 @@ fn simulate_dispatch(kind: &str, recorder: &dyn Recorder) {
             recorder.record_checkpoint(sample_checkpoint());
         }
         "filter" => {
-            recorder.record_event(sample_event());
-        }
-        "critic" => {
-            recorder.record_supervisor_note(sample_supervisor_note());
-        }
-        "intern" => {
             recorder.record_event(sample_event());
         }
         "router" => {
@@ -155,15 +150,13 @@ fn counting_recorder_tracks_dispatch_per_capability() {
     // a working `&dyn Recorder` consumer.
     simulate_dispatch("trader", &counter);
     simulate_dispatch("filter", &counter);
-    simulate_dispatch("critic", &counter);
-    simulate_dispatch("intern", &counter);
     simulate_dispatch("router", &counter);
 
     let snap = counter.snapshot();
     assert_eq!(snap.tool_calls, 1, "trader emits one tool_call");
-    // events: trader + filter + intern + router = 4
-    assert_eq!(snap.events, 4, "trader/filter/intern/router each emit one event");
-    assert_eq!(snap.supervisor_notes, 1, "critic emits one supervisor_note");
+    // events: trader + filter + router = 3
+    assert_eq!(snap.events, 3, "trader/filter/router each emit one event");
+    assert_eq!(snap.supervisor_notes, 0, "no supervisor_note in this simulation");
     assert_eq!(snap.checkpoints, 1, "trader emits one checkpoint");
     assert_eq!(snap.approvals, 0, "no approval in this simulation");
     assert_eq!(snap.sandbox_results, 0, "no sandbox in this simulation");
@@ -222,16 +215,15 @@ fn counting_recorder_can_be_shared_across_threads() {
             // Each thread fires one of every variant.
             simulate_dispatch("trader", counter.as_ref());
             simulate_dispatch("filter", counter.as_ref());
-            simulate_dispatch("critic", counter.as_ref());
         }));
     }
     for h in handles {
         h.join().expect("thread joins cleanly");
     }
     // 4 threads, each one trader (1 tool_call, 1 event, 1 checkpoint) +
-    // 1 filter (1 event) + 1 critic (1 supervisor_note).
+    // 1 filter (1 event).
     assert_eq!(counter.tool_calls.load(Ordering::Relaxed), 4);
     assert_eq!(counter.events.load(Ordering::Relaxed), 8);
-    assert_eq!(counter.supervisor_notes.load(Ordering::Relaxed), 4);
+    assert_eq!(counter.supervisor_notes.load(Ordering::Relaxed), 0);
     assert_eq!(counter.checkpoints.load(Ordering::Relaxed), 4);
 }

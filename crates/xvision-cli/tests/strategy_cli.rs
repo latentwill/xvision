@@ -118,16 +118,15 @@ fn build_test_strategy(id: &str, name: &str) -> Strategy {
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(trader_slot()),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -529,10 +528,6 @@ fn clone_strategy_json_clones_agent_and_records_source_metadata() {
     let cloned: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(cloned["manifest"]["id"], cloned_strategy_id);
     assert_eq!(cloned["manifest"]["display_name"], "clone-target");
-    assert_eq!(
-        cloned["mechanical_params"]["metadata"]["cloned_from"],
-        source_strategy_id
-    );
     assert_eq!(cloned["agents"][0]["agent_id"], cloned_agent_id);
     assert_eq!(cloned["agents"][0]["role"], "trader");
     assert_eq!(cloned["agents"][0]["activates"], "trader");

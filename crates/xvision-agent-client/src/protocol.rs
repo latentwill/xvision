@@ -121,6 +121,16 @@ pub struct StartRunParams {
     /// Skipped on the wire when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slot_role: Option<String>,
+    /// Reasoning effort hint forwarded to the provider gateway for CoT
+    /// reasoning models (deepseek-r1, qwq, etc.). Accepted values are
+    /// provider-specific strings (e.g. `"low"`, `"medium"`, `"high"`); the
+    /// sidecar passes the value through verbatim. `None` (omitted on the
+    /// wire) for non-CoT models and for cases where the operator wants the
+    /// provider default. Set via
+    /// `crate::agents::model::default_reasoning_effort(model_id)` at the
+    /// Cline dispatch site.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -335,6 +345,7 @@ mod tests {
             decision_schema: Some(serde_json::json!({"type": "object"})),
             record: false,
             slot_role: None,
+            reasoning_effort: None,
         };
         let with = serde_json::to_value(&base).unwrap();
         assert!(with.get("decision_schema").is_some());
@@ -368,6 +379,7 @@ mod tests {
             decision_schema: None,
             record: false,
             slot_role: None,
+            reasoning_effort: None,
         };
         // Default false: omitted from the wire so existing sidecars/tests
         // see exactly the pre-record shape.

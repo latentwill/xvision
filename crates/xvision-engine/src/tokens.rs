@@ -34,9 +34,7 @@ where
 
 pub fn estimate_pipeline_tokens(b: &Strategy, decision_points: u64) -> TokenEstimate {
     estimate_pipeline_tokens_from_slots(
-        [&b.regime_slot, &b.intern_slot, &b.trader_slot]
-            .into_iter()
-            .flatten(),
+        [&b.regime_slot, &b.trader_slot].into_iter().flatten(),
         decision_points,
     )
 }

@@ -69,7 +69,7 @@ pub struct ResolvedAgentSlot {
     /// V2D: the owning agent's id, populated from the parent `Agent`
     /// row at strategy-resolution time so the recorder can scope memory
     /// per agent (`agent:<agent_id>`). Empty string when the slot has
-    /// no associated agent (legacy regime/intern/trader `LLMSlot` path,
+    /// no associated agent (legacy regime/trader `LLMSlot` path,
     /// unit tests). With `memory_mode = Off` this field is ignored.
     pub agent_id: String,
     /// Snapshotted `AgentSlot.noop_skip` at strategy-resolution time.
@@ -157,6 +157,15 @@ pub struct PipelineInputs<'a> {
     /// spawned a Cline client for this run. `None` keeps every dispatch on
     /// `LlmDispatch`.
     pub cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
+    /// WS-17 parent: the `decision.model` span id the executor opened
+    /// around this `run_pipeline` call (a child of the enclosing
+    /// `agent.decision` span). Threaded down into each Cline trader
+    /// dispatch so the captured chain-of-thought `decision.reasoning` span
+    /// nests under `decision.model` (which nests under `agent.decision`).
+    /// `None` on call sites that don't own a decision-model span (e.g.
+    /// rehearsal / non-eval paths) — the reasoning span then emits
+    /// top-level, exactly as it did before this field existed.
+    pub model_call_span_id: Option<String>,
 }
 
 /// Phase C — runtime context owned by the executor for the duration
@@ -194,13 +203,102 @@ pub struct FilterPipelineCtx<'a> {
 #[derive(Debug)]
 pub struct PipelineOutputs {
     pub regime: Option<LlmResponse>,
-    pub intern: Option<LlmResponse>,
     pub trader: Option<LlmResponse>,
     pub total_input_tokens: u32,
     pub total_output_tokens: u32,
 }
 
+/// Build the `agent.plan` topology JSON for a resolved pipeline: an
+/// ordered list of stages, one `{ role, model?, capability? }` object
+/// per stage. Two shapes feed in:
+///
+/// * Agent path (modern multi-stage) — one entry per
+///   [`ResolvedAgentSlot`], carrying the slot role, the slot's bound
+///   `model` (when set), and the `activates` capability resolved off the
+///   parallel `Strategy.agents` entry (defaulting to `Trader`, matching
+///   `run_agent_pipeline`).
+/// * Legacy path — the `regime_slot` / `trader_slot` that are `Some`, in
+///   that order, with their `model` binding. No capability field (the
+///   legacy slots have no `Capability`).
+///
+/// Returned as `{ "topology": [ ... ] }` so the emitter merges it under
+/// the `topology` key of the span's attribute bag. Pure / cheap — only
+/// reads the resolved strategy + slots.
+fn build_pipeline_topology(strategy: &Strategy, agent_slots: &[ResolvedAgentSlot]) -> serde_json::Value {
+    let mut stages: Vec<serde_json::Value> = Vec::new();
+    if !agent_slots.is_empty() {
+        for (i, resolved) in agent_slots.iter().enumerate() {
+            // Capability resolved exactly as run_agent_pipeline does:
+            // `Strategy.agents[i].activates`, defaulting to Trader.
+            let capability = strategy
+                .agents
+                .get(i)
+                .and_then(|a| a.activates)
+                .unwrap_or(Capability::Trader);
+            let mut entry = serde_json::Map::new();
+            entry.insert(
+                "role".to_string(),
+                serde_json::Value::String(resolved.role.clone()),
+            );
+            if let Some(model) = resolved.slot.model.as_ref() {
+                entry.insert("model".to_string(), serde_json::Value::String(model.clone()));
+            }
+            entry.insert(
+                "capability".to_string(),
+                serde_json::Value::String(format!("{capability:?}")),
+            );
+            stages.push(serde_json::Value::Object(entry));
+        }
+    } else {
+        for slot in [strategy.regime_slot.as_ref(), strategy.trader_slot.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let mut entry = serde_json::Map::new();
+            entry.insert("role".to_string(), serde_json::Value::String(slot.role.clone()));
+            if let Some(model) = slot.model.as_ref() {
+                entry.insert("model".to_string(), serde_json::Value::String(model.clone()));
+            }
+            stages.push(serde_json::Value::Object(entry));
+        }
+    }
+    serde_json::json!({ "topology": stages })
+}
+
 pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
+    // WS-12 (`trace-obs-ws12`): open ONE `agent.plan` topology span at
+    // pipeline entry, before the first stage runs, carrying the resolved
+    // pipeline topology. No-op when `obs` is `None`. We open it here in
+    // `run_pipeline` (the common entry for BOTH the legacy and the agent
+    // path) and close it after the inner body returns — including the
+    // error path — so the span is always paired. The span is purely
+    // emit-side; it does not change any pipeline logic, slot execution,
+    // or outputs.
+    let plan_span_id = input
+        .obs
+        .as_ref()
+        .map(|_| crate::agent::observability::fresh_span_id());
+    if let (Some(obs), Some(span_id)) = (input.obs.as_ref(), plan_span_id.as_ref()) {
+        let topology = build_pipeline_topology(input.strategy, input.agent_slots);
+        obs.emit_agent_plan_started(span_id, None, topology).await;
+    }
+
+    // Snapshot the emitter before `input` is moved into the inner body
+    // so we can close the span on either return arm.
+    let obs_for_close = input.obs.clone();
+    let result = run_pipeline_inner(input).await;
+
+    if let (Some(obs), Some(span_id)) = (obs_for_close.as_ref(), plan_span_id.as_ref()) {
+        match &result {
+            Ok(_) => obs.emit_span_finished_ok(span_id).await,
+            Err(e) => obs.emit_span_finished_error(span_id, &e.to_string()).await,
+        }
+    }
+
+    result
+}
+
+async fn run_pipeline_inner<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
     if !input.agent_slots.is_empty() {
         return run_agent_pipeline(input).await;
     }
@@ -248,42 +346,6 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         None
     };
 
-    let intern = if let Some(slot) = &input.strategy.intern_slot {
-        let max_tokens = default_max_tokens_for(slot);
-        let out = execute_slot(SlotInput {
-            slot,
-            system_prompt: String::new(),
-            upstream_inputs: accumulated.clone(),
-            dispatch: input.dispatch.clone(),
-            tools: input.tools.clone(),
-            response_schema: None,
-            max_tokens,
-            temperature: None,
-            obs: input.obs.clone(),
-            memory: None,
-            memory_mode: xvision_memory::types::MemoryMode::Off,
-            agent_id: String::new(),
-            scenario_start: None,
-            source_window_start: None,
-            source_window_end: None,
-            run_id: String::new(),
-            scenario_id: String::new(),
-            cycle_idx: 0,
-            catalog: catalog_for_slot(slot, &input.provider_catalogs),
-            delta_briefing: false,
-            prev_briefing: None,
-            trace_name: None,
-            trace_attrs: None,
-        })
-        .await?;
-        total_in += out.input_tokens;
-        total_out += out.output_tokens;
-        accumulated["intern_output"] = serde_json::Value::String(out.text());
-        Some(out)
-    } else {
-        None
-    };
-
     let trader = if let Some(slot) = &input.strategy.trader_slot {
         let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
@@ -321,7 +383,6 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
 
     Ok(PipelineOutputs {
         regime,
-        intern,
         trader,
         total_input_tokens: total_in,
         total_output_tokens: total_out,
@@ -379,7 +440,6 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
     let mut total_in = 0u32;
     let mut total_out = 0u32;
     let mut regime = None;
-    let mut intern = None;
     let mut trader = None;
 
     // `indicator-tool-wiring` (2026-05-22): see the long comment kept
@@ -591,6 +651,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 run_id: input.run_id.clone(),
                 scenario_id: input.scenario_id.clone(),
                 cycle_idx: input.cycle_idx,
+                invocation_suffix: None,
                 catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
                 delta_briefing: false,
                 prev_briefing: None,
@@ -610,6 +671,9 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 recorder: input.recorder,
                 runtime: input.runtime,
                 cline: input.cline.clone(),
+                // WS-17: forward the executor's `decision.model` span id so
+                // the captured chain-of-thought nests under it.
+                model_call_span_id: input.model_call_span_id.clone(),
             })
             .await?
         };
@@ -675,15 +739,12 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
 
         // Materialise the role's text output into the accumulated
         // briefing JSON. For Trader / Router (real LLM calls), use the
-        // raw response text. For stub capabilities (Filter / Critic /
-        // Intern), serialize the typed output so downstream agents see
-        // a predictable shape.
+        // raw response text. For stub capabilities (Filter), serialize
+        // the typed output so downstream agents see a predictable shape.
         let text_for_briefing = match outcome.raw_response.as_ref() {
             Some(r) => r.text(),
             None => match &outcome.output {
                 AgentOutput::Filter(s) => serde_json::to_string(s).unwrap_or_default(),
-                AgentOutput::Critic(c) => serde_json::to_string(c).unwrap_or_default(),
-                AgentOutput::Intern(o) => serde_json::to_string(o).unwrap_or_default(),
                 _ => String::new(),
             },
         };
@@ -750,6 +811,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         run_id: input.run_id.clone(),
                         scenario_id: input.scenario_id.clone(),
                         cycle_idx: input.cycle_idx,
+                        invocation_suffix: Some(format!("filter-{role}")),
                         catalog: catalog_for_slot(&resolved.slot, &input.provider_catalogs),
                         delta_briefing: false,
                         prev_briefing: None,
@@ -761,6 +823,9 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         recorder: input.recorder,
                         runtime: input.runtime,
                         cline: input.cline.clone(),
+                        // WS-17: forward the executor's `decision.model`
+                        // span id (multi-filter re-fire of the trader).
+                        model_call_span_id: input.model_call_span_id.clone(),
                     })
                     .await?;
                     total_in += outcome2.input_tokens;
@@ -774,14 +839,13 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
             }
         }
 
-        // Legacy harness shape: surface regime / intern / trader by
-        // role name into the `PipelineOutputs` struct for back-compat.
-        // Future Phase D refactor will replace the named slots with a
-        // typed `Vec<AgentOutput>`, but Phase B keeps the shape stable.
+        // Legacy harness shape: surface regime / trader by role name into
+        // the `PipelineOutputs` struct for back-compat. Future Phase D
+        // refactor will replace the named slots with a typed
+        // `Vec<AgentOutput>`, but Phase B keeps the shape stable.
         if let Some(raw) = outcome.raw_response.clone() {
             match role_key.as_str() {
                 "regime" => regime = Some(raw),
-                "intern" => intern = Some(raw),
                 // For Trader, only set if the multi-fire branch above
                 // didn't already overwrite `trader` with the
                 // last-invocation response.
@@ -805,7 +869,6 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
 
     Ok(PipelineOutputs {
         regime,
-        intern,
         trader,
         total_input_tokens: total_in,
         total_output_tokens: total_out,
@@ -978,7 +1041,7 @@ pub fn apply_agent_ref_overrides(resolved: &mut ResolvedAgentSlot, agent_ref: &c
 ///
 /// Returns an empty vec for legacy strategies with no attached agents,
 /// mirroring `resolve_agent_slots`; the caller's executor still has the
-/// deprecated `trader_slot`/`intern_slot`/`regime_slot` fallback path.
+/// deprecated `trader_slot`/`regime_slot` fallback path.
 pub async fn resolve_agent_slots_for_strategy(
     pool: &sqlx::SqlitePool,
     strategy: &Strategy,
@@ -1007,14 +1070,14 @@ pub async fn resolve_agent_slots_for_strategy(
     Ok(out)
 }
 
-/// Legacy `LLMSlot` path (regime/intern/trader slots on the older
-/// `Strategy` shape) has no operator-side `max_tokens` field. To keep
-/// existing legacy strategies on their previous budget after the q15
-/// `Option<u32>` rework, we auto-derive from the slot's model metadata
-/// so the dispatcher sees a concrete value — matching the pre-change
-/// behaviour exactly. (The agent-slot path, by contrast, exposes the
-/// `Option<u32>` to the operator and only fills in a fallback inside
-/// the Anthropic dispatcher where the API requires the field.)
+/// Legacy `LLMSlot` path (regime/trader slots on the older `Strategy`
+/// shape) has no operator-side `max_tokens` field. To keep existing
+/// legacy strategies on their previous budget after the q15 `Option<u32>`
+/// rework, we auto-derive from the slot's model metadata so the dispatcher
+/// sees a concrete value — matching the pre-change behaviour exactly.
+/// (The agent-slot path, by contrast, exposes the `Option<u32>` to the
+/// operator and only fills in a fallback inside the Anthropic dispatcher
+/// where the API requires the field.)
 fn default_max_tokens_for(slot: &LLMSlot) -> Option<u32> {
     let model = slot.effective_model();
     let model = model.trim();

@@ -1,16 +1,12 @@
-//! Stage 1 integration test for the pipeline runtime flag (Task 6).
+//! WU-6 integration test for the pipeline Cline runtime (Task 1.6).
 //!
-//! Runs a single-Trader-agent strategy through `run_pipeline` twice:
+//! Runs a single-Trader-agent strategy through `run_pipeline`:
 //!   * `runtime = Cline` (mock sidecar wired) — the Trader decision is
 //!     produced via the Cline `start_run -> step -> end_run` lifecycle;
-//!   * `runtime = LlmDispatch` (MockDispatch) — the existing raw-dispatch
-//!     path still produces a parseable Trader decision, byte-identical to
-//!     pre-Stage-1 behaviour.
+//!   * `runtime = Cline` with `cline = None` — must HARD ERROR since WU-6
+//!     retired LlmDispatch and the fallback is gone.
 //!
-//! Both must yield a `PipelineOutputs.trader` whose text parses as a
-//! `trader_output`-shaped decision. Also asserts that selecting `Cline`
-//! WITHOUT a wired client (`cline = None`) falls back to `LlmDispatch`
-//! rather than erroring — the `should_use_cline` guard.
+//! The `LlmDispatch` runtime path and the soft-fallback were removed in WU-6.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -85,16 +81,15 @@ fn trader_strategy() -> Strategy {
             edges: Vec::new(),
         },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -183,6 +178,7 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
             recording_slot_role: None,
             tool_asset_guard: None,
         }),
+        model_call_span_id: None,
     })
     .await
     .expect("cline pipeline runs");
@@ -197,57 +193,18 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
 }
 
 #[tokio::test]
-async fn pipeline_llm_dispatch_runtime_still_works() {
+async fn pipeline_cline_without_client_is_hard_error() {
+    // WU-6: runtime = Cline but cline = None must now return an error.
+    // The LlmDispatch fallback was retired; a missing sidecar is a
+    // programmer error that must never silently drop a decision.
     let strategy = trader_strategy();
     let slots = vec![trader_slot()];
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
-        r#"{"action":"short_open","conviction":0.4,"justification":"via llmdispatch"}"#,
+        r#"{"action":"hold","conviction":0.1,"justification":"should not reach here"}"#,
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
-    let outs = run_pipeline(PipelineInputs {
-        strategy: &strategy,
-        agent_slots: &slots,
-        seed_inputs: json!({"market_data": {"bar_history": []}}),
-        dispatch,
-        tools,
-        obs: None,
-        memory_recorder: None,
-        scenario_start: None,
-        source_window_start: None,
-        source_window_end: None,
-        run_id: "run-llm".into(),
-        scenario_id: "sc-1".into(),
-        cycle_idx: 0,
-        provider_catalogs: std::collections::HashMap::new(),
-        filter_ctx: None,
-        trace_attrs: None,
-        recorder: None,
-        runtime: AgentRuntime::LlmDispatch,
-        cline: None,
-    })
-    .await
-    .expect("llm-dispatch pipeline runs");
-
-    let trader = outs.trader.expect("trader output present");
-    assert_is_trader_decision(&trader);
-    let decision: serde_json::Value = serde_json::from_str(&trader.text()).unwrap();
-    assert_eq!(decision["action"], "short_open");
-}
-
-#[tokio::test]
-async fn pipeline_cline_flag_without_client_falls_back_to_llm_dispatch() {
-    // runtime = Cline but cline = None: the should_use_cline guard keeps
-    // the dispatch on LlmDispatch rather than erroring or dropping the
-    // decision. The MockDispatch decision must come through.
-    let strategy = trader_strategy();
-    let slots = vec![trader_slot()];
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
-        r#"{"action":"hold","conviction":0.1,"justification":"fallback path"}"#,
-    ));
-    let tools = Arc::new(ToolRegistry::default_with_builtins());
-
-    let outs = run_pipeline(PipelineInputs {
+    let result = run_pipeline(PipelineInputs {
         strategy: &strategy,
         agent_slots: &slots,
         seed_inputs: json!({}),
@@ -258,7 +215,7 @@ async fn pipeline_cline_flag_without_client_falls_back_to_llm_dispatch() {
         scenario_start: None,
         source_window_start: None,
         source_window_end: None,
-        run_id: "run-fallback".into(),
+        run_id: "run-no-sidecar".into(),
         scenario_id: "sc-1".into(),
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
@@ -267,11 +224,17 @@ async fn pipeline_cline_flag_without_client_falls_back_to_llm_dispatch() {
         recorder: None,
         runtime: AgentRuntime::Cline,
         cline: None,
+        model_call_span_id: None,
     })
-    .await
-    .expect("fallback pipeline runs");
+    .await;
 
-    let trader = outs.trader.expect("trader output present");
-    let decision: serde_json::Value = serde_json::from_str(&trader.text()).unwrap();
-    assert_eq!(decision["action"], "hold");
+    assert!(
+        result.is_err(),
+        "pipeline with Cline runtime but no sidecar must return an error (WU-6)"
+    );
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("Cline sidecar") || err_msg.contains("WU-6") || err_msg.contains("XVN_AGENTD_BIN"),
+        "error message should mention the sidecar requirement; got: {err_msg}"
+    );
 }

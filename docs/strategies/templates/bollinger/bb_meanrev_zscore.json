@@ -2,50 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "BB Meanrev Zscore",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    },
-    {
-      "default": "0.05",
-      "name": "entry_pct_b_low",
-      "range": "0.0 \u2013 0.20"
-    },
-    {
-      "default": "0.95",
-      "name": "entry_pct_b_high",
-      "range": "0.80 \u2013 1.0"
-    },
-    {
-      "default": "70",
-      "name": "max_bandwidth_percentile",
-      "range": "50 \u2013 90"
-    },
-    {
-      "default": "bb_middle",
-      "name": "target (exit)",
-      "range": "bb_middle / bb_opposite_band"
-    },
-    {
-      "default": "1.5",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    },
-    {
-      "default": "10",
-      "name": "time_stop_bars",
-      "range": "5 \u2013 30"
-    }
-  ],
   "name": "bb_meanrev_zscore",
-  "plain_summary": "The canonical mean-reversion play. In normal-volatility regimes (B1, B2), price touching the lower band is a 2-\u03c3 event under the SMA's local distribution and reverts toward the mean more often than it doesn't. Symmetric for upper-band touches. This is the strategy most people mean when they say \"Bollinger Bands.\"",
+  "plain_summary": "The canonical mean-reversion play. In normal-volatility regimes (B1, B2), price touching the lower band is a 2-σ event under the SMA's local distribution and reverts toward the mean more often than it doesn't. Symmetric for upper-band touches. This is the strategy most people mean when they say \"Bollinger Bands.\"",
   "regime_fit": [
     "any"
   ],
@@ -57,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\n\nif in_normal_vol and pct_b <= entry_pct_b_low and is_flat:\n    enter long, target = bb_middle (or bb_upper if target = bb_opposite_band)\n                stop = entry - stop_atr_multiple * atr_14\n\nelif in_normal_vol and pct_b >= entry_pct_b_high and is_flat:\n    enter short, target = bb_middle (or bb_lower)\n                 stop = entry + stop_atr_multiple * atr_14\n\nexit on target, stop, or time_stop_bars elapsed.\n```",
-    "expected_regime": "B1 (calm) and B2 (normal). Toxic in B3 / B4 \u2014 `max_bandwidth_percentile`\nis the regime gate that excludes those.",
+    "expected_regime": "B1 (calm) and B2 (normal). Toxic in B3 / B4 — `max_bandwidth_percentile`\nis the regime gate that excludes those.",
     "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `bandwidth_pct = pct_rank(bandwidth)` for regime gate.\n- `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 \u2013 2.5        |\n| `entry_pct_b_low`              | 0.05    | 0.0 \u2013 0.20       |\n| `entry_pct_b_high`             | 0.95    | 0.80 \u2013 1.0       |\n| `max_bandwidth_percentile`     | 70      | 50 \u2013 90          |\n| `target` (exit)                | `bb_middle` | bb_middle / bb_opposite_band |\n| `stop_atr_multiple`            | 1.5     | 1.0 \u2013 3.0        |\n| `time_stop_bars`               | 10      | 5 \u2013 30           |\n\n`max_bandwidth_percentile = 70` keeps this strategy *out* of B3 / B4\nexpansion regimes \u2014 the inverse of the breakout strategy's gate.",
-    "references": "- Compendium README \u00a7Combination, S0/S1 and S5/S6 rows \u00d7 B1/B2 columns.\n- Symmetry-aware variant: [`bb_asymmetric_breakouts`](bb_asymmetric_breakouts.md) \u2014 uses different rules for upper-touch vs lower-touch.\n- Inverse: [`bb_band_walk_follow`](bb_band_walk_follow.md) \u2014 same touches, opposite regime, opposite direction.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 – 2.5        |\n| `entry_pct_b_low`              | 0.05    | 0.0 – 0.20       |\n| `entry_pct_b_high`             | 0.95    | 0.80 – 1.0       |\n| `max_bandwidth_percentile`     | 70      | 50 – 90          |\n| `target` (exit)                | `bb_middle` | bb_middle / bb_opposite_band |\n| `stop_atr_multiple`            | 1.5     | 1.0 – 3.0        |\n| `time_stop_bars`               | 10      | 5 – 30           |\n\n`max_bandwidth_percentile = 70` keeps this strategy *out* of B3 / B4\nexpansion regimes — the inverse of the breakout strategy's gate.",
+    "references": "- Compendium README §Combination, S0/S1 and S5/S6 rows × B1/B2 columns.\n- Symmetry-aware variant: [`bb_asymmetric_breakouts`](bb_asymmetric_breakouts.md) — uses different rules for upper-touch vs lower-touch.\n- Inverse: [`bb_band_walk_follow`](bb_band_walk_follow.md) — same touches, opposite regime, opposite direction.",
     "status": "`queued`. Highest-volume strategy in the BB family; trades fire frequently\nin normal regimes. The strategy that benefits most from the\n`max_bandwidth_percentile` gate; without it, edge collapses.",
-    "thesis": "The canonical mean-reversion play. In normal-volatility regimes (B1, B2),\nprice touching the lower band is a 2-\u03c3 event under the SMA's local\ndistribution and reverts toward the mean more often than it doesn't.\nSymmetric for upper-band touches. This is the strategy most people *mean*\nwhen they say \"Bollinger Bands.\"\n\nThe strategy depends critically on regime gating. In B3 (expansion), the\nsame touch becomes a *walk* \u2014 price rides the band rather than reverting\n\u2014 and the mean-revert trade catches a falling knife. The\n`max_bandwidth_percentile` parameter prevents firing in expansion regimes."
+    "thesis": "The canonical mean-reversion play. In normal-volatility regimes (B1, B2),\nprice touching the lower band is a 2-σ event under the SMA's local\ndistribution and reverts toward the mean more often than it doesn't.\nSymmetric for upper-band touches. This is the strategy most people *mean*\nwhen they say \"Bollinger Bands.\"\n\nThe strategy depends critically on regime gating. In B3 (expansion), the\nsame touch becomes a *walk* — price rides the band rather than reverting\n— and the mean-revert trade catches a falling knife. The\n`max_bandwidth_percentile` parameter prevents firing in expansion regimes."
   },
   "source_doc": "strategies/bollinger/bb_meanrev_zscore.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Meanrev Zscore` strategy.\n\nThesis:\nThe canonical mean-reversion play. In normal-volatility regimes (B1, B2), price touching the lower band is a 2-\u03c3 event under the SMA's local distribution and reverts toward the mean more often than it doesn't. Symmetric for upper-band touches. This is the strategy most people mean when they say \"Bollinger Bands.\"\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `bandwidth_pct = pct_rank(bandwidth)` for regime gate.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\n\nif in_normal_vol and pct_b <= entry_pct_b_low and is_flat:\n    enter long, target = bb_middle (or bb_upper if target = bb_opposite_band)\n                stop = entry - stop_atr_multiple * atr_14\n\nelif in_normal_vol and pct_b >= entry_pct_b_high and is_flat:\n    enter short, target = bb_middle (or bb_lower)\n                 stop = entry + stop_atr_multiple * atr_14\n\nexit on target, stop, or time_stop_bars elapsed.\n```\n\nExpected regime:\nB1 (calm) and B2 (normal). Toxic in B3 / B4 \u2014 max_bandwidth_percentile is the regime gate that excludes those.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Meanrev Zscore` strategy.\n\nThesis:\nThe canonical mean-reversion play. In normal-volatility regimes (B1, B2), price touching the lower band is a 2-σ event under the SMA's local distribution and reverts toward the mean more often than it doesn't. Symmetric for upper-band touches. This is the strategy most people mean when they say \"Bollinger Bands.\"\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `bandwidth_pct = pct_rank(bandwidth)` for regime gate.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\n\nif in_normal_vol and pct_b <= entry_pct_b_low and is_flat:\n    enter long, target = bb_middle (or bb_upper if target = bb_opposite_band)\n                stop = entry - stop_atr_multiple * atr_14\n\nelif in_normal_vol and pct_b >= entry_pct_b_high and is_flat:\n    enter short, target = bb_middle (or bb_lower)\n                 stop = entry + stop_atr_multiple * atr_14\n\nexit on target, stop, or time_stop_bars elapsed.\n```\n\nExpected regime:\nB1 (calm) and B2 (normal). Toxic in B3 / B4 — max_bandwidth_percentile is the regime gate that excludes those.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

@@ -11,6 +11,28 @@ import { CHART_V2_RANGE_EVENT, CHART_V2_ZOOM_EVENT } from "./ChartFrame";
 import { rangeWindowSeconds } from "./range-window";
 
 /**
+ * Produce a stable string key that captures both the JSON-serialisable
+ * structure of opts AND any function-valued fields (e.g. `axes[].values`)
+ * that `JSON.stringify` silently drops.
+ *
+ * Strategy:
+ * 1. Walk `opts.axes` and collect `.values` function sources (`.toString()`).
+ *    Other function-valued fields follow the same pattern if needed.
+ * 2. Stringify the rest of opts normally.
+ * 3. Concatenate so any change to either layer busts the dep.
+ *
+ * This is intentionally conservative — it extracts only the axes formatter
+ * functions that are the known source of the "00.0%" stale-tick bug (W14).
+ * Adding more function fields is a one-line extension below.
+ */
+function optsKey(opts: uPlot.Options): string {
+  const axisValueSources = (opts.axes ?? [])
+    .map((ax) => (typeof ax.values === "function" ? ax.values.toString() : ""))
+    .join("|");
+  return JSON.stringify(opts) + "||fn:" + axisValueSources;
+}
+
+/**
  * Constructs, owns, and destroys a uPlot instance.
  *
  * @param opts    uPlot.Options (width/height come from ResizeObserver; pass 0 as
@@ -19,8 +41,11 @@ import { rangeWindowSeconds } from "./range-window";
  * @param hostRef Ref to the container div that uPlot should render into.
  * @param height  Desired height in CSS pixels.
  *
- * NOTE: We deliberately stringify opts in the dep array (M0 approach). The
- * alternative — tracking structural identity across renders — is M1 work.
+ * Dep strategy: we use `optsKey(opts)` instead of bare `JSON.stringify(opts)`
+ * because JSON.stringify silently drops function-valued fields (e.g.
+ * `axes[].values` formatters). `optsKey` appends the `.toString()` of known
+ * function-valued opts so a changed formatter triggers a plot recreation.
+ * `data` is included directly so new data always recreates the plot.
  */
 export function usePlot(
   opts: uPlot.Options,
@@ -113,7 +138,7 @@ export function usePlot(
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(opts), data, height]);
+  }, [optsKey(opts), data, height]);
 }
 
 function zoomPlot(plot: uPlot, direction: "in" | "out") {

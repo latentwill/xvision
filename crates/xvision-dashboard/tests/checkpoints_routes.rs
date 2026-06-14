@@ -60,16 +60,15 @@ fn sample_strategy(id: &str) -> Strategy {
         agents: vec![],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({"window": 14}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -117,7 +116,6 @@ async fn list_then_restore_rewinds_strategy_byte_identical_and_emits_event() {
     // MUTATE the strategy on disk.
     let mut mutated = original.clone();
     mutated.manifest.display_name = "MUTATED".to_string();
-    mutated.mechanical_params = serde_json::json!({"window": 999});
     store.save(&mutated).await.unwrap();
     assert_ne!(tokio::fs::read(&path).await.unwrap(), original_bytes);
 

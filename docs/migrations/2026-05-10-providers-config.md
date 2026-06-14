@@ -1,4 +1,8 @@
-# 2026-05-10 — Providers registry in `config/default.toml`
+# 2026-05-10 — Providers registry in `config/default.toml` (SUPERSEDED)
+
+**Status:** The `[intern]` TOML block was removed in 2026-06. Use `[default_llm]` instead.
+
+---
 
 ## What changed
 

@@ -37,7 +37,6 @@ fn sample_strategy() -> Strategy {
             provider: None,
             model: None,
         }),
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
@@ -46,13 +45,13 @@ fn sample_strategy() -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -122,7 +121,6 @@ fn strategy_roundtrip() {
     let parsed: Strategy = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.manifest.template, "mean_reversion");
     assert!(parsed.regime_slot.is_some());
-    assert!(parsed.intern_slot.is_none());
     assert!(parsed.trader_slot.is_some());
 }
 
@@ -138,7 +136,6 @@ fn valid_strategy_passes() {
 fn strategy_without_any_llm_slot_fails() {
     let mut strategy = sample_strategy();
     strategy.regime_slot = None;
-    strategy.intern_slot = None;
     strategy.trader_slot = None;
     let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::NoAgents));
@@ -217,8 +214,7 @@ fn strategy_with_extra_capital_field_in_json_still_deserializes() {
             "daily_loss_kill_pct": 0.05
         },
         "capital": { "initial": 100000.0, "currency": "USD" },
-        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 },
-        "mechanical_params": {}
+        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 }
     });
     // Should parse without error; extra fields are ignored.
     let parsed: Strategy = serde_json::from_value(pre_merge_json).unwrap();

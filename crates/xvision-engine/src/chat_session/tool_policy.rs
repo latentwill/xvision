@@ -83,13 +83,17 @@ impl ToolPolicy {
 }
 
 /// Classify a chat authoring tool by name. WRITE = the authoring/mutation
-/// verbs (create_*, update_*, set_*, attach_*, clear_*, validate_draft,
-/// run_eval, fetch_bars). READ = inspection/list/get/resolve verbs. Unknown
+/// verbs (create_*, update_*, set_*, attach_*, clear_*, run_eval,
+/// fetch_bars). READ = inspection/list/get/resolve/validate verbs. Unknown
 /// tool names default to WRITE — fail safe, since an unrecognised verb that
 /// slips through should be gated by Act mode rather than silently allowed.
+///
+/// `validate_draft` is READ: it only calls `store.load()` + runs validation
+/// checks and performs NO persistent mutation (see `authoring::validate_draft`).
+/// This lets it run in research/THINK mode without an Act gate round-trip.
 pub fn classify(tool_name: &str) -> ToolClass {
     match tool_name {
-        // ── Read: inspection, listing, resolution. No mutation. ──────────
+        // ── Read: inspection, listing, resolution, validation. No mutation. ─
         "get_strategy"
         | "get_scenario"
         | "get_eval_run"
@@ -103,7 +107,20 @@ pub fn classify(tool_name: &str) -> ToolClass {
         | "list_strategies_folder"
         | "read_strategies_file"
         | "list_strategy_ideas"
-        | "resolve_strategy" => ToolClass::Read,
+        | "resolve_strategy"
+        // validate_draft is read-only: loads a strategy and checks validity,
+        // no write side-effects. Reclassified Read so it works in research mode.
+        | "validate_draft"
+        // New read tools added (W5 — Findings #5-8):
+        // list_providers: returns configured providers/models from config.
+        // get_agent: returns one Agent record by id (no mutation).
+        // filter_catalog: returns the filter-DSL token catalog for authoring.
+        | "list_providers"
+        | "get_agent"
+        | "filter_catalog"
+        // W10 Finding #9: read-class scenario tools.
+        // select_scenarios: stateless filter over existing scenarios, no mutation.
+        | "select_scenarios" => ToolClass::Read,
 
         // ── Write: authoring mutations + work launchers. ─────────────────
         "create_strategy"
@@ -111,14 +128,21 @@ pub fn classify(tool_name: &str) -> ToolClass {
         | "create_strategy_agent"
         | "update_slot"
         | "update_manifest"
-        | "set_mechanical_param"
         | "set_risk_config"
         | "set_filter"
         | "clear_filter"
         | "attach_agent"
-        | "validate_draft"
         | "run_eval"
-        | "fetch_bars" => ToolClass::Write,
+        | "fetch_bars"
+        // W10 Finding #9: write-class scenario tools.
+        // clone_scenario: creates a new scenario row derived from a parent.
+        // archive_scenario: soft-deletes a scenario (sets archived_at).
+        // set_scenario_regime: writes regime_label/volatility_label/trend_direction.
+        // classify_scenario: derives and persists regime labels from bar data.
+        | "clone_scenario"
+        | "archive_scenario"
+        | "set_scenario_regime"
+        | "classify_scenario" => ToolClass::Write,
 
         // Unknown → fail safe as Write so it can't bypass the Act gate.
         _ => ToolClass::Write,
@@ -279,20 +303,25 @@ mod tests {
 
     #[test]
     fn classifier_marks_authoring_verbs_write() {
+        // validate_draft was REMOVED from this list (W5 Finding #8):
+        // it is read-only (loads + checks, no mutation) and is now Read.
         for t in [
             "create_strategy",
             "create_scenario",
             "create_strategy_agent",
             "update_slot",
             "update_manifest",
-            "set_mechanical_param",
             "set_risk_config",
             "set_filter",
             "clear_filter",
             "attach_agent",
-            "validate_draft",
             "run_eval",
             "fetch_bars",
+            // W10 scenario write tools:
+            "clone_scenario",
+            "archive_scenario",
+            "set_scenario_regime",
+            "classify_scenario",
         ] {
             assert_eq!(classify(t), ToolClass::Write, "{t} should be Write");
         }
@@ -315,9 +344,80 @@ mod tests {
             "read_strategies_file",
             "list_strategy_ideas",
             "resolve_strategy",
+            // W5 Finding #8: validate_draft reclassified Read (no mutation).
+            "validate_draft",
+            // W5 Findings #5-7: three new read-class tools.
+            "list_providers",
+            "get_agent",
+            "filter_catalog",
+            // W10 scenario read tool:
+            "select_scenarios",
         ] {
             assert_eq!(classify(t), ToolClass::Read, "{t} should be Read");
         }
+    }
+
+    /// Guard: `classify()` and `KNOWN_TOOLS` must agree on the class for
+    /// the W10 scenario tools. The `_ => Write` fallback in `classify()`
+    /// and KNOWN_TOOLS can drift independently; this test catches that drift.
+    #[test]
+    fn classify_and_known_tools_agree_on_w10_scenario_tools() {
+        use crate::api::tool_policy::KNOWN_TOOLS;
+        for tool in [
+            "clone_scenario",
+            "archive_scenario",
+            "set_scenario_regime",
+            "classify_scenario",
+            "select_scenarios",
+        ] {
+            let classify_class = classify(tool);
+            let known_class = KNOWN_TOOLS
+                .iter()
+                .find(|(name, _)| *name == tool)
+                .map(|(_, class)| *class)
+                .unwrap_or_else(|| panic!("tool `{tool}` missing from KNOWN_TOOLS"));
+            assert_eq!(
+                classify_class, known_class,
+                "classify() and KNOWN_TOOLS disagree on class for `{tool}`: \
+                 classify={classify_class:?}, KNOWN_TOOLS={known_class:?}"
+            );
+        }
+    }
+
+    /// Guard: `classify()` and `KNOWN_TOOLS` must agree on the class for
+    /// `validate_draft` and the three new W5 tools. The `_ => Write` fallback
+    /// in `classify()` and KNOWN_TOOLS can drift independently; this test
+    /// catches that drift.
+    #[test]
+    fn classify_and_known_tools_agree_on_w5_affected_tools() {
+        use crate::api::tool_policy::KNOWN_TOOLS;
+        for tool in ["validate_draft", "list_providers", "get_agent", "filter_catalog"] {
+            let classify_class = classify(tool);
+            let known_class = KNOWN_TOOLS
+                .iter()
+                .find(|(name, _)| *name == tool)
+                .map(|(_, class)| *class)
+                .unwrap_or_else(|| panic!("tool `{tool}` missing from KNOWN_TOOLS"));
+            assert_eq!(
+                classify_class, known_class,
+                "classify() and KNOWN_TOOLS disagree on class for `{tool}`: \
+                 classify={classify_class:?}, KNOWN_TOOLS={known_class:?}"
+            );
+        }
+    }
+
+    /// Guard: `validate_draft` must be callable in research/THINK mode.
+    /// decide("research", Read, default_for(Read)) must be AutoApproved.
+    #[test]
+    fn validate_draft_is_auto_approved_in_research_mode() {
+        let class = classify("validate_draft");
+        assert_eq!(class, ToolClass::Read, "validate_draft must be Read");
+        let policy = ToolPolicy::default_for(class);
+        assert_eq!(
+            decide("research", class, policy),
+            ToolPolicyOutcome::AutoApproved,
+            "validate_draft must be AutoApproved in research mode"
+        );
     }
 
     #[test]

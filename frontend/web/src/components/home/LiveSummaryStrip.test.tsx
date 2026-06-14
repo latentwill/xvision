@@ -219,4 +219,19 @@ describe("LiveSummaryStrip", () => {
     expect(screen.queryByText(/real money/i)).toBeNull();
     expect(screen.queryByTestId("paper-count")).toBeNull();
   });
+
+  // n0k honesty annotation: the live count must carry "· simulated" so the label
+  // does not suggest real money when all runs are paper/testnet.
+  it("qualifies the live count as simulated (honesty annotation)", async () => {
+    vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([
+      live({ run_id: "a" }),
+      live({ run_id: "b" }),
+    ]);
+
+    renderStrip();
+
+    const liveCount = await screen.findByTestId("live-count");
+    // The live-count span must include the simulated qualifier
+    expect(liveCount.textContent).toMatch(/simulated/i);
+  });
 });

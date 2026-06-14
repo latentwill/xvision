@@ -104,7 +104,6 @@ mod tests {
     fn is_known_capability_tracks_registry() {
         assert!(is_known_capability("trader"));
         assert!(is_known_capability("filter"));
-        assert!(!is_known_capability("intern"));
     }
 
     #[test]

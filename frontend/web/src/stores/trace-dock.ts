@@ -9,6 +9,38 @@ export type DockHeight = "collapsed" | "peek" | "working" | "full";
 export type DockMode = "post-hoc" | "live";
 
 /**
+ * Trace surface the dock state belongs to. The dashboard runs two
+ * independent trace contexts — the eval surfaces (`/eval-runs/*`, the
+ * standalone `/agent-runs/:runId`) and the live surfaces (`/live*`) —
+ * and each owns its own active run / selection / mode. Splitting the
+ * store per-scope kills the "capsule floats/flickers/follows to other
+ * pages" bug: nulling one scope on unmount no longer clobbers the
+ * other surface's run, and the floating capsule only renders for the
+ * scope that matches the current route.
+ *
+ * WS-11a adds a third scope, `opti` — the autooptimizer *cycle* projected onto
+ * the trace dock on the `/optimizer` route. It owns `byScope.opti`; the
+ * eval/live routes must not touch it (and vice versa). The cycle rows
+ * themselves are derived from the existing cycle SSE stream by
+ * `features/autooptimizer/opti-trace-reducer.ts` — the slice here only tracks
+ * the active cycle id, selection, mode, and cost override, mirroring eval/live.
+ */
+export type TraceScope = "eval" | "live" | "opti";
+
+/**
+ * Per-scope dock slice. One of these exists for each {@link TraceScope}.
+ * The fields here were previously top-level on the store; they moved
+ * under `byScope` so the eval and live surfaces can't trample each
+ * other's run/selection state.
+ */
+type ScopeState = {
+  activeRunId: string | null;
+  selectedSpanId: string | null;
+  mode: DockMode;
+  costOverrideUsd: number | null;
+};
+
+/**
  * Metadata captured from `span_started` / snapshot frames so consumers
  * (e.g. RunStatusStrip) can render an active-span chip without needing
  * a second query for span details.
@@ -55,19 +87,31 @@ type State = {
    * `heightPx`. Persisted under `xvision.trace-dock.height` in localStorage.
    */
   heightPx: number;
-  selectedSpanId: string | null;
-  activeRunId: string | null;
+  /**
+   * Per-scope run / selection / mode / cost-override state. The eval and
+   * live surfaces each own one slice; route owners write only their own
+   * scope and the floating capsule reads the slice for the current route
+   * (see `useCurrentTraceScope`). This is the core of the WS-2 reshape —
+   * a single global `activeRunId` used to leak across surfaces.
+   */
+  byScope: Record<TraceScope, ScopeState>;
   /**
    * Chat-rail session the dock is bound to, when the active surface is a
    * chat session rather than a standalone agent run. When set, the dock's
    * span view projects from the unified `session-events` store (one stream,
    * two projections — Phase 1.2/1.4) instead of the agent-run SSE wire.
    * `null` keeps the existing agent-run path untouched.
+   *
+   * Shared (not per-scope): the chat rail is a single global surface.
    */
   activeSessionId: string | null;
-  mode: DockMode;
   /** Last non-collapsed height — restored by toggle(). */
   lastOpenHeight: DockHeight;
+  /**
+   * Live-stream slice. SHARED across scopes — only one live SSE stream
+   * runs at a time, so the streaming actions stay scope-free (operator
+   * decision; per-scope streaming is deferred to a later WU).
+   */
   streamingState: StreamingState;
   /**
    * Trace-view density. `false` = Simple (default): hide instrumentation
@@ -84,15 +128,16 @@ type State = {
    */
   advanced_view: boolean;
   /**
-   * Eval-side cost override pushed by `eval-runs-detail` so the floating
-   * capsule renders the same number as the page meta strip. The eval's
-   * `inference_cost_quote_total` is the authoritative aggregate; the
-   * agent-run rollup (`summary.total_cost_usd`) can lag or stay at zero
-   * for runs whose pricing data lives only in the eval table. When
-   * `null` the capsule falls back to the agent-run summary value. Reset
-   * to `null` on every `setActiveRun` so it never leaks across runs.
+   * Set of span ids whose subtree is COLLAPSED in the structured span-tree
+   * view (WS-16). A collapsed parent hides its entire descendant subtree
+   * and renders a one-line rollup; expanding restores the subtree. SHARED
+   * across scopes (it's a UI pref keyed by span id, and only one trace is
+   * inspected at a time), and persisted under
+   * `xvision.trace-dock.collapsed-spans` in localStorage so the operator's
+   * collapse choices survive a reload. Span ids not present in the run are
+   * simply inert — a stale persisted id costs nothing.
    */
-  costOverrideUsd: number | null;
+  collapsedSpanIds: Set<string>;
 };
 
 type Actions = {
@@ -100,8 +145,15 @@ type Actions = {
   setHeightPx: (px: number) => void;
   toggle: () => void;
   minimize: () => void;
-  setSelectedSpan: (id: string | null) => void;
-  setActiveRun: (id: string | null, mode: DockMode) => void;
+  setSelectedSpan: (scope: TraceScope, id: string | null) => void;
+  /**
+   * Point `scope`'s dock at `id` in `mode`. Resets that scope's
+   * selection + cost override (so per-run state never leaks across
+   * runs) AND resets the SHARED streaming slice (preserving the
+   * existing reset-on-run-switch behavior). The OTHER scope and the
+   * shared `activeSessionId` are left untouched.
+   */
+  setActiveRun: (scope: TraceScope, id: string | null, mode: DockMode) => void;
   /** Bind (or clear) the chat-rail session whose unified log feeds the dock. */
   setActiveSession: (sessionId: string | null) => void;
   markSpanActive: (spanId: string, meta?: ActiveSpanMeta) => void;
@@ -111,7 +163,15 @@ type Actions = {
   applyStreamEvent: (ev: AgentRunStreamEvent) => void;
   resetStreamingState: () => void;
   setAdvancedView: (v: boolean) => void;
-  setCostOverrideUsd: (v: number | null) => void;
+  setCostOverrideUsd: (scope: TraceScope, v: number | null) => void;
+  /** Flip a single node's collapsed state in the span-tree view. */
+  toggleSpanCollapsed: (spanId: string) => void;
+  /** Collapse every supplied node id (typically all nodes with children). */
+  collapseAllSpans: (spanIds: string[]) => void;
+  /** Expand every node (clear the collapsed set). */
+  expandAllSpans: () => void;
+  /** Replace the collapsed set wholesale (used by tests / rehydration). */
+  setCollapsedSpanIds: (spanIds: string[]) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -132,8 +192,20 @@ function freshStreaming(): StreamingState {
   };
 }
 
+/** Empty per-scope slice — used for store init and to clear a scope. */
+function freshScopeState(): ScopeState {
+  return {
+    activeRunId: null,
+    selectedSpanId: null,
+    mode: "post-hoc",
+    costOverrideUsd: null,
+  };
+}
+
 export const DOCK_HEIGHT_STORAGE_KEY = "xvision.trace-dock.height";
 export const DOCK_ADVANCED_VIEW_STORAGE_KEY = "xvision.trace-dock.advanced-view";
+export const DOCK_COLLAPSED_SPANS_STORAGE_KEY =
+  "xvision.trace-dock.collapsed-spans";
 export const DOCK_MIN_PX = 96;
 export const DEFAULT_DOCK_PX = 480;
 
@@ -193,22 +265,86 @@ function writePersistedAdvancedView(v: boolean): void {
   }
 }
 
+/**
+ * Read the persisted set of collapsed span ids (WS-16). Stored as a JSON
+ * array of span-id strings. Returns an empty set for any missing or
+ * malformed value so a corrupt entry can never crash the dock — the worst
+ * case is "everything renders expanded", the safe default.
+ */
+export function readPersistedCollapsedSpanIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writePersistedCollapsedSpanIds(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DOCK_COLLAPSED_SPANS_STORAGE_KEY,
+      JSON.stringify([...ids]),
+    );
+  } catch {
+    // Best effort only — Safari private-mode etc.
+  }
+}
+
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
   heightPx: readPersistedHeightPx(),
-  selectedSpanId: null,
-  activeRunId: null,
+  byScope: {
+    eval: freshScopeState(),
+    live: freshScopeState(),
+    opti: freshScopeState(),
+  },
   activeSessionId: null,
-  mode: "post-hoc",
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
   advanced_view: readPersistedAdvancedView(),
-  costOverrideUsd: null,
+  collapsedSpanIds: readPersistedCollapsedSpanIds(),
   setAdvancedView: (v) => {
     writePersistedAdvancedView(v);
     set({ advanced_view: v });
   },
-  setCostOverrideUsd: (v) => set({ costOverrideUsd: v }),
+  toggleSpanCollapsed: (spanId) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      if (next.has(spanId)) next.delete(spanId);
+      else next.add(spanId);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  collapseAllSpans: (spanIds) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      for (const id of spanIds) next.add(id);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  expandAllSpans: () => {
+    const next = new Set<string>();
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
+  },
+  setCollapsedSpanIds: (spanIds) => {
+    const next = new Set(spanIds);
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
+  },
+  setCostOverrideUsd: (scope, v) =>
+    set((s) => ({
+      byScope: {
+        ...s.byScope,
+        [scope]: { ...s.byScope[scope], costOverrideUsd: v },
+      },
+    })),
   setHeight: (h) =>
     set((s) => ({
       height: h,
@@ -226,15 +362,31 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
     });
   },
   minimize: () => set({ height: "collapsed" }),
-  setSelectedSpan: (id) => set({ selectedSpanId: id }),
-  setActiveRun: (id, mode) =>
-    set({
-      activeRunId: id,
-      mode,
-      selectedSpanId: null,
+  setSelectedSpan: (scope, id) =>
+    set((s) => ({
+      byScope: {
+        ...s.byScope,
+        [scope]: { ...s.byScope[scope], selectedSpanId: id },
+      },
+    })),
+  setActiveRun: (scope, id, mode) =>
+    set((s) => ({
+      // Only the targeted scope's slice is rebuilt; the other scope is
+      // preserved by reference so nulling one surface on unmount can't
+      // clobber the other. Selection + cost override reset with the run.
+      byScope: {
+        ...s.byScope,
+        [scope]: {
+          activeRunId: id,
+          selectedSpanId: null,
+          mode,
+          costOverrideUsd: null,
+        },
+      },
+      // Streaming stays shared (one live stream at a time) but still
+      // resets on every run switch — same behavior as before the reshape.
       streamingState: freshStreaming(),
-      costOverrideUsd: null,
-    }),
+    })),
   setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
   markSpanActive: (spanId, meta) =>
     set((s) => {
@@ -387,8 +539,10 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       // `events` table. These are surfaced through the post-hoc
       // `/api/agent-runs/<id>` projection, not the live SSE stream —
       // the dock's live streaming slice doesn't need a switch arm for
-      // them. When the SSE wire is later extended to forward
-      // `engine_event` frames (separate contract), add the arm here.
+      // them. Full rendering of live `engine_event` SSE frames is owned
+      // by WS-8; for now the arm is a no-op so the exhaustive switch
+      // compiles cleanly.
+      case "engine_event":
       case "run_started":
       case "tool_call_started":
       case "broker_call_started":

@@ -25,7 +25,7 @@ pub struct ToolDefinition {
     pub input_schema: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
     Text {
@@ -81,7 +81,7 @@ pub enum CacheControlMode {
     Ephemeral,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
     /// `user` | `assistant`.
@@ -826,6 +826,14 @@ impl LlmDispatch for MockDispatch {
 
 // ---- AnthropicDispatch (real) ---------------------------------------------
 
+/// Hard wall-clock timeout applied to every outbound Anthropic API request
+/// (connect + read combined). Chosen to sit below the ~122 s proxy/OS cutoff
+/// observed in long-session production runs (xvision-t4u8 Finding #3) while
+/// giving the model sufficient time for large completions. The connect timeout
+/// is a fraction of the full timeout.
+const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+const LLM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct AnthropicDispatch {
     api_key: String,
     client: reqwest::Client,
@@ -833,10 +841,74 @@ pub struct AnthropicDispatch {
 
 impl AnthropicDispatch {
     pub fn new(api_key: String) -> Self {
-        Self {
-            api_key,
-            client: reqwest::Client::new(),
+        Self::with_timeout(api_key, LLM_REQUEST_TIMEOUT)
+    }
+
+    /// Constructor used in tests to inject a short timeout so the behavioral
+    /// timeout test completes in milliseconds rather than waiting for the
+    /// production 90 s ceiling.
+    pub fn with_timeout(api_key: String, timeout: Duration) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(LLM_CONNECT_TIMEOUT.min(timeout))
+            .build()
+            .expect("reqwest client build is infallible with these settings");
+        Self { api_key, client }
+    }
+
+    /// Dispatch to an arbitrary URL instead of the canonical Anthropic endpoint.
+    /// Used in tests to point the real dispatcher at a stub server.
+    #[doc(hidden)]
+    pub async fn complete_with_url(&self, req: LlmRequest, url: &str) -> anyhow::Result<LlmResponse> {
+        let body = anthropic_request_body(&req);
+        let http_resp = self
+            .client
+            .post(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        let status = http_resp.status();
+        if !status.is_success() {
+            let text = http_resp.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error {}: {}", status, text);
         }
+        let text = http_resp
+            .text()
+            .await
+            .context("provider_decode: anthropic failed reading response body")?;
+        let resp = decode_llm_json("anthropic", &text)?;
+        let raw_content = resp["content"].as_array().cloned().unwrap_or_default();
+        let mut content = Vec::with_capacity(raw_content.len());
+        for block in raw_content {
+            match block["type"].as_str() {
+                Some("text") => content.push(ContentBlock::Text {
+                    text: block["text"].as_str().unwrap_or("").to_string(),
+                }),
+                Some("tool_use") => content.push(ContentBlock::ToolUse {
+                    id: block["id"].as_str().unwrap_or("").to_string(),
+                    name: block["name"].as_str().unwrap_or("").to_string(),
+                    input: block["input"].clone(),
+                }),
+                _ => {}
+            }
+        }
+        let stop_reason = match resp["stop_reason"].as_str() {
+            Some("end_turn") => StopReason::EndTurn,
+            Some("tool_use") => StopReason::ToolUse,
+            Some("max_tokens") => StopReason::MaxTokens,
+            _ => StopReason::EndTurn,
+        };
+        let input_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
+        let output_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32;
+        Ok(LlmResponse {
+            content,
+            stop_reason,
+            input_tokens,
+            output_tokens,
+        })
     }
 }
 
@@ -1172,10 +1244,22 @@ impl OpenaiCompatDispatch {
     /// Provider roots that already include a non-`/v1` OpenAI-compatible API
     /// path (for example Gemini's `/v1beta/openai`) are preserved.
     pub fn new(base_url: String, api_key: String) -> Self {
+        Self::with_timeout(base_url, api_key, LLM_REQUEST_TIMEOUT)
+    }
+
+    /// Constructor used in tests to inject a short timeout so the behavioral
+    /// timeout test completes in milliseconds rather than waiting for the
+    /// production 90 s ceiling.
+    pub fn with_timeout(base_url: String, api_key: String, timeout: Duration) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(LLM_CONNECT_TIMEOUT.min(timeout))
+            .build()
+            .expect("reqwest client build is infallible with these settings");
         Self {
             base_url: normalize_openai_compat_base_url(&base_url),
             api_key,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 }

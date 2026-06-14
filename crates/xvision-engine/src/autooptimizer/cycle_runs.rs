@@ -153,6 +153,31 @@ pub struct CycleRunDetail {
 /// List completed cycles, most-recent first, paginated. Cycles with a NULL
 /// `cycle_id` (seeded root strategies that were never run) are excluded.
 pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Vec<CycleRunSummary>> {
+    list_cycle_runs_filtered(pool, &[], limit, offset).await
+}
+
+/// List completed cycles, most-recent first, paginated after applying an
+/// optional cycle-id allow-list. This keeps session-scoped views from losing
+/// rows when unrelated newer cycles would otherwise consume the unfiltered
+/// page before the caller filters in memory.
+pub async fn list_cycle_runs_filtered(
+    pool: &SqlitePool,
+    cycle_ids: &[String],
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<CycleRunSummary>> {
+    if cycle_ids.is_empty() {
+        return list_cycle_runs_inner(pool, None, limit, offset).await;
+    }
+    list_cycle_runs_inner(pool, Some(cycle_ids), limit, offset).await
+}
+
+async fn list_cycle_runs_inner(
+    pool: &SqlitePool,
+    cycle_ids: Option<&[String]>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<CycleRunSummary>> {
     // F33: derive each cycle's candidate set from the per-cycle evaluation edges
     // UNION the legacy `lineage_nodes.cycle_id` attribution (so cycles that ran
     // before the edge table still appear). The UNION dedups (cycle_id,
@@ -160,7 +185,7 @@ pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Resu
     // status/time. A cycle that re-derived a shared candidate is now counted for
     // BOTH cycles instead of only the content-addressed-row owner.
     super::lineage::ensure_lineage_schema(pool).await.ok();
-    let rows = sqlx::query(
+    let mut sql = String::from(
         "WITH cn AS ( \
             SELECT cycle_id, bundle_hash FROM cycle_node_evaluations \
             UNION \
@@ -179,16 +204,36 @@ pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Resu
                 cc.unpriced_calls AS unpriced_calls \
          FROM cn \
          JOIN lineage_nodes ln ON ln.bundle_hash = cn.bundle_hash \
-         LEFT JOIN cycle_cost cc ON cc.cycle_id = cn.cycle_id \
+         LEFT JOIN cycle_cost cc ON cc.cycle_id = cn.cycle_id ",
+    );
+    if let Some(ids) = cycle_ids {
+        sql.push_str("WHERE cn.cycle_id IN (");
+        for i in 0..ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+        }
+        sql.push_str(") ");
+    }
+    sql.push_str(
+        " \
          GROUP BY cn.cycle_id \
          ORDER BY last_created_at DESC \
          LIMIT ? OFFSET ?",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .context("list_cycle_runs query")?;
+    );
+    let mut query = sqlx::query(&sql);
+    if let Some(ids) = cycle_ids {
+        for id in ids {
+            query = query.bind(id);
+        }
+    }
+    let rows = query
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .context("list_cycle_runs query")?;
     rows.into_iter().map(row_to_cycle_summary).collect()
 }
 

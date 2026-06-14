@@ -249,16 +249,15 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let mut s = make_example();

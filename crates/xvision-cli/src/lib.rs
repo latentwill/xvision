@@ -81,25 +81,6 @@ pub enum Command {
         #[arg(long, default_value = "data/store.db")]
         db: PathBuf,
     },
-    /// Pretty-print a cached `InternBriefing` by cycle_id.
-    ShowBriefing {
-        #[arg(long)]
-        cycle_id: Uuid,
-        #[arg(long, default_value = "data/store.db")]
-        db: PathBuf,
-    },
-    /// Run a single setup through Intern → Risk slice.
-    RunSetup {
-        /// Path to a serialized `MarketSnapshot` (JSON).
-        #[arg(long)]
-        snapshot: PathBuf,
-        /// Intern provider — "anthropic" or "openai-compat".
-        #[arg(long, default_value = "anthropic")]
-        intern: String,
-        /// Intern model.
-        #[arg(long, default_value = "claude-haiku-4-5-20251001")]
-        model: String,
-    },
     /// Render the headline Markdown report for a backtest run.
     Report {
         #[arg(long)]
@@ -182,12 +163,6 @@ pub enum Command {
     /// library; `import` adds user files (md/txt/csv/pdf/json) with
     /// summary sidecars for csv/pdf.
     Strategies(commands::strategies::StrategiesCmd),
-    /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
-    Intern(commands::intern::InternCmd),
-    /// Stage 2 (Trader) in isolation — preview prompt or run a backend call.
-    Trader(commands::trader::TraderCmd),
-    /// Risk layer evaluation + config inspection.
-    Risk(commands::risk::RiskCmd),
     /// SQLite flight-recorder operations (migrate / stats).
     Store(commands::store_cmd::StoreCmd),
     /// Compute one technical indicator from a JSON price/HLC series.
@@ -210,8 +185,9 @@ pub enum Command {
     ToolPolicy(commands::tool_policy::ToolPolicyCmd),
     /// SQLite-cached historical bars: fetch / ls / rm / gc.
     Bars(commands::bars::BarsCmd),
-    /// Apply pending migrations + seed, or report state with --dry-run.
-    Migrate(commands::migrate::MigrateCmd),
+    /// Initialize $XVN_HOME (schema + canonical seed); --dry-run reports pending state.
+    #[command(alias = "migrate")]
+    Init(commands::init::InitCmd),
     /// Inspect agent records from the workspace agent library.
     Agent(commands::agent::AgentCmd),
     /// Seed curated example scenarios and tutorial artifacts.
@@ -271,16 +247,6 @@ impl Cli {
             Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
                 .await
                 .map_err(Into::into),
-            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db)
-                .await
-                .map_err(Into::into),
-            Command::RunSetup {
-                snapshot,
-                intern,
-                model,
-            } => commands::run_setup::run(snapshot, intern, model)
-                .await
-                .map_err(Into::into),
             Command::Report { input, output } => commands::report::run(input, output).map_err(Into::into),
             Command::Metrics {
                 report,
@@ -323,9 +289,6 @@ impl Cli {
                 .map_err(Into::into),
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
             Command::Strategies(cmd) => commands::strategies::run(cmd).await,
-            Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
-            Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),
-            Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),
             Command::Store(cmd) => commands::store_cmd::run(cmd).await.map_err(Into::into),
             Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),
@@ -337,7 +300,7 @@ impl Cli {
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
             Command::ToolPolicy(cmd) => commands::tool_policy::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,
-            Command::Migrate(cmd) => commands::migrate::run(cmd).await,
+            Command::Init(cmd) => commands::init::run(cmd).await,
             Command::Agent(cmd) => commands::agent::run(cmd).await,
             Command::Example(cmd) => commands::example::run(cmd).await,
             Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),

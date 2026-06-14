@@ -52,7 +52,7 @@ pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
         return Ok(());
     }
 
-    if b.regime_slot.is_none() && b.intern_slot.is_none() && b.trader_slot.is_none() {
+    if b.regime_slot.is_none() && b.trader_slot.is_none() {
         return Err(ValidationError::NoAgents);
     }
     if b.trader_slot.is_none() {
@@ -63,7 +63,7 @@ pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
     // Every tool the manifest declares must appear in at least one filled
     // slot's allowed_tools — otherwise the runtime would never grant it.
     for required in &b.manifest.required_tools {
-        let granted = [&b.regime_slot, &b.intern_slot, &b.trader_slot]
+        let granted = [&b.regime_slot, &b.trader_slot]
             .into_iter()
             .flatten()
             .any(|slot| slot.allowed_tools.iter().any(|t| t == required));
@@ -514,16 +514,15 @@ mod preflight_tests {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

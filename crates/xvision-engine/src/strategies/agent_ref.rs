@@ -1,7 +1,7 @@
 //! `AgentRef` + `PipelineDef` — the building blocks of the post-refactor
 //! `Strategy`. Per the
 //! `2026-05-12-strategies-refactor-agent-composition.md` plan, strategies
-//! stop carrying fixed `regime/intern/trader` slots and instead reference
+//! stop carrying fixed `regime/trader` slots and instead reference
 //! N agents from the workspace agent library, each playing a
 //! user-defined role in the strategy's pipeline.
 //!

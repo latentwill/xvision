@@ -47,14 +47,12 @@ function BuyerCard({
   humans,
   agents,
   paidToCreatorUsd,
-  platformFeeBps,
   creator,
   isDemo,
 }: {
   humans: number;
   agents: number;
   paidToCreatorUsd: number;
-  platformFeeBps: number;
   creator: Creator;
   /** Fixture/demo client — adoption + earnings figures are illustrative. */
   isDemo: boolean;
@@ -102,8 +100,7 @@ function BuyerCard({
         </p>
         {hasPaid && (
           <p className="font-mono text-[10px] text-text-3">
-            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)} ·{" "}
-            {platformFeeBps / 100}% platform fee
+            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)}
           </p>
         )}
       </div>
@@ -161,6 +158,7 @@ function VariantMiniTree({
   variants: Variant[];
   clonesOfYours?: { count: number; upstreamEarningsUsd: number };
 }) {
+  if (variants.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-surface-card p-4">
       <div className="text-[12px] font-medium text-text mb-3">Version history</div>
@@ -264,6 +262,7 @@ function MoreFromCreatorCard({
   creator: Creator;
 }) {
   const navigate = useNavigate();
+  if (rows.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-surface-card">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -749,7 +748,6 @@ export function LineageRoute() {
             humans={detail.buyers.humans}
             agents={detail.buyers.agents}
             paidToCreatorUsd={detail.paidToCreatorUsd}
-            platformFeeBps={detail.platformFeeBps}
             creator={detail.creator}
             isDemo={isDemo}
           />

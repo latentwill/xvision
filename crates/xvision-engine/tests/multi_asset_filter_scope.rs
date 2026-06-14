@@ -24,13 +24,19 @@
 //! `multi_asset_backtest.rs`.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
+use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_core::trading::AssetSymbol;
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::signal_cache::{SignalCache, SignalCacheKey};
 use xvision_engine::agents::Capability;
@@ -46,6 +52,62 @@ use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::{PipelineDef, PipelineKind, Strategy};
 use xvision_engine::tools::ToolRegistry;
+
+fn mock_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+async fn spawn_recording_mock() -> (ClineDispatchCtx, TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    let steps_path = dir.path().join("agentd.steps.jsonl");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&json!({
+            "decisionJson": r#"{"action":"hold","conviction":0.1,"justification":"filter-scope-test"}"#,
+            "recordStepsPath": steps_path,
+        }))
+        .unwrap(),
+    )
+    .expect("write mock sidecar config");
+    let client = AgentClient::spawn(&mock_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar (is `node` on PATH?)");
+
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+        },
+        dir,
+        steps_path,
+    )
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+fn recorded_step_prompts(path: &Path) -> Vec<String> {
+    let contents = std::fs::read_to_string(path).unwrap_or_default();
+    contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|v| v.get("prompt").and_then(|p| p.as_str()).map(str::to_string))
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // DB setup
@@ -128,14 +190,6 @@ impl PerAssetFilterDispatch {
 
     fn requests(&self) -> Vec<LlmRequest> {
         self.seen.lock().unwrap().clone()
-    }
-
-    /// Return the trader-role requests in call order.
-    fn trader_requests(&self) -> Vec<LlmRequest> {
-        self.requests()
-            .into_iter()
-            .filter(|r| !r.system_prompt.contains("You are a Filter"))
-            .collect()
     }
 
     /// Infer the asset for a request by inspecting the user-message body.
@@ -261,16 +315,15 @@ fn two_filter_multi_asset_strategy() -> Strategy {
             edges: Vec::new(),
         },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -283,10 +336,10 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
             role: role.into(),
             slot: LLMSlot {
                 role: role.into(),
-                attested_with: "mock".into(),
+                attested_with: "anthropic.claude-sonnet-4-6".into(),
                 allowed_tools: Vec::new(),
-                provider: None,
-                model: Some("mock".into()),
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4-6".into()),
             },
             system_prompt: if cap == Capability::Filter {
                 // Mark so the dispatcher can detect filter calls.
@@ -395,6 +448,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
     let slots = resolved_slots();
     let dispatch = PerAssetFilterDispatch::new();
     let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let (cline, _sidecar_dir, steps_path) = spawn_recording_mock().await;
 
     // Shared per-run cache — the same object the executor owns.
     let mut cache = SignalCache::new();
@@ -406,7 +460,10 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
 
     // Simulate the per-asset fan-out: run the pipeline once for BTC and
     // once for ETH at the same bar timestamp, sharing the cache.
-    for (asset_sym, asset_str) in [(AssetSymbol::Btc, "BTC/USD"), (AssetSymbol::Eth, "ETH/USD")] {
+    for (cycle_idx, (asset_sym, asset_str)) in [(AssetSymbol::Btc, "BTC/USD"), (AssetSymbol::Eth, "ETH/USD")]
+        .into_iter()
+        .enumerate()
+    {
         let seed = serde_json::json!({
             "asset": asset_str,
             "active_assets": ["BTC/USD", "ETH/USD"],
@@ -438,7 +495,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
             source_window_end: None,
             run_id: "test-b6".into(),
             scenario_id: "s".into(),
-            cycle_idx: 0,
+            cycle_idx: cycle_idx as i64,
             trace_attrs: None,
             provider_catalogs: std::collections::HashMap::new(),
             filter_ctx: Some(FilterPipelineCtx {
@@ -450,8 +507,9 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
                 scope: SignalScope::Asset(asset_sym),
             }),
             recorder: None,
-            runtime: Default::default(),
-            cline: None,
+            runtime: AgentRuntime::Cline,
+            cline: Some(cline.clone()),
+            model_call_span_id: None,
         })
         .await
         .expect("pipeline runs for each asset");
@@ -481,24 +539,18 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
     }
 
     // --- Assertion 2: briefing isolation (5m = coalesced, 1 call per asset) ---
-    let trader_reqs = dispatch.trader_requests();
+    let trader_prompts = recorded_step_prompts(&steps_path);
     // With 5m bars (coalesced), exactly 1 Trader call per asset = 2 total.
     assert_eq!(
-        trader_reqs.len(),
+        trader_prompts.len(),
         2,
         "5m bar period (coalesced): expected 2 trader calls (one per asset), got {}",
-        trader_reqs.len()
+        trader_prompts.len()
     );
 
-    for req in &trader_reqs {
-        let body = req
-            .messages
-            .iter()
-            .map(|m| serde_json::to_string(m).unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("|");
+    for body in &trader_prompts {
         let fs_block = extract_filter_signals_block(&body);
-        let asset = PerAssetFilterDispatch::asset_from_request(req);
+        let asset = if body.contains("ETH/USD") { "ETH" } else { "BTC" };
 
         // Each coalesced trader call sees BOTH signals from its own asset.
         let (expected_regime, forbidden_regime) = match asset {
@@ -545,6 +597,7 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
     let strategy = two_filter_multi_asset_strategy();
     let slots = resolved_slots();
     let dispatch = PerAssetFilterDispatch::new();
+    let (cline, _sidecar_dir, steps_path) = spawn_recording_mock().await;
 
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
@@ -559,7 +612,9 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
     let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> =
         BTreeMap::from([(AssetSymbol::Btc, btc_bars), (AssetSymbol::Eth, eth_bars)]);
 
-    let executor = Executor::new().with_asset_bars(asset_bars);
+    let executor = Executor::new()
+        .with_asset_bars(asset_bars)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
 
     executor
         .run(
@@ -583,9 +638,9 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
     // Examine each trader call and assert no cross-asset signal bleed.
     // The bar-granularity Filter re-evaluates on every bar, so with 1
     // decision bar (bar[0]) per asset we get 2 trader calls total.
-    let trader_reqs = dispatch.trader_requests();
+    let trader_prompts = recorded_step_prompts(&steps_path);
     assert!(
-        !trader_reqs.is_empty(),
+        !trader_prompts.is_empty(),
         "at least one trader call must have been recorded"
     );
 
@@ -601,15 +656,9 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
     // ETH signals: regime="chop",  vol="high_vol"
     //
     // The forbidden values are strict cross-asset markers.
-    for req in &trader_reqs {
-        let body = req
-            .messages
-            .iter()
-            .map(|m| serde_json::to_string(m).unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("|");
+    for body in &trader_prompts {
         let fs_block = extract_filter_signals_block(&body);
-        let asset = PerAssetFilterDispatch::asset_from_request(req);
+        let asset = if body.contains("ETH/USD") { "ETH" } else { "BTC" };
 
         if fs_block.is_empty() {
             // For this strategy (2 Filters before 1 Trader) every Trader

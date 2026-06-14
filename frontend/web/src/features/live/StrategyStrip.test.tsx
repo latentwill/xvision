@@ -100,4 +100,52 @@ describe("StrategyStrip", () => {
       "Backtest-only strategy",
     );
   });
+
+  // QA item 3: the list endpoint omits model_call_count / tool_call_count, so
+  // they arrive undefined. The row must render an honest "—" (matching PnL /
+  // Sharpe / Trace), never the literal string "undefined".
+  it("renders an em dash for absent decision/trade counts (never literal 'undefined')", () => {
+    renderStrip([
+      mkLiveRun({
+        run_id: "live_nocounts",
+        agent_id: "strat_live",
+        // Backend list payload omits these — simulate with undefined.
+        model_call_count: undefined as unknown as number,
+        tool_call_count: undefined as unknown as number,
+      }),
+    ]);
+    const row = screen.getByTestId("live-run-row-live_nocounts");
+    expect(row).toHaveTextContent("Decisions —");
+    expect(row).toHaveTextContent("Trades —");
+    expect(row).not.toHaveTextContent(/undefined/i);
+  });
+
+  // QA item 2: live runs created by the engine carry no agent_id on the row's
+  // own column, but the parent eval run's strategy agent_id is now joined in as
+  // `agent_id`. When only `strategy_id` is present it must still resolve to the
+  // real strategy name — never the "eval run"/objective fallback.
+  it("resolves the strategy name from strategy_id when agent_id is absent", () => {
+    render(
+      <MemoryRouter>
+        <StrategyStrip
+          runs={[
+            mkLiveRun({
+              run_id: "live_byStrategyId",
+              agent_id: null,
+              strategy_id: "strat_x",
+              objective: "eval run",
+            }),
+          ]}
+          selectedId="live_byStrategyId"
+          onSelect={vi.fn()}
+          selectedConnStatus="streaming"
+          walletDisabled={false}
+          strategies={[{ agent_id: "strat_x", display_name: "Resolved via strategy_id" }]}
+        />
+      </MemoryRouter>,
+    );
+    const row = screen.getByTestId("live-run-row-live_byStrategyId");
+    expect(row).toHaveTextContent("Resolved via strategy_id");
+    expect(row).not.toHaveTextContent(/eval run/i);
+  });
 });

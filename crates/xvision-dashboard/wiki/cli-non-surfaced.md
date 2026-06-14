@@ -50,13 +50,13 @@ the reproducibility guarantee.
 Read paths are fine: `xvn show-decision`, `xvn show-briefing`, `xvn store stats`.
 Write paths happen only inside the run harness, never as CLI primitives.
 
-### Direct `RiskLayer` config edits
+### Direct risk config edits
 
 Risk thresholds live in `config/risk.toml` and `config/whitelist.toml`. Editing
 them per-run via CLI would defeat the audit trail.
 
-**Use instead:** `xvn risk show-config` to inspect effective values; edit the
-TOML files through git for any change.
+Edit the TOML files through git for any change. (The `xvn risk` command was
+retired in 2026-06 when `xvision-risk` was deleted.)
 
 ## Not surfaced: covered elsewhere
 
@@ -85,9 +85,7 @@ The current surface, for reference:
 | `xvn strategy *` | Create, validate, list, show, run strategies |
 | `xvn eval *` | Launch and inspect eval runs |
 | `xvn scenario *` | Create, classify, inspect scenarios |
-| `xvn intern brief / preview` | Stage 1 (briefing) in isolation |
-| `xvn trader run / preview` | Stage 2 (trader decision) in isolation |
-| `xvn risk evaluate / show-config` | Stage 3 risk gate |
+| `xvn trader run / preview` | Agent dispatch in isolation |
 | `xvn portfolio --venue` | Read live venue state (read-only) |
 | `xvn close-position --venue --asset` | Flatten one symbol |
 | `xvn fire-trade --venue` | Submit a trade (paper or testnet) |

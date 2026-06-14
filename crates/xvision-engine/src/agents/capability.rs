@@ -6,10 +6,9 @@
 //! Phase A — this file — only persists the type; the unified
 //! `dispatch_capability` seam that consumes it lands in Phase B.
 //!
-//! Wire form (JSON): one of `"trader"`, `"filter"`, `"critic"`,
-//! `"intern"`, `"router"`. The serde tag is `lowercase` so on-disk JSON
-//! reads the lowercase string verbatim; the DB column on
-//! `agent_slots.capabilities` stores a JSON array of these strings.
+//! Wire form (JSON): one of `"trader"`, `"filter"`, `"router"`. The serde tag
+//! is `lowercase` so on-disk JSON reads the lowercase string verbatim; the DB
+//! column on `agent_slots.capabilities` stores a JSON array of these strings.
 
 use serde::{Deserialize, Serialize};
 
@@ -32,12 +31,6 @@ pub enum Capability {
     /// Emits a `FilterSignal` consumed by downstream agents via
     /// `PipelineEdge.condition` predicates.
     Filter,
-    /// Inspects an upstream agent's output and returns a critique /
-    /// confidence signal; does not directly trade.
-    Critic,
-    /// Produces structured briefing data (regime, news, sentiment) for
-    /// the trader to read in its prompt.
-    Intern,
     /// Picks which downstream branch of the pipeline executes next.
     Router,
 }
@@ -49,23 +42,15 @@ mod tests {
 
     #[test]
     fn capability_wire_format_is_lowercase() {
-        // All five variants must serialize as the lowercase variant
+        // All three variants must serialize as the lowercase variant
         // name so the on-disk JSON column shape stays stable.
-        for v in [
-            Capability::Trader,
-            Capability::Filter,
-            Capability::Critic,
-            Capability::Intern,
-            Capability::Router,
-        ] {
+        for v in [Capability::Trader, Capability::Filter, Capability::Router] {
             let s = serde_json::to_string(&v).unwrap();
             let back: Capability = serde_json::from_str(&s).unwrap();
             assert_eq!(v, back);
         }
         assert_eq!(serde_json::to_string(&Capability::Trader).unwrap(), "\"trader\"");
         assert_eq!(serde_json::to_string(&Capability::Filter).unwrap(), "\"filter\"");
-        assert_eq!(serde_json::to_string(&Capability::Critic).unwrap(), "\"critic\"");
-        assert_eq!(serde_json::to_string(&Capability::Intern).unwrap(), "\"intern\"");
         assert_eq!(serde_json::to_string(&Capability::Router).unwrap(), "\"router\"");
     }
 
@@ -74,25 +59,13 @@ mod tests {
         // `BTreeSet<Capability>` is the persisted shape; the iteration
         // order must be deterministic so persisted JSON is byte-stable.
         // PartialOrd/Ord on the variants follow declaration order.
-        let set: BTreeSet<Capability> = [
-            Capability::Router,
-            Capability::Trader,
-            Capability::Critic,
-            Capability::Filter,
-            Capability::Intern,
-        ]
-        .into_iter()
-        .collect();
+        let set: BTreeSet<Capability> = [Capability::Router, Capability::Trader, Capability::Filter]
+            .into_iter()
+            .collect();
         let collected: Vec<Capability> = set.into_iter().collect();
         assert_eq!(
             collected,
-            vec![
-                Capability::Trader,
-                Capability::Filter,
-                Capability::Critic,
-                Capability::Intern,
-                Capability::Router,
-            ]
+            vec![Capability::Trader, Capability::Filter, Capability::Router,]
         );
     }
 

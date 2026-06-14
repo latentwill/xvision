@@ -39,8 +39,20 @@ pub struct RunStore {
 #[derive(Debug, Default, Clone)]
 pub struct ListFilter {
     pub agent_id: Option<String>,
+    /// W25 (PR6): filter by the long-lived workspace agent ULID stored in
+    /// `eval_runs.agents_agent_id` (migration 022). Legacy runs created before
+    /// migration 022 have `agents_agent_id = NULL` and are NOT matched by this
+    /// filter; use `agent_id` (strategy-hop path) for those.
+    pub agents_agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on (`status IN (?,...)`). `None` applies
+    /// no status filter. A single-element Vec behaves identically to the
+    /// pre-t4u8.1 single-`Option<RunStatus>` — the SQL is `status IN (?)`.
+    pub status: Option<Vec<RunStatus>>,
+    /// CT5: optional run mode filter. When set, only rows WHERE `mode = ?`
+    /// are returned, enabling SQL-level live/backtest separation. `None`
+    /// returns rows of any mode (existing behavior unchanged).
+    pub mode: Option<RunMode>,
     /// Optional page size. `None` returns every matching row. Caps are
     /// enforced at the API layer, not here, so internal callers that need
     /// "everything that matches" (e.g. retry-idempotency lookup) still
@@ -71,6 +83,14 @@ pub struct DecisionRow {
     pub fill_size: Option<f64>,
     pub fee: Option<f64>,
     pub pnl_realized: Option<f64>,
+}
+
+async fn eval_runs_has_column(pool: &SqlitePool, column: &str) -> Result<bool> {
+    let rows = sqlx::query("PRAGMA table_info(eval_runs)")
+        .fetch_all(pool)
+        .await
+        .context("inspect eval_runs columns")?;
+    Ok(rows.iter().any(|row| row.get::<String, _>("name") == column))
 }
 
 impl RunStore {
@@ -150,51 +170,99 @@ impl RunStore {
             RunMode::Backtest => Some(run.scenario_id.as_str()),
         };
 
-        // NOTE: `paused` (migration 061) is intentionally NOT written here.
-        // A run is never *created* paused — pausing is a later UPDATE via
-        // `set_paused`. Omitting the column lets `create` work against an
-        // older schema that predates 061 (the column's DB DEFAULT 0 applies
-        // when it exists), keeping the prior binary's tables forward-usable.
-        sqlx::query(
-            "INSERT INTO eval_runs \
-             (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
-              started_at, completed_at, metrics_json, error, \
-              estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
-              bars_content_hash, manifest_canonical, bars_manifest, \
-              auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
-              source, unrealized_pnl_usd) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&run.id)
-        .bind(&run.agent_id)
-        .bind(&run.agents_agent_id)
-        .bind(scenario_id)
-        .bind(params_override_json)
-        .bind(run.mode.as_str())
-        .bind(run.status.as_str())
-        .bind(run.started_at.to_rfc3339())
-        .bind(run.completed_at.map(|t| t.to_rfc3339()))
-        .bind(metrics_json)
-        .bind(&run.error)
-        .bind(run.estimated_total_tokens.map(|n| n as i64))
-        .bind(run.actual_input_tokens.map(|n| n as i64))
-        .bind(run.actual_output_tokens.map(|n| n as i64))
-        .bind(&run.bars_content_hash)
-        .bind(&run.manifest_canonical)
-        .bind(bars_manifest_json)
-        .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
-        .bind(review_model_json)
-        .bind(run.max_annotations_per_review.map(|n| n as i64))
-        .bind(live_config_json)
-        // CT5 migration 065: deployment-source discriminator + per-run
-        // unrealized PnL. `source` is set at queue time (Human/Optimizer);
-        // `unrealized_pnl_usd` is None at create (written later by the live
-        // loop's equity flush) — persisted as SQL NULL, never a faked 0.
-        .bind(run.source.as_str())
-        .bind(run.unrealized_pnl_usd)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert eval_runs id={}", run.id))?;
+        // Derive venue_label from live_config; default to Paper for backtests
+        // (migration 031 added `venue_label TEXT NOT NULL DEFAULT 'paper'`).
+        let venue_label = run
+            .live_config
+            .as_ref()
+            .map(|c| c.venue_label)
+            .unwrap_or(crate::safety::venue::VenueLabel::Paper);
+
+        // NOTE: additive migration columns are intentionally probed before
+        // writing. Several regression tests construct older/minimal eval_runs
+        // schemas directly; omitting absent additive columns lets their DB
+        // defaults apply and keeps those compatibility tests meaningful.
+        let has_venue_label = eval_runs_has_column(&self.pool, "venue_label").await?;
+        let has_source = eval_runs_has_column(&self.pool, "source").await?;
+        let has_unrealized_pnl = eval_runs_has_column(&self.pool, "unrealized_pnl_usd").await?;
+
+        let mut columns = vec![
+            "id",
+            "agent_id",
+            "agents_agent_id",
+            "scenario_id",
+            "params_override_json",
+            "mode",
+            "status",
+            "started_at",
+            "completed_at",
+            "metrics_json",
+            "error",
+            "estimated_total_tokens",
+            "actual_input_tokens",
+            "actual_output_tokens",
+            "bars_content_hash",
+            "manifest_canonical",
+            "bars_manifest",
+            "auto_fire_review",
+            "review_model_json",
+            "max_annotations_per_review",
+            "live_config_json",
+        ];
+        if has_venue_label {
+            columns.push("venue_label");
+        }
+        if has_source {
+            columns.push("source");
+        }
+        if has_unrealized_pnl {
+            columns.push("unrealized_pnl_usd");
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(columns.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO eval_runs ({}) VALUES ({})",
+            columns.join(", "),
+            placeholders
+        );
+
+        let mut query = sqlx::query(&sql)
+            .bind(&run.id)
+            .bind(&run.agent_id)
+            .bind(&run.agents_agent_id)
+            .bind(scenario_id)
+            .bind(params_override_json)
+            .bind(run.mode.as_str())
+            .bind(run.status.as_str())
+            .bind(run.started_at.to_rfc3339())
+            .bind(run.completed_at.map(|t| t.to_rfc3339()))
+            .bind(metrics_json)
+            .bind(&run.error)
+            .bind(run.estimated_total_tokens.map(|n| n as i64))
+            .bind(run.actual_input_tokens.map(|n| n as i64))
+            .bind(run.actual_output_tokens.map(|n| n as i64))
+            .bind(&run.bars_content_hash)
+            .bind(&run.manifest_canonical)
+            .bind(bars_manifest_json)
+            .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
+            .bind(review_model_json)
+            .bind(run.max_annotations_per_review.map(|n| n as i64))
+            .bind(live_config_json);
+        if has_venue_label {
+            query = query.bind(venue_label.as_str());
+        }
+        if has_source {
+            query = query.bind(run.source.as_str());
+        }
+        if has_unrealized_pnl {
+            query = query.bind(run.unrealized_pnl_usd);
+        }
+        query
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("insert eval_runs id={}", run.id))?;
         Ok(())
     }
 
@@ -841,22 +909,40 @@ impl RunStore {
                     source, unrealized_pnl_usd \
              FROM eval_runs",
         );
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
+        }
+        // W25 (PR6): filter by the workspace agent ULID in `agents_agent_id`.
+        // NULL rows (pre-migration-022 legacy runs) are excluded by this
+        // condition; the strategy-hop path (agent_id filter) covers those.
+        if filter.agents_agent_id.is_some() {
+            conditions.push("agents_agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: emit `status IN (?, ?, ...)` for any non-empty Vec.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
+        }
+        // CT5: SQL-level mode filter (live vs backtest). Pushed after status
+        // so the bind order mirrors condition push order exactly.
+        if filter.mode.is_some() {
+            conditions.push("mode = ?".to_string());
         }
         // bead-008: inclusive `started_at >= since`. Normalize both sides
         // through SQLite's `datetime()` so the comparison is correct across
         // the mixed on-disk shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
         // rather than a brittle lexicographic string compare.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -885,11 +971,19 @@ impl RunStore {
         if let Some(ref h) = filter.agent_id {
             q = q.bind(h);
         }
+        if let Some(ref h) = filter.agents_agent_id {
+            q = q.bind(h);
+        }
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s);
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str());
+            }
+        }
+        if let Some(m) = filter.mode {
+            q = q.bind(m.as_str());
         }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
@@ -911,20 +1005,37 @@ impl RunStore {
     /// return at `offset = 0, limit = ∞`.
     pub async fn count(&self, filter: &ListFilter) -> Result<u64> {
         let mut sql = String::from("SELECT COUNT(*) FROM eval_runs");
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
+        }
+        // W25 (PR6): mirror list()'s workspace-agent filter so paginated
+        // totals match the rows shown for agent-scoped eval history.
+        if filter.agents_agent_id.is_some() {
+            conditions.push("agents_agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: mirror `list`'s `IN (...)` clause exactly.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
+        }
+        // CT5: mirror list()'s mode condition so count() is honest about what
+        // list() would return. Pushed after status, bound after status.
+        if filter.mode.is_some() {
+            conditions.push("mode = ?".to_string());
         }
         // bead-008: mirror `list`'s inclusive `started_at >= since` clause so
         // the count is honest about what `list` would return.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -934,11 +1045,19 @@ impl RunStore {
         if let Some(ref h) = filter.agent_id {
             q = q.bind(h.clone());
         }
+        if let Some(ref h) = filter.agents_agent_id {
+            q = q.bind(h.clone());
+        }
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s.clone());
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str().to_string());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str().to_string());
+            }
+        }
+        if let Some(m) = filter.mode {
+            q = q.bind(m.as_str().to_string());
         }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
@@ -1298,13 +1417,11 @@ impl RunStore {
     /// projection can re-emit it verbatim. A malformed/absent row yields
     /// `None` rather than an error (status surface, never a 500).
     pub async fn max_decision_timestamp(&self, run_id: &str) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT MAX(timestamp) AS max_ts FROM eval_decisions WHERE run_id = ?",
-        )
-        .bind(run_id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("max eval_decisions.timestamp")?;
+        let row = sqlx::query("SELECT MAX(timestamp) AS max_ts FROM eval_decisions WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("max eval_decisions.timestamp")?;
         Ok(row.and_then(|r| r.try_get::<Option<String>, _>("max_ts").ok().flatten()))
     }
 
@@ -1334,6 +1451,42 @@ impl RunStore {
                 r.try_get::<Option<f64>, _>("realized").ok().flatten()
             }
         }))
+    }
+
+    /// CT5 live-deployment poll path (bead s78.2): count REAL recorded
+    /// risk-veto supervisor notes for `run_id` at or after the `since`
+    /// boundary. A risk veto is persisted per run as a `supervisor_notes` row
+    /// with `role = 'risk'` (see `eval::executor::backtest`'s
+    /// `record_supervisor_note(&run.id, "risk", ...)`), each carrying a
+    /// `created_at` RFC-3339 timestamp.
+    ///
+    /// HONESTY MANDATE (§8.1 / §8.9): this is a true `COUNT(*)`, INCLUDING a
+    /// real `0` — "0 vetoes since you were last here" is a true fact, so the
+    /// caller surfaces it as `Some(0)`, never `None`. `None` is reserved for
+    /// the *no-boundary* case (the caller does not call this at all when there
+    /// is no last-visit timestamp, because counting "since an unknown time" is
+    /// not a knowable fact).
+    ///
+    /// The boundary is INCLUSIVE (`created_at >= since`), matching the
+    /// `ListFilter::since` convention. Both sides are normalized through
+    /// SQLite's `datetime()` so the compare is correct across the mixed
+    /// on-disk timestamp shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
+    /// rather than a brittle lexicographic string compare. The `since` value
+    /// is bound as a SQL parameter — never string-interpolated.
+    pub async fn count_risk_vetoes_since(&self, run_id: &str, since: DateTime<Utc>) -> Result<u32> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n FROM supervisor_notes \
+             WHERE run_id = ? AND role = 'risk' \
+               AND datetime(created_at) >= datetime(?)",
+        )
+        .bind(run_id)
+        .bind(since.to_rfc3339())
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("count risk-veto supervisor_notes for run {run_id}"))?;
+        let n: i64 = row.try_get("n").context("read COUNT(*) for risk vetoes")?;
+        // COUNT(*) is non-negative; clamp defensively into the u32 wire type.
+        Ok(n.max(0) as u32)
     }
 
     /// Persist a signed attestation against the given run. The store
@@ -2474,8 +2627,7 @@ mod since_filter_tests {
         seed_scenario(&pool, "fixture-scenario").await;
         let store = RunStore::new(pool);
 
-        let mut run =
-            Run::new_queued("agent-opt".into(), "fixture-scenario".into(), RunMode::Backtest);
+        let mut run = Run::new_queued("agent-opt".into(), "fixture-scenario".into(), RunMode::Backtest);
         run.source = DeploymentSource::Optimizer;
         run.unrealized_pnl_usd = Some(-12.5);
         store.create(&run).await.unwrap();
@@ -2495,5 +2647,185 @@ mod since_filter_tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].source, DeploymentSource::Optimizer);
         assert_eq!(listed[0].unrealized_pnl_usd, Some(-12.5));
+    }
+}
+
+/// bead s78.2: `RunStore::count_risk_vetoes_since` — a REAL count of recorded
+/// `role='risk'` supervisor notes at/after a last-visit boundary.
+#[cfg(test)]
+mod risk_veto_count_tests {
+    use chrono::{DateTime, Utc};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    use crate::eval::store::RunStore;
+
+    /// Fully-migrated in-memory pool. Migration 018 creates `agent_runs` +
+    /// `supervisor_notes` (the latter FKs `run_id` → `agent_runs(id)`).
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open sqlite mem pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("apply migrations");
+        pool
+    }
+
+    /// Seed the parent `agent_runs` row so `supervisor_notes.run_id` satisfies
+    /// its FK (the store's `record_supervisor_note` invariant requires the
+    /// parent to exist). Only the NOT NULL columns are supplied.
+    async fn seed_agent_run(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, objective, status, started_at, retention_mode) \
+             VALUES (?, 'obj', 'running', '2026-06-13T00:00:00Z', 'full_debug')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("seed agent_runs row");
+    }
+
+    fn rfc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn counts_only_risk_notes_at_or_after_boundary() {
+        let pool = fresh_pool().await;
+        seed_agent_run(&pool, "run-a").await;
+        let store = RunStore::new(pool);
+
+        // Two risk vetoes BEFORE the boundary (excluded), one risk veto ON the
+        // boundary (inclusive → counted), one AFTER (counted). Plus a non-risk
+        // note after the boundary (role filter excludes it).
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto pre 1")
+            .await
+            .unwrap();
+        // Overwrite the auto `created_at` (record_supervisor_note stamps `now`)
+        // so the boundary assertions are deterministic.
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto pre 1",
+            "2026-06-10T00:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto pre 2")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto pre 2",
+            "2026-06-11T23:59:59+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto on boundary")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto on boundary",
+            "2026-06-12T00:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto after")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto after",
+            "2026-06-12T06:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "guard", "warn", "guard after (excluded)")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "guard",
+            "guard after (excluded)",
+            "2026-06-12T07:00:00+00:00",
+        )
+        .await;
+
+        let n = store
+            .count_risk_vetoes_since("run-a", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        // Boundary inclusive: the on-boundary + after notes count (2); the two
+        // earlier ones and the non-risk note are excluded.
+        assert_eq!(n, 2, "only role='risk' notes at/after the boundary count");
+    }
+
+    #[tokio::test]
+    async fn zero_matching_notes_is_an_honest_real_zero() {
+        // HONESTY: with a boundary provided but no risk veto after it, the
+        // count is a true 0 — not absence-of-data. The caller surfaces Some(0).
+        let pool = fresh_pool().await;
+        seed_agent_run(&pool, "run-b").await;
+        let store = RunStore::new(pool);
+
+        store
+            .record_supervisor_note("run-b", "risk", "warn", "old veto")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-b",
+            "risk",
+            "old veto",
+            "2026-06-01T00:00:00+00:00",
+        )
+        .await;
+
+        let n = store
+            .count_risk_vetoes_since("run-b", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "no risk veto after the boundary ⇒ a real, honest 0");
+    }
+
+    #[tokio::test]
+    async fn unknown_run_counts_zero() {
+        let pool = fresh_pool().await;
+        let store = RunStore::new(pool);
+        let n = store
+            .count_risk_vetoes_since("does-not-exist", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// Pin a seeded note's `created_at` to a deterministic timestamp so the
+    /// inclusive-boundary assertions don't depend on wall-clock `now`.
+    async fn set_created_at(pool: &SqlitePool, run_id: &str, role: &str, content: &str, ts: &str) {
+        sqlx::query(
+            "UPDATE supervisor_notes SET created_at = ? \
+             WHERE run_id = ? AND role = ? AND content = ?",
+        )
+        .bind(ts)
+        .bind(run_id)
+        .bind(role)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("pin supervisor_notes.created_at");
     }
 }

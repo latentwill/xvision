@@ -176,6 +176,21 @@ const MIGRATION_065_EVAL_RUN_SOURCE_AND_UNREALIZED_PNL: &str =
 /// is `CREATE TABLE IF NOT EXISTS`, so `migrate_cost_budget` is idempotent and
 /// safe to re-run on an already-migrated DB.
 const MIGRATION_066_COST_BUDGET: &str = include_str!("../../migrations/066_cost_budget.sql");
+/// Migration 067: per-run live-deployment capital-risk snapshot.
+/// Creates `live_run_state` (run_id PK → eval_runs(id) ON DELETE CASCADE),
+/// which the executor upserts each bar so `GET /api/live/deployments` can
+/// join eval_runs ⨝ live_run_state in a single query. Applied via
+/// `migrate_live_run_state`, gated on the table's absence for idempotence.
+const MIGRATION_067_LIVE_RUN_STATE: &str = include_str!("../../migrations/067_live_run_state.sql");
+/// Migration 068: daily-loss budget + stop ETA additive columns on
+/// `live_run_state`. Adds `daily_loss_budget_usd` (REAL, nullable) = kill_pct
+/// × initial capital, and `stop_at` (TEXT, nullable, RFC-3339) = started_at +
+/// time_limit_secs (only when the stop policy is time-bounded). Applied via
+/// `migrate_live_run_state_budget_eta`, which guards each column independently
+/// via `table_has_column` so a crash between the two non-atomic ALTERs never
+/// strands the DB with one column missing; re-opening converges to both columns.
+const MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA: &str =
+    include_str!("../../migrations/068_live_run_state_budget_eta.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -466,6 +481,8 @@ impl ApiContext {
         migrate_eval_run_source_and_unrealized_pnl(&pool).await?;
         // bead-8wn: persisted operator-set daily spend budget cap.
         migrate_cost_budget(&pool).await?;
+        migrate_live_run_state(&pool).await?;
+        migrate_live_run_state_budget_eta(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1351,6 +1368,43 @@ async fn migrate_cost_budget(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Apply migration 067 (CT5 live-deployments capital-risk snapshot):
+/// creates the `live_run_state` table. Gated on table absence so the
+/// migration is idempotent on already-upgraded databases. Mirrors
+/// `migrate_eval_run_flatten_requested` (table-existence guard,
+/// single `sqlx::query` apply). The DDL in
+/// `067_live_run_state.sql` (compiled in as `MIGRATION_067_LIVE_RUN_STATE`)
+/// is a `CREATE TABLE` — no multi-statement split needed.
+async fn migrate_live_run_state(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "live_run_state").await? {
+        sqlx::query(MIGRATION_067_LIVE_RUN_STATE).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 068 (CT5 strips unblock): additive `daily_loss_budget_usd`
+/// and `stop_at` columns on `live_run_state`. Mirrors `migrate_eval_run_paused`
+/// — each ALTER is guarded independently by `table_has_column` so a crash
+/// between the two non-atomic ALTERs (SQLite cannot batch them) never strands
+/// the DB with one column absent; re-opening always converges to both present.
+/// The DDL in `068_live_run_state_budget_eta.sql` (compiled in as
+/// `MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA`) is the authoritative source for
+/// a clean apply; the per-column ALTERs below mirror it exactly.
+async fn migrate_live_run_state_budget_eta(pool: &SqlitePool) -> ApiResult<()> {
+    let _ = MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA;
+    if !table_has_column(pool, "live_run_state", "daily_loss_budget_usd").await? {
+        sqlx::query("ALTER TABLE live_run_state ADD COLUMN daily_loss_budget_usd REAL")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "live_run_state", "stop_at").await? {
+        sqlx::query("ALTER TABLE live_run_state ADD COLUMN stop_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Apply migration 035 (cli-model-bakeoff): `eval_bakeoffs` +
 /// `eval_bakeoff_runs` tables. Gated on table absence so the migration
 /// is idempotent on already-upgraded databases.
@@ -1856,6 +1910,18 @@ async fn migrate_autooptimizer_sessions(pool: &SqlitePool) -> ApiResult<()> {
         for stmt in split_sql_statements(MIGRATION_057_AUTOOPTIMIZER_SESSIONS) {
             sqlx::query(&stmt).execute(pool).await?;
         }
+    }
+    // Additive column: errored_count — upgrade existing DBs that predate Task 3.1.
+    // SQLite has no ADD COLUMN IF NOT EXISTS; probe with table_has_column first.
+    if table_exists(pool, "autooptimizer_session_state").await?
+        && !table_has_column(pool, "autooptimizer_session_state", "errored_count").await?
+    {
+        sqlx::query(
+            "ALTER TABLE autooptimizer_session_state \
+             ADD COLUMN errored_count INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
@@ -2902,7 +2968,11 @@ mod migration_registry_tests {
         assert_eq!(exists(pool.clone()).await, 0, "table absent before migration");
 
         migrate_cost_budget(&pool).await.unwrap();
-        assert_eq!(exists(pool.clone()).await, 1, "migrate_cost_budget must create the table");
+        assert_eq!(
+            exists(pool.clone()).await,
+            1,
+            "migrate_cost_budget must create the table"
+        );
 
         // Fresh table holds no row — cap is UNSET (null), no fabricated cap.
         let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cost_budget")

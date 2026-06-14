@@ -13,10 +13,10 @@
 //! automatically symmetric.
 //!
 //! This test pins the closure: a synthetic strategy with Trader +
-//! Filter + Critic agent refs runs once through each surface (modelled
-//! here by exercising both implementors against an in-memory SQLite
-//! pool) and asserts every table that has `> 0` rows from the harness
-//! run also has `> 0` rows from the eval run.
+//! Filter agent refs runs once through each surface (modelled here by
+//! exercising both implementors against an in-memory SQLite pool) and
+//! asserts every table that has `> 0` rows from the harness run also
+//! has `> 0` rows from the eval run.
 
 use std::sync::{Arc, Mutex};
 
@@ -25,7 +25,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 use xvision_observability::{
-    rows::{ApprovalRow, ArtifactRow, CheckpointRow, SandboxResultRow, SupervisorNoteRow, ToolCallRow},
+    rows::{ApprovalRow, ArtifactRow, CheckpointRow, SandboxResultRow, ToolCallRow},
     AgentEvent, EvalRecorder, HarnessRecorder, Recorder, SqliteRecorder, TraceBuf,
 };
 
@@ -94,9 +94,9 @@ async fn count_rows(pool: &SqlitePool) -> TableCounts {
     }
 }
 
-/// Simulate the per-cycle emission of a strategy with one Trader, one
-/// Filter, and one Critic AgentRef. Each role contributes the rows the
-/// dispatcher would emit for its capability (mirrors the
+/// Simulate the per-cycle emission of a strategy with one Trader and
+/// one Filter AgentRef. Each role contributes the rows the dispatcher
+/// would emit for its capability (mirrors the
 /// `recorder_trait_basics::simulate_dispatch` shape) — the row counts
 /// are deterministic, so the recorder-symmetry assertion is on the
 /// "every populated harness table is also populated on eval" property,
@@ -113,6 +113,8 @@ fn simulate_strategy_run(recorder: &dyn Recorder, run_id: &str) {
         tool_hash: None,
         input_hash: "sha256:trader-in".into(),
         output_hash: Some("sha256:trader-out".into()),
+        input_text: None,
+        output_text: None,
         input_payload_ref: None,
         output_payload_ref: None,
         side_effect_level: "pure".into(),
@@ -148,17 +150,6 @@ fn simulate_strategy_run(recorder: &dyn Recorder, run_id: &str) {
         span_id: Some(format!("{run_id}-filter-span")),
         kind: "filter.signal".into(),
         payload_json: Some(r#"{"go":true}"#.into()),
-        created_at: Utc::now(),
-    });
-
-    // Critic — emits a supervisor_note (severity = warn for the test
-    // so the trace dock surfaces it).
-    recorder.record_supervisor_note(SupervisorNoteRow {
-        id: format!("{run_id}-critic-note"),
-        run_id: run_id.into(),
-        role: "reviewer".into(),
-        content: "looks fine".into(),
-        severity: "info".into(),
         created_at: Utc::now(),
     });
 
@@ -281,12 +272,11 @@ async fn harness_and_eval_recorders_produce_symmetric_row_counts() {
         "trace_buf artifacts must equal DB artifacts"
     );
 
-    // Sanity: every table is non-empty after the simulation so the
-    // symmetry assertion above is meaningful (an all-zero harness side
-    // would pass the macro trivially).
+    // Sanity: every table that can have rows after the simulation is
+    // non-empty so the symmetry assertion above is meaningful (an
+    // all-zero harness side would pass the macro trivially).
     assert!(harness_counts.tool_calls > 0);
     assert!(harness_counts.events > 0);
-    assert!(harness_counts.supervisor_notes > 0);
     assert!(harness_counts.approvals > 0);
     assert!(harness_counts.sandbox_results > 0);
     assert!(harness_counts.checkpoints > 0);

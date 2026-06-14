@@ -430,10 +430,6 @@ enum StrategyAction {
     /// `(provider, model)` (`key_missing`, `model_disabled`, etc.)
     /// refuses the clone with the same structured reason `xvn eval run`
     /// uses.
-    ///
-    /// Records `cloned_from: "<source-id>"` in
-    /// `mechanical_params.metadata` so audit tooling can chain clones
-    /// back to the original.
     Clone {
         /// Source strategy id to clone.
         strategy_id: String,
@@ -768,32 +764,29 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
     println!("name:     {}", outcome.strategy.manifest.display_name);
     println!();
     println!("Fidelity summary:");
-    println!(
-        "  captured:     {} item(s)",
-        report.captured.len()
-    );
+    println!("  captured:     {} item(s)", report.captured.len());
     for item in &report.captured {
         println!("    + {} — {}", item.item, item.reason);
     }
-    println!(
-        "  approximated: {} item(s)",
-        report.approximated.len()
-    );
+    println!("  approximated: {} item(s)", report.approximated.len());
     for item in &report.approximated {
         println!("    ~ {} — {}", item.item, item.reason);
     }
-    println!(
-        "  dropped:      {} item(s)",
-        report.dropped.len()
-    );
+    println!("  dropped:      {} item(s)", report.dropped.len());
     for item in &report.dropped {
         println!("    - {} — {}", item.item, item.reason);
     }
     println!();
     println!("Cost model (backtest defaults):");
     let cm = &report.cost_model;
-    println!("  commission: {} bps ({}) — {}", cm.commission_value_bps, cm.commission_type, "taker");
-    println!("  slippage:   {} bps ({})", cm.slippage_value_bps, cm.slippage_model);
+    println!(
+        "  commission: {} bps ({}) — {}",
+        cm.commission_value_bps, cm.commission_type, "taker"
+    );
+    println!(
+        "  slippage:   {} bps ({})",
+        cm.slippage_value_bps, cm.slippage_model
+    );
     println!("  fill:       {}", cm.fill_timing);
     println!();
     println!("{}", cm.note);
@@ -1341,16 +1334,15 @@ async fn new_atomic(
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_engine::strategies::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: no_filter_warning,
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     // 3. Validate shape.
@@ -2562,10 +2554,6 @@ async fn edit_strategy(
 /// no half-cloned state lands on disk. (Best-effort agent cleanup on
 /// partial failure is a follow-up — the agent rows exist but no
 /// strategy points at them.)
-///
-/// Stashes `cloned_from: "<source-id>"` in
-/// `mechanical_params.metadata.cloned_from` so audit tooling can chain
-/// clones back to the original.
 async fn clone(
     source_strategy_id: &str,
     new_name: &str,
@@ -2757,7 +2745,6 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             PipelineDef::sequential()
         };
         strategy.regime_slot = None;
-        strategy.intern_slot = None;
         strategy.trader_slot = None;
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
@@ -2773,9 +2760,6 @@ fn legacy_slots(strategy: &xvision_engine::strategies::Strategy) -> Vec<(String,
     let mut slots = Vec::new();
     if let Some(slot) = strategy.regime_slot.clone() {
         slots.push(("regime".to_string(), slot));
-    }
-    if let Some(slot) = strategy.intern_slot.clone() {
-        slots.push(("intern".to_string(), slot));
     }
     if let Some(slot) = strategy.trader_slot.clone() {
         slots.push(("trader".to_string(), slot));
@@ -2972,6 +2956,9 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             // caller that selects Cline.
             runtime: Default::default(),
             cline: None,
+            // WS-17: rehearsal path has no observability emitter / decision
+            // span — reasoning (if any) emits top-level.
+            model_call_span_id: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;
@@ -3075,7 +3062,7 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             ListRunsRequest {
                 agent_id: Some(sid.clone()),
                 scenario_id: None,
-                status: Some(RunStatus::Completed),
+                status: Some(vec![RunStatus::Completed]),
                 ..Default::default()
             },
         )
@@ -3738,10 +3725,8 @@ pub mod atomic_create {
             }],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
@@ -3749,6 +3734,7 @@ pub mod atomic_create {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);
@@ -3813,10 +3799,8 @@ pub mod atomic_create {
             }],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
@@ -3824,6 +3808,7 @@ pub mod atomic_create {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);

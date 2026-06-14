@@ -11,16 +11,13 @@
 ///   5. Mapped Strategy always passes `validate_strategy`.
 ///   6. Strategy round-trips through serde with `briefing_indicators` preserved.
 ///   7. Seed builder includes briefing indicator keys when strategy has briefing_indicators.
-
 use chrono::{TimeZone, Utc};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::InputsPolicy;
 use xvision_engine::eval::executor::backtest::{
     build_decision_seed, inject_briefing_indicators_into_seed, DecisionSeedInput, PerpsContext,
 };
-use xvision_engine::strategies::pine_import::{
-    map_script, parse_pine, BriefingIndicator, MapOutcome,
-};
+use xvision_engine::strategies::pine_import::{map_script, parse_pine, BriefingIndicator, MapOutcome};
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::validate::validate_strategy;
 use xvision_engine::strategies::{DecisionMode, Strategy};
@@ -29,10 +26,7 @@ use xvision_filters::IndicatorName;
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn load_fixture(name: &str) -> String {
-    let path = format!(
-        "{}/tests/fixtures/pine/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = format!("{}/tests/fixtures/pine/{name}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("fixture {name}: {e}"))
 }
 
@@ -50,11 +44,17 @@ fn rsi_threshold_maps_to_mechanistic_strategy() {
     let s = &outcome.strategy;
 
     // Must be Mechanistic
-    assert_eq!(s.decision_mode, DecisionMode::Mechanistic,
-        "rsi_threshold should produce Mechanistic strategy");
+    assert_eq!(
+        s.decision_mode,
+        DecisionMode::Mechanistic,
+        "rsi_threshold should produce Mechanistic strategy"
+    );
 
     // Must have at least one entry rule
-    let cfg = s.mechanistic_config.as_ref().expect("mechanistic_config must be Some");
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
     assert!(!cfg.entry_rules.is_empty(), "entry_rules must not be empty");
 
     // The mapped strategy must pass validation
@@ -69,9 +69,15 @@ fn rsi_threshold_has_entry_rules_and_passes_validation() {
     // literal and is recorded as unmapped. The strategy is still valid.
     let outcome = parse_and_map("rsi_threshold.pine");
     let s = &outcome.strategy;
-    assert_eq!(s.decision_mode, DecisionMode::Mechanistic,
-        "rsi_threshold must be Mechanistic (has strategy.entry calls)");
-    let cfg = s.mechanistic_config.as_ref().expect("mechanistic_config must be Some");
+    assert_eq!(
+        s.decision_mode,
+        DecisionMode::Mechanistic,
+        "rsi_threshold must be Mechanistic (has strategy.entry calls)"
+    );
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
     assert!(!cfg.entry_rules.is_empty(), "entry_rules must not be empty");
     validate_strategy(s).expect("rsi_threshold mapped strategy must pass validation");
 }
@@ -84,10 +90,16 @@ fn ma_cross_stop_target_maps_entry_rules_and_passes_validation() {
     let s = &outcome.strategy;
 
     // ma_cross_stop_target must be Mechanistic (has strategy.entry calls)
-    assert_eq!(s.decision_mode, DecisionMode::Mechanistic,
-        "ma_cross_stop_target must be Mechanistic");
+    assert_eq!(
+        s.decision_mode,
+        DecisionMode::Mechanistic,
+        "ma_cross_stop_target must be Mechanistic"
+    );
 
-    let cfg = s.mechanistic_config.as_ref().expect("mechanistic_config must be Some");
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
     assert!(!cfg.entry_rules.is_empty(), "entry_rules must not be empty");
 
     // NOTE: strategy.exit uses loss=stop_pct where stop_pct is a variable
@@ -106,17 +118,24 @@ fn ma_cross_stop_target_exit_recorded_if_not_mapped() {
     // they're recorded as unmapped.
     if cfg.close_policies.is_empty() {
         // The variable-valued loss/profit args should be in unmapped
-        assert!(!outcome.unmapped.is_empty(),
-            "If close_policies empty, strategy.exit must be in unmapped");
+        assert!(
+            !outcome.unmapped.is_empty(),
+            "If close_policies empty, strategy.exit must be in unmapped"
+        );
     } else {
         // Got literal values resolved — verify they make sense
-        let has_stop = cfg.close_policies.iter().any(|p| {
-            matches!(p, xvision_engine::strategies::ClosePolicy::StopLoss { .. })
-        });
-        let has_profit = cfg.close_policies.iter().any(|p| {
-            matches!(p, xvision_engine::strategies::ClosePolicy::TakeProfit { .. })
-        });
-        assert!(has_stop || has_profit, "Close policies should include StopLoss or TakeProfit");
+        let has_stop = cfg
+            .close_policies
+            .iter()
+            .any(|p| matches!(p, xvision_engine::strategies::ClosePolicy::StopLoss { .. }));
+        let has_profit = cfg
+            .close_policies
+            .iter()
+            .any(|p| matches!(p, xvision_engine::strategies::ClosePolicy::TakeProfit { .. }));
+        assert!(
+            has_stop || has_profit,
+            "Close policies should include StopLoss or TakeProfit"
+        );
     }
 }
 
@@ -126,12 +145,14 @@ fn ma_cross_stop_target_entry_rules_have_direction() {
     let cfg = outcome.strategy.mechanistic_config.as_ref().unwrap();
     assert!(!cfg.entry_rules.is_empty(), "entry_rules must not be empty");
     // Both Long and Short entries should be present
-    let has_long = cfg.entry_rules.iter().any(|r| {
-        matches!(r.direction, xvision_engine::strategies::EntryDirection::Long)
-    });
-    let has_short = cfg.entry_rules.iter().any(|r| {
-        matches!(r.direction, xvision_engine::strategies::EntryDirection::Short)
-    });
+    let has_long = cfg
+        .entry_rules
+        .iter()
+        .any(|r| matches!(r.direction, xvision_engine::strategies::EntryDirection::Long));
+    let has_short = cfg
+        .entry_rules
+        .iter()
+        .any(|r| matches!(r.direction, xvision_engine::strategies::EntryDirection::Short));
     assert!(has_long, "Long entry expected");
     assert!(has_short, "Short entry expected");
 }
@@ -157,8 +178,10 @@ fn supertrend_follow_maps_without_panic_and_passes_validation() {
     validate_strategy(s).expect("supertrend_follow must yield a valid strategy");
     // Should have unmapped nodes for the complex expressions
     // (var declarations, arithmetic compounds)
-    assert!(!outcome.unmapped.is_empty(),
-        "supertrend_follow must have unmapped nodes for complex expressions");
+    assert!(
+        !outcome.unmapped.is_empty(),
+        "supertrend_follow must have unmapped nodes for complex expressions"
+    );
 }
 
 #[test]
@@ -168,10 +191,16 @@ fn supertrend_follow_has_entry_rules() {
     // The fixture has strategy.entry calls → Mechanistic
     if s.decision_mode == DecisionMode::Mechanistic {
         let cfg = s.mechanistic_config.as_ref().unwrap();
-        assert!(!cfg.entry_rules.is_empty(), "Mechanistic strategy must have entry rules");
+        assert!(
+            !cfg.entry_rules.is_empty(),
+            "Mechanistic strategy must have entry rules"
+        );
     } else {
         // If mapped Agentic, must have a placeholder agent
-        assert!(!s.agents.is_empty(), "Agentic strategy must have at least one agent");
+        assert!(
+            !s.agents.is_empty(),
+            "Agentic strategy must have at least one agent"
+        );
     }
 }
 
@@ -183,19 +212,25 @@ fn supertrend_follow_sma_appears_in_unmapped_or_briefing() {
     // is an input knob → the SMA gets harvested as a briefing indicator (Sma)
     // OR recorded in unmapped with the token `atr_val`.
     let outcome = parse_and_map("supertrend_follow.pine");
-    let sma_in_briefing = outcome.strategy.briefing_indicators.iter().any(|bi| {
-        bi.name == IndicatorName::Sma
-    });
+    let sma_in_briefing = outcome
+        .strategy
+        .briefing_indicators
+        .iter()
+        .any(|bi| bi.name == IndicatorName::Sma);
     // In Mechanistic mode, fuzzy indicators are recorded as unmapped with
     // the variable name (e.g. "atr_val") and the reason mentions "Indicator".
     // We check that EITHER the SMA is in briefing OR the `atr_val` indicator
     // is in unmapped (which records the ta.sma-derived binding).
-    let atr_val_in_unmapped = outcome.unmapped.iter().any(|u| {
-        u.raw.contains("atr_val") || u.reason.contains("atr_val")
-    });
-    assert!(sma_in_briefing || atr_val_in_unmapped,
+    let atr_val_in_unmapped = outcome
+        .unmapped
+        .iter()
+        .any(|u| u.raw.contains("atr_val") || u.reason.contains("atr_val"));
+    assert!(
+        sma_in_briefing || atr_val_in_unmapped,
         "ta.sma (as atr_val) must appear in briefing_indicators or unmapped; briefing={:?}, unmapped={:?}",
-        outcome.strategy.briefing_indicators, outcome.unmapped);
+        outcome.strategy.briefing_indicators,
+        outcome.unmapped
+    );
 }
 
 // ── 4. fuzzy_mixed.pine — indicator-only (no strategy.entry) → Agentic ────────
@@ -205,16 +240,23 @@ fn fuzzy_mixed_no_entry_produces_agentic_strategy() {
     let outcome = parse_and_map("fuzzy_mixed.pine");
     let s = &outcome.strategy;
     // No strategy.entry → Agentic
-    assert_eq!(s.decision_mode, DecisionMode::Agentic,
-        "fuzzy_mixed has no strategy.entry → must be Agentic");
+    assert_eq!(
+        s.decision_mode,
+        DecisionMode::Agentic,
+        "fuzzy_mixed has no strategy.entry → must be Agentic"
+    );
     // Agentic strategy must have at least one agent (placeholder)
-    assert!(!s.agents.is_empty(),
-        "Agentic strategy must have at least one agent (placeholder)");
+    assert!(
+        !s.agents.is_empty(),
+        "Agentic strategy must have at least one agent (placeholder)"
+    );
     // Validation passes
     validate_strategy(s).expect("indicator-only script must yield valid Agentic strategy");
     // Must have unmapped nodes (array ops, user func, switch)
-    assert!(!outcome.unmapped.is_empty(),
-        "fuzzy_mixed should have unmapped nodes for array/func/switch");
+    assert!(
+        !outcome.unmapped.is_empty(),
+        "fuzzy_mixed should have unmapped nodes for array/func/switch"
+    );
 }
 
 // ── 5. validate_strategy passes for ALL fixtures ──────────────────────────────
@@ -248,10 +290,14 @@ fn strategy_with_briefing_indicators_round_trips_serde() {
     let json = serde_json::to_string(s).expect("serialize must succeed");
     let s2: Strategy = serde_json::from_str(&json).expect("deserialize must succeed");
 
-    assert_eq!(s.briefing_indicators, s2.briefing_indicators,
-        "briefing_indicators must survive serde round-trip");
-    assert_eq!(s.decision_mode, s2.decision_mode,
-        "decision_mode must survive serde round-trip");
+    assert_eq!(
+        s.briefing_indicators, s2.briefing_indicators,
+        "briefing_indicators must survive serde round-trip"
+    );
+    assert_eq!(
+        s.decision_mode, s2.decision_mode,
+        "decision_mode must survive serde round-trip"
+    );
 }
 
 #[test]
@@ -260,8 +306,10 @@ fn briefing_indicators_absent_from_json_when_empty() {
     let outcome = parse_and_map("ma_cross_stop_target.pine");
     if outcome.strategy.briefing_indicators.is_empty() {
         let json = serde_json::to_string(&outcome.strategy).unwrap();
-        assert!(!json.contains("briefing_indicators"),
-            "empty briefing_indicators must be absent from JSON: {json}");
+        assert!(
+            !json.contains("briefing_indicators"),
+            "empty briefing_indicators must be absent from JSON: {json}"
+        );
     }
 }
 
@@ -305,8 +353,7 @@ fn map_outcome_serializes_to_json() {
 #[test]
 fn full_strategy_maps_without_panic() {
     let outcome = parse_and_map("full_strategy.pine");
-    validate_strategy(&outcome.strategy)
-        .expect("full_strategy must produce a valid strategy");
+    validate_strategy(&outcome.strategy).expect("full_strategy must produce a valid strategy");
 }
 
 // ── 10. ta.* → IndicatorName mapping coverage ─────────────────────────────────
@@ -323,13 +370,22 @@ fn ta_sma_appears_in_unmapped_or_briefing_for_ma_cross() {
     // In Mechanistic mode: the SMA bindings go to unmapped (fuzzy indicators).
     // In Agentic mode: they'd be in briefing_indicators.
     let outcome = parse_and_map("ma_cross_stop_target.pine");
-    let sma_in_briefing = outcome.strategy.briefing_indicators.iter().any(|bi| bi.name == IndicatorName::Sma);
-    let sma_in_filter = outcome.strategy.filter.as_ref().map(|f| {
-        serde_json::to_string(f).unwrap().contains("sma")
-    }).unwrap_or(false);
+    let sma_in_briefing = outcome
+        .strategy
+        .briefing_indicators
+        .iter()
+        .any(|bi| bi.name == IndicatorName::Sma);
+    let sma_in_filter = outcome
+        .strategy
+        .filter
+        .as_ref()
+        .map(|f| serde_json::to_string(f).unwrap().contains("sma"))
+        .unwrap_or(false);
     let sma_in_unmapped = outcome.unmapped.iter().any(|u| {
-        u.reason.to_lowercase().contains("sma") || u.raw.to_lowercase().contains("sma")
-        || u.reason.contains("fuzzy") || u.reason.contains("Indicator")
+        u.reason.to_lowercase().contains("sma")
+            || u.raw.to_lowercase().contains("sma")
+            || u.reason.contains("fuzzy")
+            || u.reason.contains("Indicator")
     });
     // The SMA bindings should surface somewhere — either mapped or noted
     // We accept it being absent from filter/briefing if it was added to unmapped
@@ -341,8 +397,8 @@ fn ta_sma_appears_in_unmapped_or_briefing_for_ma_cross() {
 #[test]
 fn map_ta_call_unit_sma_period_literal() {
     // Direct unit test for map_ta_call with literal period
-    use xvision_engine::strategies::pine_import::parse_pine;
     use xvision_engine::strategies::pine_import::map_script;
+    use xvision_engine::strategies::pine_import::parse_pine;
     // Parse a script with a literal period SMA
     let src = "//@version=5\nstrategy(\"Test\", overlay=true)\nmy_sma = ta.sma(close, 20)\nif my_sma > 100\n    strategy.entry(\"Long\", strategy.long)\n";
     let script = parse_pine(src).expect("must parse");
@@ -356,13 +412,21 @@ fn map_ta_call_unit_sma_period_literal() {
 fn ta_rsi_appears_in_strategy_output() {
     // rsi_threshold.pine has ta.rsi — verify it appears somewhere
     let outcome = parse_and_map("rsi_threshold.pine");
-    let rsi_in_briefing = outcome.strategy.briefing_indicators.iter().any(|bi| bi.name == IndicatorName::Rsi);
-    let rsi_in_filter = outcome.strategy.filter.as_ref().map(|f| {
-        serde_json::to_string(f).unwrap().contains("rsi")
-    }).unwrap_or(false);
-    let rsi_in_unmapped = outcome.unmapped.iter().any(|u| {
-        u.reason.to_lowercase().contains("rsi") || u.raw.to_lowercase().contains("rsi")
-    });
+    let rsi_in_briefing = outcome
+        .strategy
+        .briefing_indicators
+        .iter()
+        .any(|bi| bi.name == IndicatorName::Rsi);
+    let rsi_in_filter = outcome
+        .strategy
+        .filter
+        .as_ref()
+        .map(|f| serde_json::to_string(f).unwrap().contains("rsi"))
+        .unwrap_or(false);
+    let rsi_in_unmapped = outcome
+        .unmapped
+        .iter()
+        .any(|u| u.reason.to_lowercase().contains("rsi") || u.raw.to_lowercase().contains("rsi"));
     // rsi_length comes from an input knob (variable), so the RSI period is dynamic.
     // The RSI binding will go to fuzzy → unmapped in Mechanistic mode.
     // Verify the strategy is valid and the fixture was processed.
@@ -389,8 +453,7 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
     // bars, so by bar 6 it returns a real value.
     fn bar(idx: i64, close: f64) -> Ohlcv {
         Ohlcv {
-            timestamp: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
-                + chrono::Duration::hours(idx),
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::hours(idx),
             open: close - 1.0,
             high: close + 1.0,
             low: close - 1.0,
@@ -410,6 +473,9 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         stop_loss_atr_multiple: 2.0,
         daily_loss_kill_pct: 0.05,
         max_position_pct_nav: 20.0,
+        max_funding_pay_8h: 0.0,
+        min_liq_distance_pct: 0.0,
+        max_total_exposure_pct: 0.0,
     };
 
     // Build the base decision seed (no briefing_indicators yet).
@@ -453,9 +519,9 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
     inject_briefing_indicators_into_seed(&mut seed, &indicators, &current, &history_refs);
 
     // After injection: "briefing_indicators" key must be present.
-    let bi_val = seed.get("briefing_indicators").expect(
-        "inject_briefing_indicators_into_seed must add 'briefing_indicators' key to seed",
-    );
+    let bi_val = seed
+        .get("briefing_indicators")
+        .expect("inject_briefing_indicators_into_seed must add 'briefing_indicators' key to seed");
 
     // It must be an object (source_token → computed value).
     let bi_obj = bi_val
@@ -468,9 +534,7 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         .expect("computed SMA must appear under key 'sma_val'");
 
     // It must be a finite float (the average of close prices over 3 bars).
-    let sma_f = sma_val
-        .as_f64()
-        .expect("sma_val must be a JSON number");
+    let sma_f = sma_val.as_f64().expect("sma_val must be a JSON number");
     assert!(
         sma_f.is_finite(),
         "SMA(3) computed value must be a finite float, got {sma_f}"
@@ -483,4 +547,100 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         sma_f > 95.0 && sma_f < 115.0,
         "SMA(3) should be near 100–110 for test bars, got {sma_f}"
     );
+}
+
+// ── 12. if-guard map: TDD (will fail until implemented) ──────────────────────
+//
+// Feature 1 (map.rs): `if ta.rsi(close,14) < 30\n    strategy.entry("long", strategy.long)`
+// should produce a Mechanistic strategy whose Filter has the `rsi < 30` condition
+// AND an EntryRule. The strategy must pass validate_strategy.
+
+#[test]
+fn if_guard_rsi_lt_30_produces_mechanistic_with_filter_condition() {
+    let src = "//@version=5\nstrategy(\"T\")\nif ta.rsi(close,14) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    // Must be Mechanistic (has entry rule)
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "if-guard with rsi < 30 + strategy.entry must → Mechanistic; got {:?}",
+        s.decision_mode
+    );
+
+    // Must have at least one entry rule
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
+    assert!(!cfg.entry_rules.is_empty(), "must have entry_rules; cfg={cfg:?}");
+
+    // Must have a filter with at least one condition (the rsi < 30 guard)
+    assert!(
+        s.filter.is_some(),
+        "if-guard condition rsi < 30 must produce a filter; unmapped={:?}",
+        outcome.unmapped
+    );
+
+    // Strategy must be valid
+    validate_strategy(s).expect("mapped strategy with if-guard must be valid");
+}
+
+#[test]
+fn if_guard_close_comparison_produces_filter_condition() {
+    // `if close > 100\n    strategy.entry(...)` — close > 100 is a valid filter condition
+    let src = "//@version=5\nstrategy(\"T\")\nif close > 100\n    strategy.entry(\"Long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "close > 100 guard + entry must → Mechanistic"
+    );
+
+    // The filter should have the close > 100 condition
+    assert!(
+        s.filter.is_some(),
+        "close > 100 guard must produce a filter; unmapped={:?}",
+        outcome.unmapped
+    );
+
+    validate_strategy(s).expect("must be valid");
+}
+
+#[test]
+fn if_guard_with_input_variable_binds_to_condition_input_binding() {
+    // `len = input.int(14)` → `if ta.rsi(close,len) < 30\n    strategy.entry(...)`
+    // The rsi period is a variable so map_ta_call returns None → fuzzy guard.
+    // The entry rule should still be captured, and the script should be valid.
+    let src = "//@version=5\nstrategy(\"T\")\nlen = input.int(14, title=\"Len\")\nif ta.rsi(close, len) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    // Entry rule must be captured even when guard is fuzzy
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "script with strategy.entry must → Mechanistic"
+    );
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
+    assert!(!cfg.entry_rules.is_empty(), "entry rule must be captured");
+    validate_strategy(s).expect("must be valid");
+}
+
+#[test]
+fn nested_if_body_assignments_do_not_crash() {
+    // Body with an assignment and an entry — must not panic
+    let src = "//@version=5\nstrategy(\"T\")\nif close > 50\n    x = close * 2\n    strategy.entry(\"Long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    validate_strategy(&outcome.strategy).expect("must be valid");
 }

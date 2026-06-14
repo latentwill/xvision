@@ -587,18 +587,6 @@ async fn provider_model_inventory(
     collect_summary_runtime_pair(
         &mut inventory,
         strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.provider.as_deref()),
-        strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.model.as_deref()),
-        "intern slot",
-    );
-    collect_summary_runtime_pair(
-        &mut inventory,
-        strategy
             .regime_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
@@ -612,12 +600,7 @@ async fn provider_model_inventory(
     if inventory.models.is_empty() && inventory.providers.is_empty() {
         // Legacy slot fallback for older strategy JSON. Trader is the
         // decision-maker, so it wins over advisory/scoring slots.
-        if let Some(slot) = strategy
-            .trader_slot
-            .as_ref()
-            .or(strategy.intern_slot.as_ref())
-            .or(strategy.regime_slot.as_ref())
-        {
+        if let Some(slot) = strategy.trader_slot.as_ref().or(strategy.regime_slot.as_ref()) {
             if let Some(provider) = slot.provider.as_ref() {
                 push_unique_trimmed(&mut inventory.providers, provider.clone());
             }
@@ -694,8 +677,6 @@ fn capability_string(capability: Capability) -> &'static str {
     match capability {
         Capability::Trader => "trader",
         Capability::Filter => "filter",
-        Capability::Critic => "critic",
-        Capability::Intern => "intern",
         Capability::Router => "router",
     }
 }
@@ -1003,9 +984,7 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
 /// `POST /api/marketplace/listings/:id/import` route. Mirrors the shallow
 /// clone path: the manifest is deserialized into a full [`Strategy`], a
 /// fresh ULID is minted (the seller's id is NEVER reused — the buyer's copy
-/// is an independent local draft), `published_at` is cleared, and the
-/// source id is stashed in `mechanical_params.metadata.imported_from` so
-/// audit tooling can chain the import back to the listed original. Persists
+/// is an independent local draft), and `published_at` is cleared. Persists
 /// via the same [`FilesystemStore`] the clone path uses and returns the
 /// stored strategy.
 ///
@@ -1019,11 +998,8 @@ pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> A
     let result = async {
         let mut strategy: Strategy = serde_json::from_value(manifest)
             .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
-        let source_id = strategy.manifest.id.clone();
         strategy.manifest.id = Ulid::new().to_string();
         strategy.manifest.published_at = None;
-        strategy.mechanical_params =
-            stash_metadata_string(&strategy.mechanical_params, "imported_from", &source_id);
         store
             .save(&strategy)
             .await
@@ -1074,12 +1050,8 @@ pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> A
 ///   override is supplied, each cloned Agent's slots are rewritten to
 ///   the override `(provider, model)`; other slot fields (system_prompt,
 ///   skill_ids, max_tokens, …) carry forward unchanged.
-/// - Mints a fresh ULID for the cloned strategy, copies every other
-///   manifest field except `id` / `display_name` / `published_at`, and
-///   stashes `cloned_from: "<source-id>"` in
-///   `mechanical_params.metadata.cloned_from` so audit tooling can chain
-///   clones back to the original (no schema change — `mechanical_params`
-///   is already an arbitrary-JSON column).
+/// - Mints a fresh ULID for the cloned strategy and copies every other
+///   manifest field except `id` / `display_name` / `published_at`.
 /// - The source strategy is byte-identical before and after. Failures in
 ///   the agent-clone step short-circuit before the strategy file is
 ///   written, so disk state remains consistent. Already-created clone-
@@ -1260,10 +1232,8 @@ async fn clone_strategy_full_inner(
         });
     }
 
-    // 6. Build the new Strategy. Copy every other
-    //    field from the source. Provenance lands in
-    //    `mechanical_params.metadata.cloned_from`.
-    let new_mechanical_params = stash_cloned_from(&source.mechanical_params, source_strategy_id);
+    // 6. Build the new Strategy by copying every other field from the source
+    //    (`source.clone()` carries them verbatim).
     let display_name = req
         .display_name
         .clone()
@@ -1274,7 +1244,6 @@ async fn clone_strategy_full_inner(
     new_strategy.manifest.display_name = display_name;
     new_strategy.manifest.published_at = None;
     new_strategy.agents = cloned_agent_refs;
-    new_strategy.mechanical_params = new_mechanical_params;
 
     // 7. Shape validation surfaces here (rather than after a partial
     //    filesystem write).
@@ -1326,51 +1295,6 @@ async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
     }
 }
 
-/// Insert (or overwrite) `metadata.cloned_from` inside a strategy's
-/// `mechanical_params` JSON. If the source value is not a JSON object,
-/// the existing value is preserved under a reserved `_legacy` key so the
-/// caller never silently drops authoring data.
-fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json::Value {
-    stash_metadata_string(source, "cloned_from", source_id)
-}
-
-/// Insert (or overwrite) `metadata.{key}` inside a strategy's
-/// `mechanical_params` JSON. If the source value is not a JSON object, the
-/// existing value is preserved under a reserved `_legacy` key so the caller
-/// never silently drops authoring data. Shared by the clone provenance
-/// (`cloned_from`) and the marketplace import provenance (`imported_from`).
-fn stash_metadata_string(source: &serde_json::Value, key: &str, value: &str) -> serde_json::Value {
-    let mut params = source.clone();
-    if !params.is_object() {
-        let prior = params.clone();
-        params = serde_json::json!({ "_legacy": prior });
-    }
-    let obj = params.as_object_mut().expect("ensured object above");
-    let metadata = obj
-        .entry("metadata".to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    if !metadata.is_object() {
-        let prior = metadata.clone();
-        *metadata = serde_json::json!({ "_legacy": prior });
-    }
-    let metadata_obj = metadata.as_object_mut().expect("ensured object above");
-    metadata_obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
-    params
-}
-
-/// Convenience accessor for `mechanical_params.metadata.cloned_from`.
-/// Returns the source strategy id when the clone was minted via
-/// [`clone_strategy_full`]; `None` for hand-authored or pre-clone-feature
-/// strategies. Audit tooling uses this to chain clones back to the
-/// original.
-pub fn cloned_from(strategy: &Strategy) -> Option<&str> {
-    strategy
-        .mechanical_params
-        .get("metadata")
-        .and_then(|m| m.get("cloned_from"))
-        .and_then(|v| v.as_str())
-}
-
 /// Map an `anyhow::Error` from `engine::authoring::*` dispatcher fns to a
 /// typed `ApiError`. The dispatcher emits validation failures as
 /// `anyhow!("...")` strings (no typed enum), so we string-match the prefix
@@ -1393,6 +1317,11 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "no manifest fields to update",
         "asset_universe",
         "decision_cadence_minutes",
+        // W6: new update_manifest fields — map invalid values to 400
+        // (Validation), consistent with the inspector PATCH path.
+        "display_name cannot be empty",
+        "plain_summary cannot be empty",
+        "is not a valid hex color",
         "unknown preset",
         "filter parse error",
         "filter validation error",
@@ -1411,7 +1340,6 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",
-        "mechanical_params is not a JSON object",
         "role is required",
         "already exists on strategy",
         "not found on strategy",
@@ -1481,19 +1409,6 @@ async fn collect_strategy_runtime_requirements(
             .and_then(|slot| slot.provider.as_deref()),
         strategy
             .trader_slot
-            .as_ref()
-            .and_then(|slot| slot.model.as_deref()),
-        &mut requirements,
-        &mut errors,
-    );
-    collect_runtime_requirements_for_slot(
-        "intern slot",
-        strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.provider.as_deref()),
-        strategy
-            .intern_slot
             .as_ref()
             .and_then(|slot| slot.model.as_deref()),
         &mut requirements,
@@ -2024,40 +1939,6 @@ pub async fn set_filter(ctx: &ApiContext, req: SetFilterReq) -> ApiResult<Strate
     result
 }
 
-/// Set one mechanical parameter on the strategy and refresh the search index.
-pub async fn set_mechanical_param(
-    ctx: &ApiContext,
-    req: authoring::SetMechanicalParamReq,
-) -> ApiResult<serde_json::Value> {
-    let started = Instant::now();
-    let agent_id = req.id.clone();
-    let args_json = serde_json::to_string(&req).ok();
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = authoring::set_mechanical_param(&store, req)
-        .await
-        .map(|_| serde_json::json!({ "ok": true }))
-        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
-
-    let outcome = match &result {
-        Ok(_) => Outcome::Ok,
-        Err(e) => Outcome::Error(e.to_string()),
-    };
-    let _ = audit::record(
-        ctx,
-        "strategy",
-        "set_mechanical_param",
-        Some(&agent_id),
-        args_json.as_deref(),
-        outcome,
-        started.elapsed().as_millis() as i64,
-    )
-    .await;
-    if result.is_ok() {
-        index_strategy_after_mutation(ctx, &store, &agent_id).await;
-    }
-    result
-}
-
 /// Update the strategy's risk config — preset (Conservative / Balanced /
 /// Aggressive) or an explicit `RiskConfig` blob, but not both.
 pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResult<SetRiskConfigOut> {
@@ -2332,12 +2213,6 @@ mod tests {
         // Round-trips through the same store the clone path uses.
         let reread = get(&ctx, &imported.manifest.id).await.unwrap();
         assert_eq!(reread.manifest.display_name, source.manifest.display_name);
-
-        // Provenance: the source id lands in mechanical_params.metadata.
-        assert_eq!(
-            reread.mechanical_params["metadata"]["imported_from"],
-            serde_json::Value::String(created.id.clone()),
-        );
         assert!(audit_row_exists(&ctx, "import", &imported.manifest.id).await);
     }
 
@@ -2475,6 +2350,9 @@ mod tests {
             &ctx,
             UpdateManifestReq {
                 id: created.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
                 asset_universe: Some(vec!["BTC/USD".into()]),
                 decision_cadence_minutes: Some(360),
             },
@@ -2487,6 +2365,96 @@ mod tests {
         let strategy = get(&ctx, &created.id).await.unwrap();
         assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
         assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+
+        // W6: also verify display_name and plain_summary round-trip through
+        // the full api_strategy::update_manifest path with an audit record.
+        let out2 = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id.clone(),
+                display_name: Some("Renamed via Chat".into()),
+                plain_summary: Some("A momentum strategy".into()),
+                color: Some("#A1B2C3".into()),
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out2.updated, vec!["display_name", "plain_summary", "color"]);
+        assert!(audit_row_exists(&ctx, "update_manifest", &created.id).await);
+        let strategy2 = get(&ctx, &created.id).await.unwrap();
+        assert_eq!(strategy2.manifest.display_name, "Renamed via Chat");
+        assert_eq!(strategy2.manifest.plain_summary, "A momentum strategy");
+        assert_eq!(strategy2.manifest.color, Some("#A1B2C3".into()));
+        // Previously-set fields must be untouched.
+        assert_eq!(strategy2.manifest.asset_universe, vec!["BTC/USD"]);
+        assert_eq!(strategy2.manifest.decision_cadence_minutes, 360);
+    }
+
+    #[tokio::test]
+    async fn update_manifest_only_display_name_succeeds_guard() {
+        // Guard test (W6 Finding #15): a call supplying ONLY display_name
+        // (no asset_universe, no decision_cadence_minutes) must succeed,
+        // not return the old "no manifest fields to update" 400 error.
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "Guard Test".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let out = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id.clone(),
+                display_name: Some("Renamed Only".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.updated, vec!["display_name"]);
+        let strategy = get(&ctx, &created.id).await.unwrap();
+        assert_eq!(strategy.manifest.display_name, "Renamed Only");
+    }
+
+    #[tokio::test]
+    async fn update_manifest_empty_display_name_is_validation_error() {
+        // W6: invalid new-field values must surface as 400 Validation
+        // (consistent with the inspector PATCH path), not 500 Internal.
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let r = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id,
+                display_name: Some("   ".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await;
+        assert!(matches!(r, Err(ApiError::Validation(_))));
     }
 
     #[tokio::test]
@@ -2591,6 +2559,9 @@ mod tests {
             &ctx,
             crate::authoring::UpdateManifestReq {
                 id: created.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
                 asset_universe: Some(vec!["BTC/USD".into(), "ETH/USD".into()]),
                 decision_cadence_minutes: None,
             },

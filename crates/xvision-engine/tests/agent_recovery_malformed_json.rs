@@ -131,12 +131,12 @@ async fn pool_with_migrations() -> SqlitePool {
 
 fn minimal_strategy() -> Strategy {
     // OpenAI-compat trader by default so the repair path does not
-    // depend on an agentic intern (which can't be A/B-cache paired). Anthropic
-    // / OpenAI fixtures both go through the same dispatch trait — the
-    // scripted dispatcher above intercepts before any provider code
+    // depend on an agentic briefing LLM (which can't be A/B-cache paired).
+    // Anthropic / OpenAI fixtures both go through the same dispatch trait —
+    // the scripted dispatcher above intercepts before any provider code
     // runs, so the provider/model choice is purely cosmetic for the
     // test, but we use the OpenAI-compat shape per the contract's
-    // "Use OpenAICompatIntern or AnthropicIntern fixtures" rule.
+    // "Use OpenAICompatTrader or AnthropicTrader fixtures" rule.
     Strategy {
         manifest: PublicManifest {
             id: "01TESTREPAIRSTRATEGY00000000".into(),
@@ -160,7 +160,6 @@ fn minimal_strategy() -> Strategy {
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "openai.gpt-4o-mini+".into(),
@@ -169,13 +168,13 @@ fn minimal_strategy() -> Strategy {
             model: Some("gpt-4o-mini".into()),
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

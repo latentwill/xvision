@@ -218,8 +218,8 @@ are still required for the live market-data bar stream regardless of venue.
 
 **Pipeline roles** (intern → trader → risk → executor) are valid
 conventions, not hardcoded slot names. The current shipped CLI initializes
-state with `xvn migrate`; interactive setup/onboarding is handled through the
-dashboard wizard and operator runbooks.
+state with `xvn init` (back-compat alias: `xvn migrate`); interactive
+setup/onboarding is handled through the dashboard wizard and operator runbooks.
 
 ## Experiment vs strategy vs eval (mental model)
 
@@ -380,8 +380,12 @@ are stable, unlike the general dashboard CRUD API):
   research denies write tools **before** they run (server reads the persisted
   mode column; the client can't spoof it); act allows them subject to policy.
 - `GET/PUT /api/chat-rail/tool-policy` — three-state `(enabled, auto_approve)`:
-  Auto / Ask / Disabled. Absent tool ⇒ class default (read=Auto, write=Ask);
-  unknown tool fails safe to write.
+  Auto / Ask / Disabled. Absent tool ⇒ class default (read=Auto, **write=Auto**,
+  dangerous=Disabled): a Write tool **auto-runs in Act mode** (no approval
+  round-trip) and is **denied in Research mode**. To force an approval prompt for
+  a write tool, set its policy to `auto_approve:false` (the **Ask** state).
+  `run_eval` is a Write tool, so in Act mode it launches a backtest with no
+  confirmation by default. Unknown tool fails safe to write.
 - `GET/PUT /api/chat-rail/focus` — per-scope `focus.md` at
   `$XVN_HOME/scopes/<kind>/<id>/focus.md`, re-injected each turn; path-safe.
 - `GET /api/chat-rail/sessions/:id/checkpoints` +

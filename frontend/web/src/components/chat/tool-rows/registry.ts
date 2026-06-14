@@ -71,11 +71,6 @@ export const TOOL_ROW_REGISTRY: Record<string, ToolRowEntry> = {
     sideEffect: "external_write",
     label: "Attach agent",
   },
-  set_mechanical_param: {
-    render: AgentSlotDiffRow,
-    sideEffect: "external_write",
-    label: "Set mechanical param",
-  },
   set_risk_config: {
     render: AgentSlotDiffRow,
     sideEffect: "external_write",
@@ -246,7 +241,6 @@ export const KNOWN_TOOLS: readonly string[] = [
   "create_strategy_agent",
   "update_slot",
   "update_manifest",
-  "set_mechanical_param",
   "set_risk_config",
   "set_filter",
   "clear_filter",

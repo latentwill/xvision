@@ -43,9 +43,9 @@ When any hypothesis flag is provided, a `Hypothesis` struct is attached to the
 strategy before saving. Accepted timeframes for `--timeframe`: `1m`, `5m`,
 `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
 
-Note: the `intern` slot role is being renamed to "default agent" during the
-current crossover period. New strategies use `AgentRef` entries; legacy slot
-fields are migrated with `migrate-agents`.
+Note: all strategy configuration now uses `AgentRef` entries. Legacy slot
+fields (`intern_slot`, `trader_slot`, etc.) have been migrated; config
+uses the `[default_llm]` TOML block instead of `[intern]`.
 
 ---
 
@@ -165,7 +165,7 @@ Workspace agent library: inspect, create, list, and lint agent records.
 | Verb | Effect |
 |---|---|
 | `get <agent-id> [--format json\|json-compact]` | Fetch a single agent by id. Returns the full `Agent` JSON shape (same as `agents[]` in `EvalRunExport`). Alias: `show`. |
-| `create --name <name> --capability <trader\|filter\|critic\|intern\|router> --provider <id> --model <id> --system-prompt <text\|@path> [--temperature <f>] [--max-tokens <n>] [--tags <t>…] [--description <s>] [--format json\|json-compact]` | Create a single-slot agent in the workspace library. `--system-prompt @path` reads the prompt from a file. |
+| `create --name <name> --capability <trader\|filter\|router> --provider <id> --model <id> --system-prompt <text\|@path> [--temperature <f>] [--max-tokens <n>] [--tags <t>…] [--description <s>] [--format json\|json-compact]` | Create a single-slot agent in the workspace library. `--system-prompt @path` reads the prompt from a file. |
 | `ls [--format table\|json\|json-compact] [--tag <t>…] [--include-archived]` | List agents. Default output is a table with columns AGENT_ID, NAME, CAPABILITIES, MODELS, ARCHIVED, TAGS. Use `--format json` or `json-compact` for machine-readable output. Alias: `list`. |
 | `lint [<agent-id>] [--json]` | Validate one or all agents and report diagnostics. Exits 0 when there are no error-severity findings; exits 2 when any error-severity diagnostic is present (suitable as a CI gate). `--json` emits a JSON array of `{agent_id, diagnostics: [{code, severity, message, field}]}`. |
 

@@ -7,11 +7,9 @@
 // than faked.
 import { ApiError, apiFetch } from "@/api/client";
 import {
-  getStrategy,
-  listStrategiesPaged,
-  type Strategy,
-  type StrategyListItem,
-} from "@/api/strategies";
+  fetchListableStrategies,
+  fetchPublishDraft,
+} from "./listable";
 import {
   approveUsdc,
   buyDirect,
@@ -60,6 +58,12 @@ export interface IndexedListing {
   units_sold: number;
   /// Sum of seller proceeds across `Sold` events, in whole USDC.
   earned_usdc: number;
+  /// Best trailing-30d return % from completed eval runs (Part B).
+  /// Absent when agent_id is empty or no completed runs exist.
+  return30d_pct?: number | null;
+  /// Best Sharpe ratio from completed eval runs (Part B).
+  /// Absent when agent_id is empty or no completed runs exist.
+  sharpe?: number | null;
 }
 
 /** Mirrors `ReceiptOut` in marketplace_read.rs. */
@@ -90,94 +94,6 @@ export interface ReceiptOut {
 export function bundleCidFromContentUri(contentUri: string | undefined): string {
   if (!contentUri) return "";
   return contentUri.startsWith("ipfs://") ? contentUri.slice("ipfs://".length) : "";
-}
-
-function assetSymbols(assetUniverse: string[] | undefined): string[] {
-  const symbols = new Set<string>();
-  for (const raw of assetUniverse ?? []) {
-    const symbol = raw.split("/")[0]?.trim().toUpperCase();
-    if (symbol) symbols.add(symbol);
-  }
-  return [...symbols];
-}
-
-function listableStrategyVersion(strategy: StrategyListItem): string {
-  if (!strategy.last_eval_completed_at) return "not evaluated";
-  const date = strategy.last_eval_completed_at.slice(0, 10);
-  return date ? `evaluated ${date}` : "evaluated";
-}
-
-function toListableStrategy(strategy: StrategyListItem): ListableStrategy {
-  return {
-    id: strategy.agent_id,
-    name: strategy.display_name?.trim() || strategy.agent_id,
-    version: listableStrategyVersion(strategy),
-    assets: assetSymbols(strategy.asset_universe),
-  };
-}
-
-function ingredientsForStrategy(strategy: Strategy) {
-  return [
-    ...strategy.manifest.attested_with.map((name) => ({
-      name,
-      kind: "model" as const,
-      installed: true,
-    })),
-    ...strategy.manifest.required_tools.map((name) => ({
-      name,
-      kind: name.toLowerCase().includes("mcp") ? ("mcp" as const) : ("skill" as const),
-      installed: true,
-    })),
-  ];
-}
-
-function buildApiPublishDraft(
-  strategy: Strategy,
-  row: StrategyListItem | undefined,
-): PublishDraft {
-  const assets = assetSymbols(strategy.manifest.asset_universe);
-  const strategyId = strategy.manifest.id;
-  const name = strategy.manifest.display_name?.trim() || row?.display_name?.trim() || strategyId;
-  const hasBacktest = !!row?.last_eval_completed_at;
-  return {
-    strategyId,
-    listable: [
-      { ok: true, label: "Strategy exists in your XVN" },
-      {
-        ok: assets.length > 0,
-        label: "Declares an asset universe",
-        reason: assets.length > 0 ? undefined : "No assets configured",
-      },
-      {
-        ok: hasBacktest,
-        label: "Has a backtest on record",
-        reason: hasBacktest ? undefined : "No completed eval on record",
-      },
-    ],
-    tier: "sealed",
-    priceUsdc: 49,
-    acceptedPayers: { humans: true, agents: true },
-    ingredients: ingredientsForStrategy(strategy),
-    preview: {
-      id: name,
-      lineageId: strategyId,
-      version: row ? listableStrategyVersion(row) : "not evaluated",
-      creator: { address: strategy.manifest.creator || "" },
-      model: strategy.manifest.attested_with[0] ?? "Unknown model",
-      style: "Strategy",
-      assets,
-      return30dPct: 0,
-      sharpe: 0,
-      buyers: { humans: 0, agents: 0 },
-      priceUsdc: 49,
-      tier: "sealed",
-      transferableLicense: false,
-      verification: "unverified",
-      acceptsX402: true,
-      clones: 0,
-      genArtSeed: strategyId,
-    },
-  };
 }
 
 /**
@@ -261,7 +177,10 @@ export interface MarketplaceIndexStatus {
 
 function toRow(l: IndexedListing): ListingRow {
   return {
-    id: String(l.listing_id),
+    // Part A (.7): prefer agent_id (ULID) for routing so detail-page URLs
+    // are stable across re-mints. Fall back to numeric listing_id for
+    // listings with empty agent_id (pre-ULID on-chain entries).
+    id: l.agent_id || String(l.listing_id),
     lineageId: l.agent_id || String(l.listing_id),
     version: "v1",
     // QA9: populate name from the IndexedListing.name field so the browse
@@ -271,8 +190,11 @@ function toRow(l: IndexedListing): ListingRow {
     model: "",
     style: l.symmetry,
     assets: [],
-    return30dPct: 0,
-    sharpe: 0,
+    // Part B: consume real perf metrics when the backend provides them.
+    // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
+    // with a code comment referencing bead xvision-ctkm.8.
+    return30dPct: l.return30d_pct ?? 0,
+    sharpe: l.sharpe ?? 0,
     // Honest approximation: the chain only tells us how many licenses sold,
     // not whether the buyer was a human or an agent — count them all as
     // humans rather than inventing an agent split.
@@ -297,7 +219,16 @@ function toDetail(l: IndexedListing): ListingDetail {
     // Chain metadata name is the only human-readable copy we have; it renders
     // in the promise slot under the title.
     promise: l.name,
-    metrics: { return30dPct: 0, sharpe: 0, winRatePct: 0, maxDrawdownPct: 0, avgDurationDays: 0 },
+    // Part B: surface real perf metrics when available; leave other metric
+    // slots zeroed (winRatePct, maxDrawdownPct, avgDurationDays are not yet
+    // wired from eval_runs — tracked by bead xvision-ctkm.8).
+    metrics: {
+      return30dPct: l.return30d_pct ?? 0,
+      sharpe: l.sharpe ?? 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      avgDurationDays: 0,
+    },
     paidToCreatorUsd: 0,
     platformFeeBps: 0,
     ingredients: [],
@@ -378,7 +309,21 @@ export class ApiMarketplaceData implements MarketplaceData {
     const out = await apiFetch<{ items: IndexedListing[]; total: number }>(
       "/api/marketplace/listings",
     );
-    return applyFilter(out.items.map(toRow), f);
+    const allRows = out.items.map(toRow);
+
+    // "Mine" segment: restrict to listings created by the connected wallet.
+    // If no wallet is connected, return an empty pool so the empty state renders
+    // (never show all listings when the ownership check cannot be performed).
+    if (f.segment === "mine") {
+      const viewer = await this.getViewer();
+      if (!viewer.isConnected || viewer.createdListingIds.length === 0) {
+        return { rows: [], total: allRows.length, matched: 0 };
+      }
+      const owned = allRows.filter((r) => viewer.createdListingIds.includes(r.id));
+      return applyFilter(owned, f);
+    }
+
+    return applyFilter(allRows, f);
   }
 
   async getListing(idOrName: string): Promise<ListingDetail> {
@@ -407,7 +352,17 @@ export class ApiMarketplaceData implements MarketplaceData {
       // caller surfaces the designed not-found state rather than silently
       // serving a wrong-seed fixture. Slug ids (non-numeric) may still fall
       // back to the fixture client for demo/dev use.
-      if (/^\d+$/.test(idOrName)) throw e;
+      //
+      // Part A (.7): also rethrow for ULID-shaped ids. A ULID is exactly 26
+      // chars of uppercase alphanumeric (digits + uppercase letters, Crockford
+      // base32 — excludes I/L/O/U). A real ULID that 404s is a genuine
+      // not-found, not a fixture slug. The fixture fallback must NOT serve
+      // stale/wrong-seed data for real ULIDs.
+      // We use a broader pattern (any 26-char uppercase alphanumeric) to
+      // avoid subtle regex edge cases; all valid fixture slugs are shorter or
+      // contain lowercase/hyphens.
+      const isUlidShaped = /^[0-9A-Z]{26}$/.test(idOrName);
+      if (/^\d+$/.test(idOrName) || isUlidShaped) throw e;
       return this.fallback.getListing(idOrName);
     }
   }
@@ -477,6 +432,9 @@ export class ApiMarketplaceData implements MarketplaceData {
       // address book unavailable — honest empty, receipt still renders
     }
     const at = new Date(r.block_time_unix * 1000).toISOString();
+    // Part A (.7): use agent_id (ULID) for the share URL when available so
+    // the receipt deep-link routes to the ULID-keyed detail page.
+    const routingId = r.agent_id || String(r.listing_id);
     const listingId = String(r.listing_id);
     const buyers = { humans: 0, agents: 0 };
     return {
@@ -485,7 +443,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       at,
       buyer: r.buyer,
       listing: {
-        id: listingId,
+        id: routingId,
         version: "v1",
         creator: { address: "" },
         genArtSeed: r.gen_art_seed,
@@ -506,7 +464,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       install: { xvnDetected: false, xvnEndpoint: "", ingredients: [] },
       share: {
         ogCard: {
-          id: listingId,
+          id: routingId,
           version: "v1",
           creator: { address: "" },
           genArtSeed: r.gen_art_seed,
@@ -517,7 +475,7 @@ export class ApiMarketplaceData implements MarketplaceData {
           verification: "unverified",
           acceptsX402: true,
           promise: r.name,
-          url: `/marketplace/lineage/${listingId}`,
+          url: `/marketplace/lineage/${routingId}`,
         },
         buyerStamp: `bought by ${r.buyer.slice(0, 6)}…${r.buyer.slice(-4)}`,
         caption: `I just bought ${r.name || listingId} for ${r.price_usdc} USDC on Mantle Sepolia.`,
@@ -527,16 +485,10 @@ export class ApiMarketplaceData implements MarketplaceData {
     };
   }
   async listListableStrategies(): Promise<ListableStrategy[]> {
-    const page = await listStrategiesPaged({ limit: 200 });
-    return page.items.map(toListableStrategy);
+    return fetchListableStrategies();
   }
   async createPublishDraft(strategyId: string): Promise<PublishDraft> {
-    const [strategy, page] = await Promise.all([
-      getStrategy(strategyId),
-      listStrategiesPaged({ limit: 200 }),
-    ]);
-    const row = page.items.find((item) => item.agent_id === strategyId);
-    return buildApiPublishDraft(strategy, row);
+    return fetchPublishDraft(strategyId);
   }
   // Real in-UI purchase. Primary path is gasless x402: sign an EIP-3009
   // TransferWithAuthorization in the browser and let the backend relay

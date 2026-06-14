@@ -1,18 +1,25 @@
 // frontend/web/src/features/agent-runs/TraceDock.tsx
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
+import {
+  agentRunKeys,
+  engineEventFrameToSpan,
+  getAgentRun,
+  openAgentRunStream,
+} from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
+import { useCurrentTraceScope } from "./use-trace-scope";
 import {
   type SpanProjection,
   useSessionSpans,
 } from "@/stores/session-events";
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
+import { SpanTree } from "./SpanTree";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
@@ -64,7 +71,12 @@ const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
 const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "agent.run",
   "agent.plan",
+  "agent.decision",
+  // WS-17 span taxonomy (+ `model.call`/`model.reasoning` legacy aliases).
+  "decision.model",
+  "decision.reasoning",
   "model.call",
+  "model.reasoning",
   "tool.call",
   "tool.validate_input",
   "tool.validate_output",
@@ -79,10 +91,15 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "broker.call",
   "recovery.attempt",
   "state.transition",
+  // WS-8 Part 2: the synthetic kind for projected engine lifecycle signals
+  // (risk veto / regime / order / memory …). Keeping it in the known set means
+  // `projectionToRunSpan` preserves it instead of flattening to `agent.run`;
+  // the carried `attributes.engine_event_kind` then drives the family/label.
+  "engine.event",
 ]);
 type SpanKindLike = RunSpan["kind"];
 
-function projectionToRunSpan(p: SpanProjection): RunSpan {
+export function projectionToRunSpan(p: SpanProjection): RunSpan {
   const kind = (
     KNOWN_SPAN_KINDS.has(p.kind) ? p.kind : "agent.run"
   ) as RunSpan["kind"];
@@ -99,24 +116,59 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
         : p.status === "error"
           ? "error"
           : "ok",
-    attributes: {},
+    // Carry the projection's attribute bag through (WS-8 Part 2): an
+    // `engine.event` row resolves its family/label off
+    // `attributes.engine_event_kind`, so dropping it would re-blank the row.
+    attributes: p.attributes,
+    // Inspector fidelity (WS-8 Part 2 Part B): the unified projection populates
+    // these off the rich payload variants; carry each onto `RunSpan` so the
+    // SpanInspector renders the SAME model body/tokens/cost, broker fill, tool
+    // I/O, decision index, and error the raw agent-run path shows. Spread only
+    // the present fields so an undefined never overwrites a fixture value and
+    // the wire shape stays minimal.
+    ...(p.provider !== undefined ? { provider: p.provider } : {}),
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.tokensIn !== undefined ? { tokens_in: p.tokensIn } : {}),
+    ...(p.tokensOut !== undefined ? { tokens_out: p.tokensOut } : {}),
+    ...(p.cost !== undefined ? { cost: p.cost } : {}),
+    ...(p.promptHash !== undefined ? { hash: p.promptHash } : {}),
+    ...(p.responseHash !== undefined ? { response_hash: p.responseHash } : {}),
+    ...(p.prompt !== undefined ? { prompt: p.prompt } : {}),
+    ...(p.response !== undefined ? { response: p.response } : {}),
+    ...(p.promptPayloadRef !== undefined ? { prompt_payload_ref: p.promptPayloadRef } : {}),
+    ...(p.responsePayloadRef !== undefined ? { response_payload_ref: p.responsePayloadRef } : {}),
+    ...(p.args !== undefined ? { args: p.args } : {}),
+    ...(p.result !== undefined ? { result: p.result } : {}),
+    ...(p.brokerCall !== undefined ? { broker_call: p.brokerCall } : {}),
+    ...(p.decisionIdx !== undefined ? { decision_idx: p.decisionIdx } : {}),
+    ...(p.errorMessage !== undefined ? { error_message: p.errorMessage } : {}),
   };
 }
 
 export function TraceDock() {
+  const scope = useCurrentTraceScope();
   const {
     height,
     heightPx,
-    activeRunId,
     activeSessionId,
-    selectedSpanId,
     minimize,
-    setSelectedSpan,
     advanced_view,
     setAdvancedView,
-    costOverrideUsd,
   } = useTraceDock();
+  // Per-scope slice for the current route. `setSelectedSpan` is now
+  // scope-aware, so we curry the scope in at the call site.
+  const activeRunId = useTraceDock((s) => s.byScope[scope].activeRunId);
+  const selectedSpanId = useTraceDock((s) => s.byScope[scope].selectedSpanId);
+  const costOverrideUsd = useTraceDock((s) => s.byScope[scope].costOverrideUsd);
+  const setSelectedSpan = (id: string | null) =>
+    useTraceDock.getState().setSelectedSpan(scope, id);
   const navigate = useNavigate();
+
+  // Structured-view selector. The collapsible span tree (WS-16) is the new
+  // default — it lets a DECISION collapse to one line and expand to its full
+  // subtree. The FlameGraph remains available behind the toggle (timeline /
+  // overlap view); neither replaces the other.
+  const [structuredView, setStructuredView] = useState<"tree" | "flame">("tree");
 
   // Unified-session span projection — the chat-session path. When a chat
   // session is bound (and no standalone agent run is active), the dock
@@ -149,12 +201,10 @@ export function TraceDock() {
       !(error instanceof ApiError && error.code === "not_found") && failureCount < 2,
   });
 
-  useEffect(() => {
-    if (!activeRunId) return;
-    if (q.error instanceof ApiError && q.error.code === "not_found") {
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
-    }
-  }, [activeRunId, q.error]);
+  // NOTE: no 404 self-clear here (WS-2). A not_found agent-run renders
+  // the dock's empty branch (`!activeRunId && !hasSessionTrace` guard
+  // below); it must NOT null the active run. Ownership/cleanup belongs
+  // to the route owner's unconditional unmount effect, not the dock.
 
   // The dock has one span source at a time: the agent-run query when a run is
   // active, else the unified session projection when a chat session is bound.
@@ -206,7 +256,7 @@ export function TraceDock() {
 
   // F-7 (qa round 7): the Trade quick-filter is enabled iff the run
   // carries at least one broker.call span. When the executor stage
-  // hasn't emitted a broker submit (intern-only runs, planning runs,
+  // hasn't emitted a broker submit (briefing-only runs, planning runs,
   // or any cycle that never reached the trader's APPROVED branch) the
   // button is rendered disabled — the affordance still exists so the
   // operator knows it's a first-class concept, but a click would be a
@@ -320,6 +370,23 @@ export function TraceDock() {
           // aggregates honest.
           qc.invalidateQueries({ queryKey: key });
           return;
+        case "engine_event": {
+          // WS-8: project the live engine event onto an engine.event row and
+          // append it to the cached detail so the trace surfaces lifecycle
+          // signals (risk veto, regime transition, order state, …) in real
+          // time instead of dropping them. Carrier kinds + kindless frames
+          // project to null and are skipped.
+          const projected = engineEventFrameToSpan(ev.data);
+          if (!projected) return;
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            if (prev.spans.some((s) => s.span_id === projected.span_id)) {
+              return prev;
+            }
+            return { ...prev, spans: [...prev.spans, projected] };
+          });
+          return;
+        }
         // Lifecycle / informational arms — no cache side effect.
         case "run_started":
         case "tool_call_started":
@@ -330,6 +397,8 @@ export function TraceDock() {
         case "supervisor_note":
         case "artifact_written":
         case "backpressure_dropped":
+        case "memory_recall":
+        case "memory_write":
         case "lagged":
           return;
       }
@@ -349,7 +418,7 @@ export function TraceDock() {
     <div
       data-testid="trace-dock"
       className="fixed bottom-0 left-0 right-0 z-30 bg-bg border-t border-border shadow-2xl flex flex-col"
-      style={{ height: heightPx }}
+      style={{ height: heightPx, maxHeight: "calc(100vh - 60px)" }}
     >
       <DockResizeHandle />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">
@@ -416,6 +485,49 @@ export function TraceDock() {
             }}
           >
             ADVANCED
+          </button>
+        </div>
+        {/*
+          WS-16: structured-view selector. TREE is the collapsible nested
+          span tree (default); FLAME is the timeline/overlap flame graph.
+          Both read the same `displaySpans` so Simple/Advanced + filters
+          apply identically to either view.
+        */}
+        <div
+          role="group"
+          aria-label="Structured view"
+          data-testid="trace-dock-view-toggle"
+          className="ml-2 flex items-center gap-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={structuredView === "tree"}
+            onClick={() => setStructuredView("tree")}
+            title="Tree — collapsible nested spans"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "tree" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "tree" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "tree" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            TREE
+          </button>
+          <button
+            type="button"
+            aria-pressed={structuredView === "flame"}
+            onClick={() => setStructuredView("flame")}
+            title="Flame — timeline / overlap view"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "flame" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "flame" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "flame" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            FLAME
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
@@ -520,11 +632,19 @@ export function TraceDock() {
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
-            <FlameGraph
-              spans={displaySpans}
-              selectedSpanId={selectedSpan?.span_id ?? null}
-              onSelect={setSelectedSpan}
-            />
+            structuredView === "tree" ? (
+              <SpanTree
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            ) : (
+              <FlameGraph
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            )
           ) : null}
         </div>
         {selectedSpan ? (

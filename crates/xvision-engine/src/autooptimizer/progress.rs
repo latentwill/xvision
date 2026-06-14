@@ -103,6 +103,19 @@ pub enum CycleProgressEvent {
         #[serde(default)]
         reason: String,
     },
+    /// Fired when a candidate's eval FAILED (e.g. the trader model returned an
+    /// invalid action, or truncated mid-JSON) and the cycle skipped it to
+    /// continue. Distinct from `NoCandidate` (the experiment writer produced
+    /// nothing): here a candidate existed but its evaluation crashed. Operator
+    /// label: "Candidate eval failed". 2026-06-13 trader-failure resilience.
+    CandidateError {
+        #[serde(default)]
+        session_id: String,
+        cycle_id: String,
+        parent_hash: String,
+        #[serde(default)]
+        reason: String,
+    },
     /// Fired after the numeric gate evaluates a child mutation.
     ///
     /// `passed` is kept for backward compatibility with existing consumers
@@ -371,6 +384,43 @@ mod tests {
             } => {
                 assert_eq!(session_id, "");
                 assert_eq!(elapsed_s, 0);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// CandidateError serializes as "candidate_error" and carries reason field.
+    /// 2026-06-13 trader-failure resilience (Task 3.2).
+    #[test]
+    fn test_candidate_error_wire_and_reason() {
+        let event = CycleProgressEvent::CandidateError {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            parent_hash: "ph1".into(),
+            reason: "trader returned invalid action".into(),
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            v["type"].as_str().unwrap(),
+            "candidate_error",
+            "CandidateError must serialize as 'candidate_error'"
+        );
+        assert_eq!(v["reason"].as_str().unwrap(), "trader returned invalid action");
+
+        // Old JSON without session_id/reason still deserializes via #[serde(default)].
+        let old_json = r#"{"type":"candidate_error","cycle_id":"c1","parent_hash":"ph1"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::CandidateError {
+                session_id,
+                cycle_id,
+                parent_hash,
+                reason,
+            } => {
+                assert_eq!(session_id, "");
+                assert_eq!(cycle_id, "c1");
+                assert_eq!(parent_hash, "ph1");
+                assert_eq!(reason, "");
             }
             _ => panic!("wrong variant"),
         }

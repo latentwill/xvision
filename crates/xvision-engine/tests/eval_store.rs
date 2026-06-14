@@ -203,7 +203,7 @@ async fn list_with_status_filter_only_returns_matching() {
 
     let out = store
         .list(ListFilter {
-            status: Some(RunStatus::Completed),
+            status: Some(vec![RunStatus::Completed]),
             ..Default::default()
         })
         .await

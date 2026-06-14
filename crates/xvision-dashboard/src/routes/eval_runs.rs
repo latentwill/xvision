@@ -116,13 +116,20 @@ pub async fn list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<RunsListResponse>, DashboardError> {
+    // Parse the optional `?status=` query string. Accepts a comma-separated
+    // list of valid run statuses (e.g. `?status=queued,running`). A single
+    // value (e.g. `?status=queued`) is equivalent to a one-element list.
+    // Any unknown token causes a 400 Validation error with field = "status".
+    // Repeated params (`?status=queued&status=running`) are handled by axum's
+    // Query<ListParams>: it keeps the LAST value only — callers must use the
+    // comma-list form for multi-status filtering.
     let status = params
         .status
         .as_deref()
         .map(|s| {
-            RunStatus::parse(s).ok_or_else(|| DashboardError::Validation {
+            RunStatus::parse_list(s).map_err(|msg| DashboardError::Validation {
                 field: "status".into(),
-                msg: format!("unknown run status '{s}'"),
+                msg,
             })
         })
         .transpose()?;
@@ -460,6 +467,7 @@ fn event_name(ev: &RunChartEvent) -> &'static str {
         // distinct name so it never collides with the chart's `equity` frame.
         RunChartEvent::DeploymentMetrics(_) => "deployment_metrics",
         RunChartEvent::Status { .. } => "status",
+        RunChartEvent::LiveRunState(_) => "live_run_state",
     }
 }
 

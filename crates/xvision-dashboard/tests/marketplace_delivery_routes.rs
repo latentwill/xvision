@@ -73,6 +73,8 @@ fn listing(listing_id: u64, content_uri: &str, content_hash: &str) -> IndexedLis
         attestation_count: 0,
         units_sold: 0,
         earned_usdc: 0.0,
+        return30d_pct: None,
+        sharpe: None,
     }
 }
 
@@ -665,9 +667,7 @@ async fn get_challenge(server: &TestServer, listing_id: u64) -> (String, u64) {
 #[tokio::test]
 async fn import_challenge_unknown_listing_is_404() {
     let (server, _state, _tmp) = boot().await;
-    let response = server
-        .get("/api/marketplace/listings/99/import-challenge")
-        .await;
+    let response = server.get("/api/marketplace/listings/99/import-challenge").await;
     response.assert_status(StatusCode::NOT_FOUND);
 }
 
@@ -675,9 +675,7 @@ async fn import_challenge_unknown_listing_is_404() {
 async fn import_challenge_issues_nonce_and_message() {
     let (server, state, _tmp) = boot().await;
     inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
-    let response = server
-        .get("/api/marketplace/listings/1/import-challenge")
-        .await;
+    let response = server.get("/api/marketplace/listings/1/import-challenge").await;
     response.assert_status_ok();
     let body: Value = response.json();
     let nonce = body["nonce"].as_str().unwrap();
@@ -686,7 +684,10 @@ async fn import_challenge_issues_nonce_and_message() {
     // The returned message must be the exact byte string the client signs and
     // embed the listing + the issued nonce.
     let message = body["message"].as_str().unwrap();
-    assert!(message.starts_with("xvision sealed-bundle license request"), "{message}");
+    assert!(
+        message.starts_with("xvision sealed-bundle license request"),
+        "{message}"
+    );
     assert!(message.contains("Listing: 1"), "{message}");
     assert!(message.contains(&format!("Nonce: {nonce}")), "{message}");
 }
@@ -715,10 +716,9 @@ async fn import_sealed_wrong_signer_is_403() {
 
     let buyer = buyer_signer();
     // A different key signs the message, but the body claims buyer's address.
-    let attacker: PrivateKeySigner =
-        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-            .parse()
-            .unwrap();
+    let attacker: PrivateKeySigner = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+        .parse()
+        .unwrap();
     let message = challenge_message(1, &nonce, expiry);
     let signature = sign(&attacker, &message);
 
@@ -734,7 +734,10 @@ async fn import_sealed_wrong_signer_is_403() {
     response.assert_status(StatusCode::FORBIDDEN);
     let body: Value = response.json();
     assert!(
-        body["message"].as_str().unwrap().contains("does not prove control"),
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("does not prove control"),
         "{body}"
     );
 }

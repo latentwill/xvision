@@ -1039,7 +1039,8 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
             .as_deref()
             .map(parse_status)
             .transpose()
-            .exit_with(XvnExit::Usage)?,
+            .exit_with(XvnExit::Usage)?
+            .map(|s| vec![s]),
         ..Default::default()
     };
     let runs = eval::list(&ctx, req)

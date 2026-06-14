@@ -219,14 +219,29 @@ pub async fn get_listings(
 // GET /api/marketplace/listings/:id
 // ---------------------------------------------------------------------------
 
+/// Resolves a listing by ULID-first, then integer-fallback.
+///
+/// When `id` matches an `IndexedListing.agent_id` (ULID), that listing is
+/// returned. Otherwise `id` is parsed as a `u64` and matched against
+/// `listing_id`. This lets both canonical ULID paths
+/// (`/api/marketplace/listings/<ulid>`) and legacy numeric paths
+/// (`/api/marketplace/listings/42`) work without a migration.
+fn resolve_listing<'a>(listings: &'a [IndexedListing], id: &str) -> Option<&'a IndexedListing> {
+    // ULID-first: exact match on agent_id.
+    if let Some(l) = listings.iter().find(|l| l.agent_id == id) {
+        return Some(l);
+    }
+    // Integer fallback: parse and match listing_id.
+    let numeric_id: u64 = id.parse().ok()?;
+    listings.iter().find(|l| l.listing_id == numeric_id)
+}
+
 pub async fn get_listing(
     State(state): State<AppState>,
-    Path(id): Path<u64>,
+    Path(id): Path<String>,
 ) -> Result<Json<IndexedListing>, DashboardError> {
     let snap = state.marketplace_snapshot.read().await;
-    snap.listings
-        .iter()
-        .find(|l| l.listing_id == id)
+    resolve_listing(&snap.listings, &id)
         .cloned()
         .map(Json)
         .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))
@@ -388,23 +403,22 @@ async fn fetch_sealed_ciphertext(listing: &IndexedListing) -> Result<String, Das
 ///   decrypt via Lit; NO plaintext manifest is returned.
 pub async fn get_bundle(
     State(state): State<AppState>,
-    Path(id): Path<u64>,
+    Path(id): Path<String>,
 ) -> Result<Json<BundleResponse>, DashboardError> {
     let listing = {
         let snap = state.marketplace_snapshot.read().await;
-        snap.listings
-            .iter()
-            .find(|l| l.listing_id == id)
+        resolve_listing(&snap.listings, &id)
             .cloned()
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
     };
 
+    let listing_id = listing.listing_id;
     if listing.tier == 1 {
         // Sealed: return the ciphertext + the on-chain plaintext content_hash;
         // never the manifest. The browser decrypts and self-verifies.
         let ciphertext = fetch_sealed_ciphertext(&listing).await?;
         return Ok(Json(BundleResponse::Sealed(SealedBundleOut {
-            listing_id: id,
+            listing_id,
             content_uri: listing.content_uri,
             encrypted: true,
             ciphertext,
@@ -414,7 +428,7 @@ pub async fn get_bundle(
 
     let manifest = fetch_verified_manifest(&state, &listing).await?;
     Ok(Json(BundleResponse::Open(BundleOut {
-        listing_id: id,
+        listing_id,
         content_uri: listing.content_uri,
         verified: true,
         manifest,
@@ -460,16 +474,15 @@ fn attestation_out(a: &IEvalAttestationRegistry::Attestation) -> AttestationOut 
 /// `XVN_EVAL_ATTESTATION` is dormant; 200 `{items: […]}`.
 pub async fn get_attestations(
     State(state): State<AppState>,
-    Path(id): Path<u64>,
+    Path(id): Path<String>,
 ) -> Result<Json<AttestationsOut>, DashboardError> {
-    // a. Listing must be indexed (404 unknown).
-    {
+    // a. Listing must be indexed (404 unknown); resolve ULID-first, then int.
+    let listing_id = {
         let snap = state.marketplace_snapshot.read().await;
-        snap.listings
-            .iter()
-            .find(|l| l.listing_id == id)
-            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
-    }
+        resolve_listing(&snap.listings, &id)
+            .map(|l| l.listing_id)
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
+    };
 
     // b. Same read-only provider config as the indexer (startup-resolved;
     //    see `chain_config`); dormant → 503.
@@ -496,7 +509,7 @@ pub async fn get_attestations(
     let attestations = with_chain_timeout(
         timeout,
         IEvalAttestationRegistry::new(registry_addr, &provider)
-            .getAttestations(U256::from(id))
+            .getAttestations(U256::from(listing_id))
             .call(),
     )
     .await?
@@ -914,6 +927,8 @@ mod tests {
             attestation_count: 0,
             units_sold: 0,
             earned_usdc: 0.0,
+            return30d_pct: None,
+            sharpe: None,
         }
     }
 
@@ -1068,5 +1083,79 @@ mod tests {
         assert!(!is_eth_address("0x123")); // too short
         assert!(!is_eth_address(&format!("1x{}", "a".repeat(40)))); // bad prefix
         assert!(!is_eth_address(&format!("0x{}g", "a".repeat(39)))); // non-hex
+    }
+
+    // -- resolve_listing (Part A: ULID-first, int-fallback) -------------------
+
+    fn listing_with_agent(listing_id: u64, agent_id: &str) -> IndexedListing {
+        IndexedListing {
+            listing_id,
+            agent_nft_id: listing_id.to_string(),
+            agent_id: agent_id.to_string(),
+            seller: ALICE.to_string(),
+            content_hash: "ab".repeat(32),
+            content_uri: format!("xvn://strategy/{agent_id}"),
+            tier: 0,
+            price_usdc: 49.0,
+            transferable_license: false,
+            revoked: false,
+            gen_art_seed: format!("{agent_id}:{}", "ab".repeat(32)),
+            name: format!("Strategy {listing_id}"),
+            symmetry: "Radial".into(),
+            palette: "Ember".into(),
+            attestation_count: 0,
+            units_sold: 0,
+            earned_usdc: 0.0,
+            return30d_pct: None,
+            sharpe: None,
+        }
+    }
+
+    #[test]
+    fn resolve_listing_by_agent_id_ulid() {
+        let l = listing_with_agent(1, "01HXAGENT000000000000000000");
+        let listings = vec![l];
+        let found = resolve_listing(&listings, "01HXAGENT000000000000000000");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().listing_id, 1);
+    }
+
+    #[test]
+    fn resolve_listing_by_numeric_listing_id() {
+        let l = listing_with_agent(42, "01HXAGENT000000000000000000");
+        let listings = vec![l];
+        let found = resolve_listing(&listings, "42");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().listing_id, 42);
+    }
+
+    #[test]
+    fn resolve_listing_ulid_wins_over_numeric_when_both_possible() {
+        // Agent_id looks like a ULID; another listing has listing_id 1.
+        let l1 = listing_with_agent(1, "not-this-one");
+        let l2 = listing_with_agent(2, "01HXAGENT000000000000000000");
+        let listings = vec![l1, l2];
+        // A ULID that matches agent_id on l2 — ULID-first must win.
+        let found = resolve_listing(&listings, "01HXAGENT000000000000000000");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().listing_id, 2);
+    }
+
+    #[test]
+    fn resolve_listing_returns_none_for_unknown() {
+        let l = listing_with_agent(1, "01HXAGENT000000000000000000");
+        let listings = vec![l];
+        assert!(resolve_listing(&listings, "99").is_none());
+        assert!(resolve_listing(&listings, "no-such-ulid").is_none());
+    }
+
+    #[test]
+    fn resolve_listing_empty_agent_id_numeric_fallback() {
+        // Listing with empty agent_id — should still resolve by numeric id.
+        let l = listing_with_agent(7, "");
+        let listings = vec![l];
+        let found = resolve_listing(&listings, "7");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().listing_id, 7);
     }
 }

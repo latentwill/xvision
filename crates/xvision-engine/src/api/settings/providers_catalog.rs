@@ -193,7 +193,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"

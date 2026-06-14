@@ -30,7 +30,19 @@ export type SpanKind =
   | "agent.run"
   | "agent.plan"
   | "agent.decision"
+  // WS-17 span taxonomy: the model invocation that produces the trade
+  // decision (`decision.model`) and its captured chain-of-thought
+  // (`decision.reasoning`, nested under `decision.model`). These replace
+  // the generic `model.call` / `model.reasoning` on the trading path —
+  // the slot ROLES (trader/regime/filter) were retired, so it's a single
+  // decision-model call now.
+  | "decision.model"
+  | "decision.reasoning"
+  // Legacy wire values, retained so historical exports / older recorded
+  // rows still type-check. The engine no longer emits these (the variant
+  // was renamed to DecisionModel/DecisionReasoning).
   | "model.call"
+  | "model.reasoning"
   | "tool.call"
   | "tool.validate_input"
   | "tool.validate_output"
@@ -44,7 +56,35 @@ export type SpanKind =
   | "skill.invoke"
   | "broker.call"
   | "recovery.attempt"
-  | "state.transition";
+  | "state.transition"
+  // WS-11a OPTI trace scope: the autooptimizer *cycle* projected onto the
+  // trace-dock surface. These rows are NOT agent-run spans — the OPTI scope
+  // reducer (`features/autooptimizer/opti-trace-reducer.ts`) synthesizes them
+  // from the existing `CycleProgressEvent` SSE stream so the optimizer cycle
+  // reads as a live trace (operator-labeled rows) in the dock. They share the
+  // `RunSpan` shape + `SpanTree` rendering, hence they live on `SpanKind`.
+  //   opti.cycle      — the cycle root (CycleStarted → CycleFinished)
+  //   opti.parent     — the selected parent strategy for the cycle
+  //   opti.experiment — one proposed candidate (MutationProposed)
+  //   opti.gate       — a candidate's gate verdict (kept/suspect/rejected)
+  //   opti.honesty    — the per-cycle honesty check (null-result canary)
+  //   opti.judge      — a reviewer finding on a candidate
+  //   opti.flywheel   — the DSPy flywheel compile step
+  | "opti.cycle"
+  | "opti.parent"
+  | "opti.experiment"
+  | "opti.gate"
+  | "opti.honesty"
+  | "opti.judge"
+  | "opti.flywheel"
+  // WS-8 taxonomy convergence: a synthetic span kind for the bar-level engine
+  // lifecycle signals written to the `events` table (and streamed live as
+  // `engine_event` SSE frames). These were dropped from the trace before WS-8
+  // — projecting each `EngineEvent` onto a `RunSpan` with this kind lets them
+  // flow through the existing tree / inspector / filter machinery. The actual
+  // `EngineEvent.kind` (e.g. `risk_veto`, `order_signed`) is carried in
+  // `attributes.engine_event_kind`; the family/label/color resolve off that.
+  | "engine.event";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are
@@ -166,6 +206,19 @@ export type ToolCall = {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+};
+
+export type AgentRunAccounting = {
+  source: "agent_model_calls" | "eval_model_calls" | "eval_actuals" | "none";
+  eval_run_id: string | null;
+  eval_mode: "backtest" | "live" | string | null;
+  eval_status: string | null;
+  eval_actual_input_tokens: number | null;
+  eval_actual_output_tokens: number | null;
+  eval_model_calls: number;
+  eval_model_call_input_tokens: number | null;
+  eval_model_call_output_tokens: number | null;
+  eval_model_call_cost_usd: number | null;
 };
 
 export type MemoryRecallItem = {
@@ -316,6 +369,12 @@ export type AgentRunSummary = {
    * flips it via the [Flatten positions] inline action.
    */
   flatten_requested?: boolean;
+  /**
+   * v2 export accounting provenance. Present when a backend
+   * `xvn.agent_run.v2` export is normalized; absent for older detail
+   * envelopes and v1 exports.
+   */
+  accounting?: AgentRunAccounting | null;
 };
 
 export type AgentRunDetail = {
@@ -460,6 +519,23 @@ export type StreamLaggedData = { dropped: number };
 // Loose payloads for events we surface but don't yet render against.
 // Shapes match `crates/xvision-observability/src/events.rs` and may
 // gain typed fields as consumers need them.
+
+/**
+ * Mirrors `crates/xvision-observability/src/events.rs` `EngineEvent` struct
+ * (serde-serialized field names). The `kind` string carries the producer-
+ * defined event kind (e.g. `decision_started`, `guardrail_fired`); `payload_json`
+ * is an optional opaque JSON blob whose shape is per-kind. `span_id` is only
+ * present when the event is scoped to a specific span; `run_id` is always set.
+ * `created_at` is an ISO-8601 UTC timestamp string.
+ */
+export type StreamEngineEventData = {
+  run_id: string;
+  span_id?: string | null;
+  kind: string;
+  payload_json?: string | null;
+  created_at: string;
+};
+
 export type StreamCheckpointWrittenData = { run_id: string; path?: string | null };
 export type StreamSupervisorNoteData = { run_id: string; message: string };
 export type StreamArtifactWrittenData = { run_id: string; path?: string | null };
@@ -490,6 +566,7 @@ export type AgentRunStreamEvent =
   | { event: "tool_call_cancelled"; data: StreamToolCallCancelledData }
   | { event: "broker_call_started"; data: StreamBrokerCallStartedData }
   | { event: "broker_call_finished"; data: StreamBrokerCallFinishedData }
+  | { event: "engine_event"; data: StreamEngineEventData }
   | { event: "assistant_text_delta"; data: StreamAssistantTextDeltaData }
   | { event: "sidecar_error"; data: StreamSidecarErrorData }
   | { event: "checkpoint_written"; data: StreamCheckpointWrittenData }

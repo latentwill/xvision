@@ -16,8 +16,11 @@
 //   - below the data floor (no live deployments, or every field null) the strip
 //     renders an explicit "insufficient data — no live capital deployed yet"
 //     state, NOT a calm green zero grid;
-//   - the deferred risk-veto chip renders "—" (risk_veto_count is null until
-//     last-visit tracking lands, CT5 §9.3 / Wave 5), never 0.
+//   - the risk-veto chip (bead s78.2) renders the REAL summed count of recorded
+//     risk-veto supervisor notes since the operator's last visit. It is "—" when
+//     the count is null (no `?since` boundary → can't count since an unknown
+//     time), and the number INCLUDING a real `0` when known ("0 vetoes since you
+//     were last here" is an honest fact). Never a fabricated 0.
 // The daily-loss BUFFER is color-coded (healthy → warn → danger) via theme
 // tokens as it shrinks toward the enforced kill line.
 //
@@ -117,7 +120,10 @@ function Metric({
 }
 
 export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
-  const tone = bufferTone(agg.tightestDailyLossBufferUsd, agg.deployedCapitalUsd);
+  const tone = bufferTone(
+    agg.tightestDailyLossBufferUsd,
+    agg.tightestDailyLossBudgetUsd,
+  );
 
   return (
     <section data-testid="capital-risk-strip" aria-label="Capital risk">
@@ -175,18 +181,27 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
               title="Tightest headroom before the enforced daily-loss kill fires"
             />
 
-            {/* Risk vetoes since last visit — DEFERRED (null until last-visit
-                tracking lands, CT5 §9.3). Renders "—", never 0. */}
+            {/* bead s78.2: risk vetoes since last visit — a REAL count of
+                recorded risk-veto supervisor notes since the operator's last
+                visit. "—" when null (no boundary → can't count since an unknown
+                time); the number INCLUDING a real 0 when known. Never a
+                fabricated 0. */}
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] uppercase tracking-wide text-text-3">
                 Risk vetoes
               </span>
               <span
                 data-testid="capital-risk-veto"
-                className="font-mono tabular-nums text-[15px] font-semibold text-text-2"
-                title="Risk vetoes since last visit (not yet tracked)"
+                className={`font-mono tabular-nums text-[15px] font-semibold ${
+                  agg.riskVetoCount == null ? "text-text-2" : "text-text"
+                }`}
+                title={
+                  agg.riskVetoCount == null
+                    ? "Risk vetoes since last visit (no last-visit boundary yet)"
+                    : "Risk vetoes recorded since your last visit"
+                }
               >
-                {DASH}
+                {agg.riskVetoCount == null ? DASH : String(agg.riskVetoCount)}
               </span>
             </div>
 

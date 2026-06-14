@@ -11,7 +11,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use xvision_core::config::ProviderKind;
+use xvision_core::config::{AgentRuntime, ProviderKind};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::memory;
 use xvision_engine::autooptimizer::{
@@ -115,6 +115,9 @@ fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
         NoCandidate {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        CandidateError {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
         MutationGated {
@@ -403,6 +406,28 @@ pub async fn start_cycle(
     } else {
         None
     };
+    // WU-6: the Cline sidecar is mandatory for the trader (LlmDispatch retired).
+    // Fail the cycle launch with an actionable error if the sidecar cannot be
+    // spawned — never fall back silently.
+    let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
+        &api_ctx,
+        &cfg.mutator.provider, // TODO: prefer the strategy's resolved trader provider (select_eval_provider parity)
+        Arc::new(ToolRegistry::default_with_builtins()),
+    )
+    .await
+    .map_err(|e| DashboardError::Validation {
+        field: "sidecar".to_string(),
+        msg: format!(
+            "optimizer requires the Cline sidecar (WU-6: LlmDispatch was retired): {e} \
+             — ensure XVN_AGENTD_BIN is set and the sidecar is provisioned"
+        ),
+    })?
+    .ok_or_else(|| DashboardError::Validation {
+        field: "sidecar".to_string(),
+        msg: "optimizer requires the Cline sidecar (WU-6): XVN_AGENTD_BIN must be set \
+              and the sidecar must be provisioned"
+            .to_string(),
+    })?;
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -411,7 +436,8 @@ pub async fn start_cycle(
             api_ctx,
             backtest_dispatch,
             Arc::new(ToolRegistry::default_with_builtins()),
-        );
+        )
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline_ctx));
         // F28: enforce the operator-set budget ceiling. Once the metered
         // paper-test cost reaches `budget_cap`, the cycle stops before launching
         // another backtest (no cap → f64::INFINITY). This is the guard against the
@@ -759,6 +785,7 @@ pub(super) fn build_cycle_config(
         // The dashboard cycle launcher does not (yet) surface a per-cycle
         // output-token cap; preserve prior behaviour (no cycle-level cap).
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     }
 }
 
@@ -1169,8 +1196,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+            }
         });
         serde_json::from_value(v).expect("fixture strategy must deserialise")
     }

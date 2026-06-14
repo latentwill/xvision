@@ -132,8 +132,8 @@ pub struct CreateStrategyReq {
     /// Human-readable name (e.g., `btc-momentum-v1`). Post 2026-05-21
     /// the request no longer takes a `template` discriminator —
     /// `xvn_create_strategy` produces a blank draft and the agent
-    /// (`xvn_create_strategy_agent`) and slot/mechanical-param tool
-    /// calls populate the draft. Unknown fields (including legacy
+    /// (`xvn_create_strategy_agent`) and slot tool calls populate the
+    /// draft. Unknown fields (including legacy
     /// `template` payloads from pre-migration callers) are silently
     /// ignored on the MCP boundary so the wizard tool-use loop
     /// doesn't break mid-conversation.
@@ -152,7 +152,7 @@ pub struct StrategyId {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateSlotReq {
     pub id: String,
-    /// Slot to update: `regime` | `intern` | `trader`.
+    /// Slot to update: `regime` | `trader`.
     pub slot: String,
     /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
     #[serde(default)]
@@ -166,15 +166,6 @@ pub struct UpdateSlotReq {
     /// Tools the slot is allowed to call.
     #[serde(default)]
     pub allowed_tools: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SetMechanicalParamReq {
-    pub id: String,
-    /// Key inside `Strategy.mechanical_params` (template-specific).
-    pub key: String,
-    /// New value (any JSON type the template accepts).
-    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -602,7 +593,6 @@ impl XvisionTools {
             "xvn_rsi",
             "xvn_scenario_inspect_card",
             "xvn_scenarios_select",
-            "xvn_set_mechanical_param",
             "xvn_set_risk_config",
             "xvn_sma",
             "xvn_strategy_create_atomic",
@@ -780,11 +770,10 @@ impl XvisionTools {
     ///
     /// Post-2026-05-21 the request no longer takes a `template`
     /// discriminator (the strategy template_registry was removed).
-    /// Callers fill in agents / slots / mechanical params via the
-    /// follow-up `xvn_create_strategy_agent`, `xvn_update_slot`,
-    /// `xvn_set_mechanical_param`, … verbs.
+    /// Callers fill in agents / slots via the follow-up
+    /// `xvn_create_strategy_agent`, `xvn_update_slot`, … verbs.
     #[tool(
-        description = "Create a new blank strategy draft. Persists the strategy and returns { id } (ULID). Follow up with xvn_create_strategy_agent / xvn_update_slot / xvn_set_mechanical_param to populate it."
+        description = "Create a new blank strategy draft. Persists the strategy and returns { id } (ULID). Follow up with xvn_create_strategy_agent / xvn_update_slot to populate it."
     )]
     async fn xvn_create_strategy(
         &self,
@@ -838,30 +827,6 @@ impl XvisionTools {
         .await
         .map_err(authoring_err)?;
         json_or_err(&out)
-    }
-
-    /// Set a key inside `Strategy.mechanical_params`. Templates document
-    /// which keys they accept. Returns `{ id, key }`.
-    #[tool(
-        description = "Set a key inside Strategy.mechanical_params. Templates document which keys they accept. Returns { id, key }."
-    )]
-    async fn xvn_set_mechanical_param(
-        &self,
-        Parameters(req): Parameters<SetMechanicalParamReq>,
-    ) -> Result<String, rmcp::ErrorData> {
-        let id = req.id.clone();
-        let key = req.key.clone();
-        authoring::set_mechanical_param(
-            &self.store(),
-            authoring::SetMechanicalParamReq {
-                id: req.id,
-                key: req.key,
-                value: req.value,
-            },
-        )
-        .await
-        .map_err(authoring_err)?;
-        json_or_err(&serde_json::json!({ "id": id, "key": key }))
     }
 
     /// Set the risk config on a strategy. Provide either `preset`
@@ -937,7 +902,12 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalListReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let status = req.status.as_deref().map(parse_status_for_mcp).transpose()?;
+        let status = req
+            .status
+            .as_deref()
+            .map(parse_status_for_mcp)
+            .transpose()?
+            .map(|s| vec![s]);
         let summaries = api_eval::list_summaries(
             &ctx,
             ListRunsRequest {
@@ -1401,10 +1371,8 @@ impl XvisionTools {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
@@ -1412,6 +1380,7 @@ impl XvisionTools {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         // 3. Validate shape.
@@ -2900,35 +2869,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("unknown slot"));
-    }
-
-    #[tokio::test]
-    async fn set_mechanical_param_round_trips() {
-        let (tools, _td) = tools_with_tmp();
-        let s = tools
-            .xvn_create_strategy(Parameters(CreateStrategyReq {
-                name: "x".into(),
-                creator: None,
-            }))
-            .await
-            .unwrap();
-        let id = id_of(&s);
-
-        tools
-            .xvn_set_mechanical_param(Parameters(SetMechanicalParamReq {
-                id: id.clone(),
-                key: "ema_fast".into(),
-                value: serde_json::json!(8),
-            }))
-            .await
-            .unwrap();
-
-        let g = tools
-            .xvn_get_strategy(Parameters(StrategyId { id }))
-            .await
-            .unwrap();
-        let strategy = parsed(&g);
-        assert_eq!(strategy["mechanical_params"]["ema_fast"], 8);
     }
 
     #[tokio::test]

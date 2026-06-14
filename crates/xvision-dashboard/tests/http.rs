@@ -160,16 +160,15 @@ async fn strategies_list_returns_seeded_strategy() {
             agents: Vec::new(),
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             decision_mode: Default::default(),
             mechanistic_config: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();
@@ -894,7 +893,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1313,16 +1312,15 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             agents: Vec::new(),
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             decision_mode: Default::default(),
             mechanistic_config: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();

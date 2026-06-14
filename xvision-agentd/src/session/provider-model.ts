@@ -10,12 +10,16 @@
  *      stream() method can be wrapped by model-wrapper.ts.
  *
  * Provider ID mapping:
- *   @cline/llms@0.0.41 does not register "openai-compatible" as a gateway
- *   provider id. It is a provider family / factory target; concrete registered
- *   ids include "openrouter", "deepseek", "groq", "litellm", etc. The xvision
- *   eval path historically sent "openai-compatible" / "openai-compat" for the
- *   whole OpenAI-compatible family, so this module normalizes those legacy ids
- *   to a concrete registered gateway provider before creating the AgentModel.
+ *   @cline/llms@0.0.41 did not register "openai-compatible" as a gateway
+ *   provider id. @cline/llms@0.0.47+ DOES register it (defaulting to
+ *   https://api.openai.com/v1 when no base_url is supplied). xvision's callers
+ *   of openai-compatible are self-hosted endpoints (Ollama, vLLM, proxies) and
+ *   MUST supply an explicit base_url — silently routing to api.openai.com would
+ *   be a regression. resolveGatewayProviderId therefore intercepts the
+ *   "openai-compatible" / "openai-compat" alias BEFORE the knownProviders
+ *   shortcut, enforcing base_url presence and routing to a concrete registered
+ *   id (openrouter, deepseek, litellm, …) based on the base_url. Concrete
+ *   registered ids include "openrouter", "deepseek", "groq", "litellm", etc.
  *
  * A fresh gateway is created per Agent construction — there is no shared state.
  * Each run has its own credentials/baseUrl and must not share gateway config
@@ -44,6 +48,16 @@ export interface BuildProviderModelOptions {
   apiKey?: string
   /** Custom base URL — used for openai-compatible and self-hosted endpoints. */
   baseUrl?: string
+  /**
+   * Reasoning options forwarded to the gateway as `GatewayModelHandleOptions.reasoning`.
+   * Supports CoT models (e.g. deepseek-r1 via Ollama) where setting effort to "medium"
+   * prevents reasoning tokens from starving the JSON answer.
+   */
+  reasoning?: {
+    enabled?: boolean
+    effort?: "low" | "medium" | "high"
+    budgetTokens?: number
+  }
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -87,11 +101,22 @@ export function resolveGatewayProviderId(
   knownProviders: readonly string[],
 ): string {
   const normalizedProviderId = Llms.normalizeProviderId(providerId)
-  if (knownProviders.includes(normalizedProviderId)) return normalizedProviderId
 
+  // IMPORTANT: check OPENAI_COMPAT_ALIASES BEFORE the knownProviders shortcut.
+  //
+  // @cline/llms ≥ 0.0.47 registers "openai-compatible" as a concrete gateway
+  // provider id (defaulting to https://api.openai.com/v1 when no base_url is
+  // supplied). xvision's openai-compatible callers are self-hosted endpoints
+  // (Ollama, vLLM, custom proxies) — each run requires its OWN base_url.
+  // Letting the gateway silently default to api.openai.com would be a silent
+  // misdirection regression, so we intercept the alias family FIRST and
+  // require an explicit base_url, regardless of whether the underlying
+  // gateway happens to have the id registered.
   if (OPENAI_COMPAT_ALIASES.has(normalizedProviderId)) {
     return providerIdForOpenAiCompatibleBaseUrl(baseUrl, knownProviders)
   }
+
+  if (knownProviders.includes(normalizedProviderId)) return normalizedProviderId
 
   // Backward-compatible rescue path for any older caller that sends an
   // operator-chosen OpenAI-compatible provider name alongside a base_url.
@@ -145,9 +170,15 @@ export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel 
 
   // Build the AgentModel. The gateway returns a handle object with a stream()
   // method — structurally compatible with our AgentModel interface.
+  // The optional second arg forwards reasoning options (effort, budgetTokens)
+  // to the gateway for CoT models that support native reasoning_effort (e.g.
+  // deepseek-r1 via Ollama).
   let model: AgentModel
   try {
-    model = gateway.createAgentModel({ providerId, modelId }) as AgentModel
+    model = gateway.createAgentModel(
+      { providerId, modelId },
+      opts.reasoning ? { reasoning: opts.reasoning } : undefined,
+    ) as AgentModel
   } catch (err) {
     throw new Error(
       `Failed to construct AgentModel for provider "${providerId}" model "${modelId}": ${

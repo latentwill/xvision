@@ -1,6 +1,6 @@
 // src/features/marketplace/routes/SellRoute.tsx
 import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { ApiError } from "@/api/client";
 import { patchStrategyMetadata } from "@/api/strategies";
@@ -36,7 +36,7 @@ export function SellRoute() {
   );
 
   const handleDraftUpdate = useCallback(
-    (patch: Partial<Pick<PublishDraft, "tier" | "priceUsdc" | "acceptedPayers">>) => {
+    (patch: Partial<Pick<PublishDraft, "name" | "tier" | "priceUsdc" | "acceptedPayers">>) => {
       setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
     },
     [],
@@ -82,6 +82,11 @@ export function SellRoute() {
 
   return (
     <div className="px-7 py-8 max-w-2xl" data-page="sell">
+      <div className="mb-4 text-[13px]">
+        <Link to="/marketplace" className="text-text-3 hover:text-text hover:underline underline-offset-2">
+          ← Back to Marketplace
+        </Link>
+      </div>
       <h1 className="text-[20px] font-sans font-semibold tracking-tight mb-1">
         List your strategy
       </h1>

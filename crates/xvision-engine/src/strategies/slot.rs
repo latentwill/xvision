@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LLMSlot {
-    pub role: String, // "regime", "intern", "trader"
+    pub role: String, // "regime", "trader"
     /// Informational attestation: the model id this slot was last
     /// published / tested with (e.g. "anthropic.claude-sonnet-4.6").
     /// **Provenance only — never the operational binding.** The operator's

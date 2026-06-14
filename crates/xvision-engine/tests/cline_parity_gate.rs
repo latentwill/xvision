@@ -174,6 +174,8 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
             trajectory_mode: TrajectoryMode::Record,
             record_slot_role: None,
             obs: None,
+            model_call_span_id: None,
+            reasoning_effort: None,
         })
         .await
         .expect("cline-record must produce an LlmResponse");

@@ -725,8 +725,8 @@ async fn execute_slot_skips_observation_write_without_source_window() {
 
 /// Build a minimal `Strategy` whose `agents` slot is populated so
 /// `run_pipeline` takes the agent-pipeline branch (the one this PR
-/// wired the recorder into) rather than the legacy regime/intern/
-/// trader branch. The legacy slots are cleared explicitly so the
+/// wired the recorder into) rather than the legacy regime/trader
+/// branch. The legacy slots are cleared explicitly so the
 /// agent-pipeline path is the only path that fires.
 fn pipeline_fixture_strategy() -> Strategy {
     Strategy {
@@ -752,16 +752,15 @@ fn pipeline_fixture_strategy() -> Strategy {
         agents: Vec::new(),
         pipeline: PipelineDef::sequential(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -827,8 +826,11 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         noop_skip: true,
     }];
 
+    // Use "long_open" not "hold" — flat/hold are skipped by the memory write
+    // path (U7: skip non-state-changing decisions). The test verifies the
+    // recorder path, so it must use an action that produces an Observation.
     let dispatch = Arc::new(MockDispatch::echo(
-        r#"{"action":"hold","conviction":0.0,"justification":"PIPELINE_THREADED_DECISION"}"#,
+        r#"{"action":"long_open","conviction":0.6,"justification":"PIPELINE_THREADED_DECISION"}"#,
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -855,6 +857,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -953,8 +956,11 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
     };
+    // Use "long_open" not "hold" — flat/hold are skipped by the memory write
+    // path (U7: skip non-state-changing decisions). The test verifies both
+    // the MemoryWrite and MemoryRecall events, so it must trigger a write.
     let dispatch = Arc::new(CapturingDispatch::new(
-        r#"{"action":"hold","conviction":0.1,"justification":"prov"}"#,
+        r#"{"action":"long_open","conviction":0.6,"justification":"prov"}"#,
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
@@ -1047,5 +1053,8 @@ async fn execute_slot_emits_memory_recall_event_with_decision_id() {
     assert_eq!(write.decision_id, 7);
     assert_eq!(write.namespace, "agent:agent-prov");
     assert!(!write.memory_item_id.is_empty());
-    assert!(write.text_preview.contains("hold"));
+    // The preview is derived from the EpisodicObservation JSON; check that
+    // it carries the action from the mock response (updated from "hold" to
+    // "long_open" when the U7 flat/hold skip was added — holds are skipped).
+    assert!(write.text_preview.contains("long_open"));
 }

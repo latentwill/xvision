@@ -255,7 +255,8 @@ describe("CreatorRoute with a real wallet address", () => {
     const card = await screen.findByTestId("onchain-creator-listing");
     expect(card).toHaveTextContent("BTC Dip Buyer");
     expect(card).toHaveTextContent("49 USDC");
-    expect(card).toHaveAttribute("href", "/marketplace/lineage/3");
+    // Part A (.7): href uses agent_id (ULID) when non-empty.
+    expect(card).toHaveAttribute("href", "/marketplace/lineage/01HSTRAT");
     // revoked listing is not shown
     expect(screen.queryByText("Dead Listing")).not.toBeInTheDocument();
   });

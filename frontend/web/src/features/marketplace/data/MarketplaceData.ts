@@ -6,6 +6,7 @@ import { SLICES } from "./fixtures/slices";
 import { RECEIPTS } from "./fixtures/receipts";
 import { LISTABLE_STRATEGIES, buildPublishDraft } from "./fixtures/seller";
 import { VIEWER } from "./fixtures/viewer";
+import { fetchListableStrategies, fetchPublishDraft } from "./listable";
 import { publishListing } from "./publish";
 import type {
   CreatorProfile, FilterState, Id, ListableStrategy, ListingDetail, ListingRow,
@@ -101,10 +102,25 @@ export class FixtureMarketplaceData implements MarketplaceData {
     return VIEWER;
   }
   async listListableStrategies() {
-    return LISTABLE_STRATEGIES;
+    // Listing your OWN strategies is operator-local — always served by the real
+    // `/api/strategies`, never placeholder rows, even when the on-chain
+    // marketplace indexer is inactive (so the sell picker is never gated behind
+    // it). Falls back to the offline demo fixtures only when the strategies API
+    // is genuinely unreachable (storybook / unit tests with no backend).
+    try {
+      return await fetchListableStrategies();
+    } catch {
+      return LISTABLE_STRATEGIES;
+    }
   }
   async createPublishDraft(strategyId: string) {
-    return buildPublishDraft(strategyId);
+    // Mirror listListableStrategies: build the draft from the operator's real
+    // stored strategy, falling back to the fixture draft only when offline.
+    try {
+      return await fetchPublishDraft(strategyId);
+    } catch {
+      return buildPublishDraft(strategyId);
+    }
   }
   async submitListing(d: PublishDraft): Promise<TxRef> {
     return publishListing(d);

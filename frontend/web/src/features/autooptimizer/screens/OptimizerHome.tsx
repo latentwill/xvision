@@ -23,6 +23,7 @@ import {
   type LineageNode,
 } from "../api";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
+import { OptiCapsuleSlot } from "../OptiCapsuleSlot";
 import { formatRelativeTime, formatUntil } from "../utils/time";
 
 /** Distinct cycles that still hold an active (kept) node. */
@@ -36,19 +37,29 @@ function countActiveLineages(nodes: LineageNode[]): number {
 
 // ─── Session scope chip (?session=) ───────────────────────────────────────────
 
-function SessionScopeChip({ sessionId }: { sessionId: string }) {
+function SessionScopeBanner({ sessionId }: { sessionId: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-panel px-3 py-1 font-mono text-[11.5px] text-text-2">
-        Session {sessionId}
-        <Link
-          to="/optimizer"
-          aria-label="Clear session filter"
-          className="text-text-3 hover:text-text"
-        >
-          ×
-        </Link>
-      </span>
+    <div
+      role="status"
+      aria-label={`Viewing session ${sessionId}`}
+      className="rounded-md border border-info/30 bg-info/[0.06] px-4 py-3 flex items-start justify-between gap-4"
+    >
+      <div>
+        <p className="m-0 text-[12px] font-semibold text-info uppercase tracking-wide">
+          Session view
+        </p>
+        <p className="m-0 mt-0.5 font-mono text-[12px] text-text-2">
+          Viewing session{" "}
+          <span className="text-text select-all">{sessionId}</span>
+        </p>
+      </div>
+      <Link
+        to="/optimizer"
+        aria-label="Exit session view"
+        className="shrink-0 text-[12px] text-text-3 hover:text-text transition-colors"
+      >
+        Exit session view →
+      </Link>
     </div>
   );
 }
@@ -109,7 +120,11 @@ export function OptimizerHome() {
   // The stream-derived cycle id is empty after a page reload mid-run (the SSE
   // buffer starts fresh); the status poll's active_cycle_id is the fallback so
   // Pause/Resume/Cancel stay wired.
-  const { activeCycleId: streamCycleId } = useCycleEventStream();
+  const {
+    activeCycleId: streamCycleId,
+    events: cycleEvents,
+    isRunning: streamRunning,
+  } = useCycleEventStream();
   const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
@@ -182,6 +197,15 @@ export function OptimizerHome() {
   return (
     <>
       <Topbar title="Optimizer" />
+      {/* WS-11a: the OPTI trace capsule — the live autooptimizer cycle rendered
+          on the trace-dock surface. Fed by THIS screen's single cycle SSE
+          subscription (no second EventSource). Fixed-position; renders only
+          while a cycle is in flight / freshly finished. */}
+      <OptiCapsuleSlot
+        events={cycleEvents}
+        activeCycleId={activeCycleId}
+        isRunning={streamRunning}
+      />
       <div className="space-y-5">
         <EditorialHeadline headline={headline} digest={digest}>
           {action}
@@ -196,7 +220,7 @@ export function OptimizerHome() {
           </div>
         )}
 
-        {sessionId && <SessionScopeChip sessionId={sessionId} />}
+        {sessionId && <SessionScopeBanner sessionId={sessionId} />}
 
         {/* Inline launch panel — the launch form extracted from LiveCycleView */}
         {launcherOpen && !isActive && <LaunchPanel />}

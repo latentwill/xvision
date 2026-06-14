@@ -2097,34 +2097,12 @@
     },
     {
       "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "intern"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "help",
-        "intern",
-        "brief"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "intern",
-        "preview"
+        "init"
       ]
     },
     {
@@ -2363,16 +2341,6 @@
       "path": [
         "help",
         "metrics"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": true,
-      "path": [
-        "help",
-        "migrate"
       ]
     },
     {
@@ -2738,16 +2706,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "run-setup"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2917,16 +2875,6 @@
       "mutates": false,
       "path": [
         "help",
-        "show-briefing"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
         "show-decision"
       ]
     },
@@ -2997,7 +2945,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "help",
         "strategies",
@@ -3100,6 +3048,17 @@
         "help",
         "strategy",
         "filter-catalog"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "import-pine"
       ]
     },
     {
@@ -3297,38 +3256,6 @@
         "help",
         "tool-policy",
         "show"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "trader"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "trader",
-        "preview"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "trader",
-        "run"
       ]
     },
     {
@@ -3622,84 +3549,15 @@
     },
     {
       "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [
-        "--help"
-      ],
-      "mutates": false,
-      "path": [
-        "intern"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
         "--help",
-        "--intern",
-        "--model",
-        "--snapshot"
+        "--xvn-home"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
-        "intern",
-        "brief"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "intern",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "intern",
-        "help",
-        "brief"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "intern",
-        "help",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "intern",
-        "help",
-        "preview"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--snapshot"
-      ],
-      "mutates": false,
-      "path": [
-        "intern",
-        "preview"
+        "init"
       ]
     },
     {
@@ -4264,19 +4122,6 @@
       "mutates": false,
       "path": [
         "metrics"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--dry-run",
-        "--help",
-        "--xvn-home"
-      ],
-      "mutates": true,
-      "path": [
-        "migrate"
       ]
     },
     {
@@ -4905,6 +4750,7 @@
         "--experiments-per-cycle",
         "--help",
         "--ipc-socket",
+        "--max-consecutive-errors",
         "--max-cycles",
         "--max-output-tokens",
         "--mock",
@@ -5334,20 +5180,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--intern",
-        "--model",
-        "--snapshot"
-      ],
-      "mutates": false,
-      "path": [
-        "run-setup"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help",
@@ -5764,19 +5596,6 @@
       ],
       "mutates": false,
       "path": [
-        "show-briefing"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--cycle-id",
-        "--db",
-        "--help"
-      ],
-      "mutates": false,
-      "path": [
         "show-decision"
       ]
     },
@@ -5919,7 +5738,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "help",
@@ -5950,7 +5769,7 @@
         "--help",
         "--xvn-home"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "init"
@@ -6198,6 +6017,17 @@
       "path": [
         "strategy",
         "help",
+        "import-pine"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
         "leaderboard"
       ]
     },
@@ -6331,6 +6161,19 @@
         "strategy",
         "help",
         "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "import-pine"
       ]
     },
     {
@@ -6663,92 +6506,6 @@
       "path": [
         "tool-policy",
         "show"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [
-        "--help"
-      ],
-      "mutates": false,
-      "path": [
-        "trader"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "trader",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "trader",
-        "help",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "trader",
-        "help",
-        "preview"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "trader",
-        "help",
-        "run"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--briefing",
-        "--help",
-        "--portfolio"
-      ],
-      "mutates": false,
-      "path": [
-        "trader",
-        "preview"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--api-key-env",
-        "--base-url",
-        "--briefing",
-        "--help",
-        "--model",
-        "--portfolio",
-        "--temperature"
-      ],
-      "mutates": false,
-      "path": [
-        "trader",
-        "run"
       ]
     },
     {

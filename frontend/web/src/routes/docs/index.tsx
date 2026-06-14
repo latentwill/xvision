@@ -30,7 +30,13 @@ export function DocsRoute() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState("");
-  const [showOptions, setShowOptions] = useState(false);
+  const [showOptions, setShowOptions] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("xvn.docs.showOptions") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [copied, setCopied] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
   const { prefs, setDensity } = useDocsPrefs();
@@ -62,7 +68,7 @@ export function DocsRoute() {
 
   const urlSlug = searchParams.get("slug");
   const slugInIndex = urlSlug != null && pages.some((p) => p.slug === urlSlug);
-  const activeSlug = slugInIndex ? urlSlug : (pages[0]?.slug ?? null);
+  const activeSlug = slugInIndex ? urlSlug : urlSlug == null ? (pages[0]?.slug ?? null) : null;
 
   const page = useQuery({
     queryKey: activeSlug ? docsKeys.page(activeSlug) : docsKeys.all,
@@ -125,7 +131,7 @@ export function DocsRoute() {
               className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-text-3 border border-border-soft rounded-sm px-1 leading-none py-0.5 pointer-events-none select-none"
               aria-hidden="true"
             >
-              ⌘K
+              {typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC") ? "⌘K" : "Ctrl K"}
             </span>
           </div>
           <nav className="flex flex-col gap-0.5" data-testid="docs-index">
@@ -159,20 +165,23 @@ export function DocsRoute() {
                   {group.pages.map((p) => {
                     const isActive = p.slug === activeSlug;
                     return (
-                      <button
+                      <a
                         key={p.slug}
-                        type="button"
-                        onClick={() => setSearchParams({ slug: p.slug })}
+                        href={`?slug=${p.slug}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setSearchParams({ slug: p.slug });
+                        }}
                         aria-current={isActive ? "page" : undefined}
                         data-testid={`docs-index-item-${p.slug}`}
-                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug ${
+                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug block ${
                           isActive
                             ? "text-text bg-gold/10 border-gold"
                             : "text-text-2 border-transparent hover:text-text hover:bg-surface-elev"
                         }`}
                       >
                         {p.title}
-                      </button>
+                      </a>
                     );
                   })}
                 </div>
@@ -183,7 +192,11 @@ export function DocsRoute() {
           <div className="mt-6 pt-4 border-t border-border-soft">
             <button
               type="button"
-              onClick={() => setShowOptions((v) => !v)}
+              onClick={() => setShowOptions((v) => {
+                const next = !v;
+                try { localStorage.setItem("xvn.docs.showOptions", String(next)); } catch { /* ignore */ }
+                return next;
+              })}
               aria-expanded={showOptions}
               aria-controls="docs-display-options"
               data-testid="docs-display-options-toggle"
@@ -226,7 +239,20 @@ export function DocsRoute() {
             </button>
           </div>
           <Card className="p-6 md:p-10">
-            {!activeSlug ? (
+            {urlSlug != null && !slugInIndex ? (
+              <div
+                role="alert"
+                data-testid="docs-page-not-found"
+                className="text-[13px] text-text-2"
+              >
+                <p className="mb-2 font-medium text-text">Page not found</p>
+                <p className="text-text-3">
+                  No documentation page with slug{" "}
+                  <code className="font-mono text-danger">{urlSlug}</code>{" "}
+                  exists. Select a page from the sidebar.
+                </p>
+              </div>
+            ) : !activeSlug ? (
               <div className="text-text-3 text-[13px]">
                 Select a page from the index.
               </div>

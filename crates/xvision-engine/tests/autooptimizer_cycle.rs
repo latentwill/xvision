@@ -138,10 +138,6 @@ fn make_strategy() -> Strategy {
             "max_leverage": 1.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": {
-            "ema_fast": 12,
-            "ema_slow": 26
         }
     });
     serde_json::from_value(v).expect("fixture strategy must deserialise")
@@ -354,6 +350,7 @@ async fn run_cycle_smoke() {
         regime_set: vec![],
         scenario_pool: vec![],
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -520,6 +517,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         regime_set: vec![],
         scenario_pool: vec![],
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let result = run_cycle(
@@ -674,6 +672,7 @@ async fn run_cycle_scenario_pool_round_robin_keeps_parent_child_comparable() {
         regime_set: vec![],
         scenario_pool: pool_pairs,
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let recorder = RecordingPaperTester::default();
@@ -827,6 +826,7 @@ async fn run_cycle_scenario_pool_cache_distinguishes_same_day_different_baseline
         regime_set: vec![],
         scenario_pool: pool_pairs,
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let recorder = RecordingPaperTester::default();

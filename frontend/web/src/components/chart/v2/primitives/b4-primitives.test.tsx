@@ -67,6 +67,40 @@ describe("GradientHeadline", () => {
     expect(screen.getByText("Golden Cross")).toBeInTheDocument();
     expect(screen.getByText("+82.41%")).toBeInTheDocument();
   });
+
+  it("renders a space before the emphasis span so text reads naturally", () => {
+    const { container } = render(
+      <GradientHeadline
+        prefix="The"
+        bracketed="Golden Cross"
+        suffix="is up"
+        emphasis="1.02%"
+      />,
+    );
+    const h1 = container.querySelector("h1");
+    // The full text content should not have "up1.02%" with no space.
+    expect(h1?.textContent).not.toMatch(/up1\.02%/);
+    expect(h1?.textContent).toMatch(/is up/);
+    expect(h1?.textContent).toMatch(/1\.02%/);
+  });
+
+  // W3: sign-aware suffix — "is up" for positive, "is down" for negative.
+  // This tests that the GradientHeroDashboard wires the suffix correctly;
+  // GradientHeadline itself is sign-agnostic and just renders what it receives.
+  it("accepts 'is down' as suffix for negative returns", () => {
+    render(
+      <GradientHeadline
+        prefix="The"
+        bracketed="Golden Cross"
+        suffix="is down"
+        emphasis="1.02%"
+      />,
+    );
+    expect(screen.getByText(/is down/)).toBeInTheDocument();
+    expect(screen.getByText("1.02%")).toBeInTheDocument();
+    // Emphasis must NOT repeat the sign — "is down" already carries direction.
+    expect(screen.queryByText("-1.02%")).not.toBeInTheDocument();
+  });
 });
 
 describe("PerformanceRadar geometry helpers", () => {

@@ -72,6 +72,11 @@ const OptimizerExperiment = lazy(() =>
     default: m.ExperimentDetail,
   }))
 );
+const OptimizerSessionDetail = lazy(() =>
+  import("./features/autooptimizer/screens/OptimizerSessionDetail").then((m) => ({
+    default: m.OptimizerSessionDetail,
+  }))
+);
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -81,6 +86,7 @@ const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRou
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
 const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
 const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
+const NotFoundRoute = lazy(() => import("./routes/not-found").then((m) => ({ default: m.NotFoundRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -96,8 +102,9 @@ function RouteLoaded() {
   return null;
 }
 
-/** Run detail folded into Home (session-scoped). Old /optimizer/run/:sessionId
- *  deep-links land on Home with the session filter applied. */
+/** Legacy redirect — only used when `OptimizerSessionDetail` is not available
+ *  (should not happen in practice; kept as a safety-net export for any
+ *  deep-links that still reference this symbol from old code paths). */
 export function OptimizerRunRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
   if (!sessionId) return <Navigate to="/optimizer" replace />;
@@ -237,7 +244,7 @@ export const router = createBrowserRouter([
           { index: true, element: page(<OptimizerHome />) },
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
           { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
-          { path: "run/:sessionId", element: <OptimizerRunRedirect /> },
+          { path: "run/:sessionId", element: page(<OptimizerSessionDetail />) },
           { path: "strategy/:hash", element: page(<OptimizerStrategyInspector />) },
         ],
       },
@@ -261,7 +268,7 @@ export const router = createBrowserRouter([
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },
-      { path: "*", element: <Navigate to="/" replace /> },
+      { path: "*", element: page(<NotFoundRoute />) },
     ],
   },
 ]);

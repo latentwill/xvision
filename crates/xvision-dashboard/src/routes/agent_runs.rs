@@ -9,7 +9,7 @@
 //! - `GET /api/agent-runs` — paginated list of all agent runs, newest-first.
 //!   Supports `?status=running,queued` (comma-separated filter) and
 //!   `?limit=N` (default 20, max 100).
-//! - `GET /api/agent-runs/:id` — returns the `xvn.agent_run.v1` JSON
+//! - `GET /api/agent-runs/:id` — returns the `xvn.agent_run.v2` JSON
 //!   payload as the response body.
 //! - `GET /api/agent-runs/:id/export.json` — same payload with a
 //!   `Content-Disposition: attachment; filename="xvn_run_<id>.json"`
@@ -42,8 +42,8 @@ use tokio_stream::Stream;
 use serde_json::json;
 
 use xvision_observability::{
-    build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore, BlobStoreError,
-    ExportError, MemoryRecallEvent,
+    build_export, build_export_with_blobs, find_blob_owner, render_report, AgentRunExport, BlobRef,
+    BlobStore, BlobStoreError, ExportError, MemoryRecallEvent,
 };
 
 use xvision_engine::eval::run::{RunMode, RunStatus as EvalRunStatus};
@@ -63,6 +63,13 @@ pub struct AgentRunSummary {
     pub run_id: String,
     pub objective: String,
     pub strategy_id: Option<String>,
+    /// Strategy agent id of the parent eval run (`eval_runs.agent_id`), joined
+    /// in so the live/run list can resolve the real strategy display name via
+    /// the strategies library — mirroring how the eval-runs list does it.
+    /// `None` when the agent run has no parent eval run. Distinct from
+    /// `strategy_id` (the agent_runs row's own column, often NULL for
+    /// engine-created live runs).
+    pub agent_id: Option<String>,
     pub eval_run_id: Option<String>,
     pub status: String,
     pub retention_mode: String,
@@ -84,26 +91,29 @@ pub struct AgentRunSummary {
     /// migration 062). `None` without a parent.
     pub paused: Option<bool>,
     /// THE live-money discriminator: `true` iff the child agent run is
-    /// non-terminal AND the parent eval run has `mode = 'live'` AND that
-    /// eval run is non-terminal (queued/running).
-    /// Anything else — backtests, orphaned children of finished live runs,
-    /// runs with no parent — is `false`. This is the only signal the
+    /// non-terminal AND the parent eval run's `venue_label = 'live'` (real
+    /// money) AND that eval run is non-terminal (queued/running).
+    /// Forward-test runs (`venue_label = 'paper'` / `'testnet'`), backtests,
+    /// and orphaned/finished runs are `false`. This is the only signal the
     /// dashboard may treat as "real money is moving right now".
     pub is_live_money: bool,
 }
 
 /// Liveness rule, kept in one place: live money ⇔ child agent run is
-/// non-terminal AND parent eval run is `mode = live` AND parent status is
-/// non-terminal. Unknown/unparseable mode or status values are conservatively
-/// NOT live.
-fn derive_is_live_money(agent_status: &str, eval_mode: Option<&str>, eval_status: Option<&str>) -> bool {
+/// non-terminal AND the parent eval run's `venue_label = 'live'` (real money)
+/// AND parent status is non-terminal. Forward-test venues (`paper`, `testnet`)
+/// are NOT live money regardless of eval mode; unknown/missing values are
+/// conservatively NOT live.
+fn derive_is_live_money(agent_status: &str, venue_label: Option<&str>, eval_status: Option<&str>) -> bool {
     let agent_non_terminal = matches!(agent_status, "queued" | "running");
-    let is_live_mode = eval_mode.and_then(RunMode::parse) == Some(RunMode::Live);
+    let is_real_money = venue_label
+        .map(|v| v.eq_ignore_ascii_case("live"))
+        .unwrap_or(false);
     let eval_non_terminal = eval_status
         .and_then(EvalRunStatus::parse)
         .map(|s| !s.is_terminal())
         .unwrap_or(false);
-    agent_non_terminal && is_live_mode && eval_non_terminal
+    agent_non_terminal && is_real_money && eval_non_terminal
 }
 
 /// Query-string parameters for `GET /api/agent-runs`.
@@ -173,7 +183,7 @@ pub async fn list_agent_runs(
     let mut sql = String::from(
         "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
              ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
-             ar.error, er.mode, er.status, er.paused \
+             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id \
              FROM agent_runs ar \
              LEFT JOIN eval_runs er ON er.id = ar.eval_run_id",
     );
@@ -197,7 +207,9 @@ pub async fn list_agent_runs(
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
             Option<bool>,
+            Option<String>,
         ),
     >(&sql);
     if let Some(since) = since {
@@ -223,8 +235,10 @@ pub async fn list_agent_runs(
         sidecar_version,
         error,
         eval_mode_raw,
+        venue_label_raw,
         eval_run_status,
         paused,
+        eval_agent_id,
     ) in rows
     {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
@@ -240,7 +254,7 @@ pub async fn list_agent_runs(
             }).ok()
         });
         let is_live_money =
-            derive_is_live_money(&status, eval_mode_raw.as_deref(), eval_run_status.as_deref());
+            derive_is_live_money(&status, venue_label_raw.as_deref(), eval_run_status.as_deref());
         // Normalize the mode (legacy 'paper' → "backtest"); unknown values
         // surface as None rather than leaking raw DB strings to the UI.
         let eval_mode = eval_mode_raw
@@ -251,6 +265,7 @@ pub async fn list_agent_runs(
             run_id: id,
             objective,
             strategy_id,
+            agent_id: eval_agent_id,
             eval_run_id,
             status,
             retention_mode,
@@ -289,13 +304,25 @@ pub async fn list_agent_runs(
 // pattern as `eval_runs::get` / `eval_runs::export` (no per-route
 // gate, behind the existing dashboard auth surface).
 
-/// `GET /api/agent-runs/:id` — return the `xvn.agent_run.v1` payload
-/// for a single agent run as the response body.
+/// Blob store rooted at the dashboard's `xvn_home`. Used so the export
+/// document is self-contained — model/tool payloads inline from the
+/// content-addressed store rather than needing follow-up `/blobs/:ref`
+/// fetches.
+fn run_blob_store(state: &AppState) -> BlobStore {
+    BlobStore::new(state.xvn_home.join("agent_runs").join("blobs"))
+}
+
+/// `GET /api/agent-runs/:id` — return the full-fidelity
+/// `xvn.agent_run.v3` payload for a single agent run as the response
+/// body, with blob-backed prompts/responses/tool-I/O inlined.
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AgentRunExport>, DashboardError> {
-    let export = build_export(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
     Ok(Json(export))
 }
 
@@ -307,7 +334,10 @@ pub async fn export_json(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, DashboardError> {
-    let export = build_export(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
     let body = serde_json::to_vec_pretty(&export)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize xvn_run.json: {e}")))?;
 
@@ -328,7 +358,11 @@ pub async fn export_md(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, DashboardError> {
-    let report = build_report(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
+    let report = render_report(&export);
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -344,7 +378,7 @@ pub async fn export_md(
 }
 
 /// `GET /api/agent-runs/:id/stream` — Server-Sent Events feed for a
-/// single agent run. The first event carries the `xvn.agent_run.v1`
+/// single agent run. The first event carries the `xvn.agent_run.v2`
 /// snapshot so the consumer has full context before live tail events
 /// start streaming. Subsequent events mirror the `RunEvent` vocabulary
 /// (one SSE event per emitted `RunEvent`) and the stream closes
@@ -455,7 +489,7 @@ pub struct MemoryEventDto {
 }
 
 /// Project all persisted memory flywheel events for `run_id`.
-/// The strict `xvn.agent_run.v1` export intentionally excludes generic
+/// The strict `xvn.agent_run.v2` export intentionally excludes generic
 /// events, so dashboard surfaces that need recall/write ribbons use this
 /// route instead.
 pub async fn list_memory_events(
@@ -650,14 +684,15 @@ mod tests {
     /// Seed one parent `eval_runs` row. `scenario_id` stays NULL — allowed
     /// since the migration-038 rebuild (scenario-less Live runs) and avoids
     /// having to seed a `scenarios` row for the FK.
-    async fn seed_eval_run(pool: &sqlx::SqlitePool, id: &str, mode: &str, status: &str) {
+    async fn seed_eval_run(pool: &sqlx::SqlitePool, id: &str, mode: &str, venue_label: &str, status: &str) {
         sqlx::query(
             "INSERT INTO eval_runs \
-             (id, agent_id, scenario_id, mode, status, started_at) \
-             VALUES (?, 'bundle-hash', NULL, ?, ?, '2026-01-01T00:00:00Z')",
+             (id, agent_id, scenario_id, mode, venue_label, status, started_at) \
+             VALUES (?, 'bundle-hash', NULL, ?, ?, ?, '2026-01-01T00:00:00Z')",
         )
         .bind(id)
         .bind(mode)
+        .bind(venue_label)
         .bind(status)
         .execute(pool)
         .await
@@ -807,7 +842,7 @@ mod tests {
     #[tokio::test]
     async fn list_marks_child_of_nonterminal_live_eval_run_as_live_money() {
         let (state, _tmp) = fresh_state().await;
-        seed_eval_run(&state.pool, "ev-live", "live", "running").await;
+        seed_eval_run(&state.pool, "ev-live", "live", "live", "running").await;
         seed_child_run(
             &state.pool,
             "ar-live",
@@ -823,12 +858,20 @@ mod tests {
         assert_eq!(run["eval_mode"].as_str(), Some("live"));
         assert_eq!(run["eval_run_status"].as_str(), Some("running"));
         assert_eq!(run["is_live_money"].as_bool(), Some(true));
+        // The parent eval run's strategy agent_id is joined into the summary so
+        // the live run list can resolve the real strategy display name (QA: rows
+        // must show the strategy name, not the "eval run" objective).
+        assert_eq!(
+            run["agent_id"].as_str(),
+            Some("bundle-hash"),
+            "parent eval_runs.agent_id must be surfaced on the agent-run summary"
+        );
     }
 
     #[tokio::test]
     async fn list_demotes_terminal_child_of_nonterminal_live_eval_run() {
         let (state, _tmp) = fresh_state().await;
-        seed_eval_run(&state.pool, "ev-live", "live", "running").await;
+        seed_eval_run(&state.pool, "ev-live", "live", "live", "running").await;
         seed_child_run(
             &state.pool,
             "ar-completed",
@@ -851,7 +894,7 @@ mod tests {
         let (state, _tmp) = fresh_state().await;
         // The xvision-9pi shape: agent run stuck in `running`, but its
         // parent live eval run finished long ago. NOT live money.
-        seed_eval_run(&state.pool, "ev-done", "live", "failed").await;
+        seed_eval_run(&state.pool, "ev-done", "live", "live", "failed").await;
         seed_child_run(
             &state.pool,
             "ar-stale",
@@ -872,10 +915,10 @@ mod tests {
     #[tokio::test]
     async fn list_backtest_children_are_never_live_money() {
         let (state, _tmp) = fresh_state().await;
-        seed_eval_run(&state.pool, "ev-bt", "backtest", "running").await;
+        seed_eval_run(&state.pool, "ev-bt", "backtest", "paper", "running").await;
         seed_child_run(&state.pool, "ar-bt", "ev-bt", "running", "2026-06-01T00:00:00Z").await;
         // Legacy 'paper' mode rows normalize to "backtest" on read.
-        seed_eval_run(&state.pool, "ev-paper", "paper", "running").await;
+        seed_eval_run(&state.pool, "ev-paper", "paper", "paper", "running").await;
         seed_child_run(
             &state.pool,
             "ar-paper",
@@ -897,9 +940,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_forward_test_live_mode_is_not_live_money() {
+        // The principle: a Forward test run (eval mode=live, but venue_label
+        // = paper or testnet) is NOT live money. Only venue_label=live (real
+        // funds) earns the live-money discriminator.
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-fwd", "live", "paper", "running").await;
+        seed_child_run(&state.pool, "ar-fwd", "ev-fwd", "running", "2026-06-03T00:00:00Z").await;
+        seed_eval_run(&state.pool, "ev-fwd-tn", "live", "testnet", "running").await;
+        seed_child_run(
+            &state.pool,
+            "ar-fwd-tn",
+            "ev-fwd-tn",
+            "running",
+            "2026-06-04T00:00:00Z",
+        )
+        .await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let runs = v["runs"].as_array().unwrap();
+        // newest-first: ar-fwd-tn (testnet) then ar-fwd (paper)
+        assert_eq!(runs[0]["eval_mode"].as_str(), Some("live"));
+        assert_eq!(runs[0]["is_live_money"].as_bool(), Some(false));
+        assert_eq!(runs[1]["eval_mode"].as_str(), Some("live"));
+        assert_eq!(runs[1]["is_live_money"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
     async fn list_passes_through_parent_paused_flag() {
         let (state, _tmp) = fresh_state().await;
-        seed_eval_run(&state.pool, "ev-paused", "live", "running").await;
+        seed_eval_run(&state.pool, "ev-paused", "live", "live", "running").await;
         sqlx::query("UPDATE eval_runs SET paused = 1 WHERE id = 'ev-paused'")
             .execute(&state.pool)
             .await
@@ -924,7 +995,7 @@ mod tests {
 
     #[test]
     fn derive_is_live_money_rule() {
-        // live + non-terminal ⇒ live money
+        // venue_label = live (real money) + non-terminal ⇒ live money
         assert!(derive_is_live_money("running", Some("live"), Some("running")));
         assert!(derive_is_live_money("queued", Some("live"), Some("queued")));
         // terminal child ⇒ not, even while parent live eval is still running
@@ -945,13 +1016,14 @@ mod tests {
         assert!(!derive_is_live_money("running", Some("live"), Some("completed")));
         assert!(!derive_is_live_money("running", Some("live"), Some("failed")));
         assert!(!derive_is_live_money("running", Some("live"), Some("cancelled")));
-        // backtest / legacy paper ⇒ never
+        // forward-test venues (paper / testnet) and any non-`live` value ⇒ never
+        assert!(!derive_is_live_money("running", Some("paper"), Some("running")));
+        assert!(!derive_is_live_money("running", Some("testnet"), Some("running")));
         assert!(!derive_is_live_money(
             "running",
             Some("backtest"),
             Some("running")
         ));
-        assert!(!derive_is_live_money("running", Some("paper"), Some("running")));
         // no parent / unknown values ⇒ conservatively not live
         assert!(!derive_is_live_money("running", None, None));
         assert!(!derive_is_live_money("running", Some("live"), None));
@@ -1017,9 +1089,7 @@ mod tests {
         seed_run(&state.pool, "newer", "completed", "2026-06-10T00:00:00Z").await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
-        let resp = server
-            .get("/api/agent-runs?since=2026-06-06T00:00:00Z")
-            .await;
+        let resp = server.get("/api/agent-runs?since=2026-06-06T00:00:00Z").await;
         resp.assert_status_ok();
         let v: serde_json::Value = resp.json();
         let runs = v["runs"].as_array().unwrap();

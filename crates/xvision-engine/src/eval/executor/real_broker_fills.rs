@@ -69,6 +69,13 @@ impl RealBrokerFills {
         self.obs = Some(obs);
         self
     }
+
+    /// Whether the wrapped live broker is a directional-perps venue.
+    /// Threaded into the engine's R3 veto so perps guards activate only
+    /// on perps venues. Spot brokers (Alpaca) return false.
+    pub fn is_perp_venue(&self) -> bool {
+        self.broker.is_perp_venue()
+    }
 }
 
 #[async_trait]
@@ -146,6 +153,13 @@ impl FillSink for RealBrokerFills {
         // 3. Submit + translate the outcome.
         // Emit broker.call span if an ObsEmitter is attached, matching
         // the coverage already present on the simulated-fill path.
+        //
+        // WS-4: the live path also stamps the broker's *real* venue (not
+        // the old hardcoded "live") and emits an `order_signed` engine
+        // event just before submit, so the trace distinguishes a live
+        // fill from a backtest fill (real venue identity + signing path).
+        let venue = self.broker.venue().to_string();
+        let idempotency_key = order.idempotency_key.clone();
         let broker_span_id = fresh_span_id();
         if let Some(obs) = self.obs.as_ref() {
             let broker_side = if trade_long {
@@ -161,8 +175,25 @@ impl FillSink for RealBrokerFills {
                 size,
                 Some(req.next_open),
                 "market",
-                "live",
-                Some(format!("live-{}-{}", req.asset, req.bar_ts.timestamp())),
+                &venue,
+                Some(idempotency_key.clone()),
+            )
+            .await;
+
+            // `order_signed` — fires BEFORE submit. Carries the venue +
+            // signing scheme + order intent, scoped to the broker.call
+            // span. NEVER includes keys / secrets / signatures.
+            let signed_payload = serde_json::json!({
+                "venue": venue,
+                "scheme": self.broker.signing_scheme(),
+                "asset": req.asset,
+                "side": if trade_long { "buy" } else { "sell" },
+                "idempotency_key": idempotency_key,
+            });
+            obs.emit_engine_event(
+                "order_signed",
+                Some(broker_span_id.clone()),
+                Some(signed_payload.to_string()),
             )
             .await;
         }
@@ -211,6 +242,14 @@ impl FillSink for RealBrokerFills {
                     volume_share: 0.0,
                     volume_cap_bound: false,
                 };
+                // Terminal order state for this fill — computed once so
+                // the WS-4 `order_state` engine event and the FillRecord
+                // agree byte-for-byte.
+                let order_state = if fill_size + f64::EPSILON < size {
+                    OrderState::PartiallyFilled
+                } else {
+                    OrderState::Filled
+                };
                 if let Some(obs) = self.obs.as_ref() {
                     obs.emit_broker_call_finished(
                         &broker_span_id,
@@ -224,6 +263,55 @@ impl FillSink for RealBrokerFills {
                         None,
                     )
                     .await;
+
+                    // WS-4 `order_state` — fires after the fill outcome is
+                    // known. `state` serializes the `OrderState` to its
+                    // snake_case wire form. Scoped to the broker.call span.
+                    let state_str = serde_json::to_value(order_state)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let state_payload = serde_json::json!({
+                        "asset": req.asset,
+                        "state": state_str,
+                        "fill_price": fill_price,
+                        "fill_size": fill_size,
+                        "order_size": size,
+                    });
+                    obs.emit_engine_event(
+                        "order_state",
+                        Some(broker_span_id.clone()),
+                        Some(state_payload.to_string()),
+                    )
+                    .await;
+
+                    // WS-4 `venue_account_snapshot` — run-scoped (no span).
+                    // Equity is BEST-EFFORT: a balance RPC error must NOT
+                    // break the fill or change fill semantics, so we emit
+                    // `equity_usd: null` rather than failing. Position is
+                    // the post-fill `new_pos` we already computed (no extra
+                    // round-trip to the venue).
+                    let equity_usd: serde_json::Value = match self.broker.balance().await {
+                        Ok(eq) => serde_json::Number::from_f64(eq)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "xvision_engine::real_broker_fills",
+                                venue = %venue,
+                                error = %format!("{e:#}"),
+                                "venue_account_snapshot: balance RPC failed; emitting null equity"
+                            );
+                            serde_json::Value::Null
+                        }
+                    };
+                    let snapshot_payload = serde_json::json!({
+                        "venue": venue,
+                        "position": new_pos,
+                        "equity_usd": equity_usd,
+                    });
+                    obs.emit_engine_event("venue_account_snapshot", None, Some(snapshot_payload.to_string()))
+                        .await;
                 }
                 FillRecord {
                     new_pos,
@@ -235,11 +323,7 @@ impl FillSink for RealBrokerFills {
                     provenance,
                     fill_branch: Some(crate::eval::executor::trace_types::FillBranch::NextOpenOnly),
                     aggressor_side: Some(crate::eval::executor::trace_types::AggressorSide::Taker),
-                    order_state: Some(if fill_size + f64::EPSILON < size {
-                        OrderState::PartiallyFilled
-                    } else {
-                        OrderState::Filled
-                    }),
+                    order_state: Some(order_state),
                     volume_cap_hit: None,
                     broker_error: None,
                 }

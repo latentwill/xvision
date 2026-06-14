@@ -36,38 +36,24 @@ export function MobileShell({
         title={isHome ? undefined : title}
         onMenu={() => setDrawerOpen(true)}
       />
-      {isHome ? (
-        <div className="flex-1 min-h-0">
-          <Suspense fallback={null}>
-            <ChatRailComponent
-              variant="panel"
-              showHeader
-              onOpenActions={() => setFunctionsOpen(true)}
-            />
-          </Suspense>
-        </div>
-      ) : (
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 pt-4 pb-24">
-          <Outlet />
-        </main>
-      )}
-      {!isHome && (
-        <>
-          <ChatPill
+      <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 pt-4 pb-24">
+        <Outlet />
+      </main>
+      <>
+        <ChatPill
+          context={headerLabel(scope)}
+          placeholder={placeholder(scope)}
+          onOpen={() => setChatOpen(true)}
+        />
+        {chatOpen && (
+          <MobileChatOverlay
             context={headerLabel(scope)}
-            placeholder={placeholder(scope)}
-            onOpen={() => setChatOpen(true)}
+            onClose={() => setChatOpen(false)}
+            onOpenActions={() => setFunctionsOpen(true)}
+            ChatRailComponent={ChatRailComponent}
           />
-          {chatOpen && (
-            <MobileChatOverlay
-              context={headerLabel(scope)}
-              onClose={() => setChatOpen(false)}
-              onOpenActions={() => setFunctionsOpen(true)}
-              ChatRailComponent={ChatRailComponent}
-            />
-          )}
-        </>
-      )}
+        )}
+      </>
       <MobileDrawer />
       <MobileFunctionsSheet />
       <CommandPalette />

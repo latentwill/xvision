@@ -20,6 +20,7 @@ vi.mock("@/api/eval", async () => {
     ...actual,
     listRuns: vi.fn(),
     cancelRun: vi.fn(),
+    flattenRun: vi.fn(),
   };
 });
 
@@ -167,6 +168,8 @@ function makeDeployment(
     unrealized_pnl_usd: 42.5,
     drawdown_pct: 1.0,
     daily_loss_limit_remaining_usd: 500,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
@@ -420,9 +423,9 @@ describe("ActiveTasksStrip", () => {
     expect(screen.queryByTestId("live-deployments-group")).toBeNull();
   });
 
-  // awm (a): Cancel shown for human-sourced and for absent/undefined source
+  // awm (a): Stop shown for human-sourced and for absent/undefined source
   // (legacy runs); HIDDEN only on explicit source==='optimizer'.
-  it("shows Cancel for a human-sourced deployment", async () => {
+  it("shows Stop for a human-sourced deployment", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     setStatus(null);
 
@@ -432,11 +435,28 @@ describe("ActiveTasksStrip", () => {
 
     const row = await screen.findByTestId("deployment-row-d1");
     expect(
-      row.querySelector('[aria-label="Cancel HumanRun"]'),
+      row.querySelector('[aria-label="Stop HumanRun"]'),
     ).not.toBeNull();
   });
 
-  it("shows Cancel when source is absent/undefined (legacy run)", async () => {
+  it("calls flattenRun with the deployment id when Stop is clicked", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    vi.mocked(evalApi.flattenRun).mockResolvedValue(
+      makeRun({ id: "d1", status: "completed" }) as never,
+    );
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: "HumanRun", source: "human" }),
+    ]);
+
+    const stop = await screen.findByTestId("deployment-stop-d1");
+    await userEvent.click(stop);
+
+    expect(evalApi.flattenRun).toHaveBeenCalledWith("d1");
+  });
+
+  it("shows Stop when source is absent/undefined (legacy run)", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     setStatus(null);
 
@@ -448,11 +468,11 @@ describe("ActiveTasksStrip", () => {
 
     const row = await screen.findByTestId("deployment-row-d1");
     expect(
-      row.querySelector('[aria-label="Cancel LegacyRun"]'),
+      row.querySelector('[aria-label="Stop LegacyRun"]'),
     ).not.toBeNull();
   });
 
-  it("hides Cancel for an optimizer-sourced deployment", async () => {
+  it("hides Stop for an optimizer-sourced deployment", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     setStatus(null);
 
@@ -461,7 +481,24 @@ describe("ActiveTasksStrip", () => {
     ]);
 
     const row = await screen.findByTestId("deployment-row-d1");
-    expect(row.querySelector('[aria-label="Cancel OptRun"]')).toBeNull();
+    expect(row.querySelector('[aria-label="Stop OptRun"]')).toBeNull();
+  });
+
+  it("hides Stop for a stopped deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        strategy_name: "StoppedRun",
+        source: "human",
+        status: "stopped",
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(row.querySelector('[aria-label="Stop StoppedRun"]')).toBeNull();
   });
 
   // awm (b): runaway warning chip on a LIVE deployment started > 24h ago.
@@ -711,5 +748,43 @@ describe("ActiveTasksStrip", () => {
     // Flush effects.
     await new Promise((r) => setTimeout(r, 0));
     expect(streamRegistry.last("d1")).toBeUndefined();
+  });
+});
+
+// ─── awm ETA: stop_at field on DeploymentRow ─────────────────────────────────
+
+describe("ActiveTasksStrip — ETA display (awm / stop_at)", () => {
+  it("renders deployment-eta-* with '~...left' text when stop_at is a future timestamp", async () => {
+    const futureStopAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2h from now
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "dep-eta",
+        status: "running",
+        stop_at: futureStopAt,
+      }),
+    ]);
+
+    const etaEl = await screen.findByTestId("deployment-eta-dep-eta");
+    expect(etaEl).toBeInTheDocument();
+    expect(etaEl.textContent).toMatch(/~.+left/);
+  });
+
+  it("does NOT render deployment-eta-* when stop_at is null (no real limit)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "dep-noeta",
+        status: "running",
+        stop_at: null,
+      }),
+    ]);
+
+    await screen.findByTestId("deployment-row-dep-noeta");
+    expect(screen.queryByTestId("deployment-eta-dep-noeta")).toBeNull();
   });
 });

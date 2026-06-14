@@ -19,6 +19,16 @@ async fn ctx_with_strategies_dir() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // strategy::list() queries eval_runs for coverage stats (migration 002)
+    // and the eval_runs.agent_id column (migration 014).
+    sqlx::query(include_str!("../migrations/002_eval.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
@@ -270,16 +280,15 @@ async fn list_returns_summaries_for_existing_strategys() {
         agents: Vec::new(),
         pipeline: xvision_engine::strategies::PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     store.save(&strategy).await.unwrap();
 

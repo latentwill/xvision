@@ -7,14 +7,13 @@
 //! into a live eval run.
 //!
 //! Predicates compare against an upstream `FilterSignal.payload` —
-//! when the upstream output is any other capability (Trader / Critic /
-//! Intern / Router), the predicate evaluates to `false` by
-//! construction.
+//! when the upstream output is any other capability (Trader / Router),
+//! the predicate evaluates to `false` by construction.
 
 use chrono::Utc;
 use serde_json::json;
 use xvision_engine::agent::dispatch_capability::{
-    AgentOutput, Critique, CritiqueSeverity, FilterGranularity, FilterSignal, SignalScope,
+    AgentOutput, FilterGranularity, FilterSignal, RouteSelection, SignalScope,
 };
 use xvision_engine::agent::edge_predicate::{evaluate_against_signal, evaluate_predicate};
 use xvision_engine::strategies::agent_ref::EdgePredicate;
@@ -308,11 +307,10 @@ fn predicate_against_non_filter_upstream_is_false() {
         signal_field: "regime".into(),
         value: json!("trend"),
     };
-    // Critic output is not a FilterSignal — the evaluator must return
+    // Router output is not a FilterSignal — the evaluator must return
     // false rather than panicking.
-    let critic = AgentOutput::Critic(Critique {
-        severity: CritiqueSeverity::Info,
-        text: "stub".into(),
+    let router = AgentOutput::Router(RouteSelection {
+        target_agent_ref_index: 0,
     });
-    assert!(!evaluate_predicate(&p, &critic));
+    assert!(!evaluate_predicate(&p, &router));
 }

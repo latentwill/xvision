@@ -154,12 +154,29 @@ export function HomeRoute() {
     refetchInterval: 10_000,
   });
 
+  // jlm: read-before-write the last-visit boundary. snapshotLastVisit() freezes
+  // the PREVIOUS boundary at module scope on the first render this page load —
+  // so this paint (and any in-session remount / StrictMode double-invoke) shows
+  // the delta since that prior visit — then persistVisitOnce (below) writes
+  // "now" a single time so the NEXT page load measures from here. bead s78.2
+  // reads it HERE (above the deployments poll) so the same boundary feeds the
+  // deployments `?since` risk-veto count.
+  const lastVisitIso = snapshotLastVisit();
+
   // n0k/awm: live/paper deployments for the ActiveTasksStrip live rows. 5s
   // poll matches the CT5 contract (§3) — list membership AND the honest
   // capital/P&L/drawdown fields both ride this poll.
+  // bead s78.2: pass the jlm last-visit boundary (the SAME boundary the home
+  // delta + cost rollup window off) as `?since` so each deployment carries a
+  // REAL count of risk vetoes recorded since the operator was last here. On a
+  // first visit there is no boundary, so `since` is omitted → the backend
+  // leaves `risk_veto_count_since_last_visit` null and the chip shows "—".
+  const deploymentsParams = lastVisitIso
+    ? { ...DEPLOYMENTS_PARAMS, since: lastVisitIso }
+    : DEPLOYMENTS_PARAMS;
   const deployments = useQuery({
-    queryKey: deploymentKeys.list(DEPLOYMENTS_PARAMS),
-    queryFn: () => listDeployments(DEPLOYMENTS_PARAMS),
+    queryKey: deploymentKeys.list(deploymentsParams),
+    queryFn: () => listDeployments(deploymentsParams),
     refetchInterval: 5_000,
   });
 
@@ -186,12 +203,10 @@ export function HomeRoute() {
     });
   }, [runs.data, queryClient]);
 
-  // jlm: read-before-write the last-visit boundary. snapshotLastVisit() freezes
-  // the PREVIOUS boundary at module scope on the first render this page load —
-  // so this paint (and any in-session remount / StrictMode double-invoke) shows
-  // the delta since that prior visit — then persistVisitOnce writes "now" a
-  // single time so the NEXT page load measures from here.
-  const lastVisitIso = snapshotLastVisit();
+  // jlm: persist "now" as the new boundary a single time per page load so the
+  // NEXT page load measures from here. The PREVIOUS boundary was already frozen
+  // above (snapshotLastVisit, read before this write) and drives both the delta
+  // subtitle and the deployments `?since` risk-veto count this render.
   useEffect(() => {
     persistVisitOnce(new Date().toISOString());
   }, []);

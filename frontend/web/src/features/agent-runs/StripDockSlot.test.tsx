@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { StripDockSlot } from "./StripDockSlot";
 import { useTraceDock } from "@/stores/trace-dock";
+import type { DockMode } from "@/stores/trace-dock";
 import * as agentRunsApi from "@/api/agent-runs";
 import * as evalApi from "@/api/eval";
 import type { AgentRunDetail, AgentRunSummary } from "@/api/types-agent-runs";
@@ -53,6 +54,30 @@ function renderSlot() {
   );
 }
 
+/**
+ * Seed the eval scope slice — the default MemoryRouter path "/" maps to
+ * the eval scope, which is the slice StripDockSlot reads here. The live
+ * scope stays at its init state.
+ */
+function setEvalScope(slice: {
+  activeRunId?: string | null;
+  selectedSpanId?: string | null;
+  mode?: DockMode;
+  costOverrideUsd?: number | null;
+}) {
+  useTraceDock.setState((s) => ({
+    byScope: {
+      ...s.byScope,
+      eval: {
+        activeRunId: slice.activeRunId ?? null,
+        selectedSpanId: slice.selectedSpanId ?? null,
+        mode: slice.mode ?? "post-hoc",
+        costOverrideUsd: slice.costOverrideUsd ?? null,
+      },
+    },
+  }));
+}
+
 function makeSummary(overrides: Partial<AgentRunSummary> = {}): AgentRunSummary {
   return {
     run_id: "run_abc1234",
@@ -90,11 +115,9 @@ describe("StripDockSlot", () => {
     vi.clearAllMocks();
     useTraceDock.setState({
       height: "collapsed",
-      selectedSpanId: null,
-      activeRunId: null,
-      mode: "post-hoc",
       lastOpenHeight: "working",
     });
+    setEvalScope({ activeRunId: null, selectedSpanId: null, mode: "post-hoc" });
   });
   afterEach(() => cleanup());
 
@@ -106,11 +129,8 @@ describe("StripDockSlot", () => {
 
   test("renders RunStatusStrip when activeRunId set and height=collapsed", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(makeDetail());
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     await waitFor(() =>
       expect(screen.getByTestId("run-status-strip")).toBeInTheDocument(),
@@ -119,11 +139,8 @@ describe("StripDockSlot", () => {
 
   test("renders TraceDock when height is non-collapsed", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(makeDetail());
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "working" });
     renderSlot();
     await waitFor(() =>
       expect(screen.getByTestId("trace-dock")).toBeInTheDocument(),
@@ -143,11 +160,8 @@ describe("StripDockSlot", () => {
         duration_ms: null,
       }),
     );
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "post-hoc",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "post-hoc" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
 
     const strip = await screen.findByTestId("run-status-strip");
@@ -165,11 +179,8 @@ describe("StripDockSlot", () => {
         duration_ms: null,
       }),
     );
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "post-hoc",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "post-hoc" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
 
     const strip = await screen.findByTestId("run-status-strip");
@@ -181,11 +192,8 @@ describe("StripDockSlot", () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
       makeDetail({ is_live_money: true, eval_mode: "live" }),
     );
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     const label = await screen.findByTestId("capsule-kind-label");
     expect(label).toHaveTextContent("LIVE");
@@ -195,11 +203,8 @@ describe("StripDockSlot", () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
       makeDetail({ eval_mode: "backtest" }),
     );
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     const label = await screen.findByTestId("capsule-kind-label");
     expect(label).toHaveTextContent("EVAL");
@@ -210,11 +215,8 @@ describe("StripDockSlot", () => {
       makeDetail({ financial_eval_id: null }),
     );
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     await screen.findByTestId("run-status-strip");
     // Scope guard: live-strategy runs (no eval link) must not trigger the
@@ -245,11 +247,8 @@ describe("StripDockSlot", () => {
       } as EvalRunSummary,
     } as RunDetail);
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     await screen.findByTestId("run-status-strip");
     // Both slices polled — running and failed — so freshly-errored
@@ -306,11 +305,8 @@ describe("StripDockSlot", () => {
       return Promise.resolve([]);
     });
 
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     const strip = await screen.findByTestId("run-status-strip");
     // The failed sibling surfaces both as a row (one of N + the focused
@@ -369,11 +365,8 @@ describe("StripDockSlot", () => {
       }
       return Promise.resolve([]);
     });
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "collapsed",
-      mode: "live",
-    });
+    setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
+    useTraceDock.setState({ height: "collapsed" });
     renderSlot();
     const strip = await screen.findByTestId("run-status-strip");
     // Wait briefly to give the failedQ a chance to resolve, then assert

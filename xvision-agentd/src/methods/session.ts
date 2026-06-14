@@ -67,6 +67,8 @@ interface StartRunParams {
   record?: unknown
   /** Optional — slot role stamped on recorded trajectory frames. */
   slot_role?: unknown
+  /** Optional — reasoning effort hint for CoT models ("low"|"medium"|"high"|"none"). */
+  reasoning_effort?: unknown
 }
 
 interface StartRunResult {
@@ -186,6 +188,13 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     throw new TypeError("params.record must be a boolean when present")
   if (p.slot_role !== undefined && (typeof p.slot_role !== "string" || p.slot_role.length === 0))
     throw new TypeError("params.slot_role must be a non-empty string when present")
+  const VALID_REASONING_EFFORTS = ["low", "medium", "high", "none"] as const
+  if (p.reasoning_effort !== undefined) {
+    if (!VALID_REASONING_EFFORTS.includes(p.reasoning_effort as typeof VALID_REASONING_EFFORTS[number]))
+      throw new TypeError(
+        `params.reasoning_effort must be one of: ${VALID_REASONING_EFFORTS.join(", ")} when present (got ${JSON.stringify(p.reasoning_effort)})`,
+      )
+  }
   const limits = validateBudget(p.budget_limits)
   // exactOptionalPropertyTypes: spread the optional fields only when present.
   return {
@@ -200,6 +209,7 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     ...(decisionContextOk ? { decision_context: p.decision_context as Record<string, unknown> } : {}),
     ...(typeof p.record === "boolean" ? { record: p.record } : {}),
     ...(typeof p.slot_role === "string" && p.slot_role.length > 0 ? { slot_role: p.slot_role } : {}),
+    ...(typeof p.reasoning_effort === "string" ? { reasoning_effort: p.reasoning_effort } : {}),
   }
 }
 

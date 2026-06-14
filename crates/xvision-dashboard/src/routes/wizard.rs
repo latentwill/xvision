@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn chat_body_default_model_is_none() {
         let body: ChatBody = serde_json::from_str(r#"{"message":"hi"}"#).unwrap();
-        // The resolver fills in the model from [intern] / default_model() —
+        // The resolver fills in the model from [default_llm] / default_model() —
         // an unset field deserializes as `None`.
         assert!(body.model.is_none());
         assert!(body.provider.is_none());

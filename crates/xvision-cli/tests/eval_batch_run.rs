@@ -106,6 +106,25 @@ async fn apply_batch_test_migrations(pool: &SqlitePool) {
         include_str!("../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../../xvision-engine/migrations/038_eval_runs_live_config.sql"),
         include_str!("../../xvision-engine/migrations/047_agent_slot_max_wall_ms.sql"),
+        include_str!("../../xvision-engine/migrations/048_autooptimizer.sql"),
+        include_str!("../../xvision-engine/migrations/049_autooptimizer_diversity.sql"),
+        include_str!("../../xvision-engine/migrations/050_mutator_attribution.sql"),
+        include_str!("../../xvision-engine/migrations/051_agent_slot_optimizations.sql"),
+        include_str!("../../xvision-engine/migrations/052_drop_autooptimizer_provenance.sql"),
+        include_str!("../../xvision-engine/migrations/053_pattern_optimizations.sql"),
+        include_str!("../../xvision-engine/migrations/054_agent_slot_optimization_gates.sql"),
+        include_str!("../../xvision-engine/migrations/055_autooptimizer_regime_results.sql"),
+        include_str!("../../xvision-engine/migrations/056_agent_slot_allowed_tools.sql"),
+        include_str!("../../xvision-engine/migrations/057_autooptimizer_sessions.sql"),
+        include_str!("../../xvision-engine/migrations/058_autooptimizer_evidence.sql"),
+        include_str!("../../xvision-engine/migrations/059_autooptimizer_schedules.sql"),
+        include_str!("../../xvision-engine/migrations/060_autooptimizer_schedules_unique_strategy.sql"),
+        include_str!("../../xvision-engine/migrations/061_autooptimizer_random_baseline.sql"),
+        include_str!("../../xvision-engine/migrations/062_eval_run_paused.sql"),
+        include_str!("../../xvision-engine/migrations/063_eval_run_flatten_requested.sql"),
+        include_str!("../../xvision-engine/migrations/064_autooptimizer_pattern_snapshots.sql"),
+        include_str!("../../xvision-engine/migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+        include_str!("../../xvision-engine/migrations/066_cost_budget.sql"),
     ] {
         sqlx::query(migration).execute(pool).await.unwrap();
     }
@@ -185,16 +204,15 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

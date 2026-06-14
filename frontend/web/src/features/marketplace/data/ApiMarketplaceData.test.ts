@@ -89,6 +89,64 @@ function makeFallback(): MarketplaceData {
   return new FixtureMarketplaceData();
 }
 
+describe("ApiMarketplaceData.listListings — mine segment", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("mine segment: returns empty pool when no wallet is connected", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+    mockedChain.currentAddress.mockResolvedValue(null);
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    expect(rows).toHaveLength(0);
+    expect(matched).toBe(0);
+  });
+
+  it("mine segment: returns only listings whose id appears in viewer.createdListingIds", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+
+    // Listing id "3" is in the viewer's createdListingIds; "4" is not.
+    // getViewer on ApiMarketplaceData returns createdListingIds: [] (wallet join
+    // is deferred), so "mine" yields empty — this test verifies the guard logic.
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    // createdListingIds is [] for the real API viewer (wallet join deferred) →
+    // empty result, never "all listings".
+    expect(rows).toHaveLength(0);
+    expect(matched).toBe(0);
+  });
+
+  it("mine segment: shows own listings when viewer.createdListingIds contains matching ids", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+
+    const api = new ApiMarketplaceData(makeFallback());
+    // Part A (.7): id is now agent_id (ULID) when non-empty. The viewer's
+    // createdListingIds must use the same ULID-based id for the match to work.
+    vi.spyOn(api, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: ADDR,
+      createdListingIds: ["01HXAGENT"],
+      ownedListingIds: [],
+    });
+
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("01HXAGENT");
+    expect(matched).toBe(1);
+  });
+});
+
 describe("ApiMarketplaceData.listListings", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -110,7 +168,8 @@ describe("ApiMarketplaceData.listListings", () => {
     expect(matched).toBe(2);
     expect(rows).toHaveLength(2);
 
-    const sealed = rows.find((r) => r.id === "3")!;
+    // Part A (.7): id is now agent_id (ULID) when non-empty.
+    const sealed = rows.find((r) => r.id === "01HXAGENT")!;
     expect(sealed).toBeDefined();
     expect(sealed.lineageId).toBe("01HXAGENT");
     expect(sealed.version).toBe("v1");
@@ -131,6 +190,7 @@ describe("ApiMarketplaceData.listListings", () => {
     // QA9: name field populated from IndexedListing.name
     expect(sealed.name).toBe("BTC Momentum");
 
+    // freeListing has empty agent_id → falls back to String(listing_id) = "4".
     const open = rows.find((r) => r.id === "4")!;
     expect(open.tier).toBe("open");
     expect(open.priceUsdc).toBeNull(); // price 0 → null (open/free)
@@ -161,7 +221,8 @@ describe("ApiMarketplaceData.getListing", () => {
     const api = new ApiMarketplaceData(makeFallback());
     const d: ListingDetail = await api.getListing("3");
 
-    expect(d.id).toBe("3");
+    // Part A (.7): id is now agent_id (ULID) when non-empty.
+    expect(d.id).toBe("01HXAGENT");
     expect(d.genArtSeed).toBe("seed-xyz");
     // Sealed tier: promise falls back to chain metadata name (no bundle fetch)
     expect(d.promise).toBe("BTC Momentum"); // chain metadata name
@@ -217,7 +278,8 @@ describe("ApiMarketplaceData.getListing", () => {
   });
 
   it("open-tier: tolerates bundle fetch failure — detail page must not throw", async () => {
-    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0, name: "Fallback Name" };
+    // Use empty agent_id to test the numeric listing_id fallback (id = "4").
+    const openIndexed = { ...indexedListing, listing_id: 4, agent_id: "", tier: 0, name: "Fallback Name" };
     vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
       const u = typeof url === "string" ? url : String(url);
       if (u.includes("/bundle")) return Promise.reject(new TypeError("network error"));
@@ -293,6 +355,20 @@ describe("ApiMarketplaceData.getListing", () => {
     const api = new ApiMarketplaceData(fallback);
 
     await expect(api.getListing("999")).rejects.toThrow();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("Part A (.7): throws (no fixture fallback) for ULID-shaped id that 404s", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockErrorJson(404, { code: "not_found", message: "listing not found" }),
+    );
+
+    const fallback = makeFallback();
+    const spy = vi.spyOn(fallback, "getListing");
+    const api = new ApiMarketplaceData(fallback);
+
+    // A 26-char ULID: real agent_id that 404s must NOT fall back to fixture.
+    await expect(api.getListing("01HXAGENT00000000000000000")).rejects.toThrow();
     expect(spy).not.toHaveBeenCalled();
   });
 });

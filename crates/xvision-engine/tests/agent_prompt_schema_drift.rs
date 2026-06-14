@@ -41,6 +41,10 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(migration_036).execute(&pool).await.unwrap();
     let migration_047 = include_str!("../migrations/047_agent_slot_max_wall_ms.sql");
     sqlx::query(migration_047).execute(&pool).await.unwrap();
+    // allowed_tools_json column on agent_slots (migration 056).
+    // AgentStore::insert_slot binds this on every save.
+    let migration_056 = include_str!("../migrations/056_agent_slot_allowed_tools.sql");
+    sqlx::query(migration_056).execute(&pool).await.unwrap();
     pool
 }
 

@@ -37,9 +37,8 @@ use crate::strategies::agent_ref::EdgePredicate;
 /// Evaluate an `EdgePredicate` against the upstream agent's output.
 ///
 /// Returns `false` when the upstream output is not a `FilterSignal`
-/// (only Filter capabilities produce signals; Critic / Trader / Intern /
-/// Router outputs cannot satisfy a payload-keyed predicate by
-/// construction).
+/// (only Filter capabilities produce signals; Trader / Router outputs
+/// cannot satisfy a payload-keyed predicate by construction).
 pub fn evaluate_predicate(predicate: &EdgePredicate, upstream: &AgentOutput) -> bool {
     let signal = match upstream.as_filter_signal() {
         Some(s) => s,
@@ -167,15 +166,14 @@ mod tests {
 
     #[test]
     fn non_filter_upstream_yields_false() {
-        use crate::agent::dispatch_capability::{AgentOutput, Critique, CritiqueSeverity};
+        use crate::agent::dispatch_capability::{AgentOutput, RouteSelection};
         let p = EdgePredicate::Eq {
             signal_field: "regime".into(),
             value: json!("trend"),
         };
-        let critic = AgentOutput::Critic(Critique {
-            severity: CritiqueSeverity::Info,
-            text: "stub".into(),
+        let router = AgentOutput::Router(RouteSelection {
+            target_agent_ref_index: 1,
         });
-        assert!(!evaluate_predicate(&p, &critic));
+        assert!(!evaluate_predicate(&p, &router));
     }
 }

@@ -23,6 +23,7 @@ use xvision_filters::{
     Bar, Filter, FilterEventV1, FilterState,
 };
 
+use crate::agent::observability::ObsEmitter;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::strategies::Strategy;
 
@@ -40,6 +41,15 @@ pub struct FilterHook {
     /// read `filter.display_name` through the borrow.
     display_name: String,
     bar_index: u64,
+    /// Observability emitter for the eval run, threaded in via
+    /// [`FilterHook::with_obs`]. `None` for the CLI / unit-test path
+    /// where the bus isn't wired — then `record` is a no-op on the obs
+    /// side and only writes the `eval_filter_evaluations` ledger row +
+    /// the `ProgressEvent::FilterEvaluated`. When `Some`, a *trip* (the
+    /// FIRE/wake event) additionally emits a `filter_fired` engine event
+    /// so the trace dock can render filter firings alongside the rest of
+    /// the per-decision actions.
+    obs: Option<ObsEmitter>,
 }
 
 /// One per-bar evaluation result plus the public event shape persisted
@@ -81,9 +91,21 @@ impl FilterHook {
                     state,
                     display_name,
                     bar_index: 0,
+                    obs: None,
                 }))
             }
         }
+    }
+
+    /// Attach the eval run's [`ObsEmitter`] so a filter trip emits a
+    /// `filter_fired` engine event onto the observability bus. The
+    /// executor wires this from its own `obs_emitter` at hook-build
+    /// time. Passing `None` (or never calling this) keeps the hook on
+    /// the legacy table-only path. Builder style mirrors the rest of
+    /// the obs surface (`with_observability`, `with_retention`).
+    pub fn with_obs(mut self, obs: Option<ObsEmitter>) -> Self {
+        self.obs = obs;
+        self
     }
 
     /// Evaluate one bar. Returns the outcome so the executor can decide
@@ -201,6 +223,34 @@ impl FilterHook {
                     trip: outcome.decision.is_trip(),
                 },
             );
+        }
+
+        // trace-obs WS-6: surface the deterministic FIRE/wake on the
+        // observability bus IN ADDITION to the ledger row + ProgressEvent
+        // above, so the trace dock renders a filter firing like any other
+        // engine action. Emit ONLY on a trip — the `eval_filter_evaluations`
+        // table already carries per-bar detail, so a bus event every bar
+        // would be noise. Run-scoped (`span_id = None`) to match the other
+        // bar-level engine events the executor emits (early_stop_triggered,
+        // risk_veto, …). No-op when no emitter is wired.
+        if outcome.decision.is_trip() {
+            if let Some(obs) = self.obs.as_ref() {
+                let reason = self
+                    .filter
+                    .fire
+                    .as_ref()
+                    .map(|f| serde_json::Value::String(f.reason.clone()))
+                    .unwrap_or(serde_json::Value::Null);
+                let payload = serde_json::json!({
+                    "filter_id": self.filter.id.as_str(),
+                    "rule": self.display_name,
+                    "decision_index": bar_index_i,
+                    "outcome": outcome.decision.tag(),
+                    "reason": reason,
+                });
+                obs.emit_engine_event("filter_fired", None, Some(payload.to_string()))
+                    .await;
+            }
         }
 
         Ok(())

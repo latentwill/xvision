@@ -66,8 +66,30 @@ pub enum SpanKind {
     AgentRun,
     #[serde(rename = "agent.plan")]
     AgentPlan,
-    #[serde(rename = "model.call")]
-    ModelCall,
+    /// The model invocation that produces the trade decision. One per
+    /// decision cycle, nested under the enclosing [`SpanKind::AgentDecision`]
+    /// span. Renamed from `ModelCall` (`"model.call"`) — a single-stage
+    /// trading agent has exactly one decision-producing model call per
+    /// cycle (the per-slot trader/regime/filter ROLES were retired), so the
+    /// span says what the model is doing rather than carrying a generic APM
+    /// name. The wire/DB string is `"decision.model"`.
+    #[serde(rename = "decision.model")]
+    DecisionModel,
+    /// Inline chain-of-thought captured from a model's `<think>…</think>`
+    /// block before the engine strips it out of the raw text (so the
+    /// `{…}` decision object the trader parses isn't shadowed by the
+    /// reasoning trace). Emitted as a CHILD of the enclosing
+    /// [`SpanKind::DecisionModel`] span by the Cline executor when a CoT
+    /// model emits reasoning. The reasoning body is payload-gated exactly
+    /// like the model-call prompt/response (blob-backed + redacted under
+    /// `redacted`/`full_debug`, never stored under `hash_only`); the
+    /// `reasoning_char_count` attribute is always recorded for cost
+    /// legibility. Added by WS-17 (`trace-obs` reasoning capture) —
+    /// previously the chain-of-thought was discarded at the strip site.
+    /// Renamed from `ModelReasoning` (`"model.reasoning"`); the wire/DB
+    /// string is `"decision.reasoning"`.
+    #[serde(rename = "decision.reasoning")]
+    DecisionReasoning,
     #[serde(rename = "tool.call")]
     ToolCall,
     #[serde(rename = "approval.request")]
@@ -142,8 +164,8 @@ pub enum SpanKind {
     /// `{asset, verdict: "pass"|"reject", reason?}` in `attributes_json`.
     #[serde(rename = "filter.eval")]
     FilterEval,
-    /// Risk-gate evaluation. Emitted by the eval harness (`BacktestRunner`)
-    /// and ObsEmitter around each `RiskLayer::evaluate` call. Carries
+    /// Risk-gate evaluation. Emitted by the engine R3 risk veto path
+    /// (ObsEmitter) around each veto check. Carries
     /// `{verdict: "approved"|"modified"|"vetoed", veto_reason?}`.
     #[serde(rename = "risk.gate")]
     RiskGate,
@@ -154,7 +176,8 @@ impl SpanKind {
         match self {
             Self::AgentRun => "agent.run",
             Self::AgentPlan => "agent.plan",
-            Self::ModelCall => "model.call",
+            Self::DecisionModel => "decision.model",
+            Self::DecisionReasoning => "decision.reasoning",
             Self::ToolCall => "tool.call",
             Self::ApprovalRequest => "approval.request",
             Self::ApprovalResponse => "approval.response",
@@ -302,7 +325,7 @@ pub struct SpanAttributes {
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// Slot role label ("regime" / "intern" / "trader" / free-form
+    /// Slot role label ("regime" / "trader" / free-form
     /// per strategy). Sourced from `LLMSlot.role` at the engine
     /// dispatch site.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -323,7 +346,7 @@ pub struct SpanAttributes {
     pub prompt_version: Option<String>,
     /// Per-decision index inside an eval run, populated on
     /// `agent.decision` spans (and propagated to `tool.call` /
-    /// `model.call` child spans where the call site knows it). Added
+    /// `decision.model` child spans where the call site knows it). Added
     /// by F43 (`trace-dock-emitters`) so the dashboard can group
     /// per-decision spans without re-deriving the index from the bar
     /// timeline.
@@ -412,7 +435,7 @@ mod span_attributes_tests {
         let attrs = SpanAttributes {
             run_id: Some("r".into()),
             agent_id: Some("a".into()),
-            stage: Some("intern".into()),
+            stage: Some("trader".into()),
             model: Some("m".into()),
             provider: Some("p".into()),
             tool_name: Some("get_quote".into()),

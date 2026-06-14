@@ -43,6 +43,7 @@ const MUTATING_LEAF_NAMES: &[&str] = &[
     "set",
     "set-pipeline",
     "set-regime",
+    "init",
     "migrate",
     "migrate-agents",
     "seed",
@@ -266,15 +267,15 @@ const UNDOCUMENTED_VERBS: &[&str] = &[
     "close-position",
     // Stage-isolation commands — intended for developers probing a single
     // pipeline stage, not for routine operator use.
-    "intern",
     "trader",
     "risk",
     // Single-indicator computation helper — developer/debug tool.
     "indicator",
     // Starts the embedded HTTP server; operators use docker compose, not this.
     "dashboard",
-    // DB migration runner — operators trigger this via dashboard, not CLI.
-    "migrate",
+    // First-run init (schema + canonical seed); also runs automatically on
+    // `dashboard serve`, so not a routine standalone operator verb.
+    "init",
     // Seed curated examples — developer/setup tool, not routine operator use.
     "example",
     // Agent-run observability ops — not yet promoted to the reference page.

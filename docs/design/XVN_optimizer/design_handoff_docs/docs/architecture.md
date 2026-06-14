@@ -1,5 +1,7 @@
 # xvn — Architecture
 
+> **ARCHIVED** — two-stage Intern→Trader architecture superseded by the single-stage agent model (2026-06).
+
 > A multistrategy loom with on-chain reputation.
 
 **Pipeline** · 4 stages · **LLM roles** · Intern + Trader · **Risk** · deterministic · **Headline metric** · Δ-Sharpe · **Updated** 2026-05-20.

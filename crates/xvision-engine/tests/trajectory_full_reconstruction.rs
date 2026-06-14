@@ -1,6 +1,6 @@
 //! Task 9 exit gate: full trajectory reconstruction.
 //!
-//! Records a complete multi-slot run (trader + intern), then reconstructs
+//! Records a complete multi-slot run (trader + regime), then reconstructs
 //! every slot's every step from `read_frames` and asserts:
 //! 1. The reconstructed frame sequences are byte-identical to what was written.
 //! 2. `schema_version` is pinned to `TRAJECTORY_SCHEMA_VERSION`.
@@ -133,7 +133,7 @@ async fn full_reconstruction_multi_slot_multi_step() {
     let store = make_store(&tmp).await;
 
     let cycle_id = Uuid::new_v4();
-    let slots = ["trader", "intern"];
+    let slots = ["trader", "regime"];
     let n_steps = 3;
 
     // --- Record phase ---

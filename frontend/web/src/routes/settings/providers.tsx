@@ -254,8 +254,7 @@ export function SettingsProvidersRoute() {
             LLM providers
           </h3>
           <p className="m-0 mt-1 text-text-3 text-[12px]">
-            Models xvn can call for the intern, agent rail, and
-            authoring wizard.
+            Models xvn can call for the agent rail and authoring wizard.
           </p>
         </div>
         {!adding && rows.length > 0 ? (
@@ -479,9 +478,7 @@ function ProviderRowView({
                 title="Pick which models from this provider show up in the chat-rail dropdown"
                 className="px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-text hover:border-text-3"
               >
-                {row.enabled_models.length === 0
-                  ? "Pick models"
-                  : `Models · ${row.enabled_models.length}`}
+                {`Models · ${row.enabled_models.length}`}
               </button>
             ) : null}
             <button
@@ -1027,7 +1024,7 @@ function AddProviderForm({
           <button
             type="button"
             onClick={onCancel}
-            className="text-[12px] text-text-3 hover:text-text"
+            className="px-2 py-1 rounded text-[12px] border border-border text-text-3 hover:text-text hover:border-text-3 transition-colors"
           >
             Cancel
           </button>

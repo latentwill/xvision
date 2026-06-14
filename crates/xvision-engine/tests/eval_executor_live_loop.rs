@@ -40,6 +40,7 @@ use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderR
 
 use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::eval::executor::{
     AttestHook, AttestSummary, Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock,
 };
@@ -303,7 +304,6 @@ fn build_strategy(agent_id: &str) -> Strategy {
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),
@@ -312,13 +312,13 @@ fn build_strategy(agent_id: &str) -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -2138,7 +2138,7 @@ impl CountingAttestHook {
 
 #[async_trait]
 impl AttestHook for CountingAttestHook {
-    async fn maybe_attest(&self, summary: AttestSummary) {
+    async fn maybe_attest(&self, summary: AttestSummary, _obs: Option<ObsEmitter>) {
         self.calls_at.lock().unwrap().push(summary.n_trades);
     }
 }
@@ -2211,8 +2211,7 @@ async fn attest_hook_fires_once_per_n_trades_and_not_before() {
 
     // Sanity: every bar produces one fill leg.
     assert_eq!(
-        metrics.n_trades,
-        BARS as u32,
+        metrics.n_trades, BARS as u32,
         "each alternating bar fills exactly once, got {}",
         metrics.n_trades,
     );
@@ -2273,8 +2272,7 @@ async fn attest_hook_does_not_fire_below_n_trades() {
         .expect("live run completes on stream end");
 
     assert_eq!(
-        metrics.n_trades,
-        BARS as u32,
+        metrics.n_trades, BARS as u32,
         "{BARS} filled legs expected, got {}",
         metrics.n_trades,
     );
@@ -2317,4 +2315,315 @@ async fn live_run_without_attest_hook_completes_unchanged() {
 
     assert_eq!(metrics.n_decisions, 1, "one bar => one decision");
     assert!(metrics.n_trades >= 1, "the filled order counts as a trade");
+}
+
+// ---------------------------------------------------------------------------
+// WS-9 — on-chain attestation trace (boundary event + emitter seam)
+//
+// Two surfaces:
+//   1. The ENGINE itself emits `attest_boundary_reached { agent_id, n_trades,
+//      run_id }` every time the cumulative trade count crosses an N-trade
+//      boundary, regardless of which `AttestHook` (if any) is wired. This is
+//      the one chain-adjacent event that fires in a live run TODAY.
+//   2. The `AttestHook::maybe_attest` signature carries an `Option<ObsEmitter>`
+//      seam so a FUTURE identity-backed hook can emit the rest of the
+//      attestation lifecycle (`attest_verdict`, `chain_submit_started`,
+//      `chain_submit_finished`, `attestation_posted`) onto the SAME bus. The
+//      engine does NOT emit those — the hook does. This test proves the seam
+//      reaches the hook by driving a stand-in hook that uses it.
+//
+// Redaction: none of these payloads may carry a private key or a raw
+// signature — they are never put in the payload in the first place.
+// ---------------------------------------------------------------------------
+
+/// Build a bus whose only subscriber buffers every event in-memory, mirroring
+/// the WS-6 filter-hook obs test harness.
+fn attest_capturing_bus() -> (
+    Arc<xvision_observability::RunEventBus>,
+    Arc<xvision_observability::NoopRecorder>,
+) {
+    let recorder = Arc::new(xvision_observability::NoopRecorder::new());
+    let bus = Arc::new(xvision_observability::RunEventBus::new(vec![recorder.clone()]));
+    (bus, recorder)
+}
+
+/// Collect every `EngineEvent` of a given `kind` from a captured event stream.
+fn engine_events_of_kind<'a>(
+    events: &'a [xvision_observability::RunEvent],
+    kind: &str,
+) -> Vec<&'a xvision_observability::EngineEvent> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            xvision_observability::RunEvent::EngineEvent(ev) if ev.kind == kind => Some(ev),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Assert no payload across the whole captured stream leaks a private key or
+/// raw signature. We scan BOTH the JSON keys and the serialized payload text
+/// (case-insensitive) for the forbidden tokens.
+fn assert_no_secret_in_any_payload(events: &[xvision_observability::RunEvent]) {
+    const FORBIDDEN: &[&str] = &[
+        "private_key",
+        "privatekey",
+        "priv_key",
+        "secret_key",
+        "signature",
+        "raw_signature",
+        "mnemonic",
+        "seed_phrase",
+    ];
+    for e in events {
+        if let xvision_observability::RunEvent::EngineEvent(ev) = e {
+            if let Some(payload) = ev.payload_json.as_deref() {
+                let lower = payload.to_lowercase();
+                for tok in FORBIDDEN {
+                    assert!(
+                        !lower.contains(tok),
+                        "attestation payload for `{}` leaked forbidden token `{tok}`: {payload}",
+                        ev.kind,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Stand-in for a future identity-backed `AttestHook`. It does NOT touch the
+/// chain — it just exercises the `Option<ObsEmitter>` seam, emitting the four
+/// downstream attestation-lifecycle events the real impl would emit. Carries
+/// ONLY chain-safe fields (tx hash, registry/attester addresses, chain id,
+/// gas, block, verdict numbers) — never a private key or raw signature.
+#[derive(Clone, Default)]
+struct SeamProbeAttestHook {
+    /// `n_trades` seen at each call, so the test can also assert it fired.
+    calls_at: Arc<Mutex<Vec<u32>>>,
+}
+
+impl SeamProbeAttestHook {
+    fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    fn calls_at(&self) -> Vec<u32> {
+        self.calls_at.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl AttestHook for SeamProbeAttestHook {
+    async fn maybe_attest(&self, summary: AttestSummary, obs: Option<ObsEmitter>) {
+        self.calls_at.lock().unwrap().push(summary.n_trades);
+        // The seam: a future identity-backed hook emits the rest of the
+        // attestation lifecycle on the SAME observability bus the engine
+        // already publishes `attest_boundary_reached` onto.
+        let Some(obs) = obs else { return };
+        obs.emit_engine_event(
+            "attest_verdict",
+            None,
+            Some(
+                serde_json::json!({
+                    "live_window_sharpe": 1.42,
+                    "listed_sharpe": 1.10,
+                    "verdict": "endorses",
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+        obs.emit_engine_event(
+            "chain_submit_started",
+            None,
+            Some(
+                serde_json::json!({
+                    "registry": "0xREGISTRY00000000000000000000000000000001",
+                    "method": "attest",
+                    "chain_id": 5000,
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+        obs.emit_engine_event(
+            "chain_submit_finished",
+            None,
+            Some(
+                serde_json::json!({
+                    "tx_hash": "0xTXHASH000000000000000000000000000000000000000000000000000000abcd",
+                    "block": 123_456,
+                    "gas_used": 84_213,
+                    "status": "success",
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+        obs.emit_engine_event(
+            "attestation_posted",
+            None,
+            Some(
+                serde_json::json!({
+                    "registry": "0xREGISTRY00000000000000000000000000000001",
+                    "attester": "0xATTESTER0000000000000000000000000000002",
+                })
+                .to_string(),
+            ),
+        )
+        .await;
+    }
+}
+
+/// (a) The engine emits `attest_boundary_reached { agent_id, n_trades, run_id }`
+/// at each N-trade boundary in a live run, REGARDLESS of the hook impl. Driven
+/// with the no-op hook so we prove the engine — not the hook — is the emitter.
+#[tokio::test]
+async fn engine_emits_attest_boundary_reached_at_each_n_trade_boundary() {
+    const N: u32 = 5;
+    const BARS: usize = 11; // 11 fills → boundaries at 5 and 10
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let bars: Vec<MarketBar> = (1..=BARS)
+        .map(|i| market_bar_at(60 * i as i64, 50_000.0 + i as f64))
+        .collect();
+    let stream = single_asset_stream(bars);
+
+    let (bus, recorder) = attest_capturing_bus();
+    let emitter = ObsEmitter::new(bus.clone(), run.id.clone());
+
+    // No attest hook wired — only the engine boundary event should appear.
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds")
+    .with_observability(emitter)
+    .with_attest_every_n_trades(N);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            alternating_open_flat_dispatch(BARS),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+    assert_eq!(metrics.n_trades, BARS as u32);
+
+    bus.quiesce().await;
+    let events = recorder.snapshot().await;
+    let boundaries = engine_events_of_kind(&events, "attest_boundary_reached");
+    assert_eq!(
+        boundaries.len(),
+        2,
+        "engine must emit attest_boundary_reached at trade 5 and 10 only, got {boundaries:?}",
+    );
+    for ev in &boundaries {
+        assert_eq!(ev.run_id, run.id, "event carries the run id");
+        let payload: serde_json::Value =
+            serde_json::from_str(ev.payload_json.as_deref().expect("payload present")).unwrap();
+        assert_eq!(payload["run_id"], run.id);
+        assert_eq!(payload["agent_id"], strategy.manifest.id);
+        let n = payload["n_trades"].as_u64().expect("n_trades is an int");
+        assert!(n == 5 || n == 10, "n_trades must be a boundary, got {n}");
+    }
+    // No private key / signature in any payload.
+    assert_no_secret_in_any_payload(&events);
+}
+
+/// (b) The `Option<ObsEmitter>` seam reaches the hook: a stand-in hook uses it
+/// to emit `attest_verdict` + `chain_submit_started`/`finished` +
+/// `attestation_posted` onto the SAME bus, proving a future identity-backed
+/// hook can stream the full attestation lifecycle into the dock/export.
+#[tokio::test]
+async fn attest_hook_emitter_seam_streams_chain_lifecycle_events() {
+    const N: u32 = 5;
+    const BARS: usize = 5; // exactly one boundary at trade 5
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let bars: Vec<MarketBar> = (1..=BARS)
+        .map(|i| market_bar_at(60 * i as i64, 50_000.0 + i as f64))
+        .collect();
+    let stream = single_asset_stream(bars);
+
+    let (bus, recorder) = attest_capturing_bus();
+    let emitter = ObsEmitter::new(bus.clone(), run.id.clone());
+    let hook = SeamProbeAttestHook::new();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds")
+    .with_observability(emitter)
+    .with_attest_hook(hook.clone(), N);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            alternating_open_flat_dispatch(BARS),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+    assert_eq!(metrics.n_trades, BARS as u32);
+
+    // The hook fired exactly once (at the trade-5 boundary).
+    assert_eq!(hook.calls_at(), vec![N], "hook fires once at the N boundary");
+
+    bus.quiesce().await;
+    let events = recorder.snapshot().await;
+
+    // The engine boundary event still fired (independent of the hook).
+    assert_eq!(
+        engine_events_of_kind(&events, "attest_boundary_reached").len(),
+        1,
+        "engine boundary event fires alongside the hook",
+    );
+
+    // The four hook-emitted lifecycle events landed on the SAME bus, in order.
+    let verdict = engine_events_of_kind(&events, "attest_verdict");
+    assert_eq!(verdict.len(), 1, "one attest_verdict from the hook seam");
+    let vp: serde_json::Value = serde_json::from_str(verdict[0].payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(vp["verdict"], "endorses");
+    assert!(vp["live_window_sharpe"].is_number());
+    assert!(vp["listed_sharpe"].is_number());
+
+    let started = engine_events_of_kind(&events, "chain_submit_started");
+    assert_eq!(started.len(), 1);
+    let sp: serde_json::Value = serde_json::from_str(started[0].payload_json.as_deref().unwrap()).unwrap();
+    assert!(sp["registry"].is_string());
+    assert_eq!(sp["method"], "attest");
+    assert!(sp["chain_id"].is_number());
+
+    let finished = engine_events_of_kind(&events, "chain_submit_finished");
+    assert_eq!(finished.len(), 1);
+    let fp: serde_json::Value = serde_json::from_str(finished[0].payload_json.as_deref().unwrap()).unwrap();
+    assert!(fp["tx_hash"].is_string());
+    assert!(fp["block"].is_number());
+    assert!(fp["gas_used"].is_number());
+    assert_eq!(fp["status"], "success");
+
+    let posted = engine_events_of_kind(&events, "attestation_posted");
+    assert_eq!(posted.len(), 1);
+    let pp: serde_json::Value = serde_json::from_str(posted[0].payload_json.as_deref().unwrap()).unwrap();
+    assert!(pp["registry"].is_string());
+    assert!(pp["attester"].is_string());
+
+    // (c) No private key / raw signature anywhere across the whole stream.
+    assert_no_secret_in_any_payload(&events);
 }

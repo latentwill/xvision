@@ -141,9 +141,18 @@ fn deployment_metrics_omits_null_capital_fields_no_faked_zero() {
     assert!(obj.contains_key("n_trades"));
     assert!(obj.contains_key("drawdown_pct"));
     // Null capital fields are OMITTED — never serialized as 0.
-    assert!(!obj.contains_key("deployed_capital_usd"), "null field must be omitted, got {json}");
-    assert!(!obj.contains_key("realized_pnl_usd"), "null field must be omitted, got {json}");
-    assert!(!obj.contains_key("unrealized_pnl_usd"), "null field must be omitted, got {json}");
+    assert!(
+        !obj.contains_key("deployed_capital_usd"),
+        "null field must be omitted, got {json}"
+    );
+    assert!(
+        !obj.contains_key("realized_pnl_usd"),
+        "null field must be omitted, got {json}"
+    );
+    assert!(
+        !obj.contains_key("unrealized_pnl_usd"),
+        "null field must be omitted, got {json}"
+    );
     assert!(
         !obj.contains_key("daily_loss_limit_remaining_usd"),
         "null field must be omitted, got {json}"

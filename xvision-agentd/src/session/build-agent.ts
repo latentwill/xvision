@@ -137,6 +137,9 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
     modelId: config.model_id,
     ...(config.api_key !== undefined ? { apiKey: config.api_key } : {}),
     ...(config.base_url !== undefined ? { baseUrl: config.base_url } : {}),
+    ...(config.reasoning_effort !== undefined
+      ? { reasoning: { effort: config.reasoning_effort as "low" | "medium" | "high" } }
+      : {}),
   })
 
   const wrapped = wrapAgentModel(innerModel, {

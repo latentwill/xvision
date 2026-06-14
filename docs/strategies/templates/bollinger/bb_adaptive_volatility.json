@@ -2,45 +2,8 @@
   "base_template": "range_trade",
   "display_name": "BB Adaptive Volatility",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "base_period",
-      "range": "10 / 20 / 30"
-    },
-    {
-      "default": "8",
-      "name": "period_min",
-      "range": "5 \u2013 15"
-    },
-    {
-      "default": "50",
-      "name": "period_max",
-      "range": "30 \u2013 100"
-    },
-    {
-      "default": "30",
-      "name": "vol_of_vol_window",
-      "range": "15 \u2013 60"
-    },
-    {
-      "default": "rolling-median",
-      "name": "vol_of_vol_baseline",
-      "range": "absolute / rolling-median"
-    },
-    {
-      "default": "0.5",
-      "name": "adaptation_strength",
-      "range": "0.0 (no adapt) \u2013 1.0 (full)"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    }
-  ],
   "name": "bb_adaptive_volatility",
-  "plain_summary": "A fixed BB period (20) is robust on average but suboptimal at the tails. In high vol-of-vol environments (regime change, news shocks), a 20-period window is too long \u2014 the bands lag the new regime. In low vol-of-vol environments (extended ranges), 20 is too short \u2014 the bands flap on local noise.",
+  "plain_summary": "A fixed BB period (20) is robust on average but suboptimal at the tails. In high vol-of-vol environments (regime change, news shocks), a 20-period window is too long — the bands lag the new regime. In low vol-of-vol environments (extended ranges), 20 is too short — the bands flap on local noise.",
   "regime_fit": [
     "any"
   ],
@@ -54,12 +17,12 @@
     "decision_rule": "Same as `bb_meanrev_zscore`, except the bands are computed with `period_t`\neach bar:\n\n```\nbb_middle, bb_upper, bb_lower = bollinger(price, period=period_t, mult=bb_mult)\n\nif pct_b <= entry_pct_b_low and is_flat: enter long\nelif pct_b >= entry_pct_b_high and is_flat: enter short\n\nexit on bb_middle touch or stop.\n```",
     "expected_regime": "All regimes; the strategy's *point* is to be robust across regime\ntransitions without re-tuning. Best evaluated on a long window that\nincludes a regime shift (e.g., a calm-to-crisis transition).",
     "inputs": "- `PriceFrame.close`.\n- Computed: `bandwidth_change[t] = bandwidth[t] - bandwidth[t-1]`.\n- Computed: `vol_of_vol = std_dev(bandwidth_change, window=30)`.\n- Computed: `period_t = clamp(base_period * scale_factor(vol_of_vol), period_min, period_max)`.\n- The bands then computed with the *adaptive* period.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `base_period`                  | 20      | 10 / 20 / 30     |\n| `period_min`                   | 8       | 5 \u2013 15           |\n| `period_max`                   | 50      | 30 \u2013 100         |\n| `vol_of_vol_window`            | 30      | 15 \u2013 60          |\n| `vol_of_vol_baseline`          | rolling-median | absolute / rolling-median |\n| `adaptation_strength`          | 0.5     | 0.0 (no adapt) \u2013 1.0 (full) |\n| `bb_mult`                      | 2.0     | 1.5 \u2013 2.5        |\n\n`adaptation_strength = 0` collapses to fixed-period BB, which is the\ncontrol case in evaluation.",
-    "references": "- Compendium README \u00a7The 7 axes, axis 3 (period).\n- Conceptually related: KAMA (Kaufman Adaptive Moving Average) \u2014 same\n  adaptation philosophy applied to the centerline rather than the period.\n- Comparison target: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) at\n  `adaptation_strength = 0` is the same strategy with fixed period.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `base_period`                  | 20      | 10 / 20 / 30     |\n| `period_min`                   | 8       | 5 – 15           |\n| `period_max`                   | 50      | 30 – 100         |\n| `vol_of_vol_window`            | 30      | 15 – 60          |\n| `vol_of_vol_baseline`          | rolling-median | absolute / rolling-median |\n| `adaptation_strength`          | 0.5     | 0.0 (no adapt) – 1.0 (full) |\n| `bb_mult`                      | 2.0     | 1.5 – 2.5        |\n\n`adaptation_strength = 0` collapses to fixed-period BB, which is the\ncontrol case in evaluation.",
+    "references": "- Compendium README §The 7 axes, axis 3 (period).\n- Conceptually related: KAMA (Kaufman Adaptive Moving Average) — same\n  adaptation philosophy applied to the centerline rather than the period.\n- Comparison target: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) at\n  `adaptation_strength = 0` is the same strategy with fixed period.",
     "status": "`queued`. Tests the period-substitution axis. Most likely outcome:\nadaptive-period helps marginally on average but matters more during\nregime transitions, where it avoids the lag-then-overshoot pattern of\nfixed-period BB.",
-    "thesis": "A fixed BB period (20) is robust on average but suboptimal at the tails.\nIn high vol-of-vol environments (regime change, news shocks), a 20-period\nwindow is too long \u2014 the bands lag the new regime. In low vol-of-vol\nenvironments (extended ranges), 20 is too short \u2014 the bands flap on\nlocal noise.\n\nAdaptive-period BB scales the window with the realized vol-of-vol of\nrecent bandwidth changes: when vol-of-vol is high, shorten the period\n(faster adaptation); when low, lengthen it (smoother bands). The strategy\nis otherwise the same `bb_meanrev_zscore` template \u2014 what's substituted\nis just the period parameter.\n\nThe adaptive variant is also a hedge against the \"parameter brittleness\"\ncritique of BB: any 20-period optimization that works on past data may\nfail on future data with a different vol-of-vol profile, but an\nadaptive-period strategy is by construction less period-sensitive."
+    "thesis": "A fixed BB period (20) is robust on average but suboptimal at the tails.\nIn high vol-of-vol environments (regime change, news shocks), a 20-period\nwindow is too long — the bands lag the new regime. In low vol-of-vol\nenvironments (extended ranges), 20 is too short — the bands flap on\nlocal noise.\n\nAdaptive-period BB scales the window with the realized vol-of-vol of\nrecent bandwidth changes: when vol-of-vol is high, shorten the period\n(faster adaptation); when low, lengthen it (smoother bands). The strategy\nis otherwise the same `bb_meanrev_zscore` template — what's substituted\nis just the period parameter.\n\nThe adaptive variant is also a hedge against the \"parameter brittleness\"\ncritique of BB: any 20-period optimization that works on past data may\nfail on future data with a different vol-of-vol profile, but an\nadaptive-period strategy is by construction less period-sensitive."
   },
   "source_doc": "strategies/bollinger/bb_adaptive_volatility.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Adaptive Volatility` strategy.\n\nThesis:\nA fixed BB period (20) is robust on average but suboptimal at the tails. In high vol-of-vol environments (regime change, news shocks), a 20-period window is too long \u2014 the bands lag the new regime. In low vol-of-vol environments (extended ranges), 20 is too short \u2014 the bands flap on local noise.\n\nInputs:\n- `PriceFrame.close`.\n- Computed: `bandwidth_change[t] = bandwidth[t] - bandwidth[t-1]`.\n- Computed: `vol_of_vol = std_dev(bandwidth_change, window=30)`.\n- Computed: `period_t = clamp(base_period * scale_factor(vol_of_vol), period_min, period_max)`.\n- The bands then computed with the *adaptive* period.\n\nDecision rule:\nSame as `bb_meanrev_zscore`, except the bands are computed with `period_t`\neach bar:\n\n```\nbb_middle, bb_upper, bb_lower = bollinger(price, period=period_t, mult=bb_mult)\n\nif pct_b <= entry_pct_b_low and is_flat: enter long\nelif pct_b >= entry_pct_b_high and is_flat: enter short\n\nexit on bb_middle touch or stop.\n```\n\nExpected regime:\nAll regimes; the strategy's point is to be robust across regime transitions without re-tuning. Best evaluated on a long window that includes a regime shift (e.g., a calm-to-crisis transition).\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Adaptive Volatility` strategy.\n\nThesis:\nA fixed BB period (20) is robust on average but suboptimal at the tails. In high vol-of-vol environments (regime change, news shocks), a 20-period window is too long — the bands lag the new regime. In low vol-of-vol environments (extended ranges), 20 is too short — the bands flap on local noise.\n\nInputs:\n- `PriceFrame.close`.\n- Computed: `bandwidth_change[t] = bandwidth[t] - bandwidth[t-1]`.\n- Computed: `vol_of_vol = std_dev(bandwidth_change, window=30)`.\n- Computed: `period_t = clamp(base_period * scale_factor(vol_of_vol), period_min, period_max)`.\n- The bands then computed with the *adaptive* period.\n\nDecision rule:\nSame as `bb_meanrev_zscore`, except the bands are computed with `period_t`\neach bar:\n\n```\nbb_middle, bb_upper, bb_lower = bollinger(price, period=period_t, mult=bb_mult)\n\nif pct_b <= entry_pct_b_low and is_flat: enter long\nelif pct_b >= entry_pct_b_high and is_flat: enter short\n\nexit on bb_middle touch or stop.\n```\n\nExpected regime:\nAll regimes; the strategy's point is to be robust across regime transitions without re-tuning. Best evaluated on a long window that includes a regime shift (e.g., a calm-to-crisis transition).\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

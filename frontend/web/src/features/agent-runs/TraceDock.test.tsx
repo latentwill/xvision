@@ -6,6 +6,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { TraceDock } from "./TraceDock";
 import { useTraceDock } from "@/stores/trace-dock";
+import type { DockMode } from "@/stores/trace-dock";
+
+/**
+ * Seed the eval scope slice (the default MemoryRouter path "/" maps to
+ * the eval scope, which is what TraceDock reads here). Leaves the live
+ * scope at its init state.
+ */
+function setEvalScope(slice: {
+  activeRunId?: string | null;
+  selectedSpanId?: string | null;
+  mode?: DockMode;
+  costOverrideUsd?: number | null;
+}) {
+  useTraceDock.setState((s) => ({
+    byScope: {
+      ...s.byScope,
+      eval: {
+        activeRunId: slice.activeRunId ?? null,
+        selectedSpanId: slice.selectedSpanId ?? null,
+        mode: slice.mode ?? "post-hoc",
+        costOverrideUsd: slice.costOverrideUsd ?? null,
+      },
+    },
+  }));
+}
 
 function renderDock() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -20,13 +45,19 @@ function renderDock() {
 
 describe("TraceDock", () => {
   beforeEach(() => {
+    localStorage.clear();
+    // useSpanFilter persists the active filter to BOTH localStorage and the
+    // URL (`?q=kind:model` etc.) — reset the URL too so a kind filter set by
+    // an earlier test can't leak in and hide spans the next test asserts on.
+    window.history.replaceState({}, "", "/");
     useTraceDock.setState({
       height: "collapsed",
-      selectedSpanId: null,
-      activeRunId: null,
       lastOpenHeight: "working",
-      costOverrideUsd: null,
     });
+    // WS-16: collapse state is a SHARED store slice (persisted) — reset it
+    // so tree-collapse state can't leak between tests in this file.
+    useTraceDock.getState().expandAllSpans();
+    setEvalScope({ activeRunId: null, selectedSpanId: null, costOverrideUsd: null });
   });
 
   test("renders nothing when activeRunId is null", () => {
@@ -35,20 +66,23 @@ describe("TraceDock", () => {
   });
 
   test("renders header when activeRunId set, hidden body when collapsed", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "collapsed" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "collapsed" });
     renderDock();
     // Header still hidden at collapsed — strip handles that.
     expect(screen.queryByTestId("trace-dock-body")).toBeNull();
   });
 
   test("shows body at working height", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     expect(await screen.findByTestId("trace-dock-body")).toBeInTheDocument();
   });
 
   test("minimize button collapses the dock", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     await userEvent.click(screen.getByLabelText(/minimize/i));
@@ -56,7 +90,8 @@ describe("TraceDock", () => {
   });
 
   test("renders no Full preset button (resize handle owns height)", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     expect(screen.queryByRole("button", { name: /^full$/i })).toBeNull();
@@ -71,24 +106,21 @@ describe("TraceDock", () => {
   });
 
   test("dock renders at the store's heightPx", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      heightPx: 612,
-    });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", heightPx: 612 });
     renderDock();
     const dock = await screen.findByTestId("trace-dock");
     expect(dock).toHaveStyle({ height: "612px" });
   });
 
   test("inspector selection falls back to the first filtered span", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      advanced_view: false,
-    });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: false });
     renderDock();
     await screen.findByTestId("trace-dock-body");
+    // WS-16: the tree is the default structured view; this test asserts
+    // flame-graph rendering, so switch to the FLAME view first.
+    await userEvent.click(screen.getByRole("button", { name: /flame/i }));
     await screen.findByTestId("flame-bar-s1");
 
     // The Simple-mode inspector summary embeds the span_id inside a
@@ -116,7 +148,8 @@ describe("TraceDock", () => {
     // MOCK_RUN_COMPLETED has no broker.call span — the affordance still
     // appears so the operator knows the concept exists, but a click is
     // a no-op. The disabled state surfaces the *reason* via title.
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     const btn = screen.getByTestId("trace-dock-trade-button");
@@ -132,11 +165,8 @@ describe("TraceDock", () => {
     // `inference_cost_quote_total` may differ when pricing rolled up on
     // the eval table only. The capsule must prefer the pinned override
     // so it matches the meta-strip number rather than the stale rollup.
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      costOverrideUsd: 0.4242,
-    });
+    setEvalScope({ activeRunId: "run_abc1234", costOverrideUsd: 0.4242 });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     const cost = await screen.findByTestId("trace-dock-cost");
     expect(cost.textContent).toBe("$0.4242");
@@ -144,14 +174,53 @@ describe("TraceDock", () => {
   });
 
   test("capsule cost falls back to the agent-run summary when no override is pinned", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      costOverrideUsd: null,
-    });
+    setEvalScope({ activeRunId: "run_abc1234", costOverrideUsd: null });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     const cost = await screen.findByTestId("trace-dock-cost");
     // MOCK_RUN_COMPLETED.summary.total_cost_usd === 0.0624.
     expect(cost.textContent).toBe("$0.0624");
+  });
+
+  test("WS-16: renders the collapsible span tree as the default structured view", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    // The span tree is the default structured view (parents + children).
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+    expect(screen.getByTestId("span-tree-row-s3")).toBeInTheDocument();
+    // FlameGraph is not the default — but its toggle exists.
+    expect(screen.queryByTestId("flame-bar-s1")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /flame/i }),
+    ).toBeInTheDocument();
+  });
+
+  test("WS-16: the view toggle swaps the tree for the flame graph", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("span-tree-row-s1");
+    await userEvent.click(screen.getByRole("button", { name: /flame/i }));
+    expect(await screen.findByTestId("flame-bar-s1")).toBeInTheDocument();
+    expect(screen.queryByTestId("span-tree-row-s1")).not.toBeInTheDocument();
+    // And back to the tree.
+    await userEvent.click(screen.getByRole("button", { name: /^tree$/i }));
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+  });
+
+  test("WS-16: collapsing a DECISION in the tree hides its subtree", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: true });
+    useTraceDock.getState().expandAllSpans();
+    renderDock();
+    await screen.findByTestId("span-tree-row-s3");
+    // s3 (model.call) has a child s4 (tool.call) in the fixture.
+    expect(screen.getByTestId("span-tree-row-s4")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("span-tree-caret-s3"));
+    expect(screen.queryByTestId("span-tree-row-s4")).not.toBeInTheDocument();
+    // Collapsed parent shows its one-line rollup.
+    expect(screen.getByTestId("span-tree-rollup-s3")).toBeInTheDocument();
   });
 });

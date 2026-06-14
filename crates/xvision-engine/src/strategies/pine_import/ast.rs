@@ -24,13 +24,21 @@ pub struct PineParseError {
 
 impl PineParseError {
     pub(crate) fn new(line: usize, col: usize, message: impl Into<String>) -> Self {
-        PineParseError { line, col, message: message.into() }
+        PineParseError {
+            line,
+            col,
+            message: message.into(),
+        }
     }
 }
 
 impl fmt::Display for PineParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pine parse error at {}:{}: {}", self.line, self.col, self.message)
+        write!(
+            f,
+            "Pine parse error at {}:{}: {}",
+            self.line, self.col, self.message
+        )
     }
 }
 
@@ -69,15 +77,29 @@ pub enum Expr {
     /// `ta.<name>(args)` call.
     TaCall { name: String, args: Vec<Expr> },
     /// `strategy.entry(...)` / `strategy.close(...)` / `strategy.exit(...)` as expression.
-    StrategyCall { method: String, args: Vec<(Option<String>, Expr)> },
+    StrategyCall {
+        method: String,
+        args: Vec<(Option<String>, Expr)>,
+    },
     /// `input.int(...)` / `input.float(...)` / `input.bool(...)` / `input.string(...)`.
-    InputCall { input_type: String, args: Vec<(Option<String>, Expr)> },
+    InputCall {
+        input_type: String,
+        args: Vec<(Option<String>, Expr)>,
+    },
     /// Binary operation: `left op right`.
-    BinOp { op: String, left: Box<Expr>, right: Box<Expr> },
+    BinOp {
+        op: String,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     /// Unary `not expr`.
     Not { expr: Box<Expr> },
     /// Ternary `cond ? then_ : else_`.
-    Ternary { cond: Box<Expr>, then_: Box<Expr>, else_: Box<Expr> },
+    Ternary {
+        cond: Box<Expr>,
+        then_: Box<Expr>,
+        else_: Box<Expr>,
+    },
     /// Parenthesised expression.
     Paren { inner: Box<Expr> },
     /// Anything outside the subset — preserved verbatim.
@@ -110,16 +132,26 @@ pub enum Statement {
         args: Vec<Expr>,
     },
     /// `strategy.entry("id", direction, ...)`.
-    StrategyEntry {
-        args: Vec<(Option<String>, Expr)>,
-    },
+    StrategyEntry { args: Vec<(Option<String>, Expr)> },
     /// `strategy.close("id", ...)`.
-    StrategyClose {
-        args: Vec<(Option<String>, Expr)>,
-    },
+    StrategyClose { args: Vec<(Option<String>, Expr)> },
     /// `strategy.exit("id", ...)`.
-    StrategyExit {
-        args: Vec<(Option<String>, Expr)>,
+    StrategyExit { args: Vec<(Option<String>, Expr)> },
+    /// An `if <condition>` block with a captured body.
+    ///
+    /// When the `if` guard is a mappable expression (comparison, crossover/crossunder,
+    /// boolean operator), the condition is preserved here so the mapper can thread it
+    /// into a Filter condition for the enclosed `strategy.entry`/`strategy.exit` calls.
+    /// Body statements that are not parseable degrade to `Unsupported` rather than
+    /// causing an error.
+    ///
+    /// `else` / `else if` branches are not yet fully supported — when encountered they
+    /// are recorded as `Unsupported` in the body and do not block parsing.
+    If {
+        /// The guard expression (e.g. `ta.rsi(close,14) < 30`).
+        condition: Expr,
+        /// Statements in the indented body of the `if` block.
+        body: Vec<Statement>,
     },
     /// A construct outside the supported subset.
     ///

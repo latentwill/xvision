@@ -173,7 +173,12 @@ fn send_sigterm(_pid: u32) {}
 pub struct ListRunsRequest {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on. `None` = no filter; a
+    /// single-element Vec behaves identically to the previous
+    /// single-`Option<RunStatus>` API. Serialises as a JSON array so
+    /// MCP / wizard callers that JSON-encode `ListRunsRequest` still
+    /// work after the change.
+    pub status: Option<Vec<RunStatus>>,
     /// Optional pagination — when both fields are absent, every matching
     /// row is returned. The dashboard's list endpoint passes both;
     /// internal callers (retry idempotency, chart preview) pass neither
@@ -391,10 +396,12 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
+        mode: None,
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     store
         .list(filter)
@@ -433,10 +440,12 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
+        mode: None,
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     // Compute total BEFORE slicing so the pager renders an honest
     // "of N" even when the active page is the last and partial.
@@ -1242,8 +1251,9 @@ pub struct EvalRunRequest {
     /// currently returns a not-implemented error pending the
     /// `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
     pub mode: RunMode,
-    /// Optional per-run override of `Strategy.mechanical_params`. Persisted as
-    /// `eval_runs.params_override_json`.
+    /// Optional free-form per-run config bag, persisted verbatim as
+    /// `eval_runs.params_override_json`. Used as part of the run's dedup
+    /// fingerprint and read by the watchdog (e.g. `max_run_duration_secs`).
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
     /// Required for `mode = live`. Backtest runs must leave this unset.
@@ -1552,16 +1562,11 @@ async fn record_agent_runtime_note(store: &RunStore, run_id: &str, runtime: Agen
     let payload = serde_json::json!({
         "runtime": match runtime {
             AgentRuntime::Cline => "cline",
-            AgentRuntime::LlmDispatch => "llm-dispatch",
         },
         "reason": reason,
     });
     let severity = match runtime {
         AgentRuntime::Cline => "info",
-        // Any LlmDispatch resolution (explicit, fallback, or emergency
-        // rollback) is surfaced at warn severity — the fleet expectation
-        // is Cline everywhere.
-        AgentRuntime::LlmDispatch => "warn",
     };
     if let Err(e) = store
         .record_supervisor_note(run_id, AGENT_RUNTIME_NOTE_ROLE, severity, &payload.to_string())
@@ -1742,14 +1747,10 @@ async fn collect_provider_names_for_strategy(
 ) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
 
-    // 1. Legacy inline slots on the strategy (trader / intern / regime).
-    for slot in [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
+    // 1. Legacy inline slots on the strategy (trader / regime).
+    for slot in [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
     {
         if let Some(p) = slot.provider.as_deref() {
             let p = p.trim();
@@ -2019,14 +2020,10 @@ fn runtime_slots<'a>(
     if !agent_slots.is_empty() {
         return agent_slots.iter().map(|resolved| &resolved.slot).collect();
     }
-    [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Pick the long-lived `agents.agent_id` of the agent acting as the
@@ -2272,117 +2269,20 @@ async fn resolve_provider_api_key(xvn_home: &Path, entry: &ProviderEntry) -> Api
 ///
 /// The flag default is `Cline` (Task 9 flip). But the Cline path can only
 /// physically run when the `xvision-agentd` sidecar binary is available, so
-/// the eval entry point gates the effective runtime on `XVN_AGENTD_BIN`:
+/// Resolve the agent runtime (WU-6: always `Cline`).
 ///
-/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` set → `Cline`.
-/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` UNSET →
-///   `Cline` is still returned, so `spawn_cline_ctx` produces the typed
-///   "set XVN_AGENTD_BIN" error — an operator who explicitly asked for
-///   Cline gets a clear failure, never a silent downgrade (design
-///   decision 5 / failure contract).
-/// * config omits the field (resolves to the `Cline` serde default) but
-///   `XVN_AGENTD_BIN` is UNSET → `LlmDispatch`. This is the safe migration
-///   behavior: an environment that hasn't provisioned the sidecar (most
-///   tests, fresh installs) keeps running through the proven raw-dispatch
-///   path until the operator opts in by provisioning the sidecar.
-/// * config fails to load (no file / parse error) → `LlmDispatch`.
-///
-/// The distinction between "explicitly cline" and "defaulted cline" is read
-/// from the raw config text (the `agent_runtime` key's presence) because
-/// serde collapses both to the same deserialized value.
-///
-/// Every resolution is logged (the silent-fallback cases at `warn`) and the
-/// `(runtime, reason)` pair is returned so the launch paths can persist it as
-/// an `agent_runtime` supervisor note — a silent downgrade must never be
-/// invisible.
+/// Since WU-6 retired the `LlmDispatch` trader path, every run unconditionally
+/// uses the Cline sidecar. This function is kept for call-site compatibility
+/// and for logging the resolved runtime as a supervisor note. If the sidecar
+/// is not provisioned (`XVN_AGENTD_BIN` unset), `spawn_cline_ctx` will fail
+/// with a clear actionable error — never a silent downgrade.
 async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str) {
-    // Stage 3 Task 10 / inheritance item 6 — emergency off-ramp. When the
-    // documented env var is set, route the routine path back through the
-    // legacy LlmDispatch for incident rollback, with a loud warn naming the
-    // blast radius.
-    if config::emergency_llm_dispatch_enabled() {
-        tracing::warn!(
-            target: "agent_runtime",
-            env = config::EMERGENCY_LLM_DISPATCH_ENV,
-            "EMERGENCY ROLLBACK ACTIVE: routing LLM slots through legacy LlmDispatch \
-             (blast radius: this process only, opt-in). Cline is the unconditional \
-             routine runtime; unset {} to restore it. See MANUAL.md (Emergency rollback).",
-            config::EMERGENCY_LLM_DISPATCH_ENV,
-        );
-        return (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (XVN_EMERGENCY_LLM_DISPATCH rollback active)",
-        );
-    }
-
-    let cfg_path = runtime_config_path(ctx);
-    let sidecar_available = std::env::var("XVN_AGENTD_BIN")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-
-    let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
-    let explicitly_set = raw
-        .as_deref()
-        .map(|s| {
-            s.lines()
-                .map(str::trim_start)
-                .any(|l| l.starts_with("agent_runtime") && l.contains('='))
-        })
-        .unwrap_or(false);
-
-    let configured = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
-        Ok(Ok(cfg)) => Some(cfg.agent_runtime),
-        _ => None,
-    };
-
-    let (runtime, reason) = classify_agent_runtime(configured, explicitly_set, sidecar_available);
-    match runtime {
-        // The fallback cases are the ones the operator believed didn't
-        // exist — warn so they are never invisible in run logs.
-        AgentRuntime::LlmDispatch if configured != Some(AgentRuntime::LlmDispatch) => {
-            tracing::warn!(target: "agent_runtime", "agent_runtime={reason}");
-        }
-        _ => {
-            tracing::info!(target: "agent_runtime", "agent_runtime={reason}");
-        }
-    }
-    (runtime, reason)
-}
-
-/// Pure classification half of [`resolve_agent_runtime`]: maps the loaded
-/// config value (`None` = file missing/unparseable), whether the
-/// `agent_runtime` key was explicitly present in the raw config text, and
-/// `XVN_AGENTD_BIN` availability to the effective runtime plus a stable,
-/// human-readable reason string (logged + persisted as a supervisor note).
-fn classify_agent_runtime(
-    configured: Option<AgentRuntime>,
-    explicitly_set: bool,
-    sidecar_available: bool,
-) -> (AgentRuntime, &'static str) {
-    match configured {
-        None => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (FALLBACK: config file missing or unparseable)",
-        ),
-        Some(AgentRuntime::LlmDispatch) => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (explicit agent_runtime = \"llm-dispatch\" in config)",
-        ),
-        Some(AgentRuntime::Cline) if explicitly_set => (
-            AgentRuntime::Cline,
-            "cline (explicit agent_runtime = \"cline\" in config)",
-        ),
-        Some(AgentRuntime::Cline) if sidecar_available => (
-            AgentRuntime::Cline,
-            "cline (serde default; sidecar provisioned via XVN_AGENTD_BIN)",
-        ),
-        Some(AgentRuntime::Cline) => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (FALLBACK: agent_runtime not explicit in config and \
-             XVN_AGENTD_BIN unset — add `agent_runtime = \"cline\"` to the config \
-             or provision the sidecar)",
-        ),
-    }
+    let _ = ctx; // ctx retained for future per-workspace overrides
+    tracing::info!(target: "agent_runtime", "agent_runtime=cline (unconditional since WU-6)");
+    (
+        AgentRuntime::Cline,
+        "cline (unconditional — LlmDispatch retired in WU-6)",
+    )
 }
 
 /// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
@@ -2952,19 +2852,15 @@ async fn run_inner(
             .with_catalogs(obs_catalogs.clone())
     });
 
-    // Stage 1 (Cline runtime unification, Task 6): resolve the agent
-    // runtime once. When `Cline` is selected, spawn the sidecar and build
-    // the dispatch ctx so the backtest executor threads it into every slot
-    // dispatch. `LlmDispatch` leaves `build_eval_dispatch` exactly as
-    // before (the `dispatch` arg already in hand). An unmapped provider or
-    // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
-    // silent fallback (provider-matrix + failure contracts).
+    // WU-6: runtime is always Cline. Spawn the sidecar unconditionally.
+    // An unmapped provider or an unset XVN_AGENTD_BIN surfaces as a typed
+    // error here — never a silent fallback.
     let (agent_runtime, agent_runtime_reason) = resolve_agent_runtime(ctx).await;
     // `run_recording` is `Some` only when recording is enabled (per-run
     // `trajectory_mode = record`) AND a Cline client was spawned with a
     // recording sink. The eval finalizer below closes it out (complete /
     // corrupt) after the run.
-    let (cline_ctx, run_recording) = if matches!(agent_runtime, AgentRuntime::Cline) {
+    let (cline_ctx, run_recording) = {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
         let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
@@ -2995,8 +2891,6 @@ async fn run_inner(
         };
         let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
         (Some(cctx), rec)
-    } else {
-        (None, None)
     };
     // The recorder needs the spawned client's persist-failure flag at
     // finalize time; clone the Arc so the finalizer can read it after the
@@ -3458,7 +3352,7 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 // owns its own broker + min-notional surface in the
 // `live-bar-source-alpaca` track. The risk-config crate's `"paper"`
 // venue-id label is preserved (separate concept from RunMode); see
-// `xvision_risk::config::venue_limits`.
+// `xvision_core::config::RiskVenueLimits`.
 
 /// Build the backtest executor, fanning out bar-loading over the strategy's
 /// active asset set (multi-asset B7, Task C3).
@@ -4038,8 +3932,9 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     // `run_inner` path whose finalizer can close the recording out
     // (complete/corrupt). Extending recording to this path needs a finalize
     // hook inside the spawned task (future work).
+    // WU-6: runtime is always Cline.
     let (agent_runtime, agent_runtime_reason) = resolve_agent_runtime(ctx).await;
-    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+    let cline_ctx = {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
         let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
@@ -4054,8 +3949,6 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
             })?;
         let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
         Some(cctx)
-    } else {
-        None
     };
 
     let executor: Box<dyn RunExecutor> = match req.mode {
@@ -4126,7 +4019,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
     // can be in flight against a single upstream `(provider, model)`
     // bucket. Resolved from the trader slot (the dominant token spender);
-    // findings/intern slots ride along on the same permit because the
+    // findings/regime slots ride along on the same permit because the
     // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
     // the burst as a single user-perceived "launch". The guard is moved
     // into the spawned background task so it lives for the full run
@@ -4868,6 +4761,38 @@ pub async fn attach_run_to_batch(ctx: &ApiContext, run_id: &str, batch_id: &str)
         .map_err(|e| ApiError::Internal(format!("attach_run_to_batch: {e}")))
 }
 
+/// Public wrapper that spawns ONE [`crate::agent::dispatch_capability::ClineDispatchCtx`]
+/// without trajectory recording, for use by the optimizer cycle.
+///
+/// Since WU-6 retired `LlmDispatch`, the sidecar is mandatory — this function
+/// always attempts to spawn. If `XVN_AGENTD_BIN` is unset or the provider is
+/// not launchable it returns a clear `ApiError::Validation` so the caller can
+/// surface an actionable message rather than silently falling back.
+///
+/// The return type is `Option<ClineDispatchCtx>` for call-site compatibility;
+/// it is always `Some` on success (never `None`).
+pub async fn spawn_optimizer_cline_ctx(
+    ctx: &ApiContext,
+    provider_name: &str,
+    tools: Arc<ToolRegistry>,
+) -> ApiResult<Option<crate::agent::dispatch_capability::ClineDispatchCtx>> {
+    let cfg_path = runtime_config_path(ctx);
+    let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, provider_name, None)
+        .await
+        .map_err(|u| {
+            ApiError::Validation(format!(
+                "optimizer sidecar (Cline) is required since WU-6: \
+                 provider `{}` not launchable (reason={}): {} \
+                 — ensure XVN_AGENTD_BIN is set and the provider is configured",
+                u.provider,
+                u.reason.as_str(),
+                u.hint
+            ))
+        })?;
+    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None).await?;
+    Ok(Some(cctx))
+}
+
 mod tests {
     use super::*;
     use crate::strategies::{
@@ -5117,59 +5042,9 @@ mod tests {
         assert_eq!(signal_agentd_for_run(run_id), CancelOutcome::NoProcess);
     }
 
-    // --- classify_agent_runtime (Cline selection visibility, 2026-06-10) ----
-
-    #[test]
-    fn classify_explicit_cline_selects_cline_regardless_of_sidecar_env() {
-        // Explicit config opt-in wins even without XVN_AGENTD_BIN: the spawn
-        // then fails loudly with the typed "set XVN_AGENTD_BIN" error rather
-        // than silently downgrading.
-        for sidecar in [true, false] {
-            let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), true, sidecar);
-            assert_eq!(rt, AgentRuntime::Cline);
-            assert!(
-                reason.contains("explicit"),
-                "reason should say explicit: {reason}"
-            );
-        }
-    }
-
-    #[test]
-    fn classify_defaulted_cline_with_sidecar_selects_cline() {
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), false, true);
-        assert_eq!(rt, AgentRuntime::Cline);
-        assert!(
-            reason.contains("XVN_AGENTD_BIN"),
-            "reason should name the env var: {reason}"
-        );
-    }
-
-    #[test]
-    fn classify_defaulted_cline_without_sidecar_falls_back_with_loud_reason() {
-        // The previously-silent fallback: field not explicit, sidecar not
-        // provisioned. Must resolve LlmDispatch AND say so in the reason.
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), false, false);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("FALLBACK"), "fallback must be labeled: {reason}");
-        assert!(
-            reason.contains("XVN_AGENTD_BIN"),
-            "reason should name the fix: {reason}"
-        );
-    }
-
-    #[test]
-    fn classify_explicit_llm_dispatch_is_honored_and_labeled() {
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::LlmDispatch), true, true);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("explicit"), "reason: {reason}");
-    }
-
-    #[test]
-    fn classify_missing_config_falls_back_with_loud_reason() {
-        let (rt, reason) = classify_agent_runtime(None, false, true);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("FALLBACK"), "reason: {reason}");
-    }
+    // --- agent_runtime (WU-6: always Cline) ------------------------------------
+    // classify_agent_runtime was removed in WU-6 (LlmDispatch retirement).
+    // The tests that exercised LlmDispatch fallback paths were also removed.
 
     #[allow(dead_code)]
     fn provider(enabled_models: Vec<&str>) -> ProviderEntry {
@@ -5224,16 +5099,15 @@ mod tests {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(legacy_slot),
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -5512,4 +5386,173 @@ mod tests {
             "per-asset bars must diverge across assets; btc={btc_close} eth={eth_close}"
         );
     }
+
+    // --- spawn_optimizer_cline_ctx (optimizer parity, WU-6) -------------------
+
+    /// Since WU-6 retired LlmDispatch, spawn_optimizer_cline_ctx always
+    /// attempts to spawn the sidecar. Without XVN_AGENTD_BIN set and no
+    /// configured provider, it must return a hard error (not Ok(None)).
+    #[tokio::test]
+    async fn optimizer_cline_ctx_errors_without_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+
+        // Ensure XVN_AGENTD_BIN is NOT set so the sidecar is unavailable.
+        // Without a configured provider, the wrapper must return an error.
+        std::env::remove_var("XVN_AGENTD_BIN");
+
+        let tools = Arc::new(crate::tools::ToolRegistry::empty());
+        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools).await;
+        // ClineDispatchCtx has no Debug, so report only the Ok/Err shape.
+        assert!(
+            result.is_err(),
+            "expected Err (sidecar mandatory since WU-6), but got Ok(..)"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: LiveDeploymentSummary type + list_live_deployments / get_live_deployment
+// ---------------------------------------------------------------------------
+
+/// Wire type for the live-deployments list/detail API.
+/// Represents one paper or testnet live run with its current capital-risk snapshot.
+/// `venue_label` is always "paper" or "testnet" — 'live' is excluded by the query.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiveDeploymentSummary {
+    pub deployment_id: String,
+    pub strategy_id: Option<String>,
+    pub strategy_name: Option<String>,
+    /// "paper" | "testnet" — 'live' excluded by the query filter.
+    pub venue_label: String,
+    /// queued | running | completed | failed | cancelled
+    pub status: String,
+    pub paused: bool,
+    pub started_at: String,
+    pub last_decision_at: Option<String>,
+    pub deployed_capital_usd: Option<f64>,
+    pub equity_usd: Option<f64>,
+    pub realized_pnl_usd: Option<f64>,
+    pub unrealized_pnl_usd: Option<f64>,
+    pub realized_today_usd: Option<f64>,
+    pub drawdown_pct: Option<f64>,
+    pub daily_loss_limit_remaining_usd: Option<f64>,
+    // i64 → JSON integer decodes as a JS `number`, not BigInt; pin the TS type.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
+    pub risk_veto_count: i64,
+    /// Daily-loss budget in USD = kill_pct × initial capital. `None` when
+    /// no live_run_state row exists yet or kill_pct is 0. Unlocks the
+    /// strip's buffer %-gradient (remaining / budget).
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline (RFC-3339) = started_at + time_limit_secs.
+    /// `None` for bar/decision stop policies (no wall-clock ETA) or when no
+    /// live_run_state row exists yet. Unlocks awm's ETA display.
+    pub stop_at: Option<String>,
+}
+
+/// Private row type for the `eval_runs LEFT JOIN live_run_state` query.
+/// Field names MUST exactly match the SELECT column aliases.
+#[derive(sqlx::FromRow)]
+struct LiveDeploymentRow {
+    deployment_id: String,
+    venue_label: String,
+    status: String,
+    paused: bool,
+    started_at: String,
+    strategy_id: Option<String>,
+    strategy_name: Option<String>,
+    last_decision_at: Option<String>,
+    deployed_capital_usd: Option<f64>,
+    equity_usd: Option<f64>,
+    realized_pnl_usd: Option<f64>,
+    unrealized_pnl_usd: Option<f64>,
+    realized_today_usd: Option<f64>,
+    drawdown_pct: Option<f64>,
+    daily_loss_remaining_usd: Option<f64>,
+    risk_veto_count: Option<i64>,
+    daily_loss_budget_usd: Option<f64>,
+    stop_at: Option<String>,
+}
+
+/// Base SELECT joining `eval_runs` to `live_run_state`, filtered to
+/// `mode='live' AND venue_label != 'live'` (paper + testnet only).
+const LIVE_DEPLOYMENT_SELECT: &str = "\
+    SELECT r.id AS deployment_id, r.venue_label AS venue_label, r.status AS status, \
+           r.paused AS paused, r.started_at AS started_at, \
+           s.strategy_id AS strategy_id, s.strategy_name AS strategy_name, \
+           s.last_decision_at AS last_decision_at, s.deployed_capital_usd AS deployed_capital_usd, \
+           s.equity_usd AS equity_usd, s.realized_pnl_usd AS realized_pnl_usd, \
+           s.unrealized_pnl_usd AS unrealized_pnl_usd, s.realized_today_usd AS realized_today_usd, \
+           s.drawdown_pct AS drawdown_pct, s.daily_loss_remaining_usd AS daily_loss_remaining_usd, \
+           s.risk_veto_count AS risk_veto_count, \
+           s.daily_loss_budget_usd AS daily_loss_budget_usd, s.stop_at AS stop_at \
+    FROM eval_runs r LEFT JOIN live_run_state s ON s.run_id = r.id \
+    WHERE r.mode = 'live' AND r.venue_label != 'live'";
+
+impl From<LiveDeploymentRow> for LiveDeploymentSummary {
+    fn from(r: LiveDeploymentRow) -> Self {
+        Self {
+            deployment_id: r.deployment_id,
+            strategy_id: r.strategy_id,
+            strategy_name: r.strategy_name,
+            venue_label: r.venue_label,
+            status: r.status,
+            paused: r.paused,
+            started_at: r.started_at,
+            last_decision_at: r.last_decision_at,
+            deployed_capital_usd: r.deployed_capital_usd,
+            equity_usd: r.equity_usd,
+            realized_pnl_usd: r.realized_pnl_usd,
+            unrealized_pnl_usd: r.unrealized_pnl_usd,
+            realized_today_usd: r.realized_today_usd,
+            drawdown_pct: r.drawdown_pct,
+            daily_loss_limit_remaining_usd: r.daily_loss_remaining_usd,
+            risk_veto_count: r.risk_veto_count.unwrap_or(0),
+            daily_loss_budget_usd: r.daily_loss_budget_usd,
+            stop_at: r.stop_at,
+        }
+    }
+}
+
+/// List all paper/testnet live deployments, optionally filtered by status.
+///
+/// An empty `status` string is treated as no-filter (same as `None`).
+/// Results are ordered by `started_at DESC, id DESC`.
+pub async fn list_live_deployments(
+    ctx: &ApiContext,
+    status: Option<&str>,
+) -> anyhow::Result<Vec<LiveDeploymentSummary>> {
+    let mut sql = String::from(LIVE_DEPLOYMENT_SELECT);
+    // Treat an empty status string as "no filter".
+    let status = status.filter(|s| !s.is_empty());
+    if status.is_some() {
+        sql.push_str(" AND r.status = ?");
+    }
+    sql.push_str(" ORDER BY r.started_at DESC, r.id DESC");
+    let mut q = sqlx::query_as::<_, LiveDeploymentRow>(&sql);
+    if let Some(st) = status {
+        q = q.bind(st);
+    }
+    let rows = q.fetch_all(&ctx.db).await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Fetch a single live deployment by `run_id`, or `None` when not found.
+pub async fn get_live_deployment(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> anyhow::Result<Option<LiveDeploymentSummary>> {
+    let sql = format!("{LIVE_DEPLOYMENT_SELECT} AND r.id = ?");
+    let row = sqlx::query_as::<_, LiveDeploymentRow>(&sql)
+        .bind(run_id)
+        .fetch_optional(&ctx.db)
+        .await?;
+    Ok(row.map(Into::into))
 }

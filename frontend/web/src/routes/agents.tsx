@@ -175,7 +175,7 @@ export function AgentsRoute() {
 
   return (
     <>
-      <Topbar title="Agents" sub={subtitleFor(q, total, list.rows.length)} />
+      <Topbar title="Agents" sub={subtitleFor(q, total, list.rows.length, archivedToken)} />
 
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <Link
@@ -235,11 +235,12 @@ export function AgentsRoute() {
             </Link>
           ) : null
         }
-        renderRow={(row) => (
+        renderRow={(row, _i, visibleKeys) => (
           <DesktopRow
             key={row.agent_id}
             row={row}
             onGo={go}
+            visibleKeys={visibleKeys}
             tools={toolsQ.data?.items ?? []}
             toolsLoading={toolsQ.isPending}
             updatingTools={updateTools.isPending}
@@ -277,19 +278,23 @@ function subtitleFor(
   q: { isPending: boolean; isError: boolean },
   total: number,
   visibleRows: number,
+  archivedToken: string,
 ): string {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load agents";
-  if (total === 0) return "0 agents";
-  if (visibleRows === total) {
-    return `${total} ${total === 1 ? "agent" : "agents"}`;
-  }
-  return `${visibleRows} of ${total} agents`;
+  const base =
+    total === 0
+      ? "0 agents"
+      : visibleRows === total
+        ? `${total} ${total === 1 ? "agent" : "agents"}`
+        : `${visibleRows} of ${total} agents`;
+  return archivedToken === "exclude" ? `${base} · archived hidden` : base;
 }
 
 function DesktopRow({
   row,
   onGo,
+  visibleKeys,
   tools,
   toolsLoading,
   updatingTools,
@@ -297,6 +302,7 @@ function DesktopRow({
 }: {
   row: Agent;
   onGo: (id: string) => void;
+  visibleKeys: Set<string>;
   tools: { name: string; description: string }[];
   toolsLoading: boolean;
   updatingTools: boolean;
@@ -326,35 +332,47 @@ function DesktopRow({
           </div>
         ) : null}
       </td>
-      <td className="px-5 py-3">
-        <StatusPill status={status} />
-      </td>
-      <td className="px-5 py-3">
-        <AgentToolsSelect
-          row={row}
-          tools={tools}
-          loading={toolsLoading}
-          disabled={updatingTools}
-          onChange={onToolsChange}
-        />
-      </td>
-      <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
-        {row.slots.length === 1
-          ? `1 (${row.slots[0]?.name ?? "main"})`
-          : `${row.slots.length}`}
-      </td>
-      <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
-        {skillsCount}
-      </td>
-      <td
-        className="px-5 py-3 text-text-3 text-[12px]"
-        title={row.created_at}
-      >
-        {formatRelative(row.created_at)}
-      </td>
-      <td className="px-5 py-3 text-text-3 text-[12px]">
-        {formatRelative(row.updated_at)}
-      </td>
+      {visibleKeys.has("status") ? (
+        <td className="px-5 py-3">
+          <StatusPill status={status} />
+        </td>
+      ) : null}
+      {visibleKeys.has("tools") ? (
+        <td className="px-5 py-3 overflow-hidden">
+          <AgentToolsSelect
+            row={row}
+            tools={tools}
+            loading={toolsLoading}
+            disabled={updatingTools}
+            onChange={onToolsChange}
+          />
+        </td>
+      ) : null}
+      {visibleKeys.has("slots") ? (
+        <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
+          {row.slots.length === 1
+            ? `1 (${row.slots[0]?.name ?? "main"})`
+            : `${row.slots.length}`}
+        </td>
+      ) : null}
+      {visibleKeys.has("skills") ? (
+        <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
+          {skillsCount}
+        </td>
+      ) : null}
+      {visibleKeys.has("created") ? (
+        <td
+          className="px-5 py-3 text-text-3 text-[12px]"
+          title={row.created_at}
+        >
+          {formatRelative(row.created_at)}
+        </td>
+      ) : null}
+      {visibleKeys.has("updated") ? (
+        <td className="px-5 py-3 text-text-3 text-[12px]">
+          {formatRelative(row.updated_at)}
+        </td>
+      ) : null}
     </tr>
   );
 }
@@ -392,7 +410,7 @@ function AgentToolsSelect({
         if (next === "__custom__") return;
         onChange(next === "__none__" ? [] : [next]);
       }}
-      className="h-7 w-[150px] rounded-sm border border-border bg-surface-elev px-2 font-mono text-[11px] text-text-2 outline-none transition-colors hover:border-text-3 focus:border-gold/50 disabled:cursor-not-allowed disabled:opacity-60"
+      className="h-7 w-[150px] max-w-[150px] rounded-sm border border-border bg-surface-elev px-2 font-mono text-[11px] text-text-2 outline-none transition-colors hover:border-text-3 focus:border-gold/50 disabled:cursor-not-allowed disabled:opacity-60 overflow-hidden text-ellipsis"
     >
       <option value="__none__">No tools</option>
       {selectedTools.length > 1 ? (

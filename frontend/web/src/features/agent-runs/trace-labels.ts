@@ -63,6 +63,42 @@ export function formatTraceLabel(input: TraceLabelInput): string {
   }
 }
 
+/**
+ * Operator-surface label for an OPTI scope row (WS-11a). The autooptimizer
+ * cycle trace projects developer-surface kinds (`opti.gate`, `opti.experiment`,
+ * …) but the dock must read in plain language per the terminology lock —
+ * "Experiment proposed", "Active" / "Suspect" / "Rejected" gate outcomes,
+ * "Honesty check", "Judge finding", "Flywheel compiled".
+ *
+ * Returns `null` for any non-OPTI span so existing call sites keep their
+ * payload-ref label path untouched.
+ */
+export function optiSpanLabel(span: RunSpan): string | null {
+  switch (span.kind) {
+    case "opti.cycle":
+      return "Optimizer cycle";
+    case "opti.parent":
+      return "Parent selected";
+    case "opti.experiment":
+      return "Experiment proposed";
+    case "opti.honesty":
+      return "Honesty check";
+    case "opti.judge":
+      return "Judge finding";
+    case "opti.flywheel":
+      return "Flywheel compiled";
+    case "opti.gate": {
+      const outcome = (span.attributes as { outcome?: unknown }).outcome;
+      if (outcome === "kept") return "Active";
+      if (outcome === "suspect") return "Suspect";
+      if (outcome === "rejected") return "Rejected";
+      return "Gate evaluated";
+    }
+    default:
+      return null;
+  }
+}
+
 function formatBrokerCallLabel(span: RunSpan): string {
   const bc = span.broker_call!;
   const side = bc.side.toUpperCase();
@@ -127,11 +163,12 @@ function pickStage(span: RunSpan): string | null {
   const stage = (attrs as Record<string, unknown>).stage;
   if (typeof stage === "string" && stage) return stage;
   // Fall back to the span name when the producer hasn't populated
-  // `attributes.stage` yet (pre-PR-#294 runs).
-  if (span.name && span.kind === "model.call") {
+  // `attributes.stage` yet (pre-PR-#294 runs). `decision.model` is the
+  // WS-17 rename of the model-call span; `model.call` is kept as a
+  // legacy alias for historical exports.
+  if (span.name && (span.kind === "decision.model" || span.kind === "model.call")) {
     const lower = span.name.toLowerCase();
     if (lower.includes("trader")) return "trader";
-    if (lower.includes("intern")) return "intern";
     if (lower.includes("risk")) return "risk";
     if (lower.includes("regime")) return "regime";
   }

@@ -11,7 +11,7 @@
 //!
 //! `orderly-connector-rs 0.4.15` pins `zeroize = "=1.3.0"` via its `solana-sdk`
 //! transitive dependency. The workspace already uses `reqwest = 0.13` (in
-//! `xvision-intern` and others) which pulls `rustls 0.23` requiring
+//! several crates) which pulls `rustls 0.23` requiring
 //! `zeroize >= 1.7`. These are irreconcilable: Cargo's resolver cannot
 //! simultaneously satisfy `=1.3.0` and `>=1.7`.
 //!

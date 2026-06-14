@@ -7,13 +7,10 @@
 //     served by the `agent-run-observability-export-cli` track.
 //
 // Selection rule:
-//   - `VITE_USE_MOCK_AGENT_RUNS=1`         -> mock
-//   - else if MODE is `test` or `development` -> mock (so the UI works
-//     before the backend lands; flip the flag to `0` to test against real)
-//   - else                                  -> real HTTP
-//
-// When the backend is shipped and stable, drop the dev-default and require
-// the flag explicitly.
+//   - `VITE_USE_MOCK_AGENT_RUNS=1`  -> mock
+//   - `VITE_USE_MOCK_AGENT_RUNS=0`  -> real HTTP (overrides MODE)
+//   - else if MODE is `test`        -> mock (Vitest baseline)
+//   - else                          -> real HTTP
 
 import { ApiError, apiFetch } from "./client";
 import { decisionIdxFromAttributes } from "@/features/agent-runs/decision-idx";
@@ -29,6 +26,7 @@ import type {
   AgentRunMemoryEventsResponse,
   AgentRunStreamEvent,
   AgentRunSummary,
+  AgentRunAccounting,
   RetentionMode,
   RunSpan,
   RunStatus,
@@ -70,9 +68,10 @@ export function shouldUseMockAgentRuns(): boolean {
   const explicit = import.meta.env.VITE_USE_MOCK_AGENT_RUNS;
   if (explicit === "1" || explicit === "true") return true;
   if (explicit === "0" || explicit === "false") return false;
-  if (import.meta.env.MODE === "test" || import.meta.env.MODE === "development")
-    return true;
-  return import.meta.env.DEV === true;
+  // No explicit override: only the Vitest test runner gets mock by default.
+  // Development (`vite dev`) hits the real HTTP backend now that the agent-run
+  // observability endpoints are shipped and stable.
+  return import.meta.env.MODE === "test";
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +105,15 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isAgentRunExportPayload(payload: unknown): payload is Record<string, unknown> {
-  return isObject(payload) && payload.schema_version === "xvn.agent_run.v1";
+  return (
+    isObject(payload) &&
+    (payload.schema_version === "xvn.agent_run.v1" ||
+      payload.schema_version === "xvn.agent_run.v2" ||
+      // WS-7: the export bumped to v3 (added the full `events` array + inlined
+      // blob payloads). The detail page consumes the same payload, so it must
+      // accept v3 — otherwise GET /api/agent-runs/:id throws invalid_response.
+      payload.schema_version === "xvn.agent_run.v3")
+  );
 }
 
 function asString(v: unknown, fallback = ""): string {
@@ -115,6 +122,10 @@ function asString(v: unknown, fallback = ""): string {
 
 function asNumber(v: unknown, fallback = 0): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function asNullableNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 function asNullableString(v: unknown): string | null {
@@ -204,6 +215,110 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
   return out;
 }
 
+/**
+ * Engine-event kinds that are payload CARRIERS for a span (their body is
+ * folded onto the matching model/tool span elsewhere), not standalone
+ * lifecycle signals. Projecting them as `engine.event` rows would duplicate
+ * the model/tool span — so they're skipped. WS-8.
+ */
+const ENGINE_EVENT_CARRIER_KINDS: ReadonlySet<string> = new Set([
+  "model_call_payload",
+  "tool_call_payload",
+]);
+
+/**
+ * Project the v3 export's `events[]` array (every `EngineEvent` for the run)
+ * onto `engine.event` `RunSpan` rows so they render in the trace dock through
+ * the existing tree / inspector / filter machinery. Before WS-8 these were
+ * dropped entirely (the trace rendered only `spans`).
+ *
+ * Each lifecycle event becomes a synthetic span:
+ *   - `kind: "engine.event"` (the family/label/color resolve off
+ *     `attributes.engine_event_kind` via `span-colors.ts`),
+ *   - `parent_span_id` = the event's scoping `span_id` (so it nests under the
+ *     decision/model it fired against; run-scoped events become top-level),
+ *   - the raw kind + parsed payload preserved in `attributes` for the inspector.
+ *
+ * Carrier events (`model_call_payload`, `tool_call_payload`) are skipped — they
+ * are folded onto the model/tool spans, not rendered as their own rows.
+ */
+function projectEngineEvents(events: unknown, byId: Map<string, RunSpan>): RunSpan[] {
+  if (!Array.isArray(events)) return [];
+  const out: RunSpan[] = [];
+  let synthCounter = 0;
+  for (const raw of events) {
+    if (!isObject(raw)) continue;
+    const kind = asString(raw.kind);
+    if (!kind || ENGINE_EVENT_CARRIER_KINDS.has(kind)) continue;
+    const createdAt = asString(raw.created_at);
+    // Scope to the event's span when it names one AND that span exists in the
+    // tree; otherwise the row is a top-level lifecycle signal (never dropped).
+    const scopeId = asNullableString(raw.span_id);
+    const parentSpanId = scopeId && byId.has(scopeId) ? scopeId : null;
+    const spanId = `engine_event:${kind}:${synthCounter++}:${createdAt}`;
+    const attrs: Record<string, unknown> = { engine_event_kind: kind };
+    if (raw.payload_json !== undefined && raw.payload_json !== null) {
+      attrs.engine_event_payload = raw.payload_json;
+    }
+    out.push({
+      span_id: spanId,
+      parent_span_id: parentSpanId,
+      name: kind,
+      kind: "engine.event",
+      started_at: createdAt,
+      // Engine events are point-in-time signals, not bracketed intervals; the
+      // tree renders them as zero-duration rows.
+      finished_at: createdAt || null,
+      status: "ok",
+      attributes: attrs,
+    });
+  }
+  return out;
+}
+
+/**
+ * Convert a LIVE `engine_event` SSE frame (`StreamEngineEventData`) into an
+ * `engine.event` `RunSpan` so the dock can append it to the cached detail in
+ * real time. Mirrors {@link projectEngineEvents} (the post-hoc v3-export path)
+ * so live and replayed runs render identical engine-event rows. WS-8.
+ *
+ * `payload_json` arrives as a JSON STRING on the wire (vs. a parsed Value in
+ * the export) — it's parsed here when valid, else kept as the raw string so
+ * nothing is lost. Returns `null` for carrier kinds (folded onto model/tool
+ * spans) and for kindless frames.
+ */
+export function engineEventFrameToSpan(data: {
+  span_id?: string | null;
+  kind: string;
+  payload_json?: string | null;
+  created_at: string;
+}): RunSpan | null {
+  const kind = asString(data.kind);
+  if (!kind || ENGINE_EVENT_CARRIER_KINDS.has(kind)) return null;
+  const createdAt = asString(data.created_at);
+  const attrs: Record<string, unknown> = { engine_event_kind: kind };
+  if (typeof data.payload_json === "string" && data.payload_json.length > 0) {
+    try {
+      attrs.engine_event_payload = JSON.parse(data.payload_json);
+    } catch {
+      attrs.engine_event_payload = data.payload_json;
+    }
+  }
+  // The dock links this under its scoping span if present; an unknown/absent
+  // span_id becomes a top-level lifecycle row (never dropped).
+  const parentSpanId = asNullableString(data.span_id);
+  return {
+    span_id: `engine_event:${kind}:${createdAt}:${parentSpanId ?? "run"}`,
+    parent_span_id: parentSpanId,
+    name: kind,
+    kind: "engine.event",
+    started_at: createdAt,
+    finished_at: createdAt || null,
+    status: "ok",
+    attributes: attrs,
+  };
+}
+
 function extractBrokerCall(
   attrs: Record<string, unknown>,
 ): RunSpan["broker_call"] | undefined {
@@ -248,12 +363,36 @@ function durationMs(startedAt: string, finishedAt: string | null): number | null
   return Math.max(0, end - start);
 }
 
+function normalizeAccounting(raw: unknown): AgentRunAccounting | null {
+  if (!isObject(raw)) return null;
+  return {
+    source: asString(raw.source, "none") as AgentRunAccounting["source"],
+    eval_run_id: asNullableString(raw.eval_run_id),
+    eval_mode: asNullableString(raw.eval_mode),
+    eval_status: asNullableString(raw.eval_status),
+    eval_actual_input_tokens: asNullableNumber(raw.eval_actual_input_tokens),
+    eval_actual_output_tokens: asNullableNumber(raw.eval_actual_output_tokens),
+    eval_model_calls: asNumber(raw.eval_model_calls),
+    eval_model_call_input_tokens: asNullableNumber(raw.eval_model_call_input_tokens),
+    eval_model_call_output_tokens: asNullableNumber(raw.eval_model_call_output_tokens),
+    eval_model_call_cost_usd: asNullableNumber(raw.eval_model_call_cost_usd),
+  };
+}
+
 function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDetail {
   const totals = isObject(payload.totals) ? payload.totals : {};
+  const accounting = normalizeAccounting(payload.accounting);
   const spans = flattenExportSpans(payload.spans);
   const modelCallsRaw = Array.isArray(payload.model_calls) ? payload.model_calls : [];
   const toolCallsRaw = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
   const bySpan = new Map(spans.map((s) => [s.span_id, s]));
+  // WS-8: project the v3 `events[]` lifecycle rows onto engine.event spans so
+  // they render in the trace instead of being silently dropped. Appended after
+  // the real spans so they nest under their scoping span (parent linkage uses
+  // the real-span id set). Carrier payload events are skipped (folded onto the
+  // model/tool spans below).
+  const engineEventSpans = projectEngineEvents(payload.events, bySpan);
+  for (const s of engineEventSpans) spans.push(s);
   // Project per-call provider/model/cost/hashes back onto the matching
   // `model.call` span so SpanInspector can render the model the slot
   // actually invoked (not just the strategy default) and so operators
@@ -299,7 +438,10 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
       started_at: startedAt,
       finished_at: finishedAt,
       status,
-      span_count: spans.length,
+      // Count real observability spans only — engine.event rows are projected
+      // lifecycle signals (WS-8), not spans, so they must not inflate the
+      // header's "N spans" tally.
+      span_count: spans.length - engineEventSpans.length,
       model_call_count: asNumber(totals.model_calls, modelCallsRaw.length),
       tool_call_count: asNumber(totals.tool_calls, toolCallsRaw.length),
       error_count: errorCount,
@@ -309,6 +451,7 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
       duration_ms: durationMs(startedAt, finishedAt),
       financial_eval_id: asNullableString(payload.eval_run_id),
       retention_mode: asString(payload.retention_mode, "hash_only") as RetentionMode,
+      ...(accounting ? { accounting } : {}),
     },
     spans,
     model_calls: modelCallsRaw.filter(isObject).map((row) => ({
@@ -580,7 +723,7 @@ function openMockStream(
  * is the first frame on every (re)connect, so a dropped connection
  * recovers the full run state on its own.
  */
-const REAL_SSE_EVENTS = [
+export const REAL_SSE_EVENTS = [
   "snapshot",
   "run_started",
   "run_finished",
@@ -592,6 +735,8 @@ const REAL_SSE_EVENTS = [
   "tool_call_finished",
   "tool_call_failed",
   "tool_call_cancelled",
+  "broker_call_started",
+  "broker_call_finished",
   "assistant_text_delta",
   "sidecar_error",
   "checkpoint_written",
@@ -600,6 +745,7 @@ const REAL_SSE_EVENTS = [
   "backpressure_dropped",
   "memory_recall",
   "memory_write",
+  "engine_event",
   "lagged",
 ] as const;
 type RealSseEventName = (typeof REAL_SSE_EVENTS)[number];

@@ -458,12 +458,18 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
+        self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
+        self
+    }
+
+    /// WS-9 — set the attest boundary interval WITHOUT wiring a hook. The
+    /// engine emits `attest_boundary_reached` at every `every_n`-trade boundary
+    /// independently of the hook, so an observed live run can surface the
+    /// boundary on the trace dock even before an identity-backed hook exists.
+    /// `every_n` is clamped to at least 1 (a `0` becomes "every trade").
+    pub fn with_attest_every_n_trades(mut self, every_n: u32) -> Self {
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
     }
@@ -484,6 +490,17 @@ impl Executor {
         self.agent_runtime = runtime;
         self.cline = cline;
         self
+    }
+
+    /// Returns `true` when the executor has a live `ClineDispatchCtx`, meaning
+    /// the trader slot will be dispatched via `execute_slot_cline` rather than
+    /// falling back to `LlmDispatch`.
+    ///
+    /// **Test-only accessor.** Production code must not branch on this;
+    /// use `should_use_cline` inside the pipeline dispatch path instead.
+    /// `pub` (not `#[cfg(test)]`) so integration tests in `tests/` can reach it.
+    pub fn cline_is_wired(&self) -> bool {
+        self.cline.is_some()
     }
 
     fn emit(&self, event: ProgressEvent) {
@@ -894,6 +911,14 @@ impl Executor {
         // doesn't leak into ETH's flip detection.
         let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
             BTreeMap::new();
+        // WS-15 (`trace-obs` market-context): per-asset last-seen regime
+        // label. A market regime change is the highest-signal pre-decision
+        // state shift; when the label for an asset differs from the prior
+        // decision we emit a queryable `regime_transition` engine event
+        // (see the per-decision emit below). Keyed per asset so a regime
+        // flip on BTC doesn't masquerade as one on ETH. Purely
+        // observational — never feeds back into regime/briefing/trading.
+        let mut last_regime_label: BTreeMap<xvision_core::trading::AssetSymbol, String> = BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -937,7 +962,13 @@ impl Executor {
         // Errors (CompiledRules, FilterGated without filter) surface
         // here and abort the run, matching the rest of the pre-loop
         // strategy invariants.
-        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+        // trace-obs WS-6: thread the run's ObsEmitter into the hook so a
+        // filter trip emits a `filter_fired` engine event onto the bus
+        // (in addition to the per-bar `eval_filter_evaluations` row +
+        // ProgressEvent). `None` for non-observed runs keeps the legacy
+        // table-only path.
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
+            .map(|hook| hook.with_obs(self.obs_emitter.clone()));
         // Cache the pool handle for the hook's per-bar inserts. We
         // reach through `store` rather than threading it as a separate
         // parameter so the executor's surface area stays unchanged.
@@ -1289,6 +1320,14 @@ impl Executor {
                         let sltp_entry = book.entry_price(asset_sym);
                         match crate::eval::executor::sltp::check_and_update(sltp, bar) {
                             Some(SltpTrigger::FullExit { reason }) => {
+                                // WS-14: capture the effective bracket prices the
+                                // exit fired against BEFORE the state is removed
+                                // (line below clears `sltp_state`). These are the
+                                // values the deterministic exit already computed —
+                                // we only read them for the `position_exit` trace
+                                // event, never recompute or change exit logic.
+                                let exit_effective_sl_price = sltp.get_effective_sl_price();
+                                let exit_effective_tp_price = sltp.get_effective_tp_price();
                                 let (sltp_pnl, sltp_fee) = apply_sltp_full_exit(
                                     sltp_position,
                                     sltp_entry,
@@ -1369,6 +1408,48 @@ impl Executor {
                                         crate::agent::episodic::IndicatorSnapshot::default(),
                                     );
                                     episodic_store.push(sltp_obs);
+                                }
+                                // WS-14: emit a `position_exit` engine event so the
+                                // deterministic SL/TP/trailing/time exit — often THE
+                                // realized-PnL event — is first-class in the trace,
+                                // not just a DB row + chart blip. This exit site runs
+                                // BEFORE the LLM-decision span is opened (and bails via
+                                // `continue 'asset`), so it gets its own short-lived
+                                // `agent.decision` span scoped to the exit, mirroring
+                                // how an LLM decision carries its outcome events.
+                                // Emit-only: every value below is already computed for
+                                // the exit above — no recompute, no logic change.
+                                if let Some(obs) = self.obs_emitter.as_ref() {
+                                    let exit_span_id = crate::agent::observability::fresh_span_id();
+                                    obs.emit_decision_span_started(
+                                        &exit_span_id,
+                                        None,
+                                        decision_idx as i64,
+                                        Some(&asset),
+                                        Some(bar.timestamp),
+                                        Some(bar.close),
+                                        Some(sltp_position),
+                                        // decision_input (WS-10): a deterministic SL/TP exit
+                                        // carries no agent briefing, so there is no
+                                        // market-context snapshot to attach here.
+                                        None,
+                                    )
+                                    .await;
+                                    let payload = serde_json::json!({
+                                        "asset": asset,
+                                        "exit_reason": reason,
+                                        "effective_sl_price": exit_effective_sl_price,
+                                        "effective_tp_price": exit_effective_tp_price,
+                                        "realized_pnl": net_sltp_pnl,
+                                        "exit_price": fill_price,
+                                    });
+                                    obs.emit_engine_event(
+                                        "position_exit",
+                                        Some(exit_span_id.clone()),
+                                        Some(payload.to_string()),
+                                    )
+                                    .await;
+                                    obs.emit_span_finished_ok(&exit_span_id).await;
                                 }
                                 decision_idx += 1;
                                 continue 'asset;
@@ -1554,6 +1635,19 @@ impl Executor {
                 // tick without diffing decision rows.
                 let decision_span_id = crate::agent::observability::fresh_span_id();
                 if let Some(obs) = self.obs_emitter.as_ref() {
+                    // WS-10 (`trace-obs-decision-input`): capture the
+                    // structured market context the trader saw this bar
+                    // (indicator panel, current-bar OHLCV, regime,
+                    // briefing mode, bounded bar_history summary) from
+                    // the seed (briefing) already assembled above, and
+                    // attach it to the `agent.decision` span attributes
+                    // so it's queryable and lands in the export. The
+                    // backtest dispatch path sends the FULL briefing
+                    // (delta-briefing is a per-slot dispatch opt-in not
+                    // threaded through this executor), so `prev`/opt-in
+                    // are `None`/`false` here — the recorded mode is
+                    // truthfully "full".
+                    let decision_input = build_decision_input(&seed, None, false);
                     obs.emit_decision_span_started(
                         &decision_span_id,
                         None,
@@ -1562,6 +1656,7 @@ impl Executor {
                         Some(bar.timestamp),
                         Some(bar.close),
                         Some(book.position(asset_sym)),
+                        Some(decision_input),
                     )
                     .await;
                     let payload = serde_json::json!({
@@ -1575,6 +1670,44 @@ impl Executor {
                         Some(payload.to_string()),
                     )
                     .await;
+
+                    // WS-15 (`trace-obs` market-context): emit a
+                    // `regime_transition` engine event when the regime
+                    // label for THIS asset changed from the prior
+                    // decision. The label is COMPUTED here per decision
+                    // (deterministic + cheap, no LLM) by running the shared
+                    // `derive_regime_labels` heuristic over the executor's
+                    // OWN trailing bar-history window for this asset — the
+                    // last `history_window` bars plus the current bar
+                    // (`combined_bars[history_start..=combined_idx]`). The
+                    // empty `seed.regime` field the backtest emits is never
+                    // a usable source here, so reading it would make this
+                    // event dead in backtests. Purely observational: the
+                    // computed label feeds ONLY this trace event — it is
+                    // NEVER injected into the trader seed / briefing /
+                    // prompt, so regime/briefing/trading logic is untouched.
+                    // No event on the first observation (no prior) or when
+                    // the regime is stable.
+                    let regime_window = &combined_bars[history_start..=combined_idx];
+                    let curr_regime = compute_regime_label(regime_window);
+                    let prev_regime = last_regime_label.get(&asset_sym).cloned();
+                    if let Some((from, to)) = regime_changed(prev_regime.as_deref(), curr_regime.as_deref()) {
+                        let payload = serde_json::json!({
+                            "asset": asset,
+                            "from": from,
+                            "to": to,
+                            "decision_index": decision_idx,
+                        });
+                        obs.emit_engine_event(
+                            "regime_transition",
+                            Some(decision_span_id.clone()),
+                            Some(payload.to_string()),
+                        )
+                        .await;
+                    }
+                    if let Some(c) = curr_regime {
+                        last_regime_label.insert(asset_sym, c);
+                    }
                 }
                 macro_rules! finish_decision_span_error {
                     ($message:expr) => {
@@ -1651,6 +1784,36 @@ impl Executor {
                     )
                 } else {
                     let seed_for_repair = seed.clone();
+                    // WS-17: open a `decision.model` span as a CHILD of this
+                    // bar's `agent.decision` span BEFORE running the pipeline,
+                    // and thread its id down so the Cline trader's captured
+                    // chain-of-thought (`decision.reasoning`) nests under it.
+                    // The span is the single per-cycle record of the model
+                    // invocation that produced the trade decision (the
+                    // trader/regime/filter slot roles were retired — it's one
+                    // decision-model call now). Closed after the pipeline
+                    // returns, carrying the input/output token counts from
+                    // `PipelineOutputs`. `None` emitter ⇒ no-op + `None` id.
+                    let decision_model_span_id = self
+                        .obs_emitter
+                        .as_ref()
+                        .map(|_| crate::agent::observability::fresh_span_id());
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        let provider = trader_provider(agent_slots, strategy).unwrap_or_default();
+                        let model = trader_model_id(agent_slots, strategy).unwrap_or_default();
+                        obs.emit_model_call_started(
+                            dm_span_id,
+                            Some(decision_span_id.clone()),
+                            &provider,
+                            &model,
+                            Some("trader"),
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
                     let outs = run_pipeline(PipelineInputs {
                         strategy,
                         agent_slots,
@@ -1696,8 +1859,22 @@ impl Executor {
                         // eval entry point selected it.
                         runtime: self.agent_runtime,
                         cline: self.cline.clone(),
+                        // WS-17: parent for the captured chain-of-thought.
+                        model_call_span_id: decision_model_span_id.clone(),
                     })
-                    .await?;
+                    .await;
+                    // WS-17: close the `decision.model` span on BOTH arms
+                    // before propagating — an Err would otherwise leave the
+                    // span dangling open on the trace dock.
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        match &outs {
+                            Ok(_) => obs.emit_span_finished_ok(dm_span_id).await,
+                            Err(e) => obs.emit_span_finished_error(dm_span_id, &e.to_string()).await,
+                        }
+                    }
+                    let outs = outs?;
                     total_input_tokens += outs.total_input_tokens as u64;
                     total_output_tokens += outs.total_output_tokens as u64;
                     run.actual_input_tokens = Some(total_input_tokens);
@@ -1882,6 +2059,28 @@ impl Executor {
                 // drives `simulate_fill` / marker derivation. A `RewriteTo`
                 // also writes a `supervisor_notes` row so the operator sees
                 // the block.
+                // WS-13 (`trace-obs-risk-gate`): open a `risk.gate` span
+                // around the engine's REAL risk window — the guardrail
+                // rewrite below + the deterministic risk-config vetoes
+                // that follow. The span is a child of this decision's
+                // `agent.decision` span and is closed (with a verdict
+                // derived read-only from what actually happened) once the
+                // final `applied_action` is known. This is emit-only: the
+                // guardrail/risk-config/veto LOGIC and the trade outcome
+                // are unchanged. Snapshot the trader's pre-risk action so
+                // the verdict can tell "approved" (unchanged) apart from
+                // "modified"/"vetoed" (rewritten) without re-deriving it.
+                let risk_gate_span_id = crate::agent::observability::fresh_span_id();
+                let trader_action_pre_risk = parsed.action.clone();
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    obs.emit_risk_gate_started(&risk_gate_span_id, Some(decision_span_id.clone()))
+                        .await;
+                }
+                // Reason carried out of the risk-config veto block so the
+                // span finish can report it (`daily_loss_kill` /
+                // `max_concurrent_positions`). `None` when nothing vetoed.
+                let mut risk_veto_reason: Option<&'static str> = None;
+
                 let original_action = GuardAction::parse(&parsed.action);
                 let position_state = position_state_from_size(pre_fill_position);
                 let decision = guardrails::classify(
@@ -1975,12 +2174,74 @@ impl Executor {
                         let max_positions_breached =
                             max_positions > 0 && !already_open && open_positions >= max_positions as usize;
 
-                        if daily_loss_breached || max_positions_breached {
-                            let reason = if daily_loss_breached {
-                                "daily_loss_kill"
+                        // Perps entry veto (venue-gated). Backtest is spot-only
+                        // so `is_perp_venue=false` keeps this permanently inert
+                        // here. Funding data is not plumbed in the backtest path
+                        // (PerpsContext::default() → all None). Liq-distance is
+                        // not yet plumbed into the engine book (follow-on track);
+                        // pass None → that check no-ops.
+                        let is_perp_venue = false;
+                        let perps_funding_rate: Option<f64> = None;
+                        let direction = if applied_action == "short_open" {
+                            xvision_core::trading::Direction::Short
+                        } else {
+                            xvision_core::trading::Direction::Long
+                        };
+                        let perps_veto = crate::strategies::risk::perps::perps_entry_veto(
+                            &strategy.risk,
+                            is_perp_venue,
+                            true, // is_new_open: this branch only runs for new opens
+                            direction,
+                            perps_funding_rate,
+                            None,
+                        );
+
+                        let exposure_breached = {
+                            let cap = strategy.risk.max_total_exposure_pct;
+                            if cap > 0.0 {
+                                let existing: f64 = book
+                                    .open_legs()
+                                    .iter()
+                                    .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                                    .sum();
+                                let new_notional = {
+                                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                                    usd_at_risk.max(0.0)
+                                };
+                                crate::strategies::risk::perps::exceeds_total_exposure(
+                                    cap,
+                                    equity,
+                                    existing,
+                                    new_notional,
+                                )
                             } else {
-                                "max_concurrent_positions"
-                            };
+                                false
+                            }
+                        };
+
+                        let breach_reason: Option<&str> = if daily_loss_breached {
+                            Some("daily_loss_kill")
+                        } else if max_positions_breached {
+                            Some("max_concurrent_positions")
+                        } else if exposure_breached {
+                            Some("max_total_exposure")
+                        } else {
+                            match perps_veto {
+                                Some(xvision_core::trading::VetoReason::PunitiveFunding) => {
+                                    Some("punitive_funding")
+                                }
+                                Some(xvision_core::trading::VetoReason::NearLiquidation) => {
+                                    Some("near_liquidation")
+                                }
+                                _ => None,
+                            }
+                        };
+
+                        if let Some(reason) = breach_reason {
+                            // WS-13: surface the veto reason to the
+                            // enclosing `risk.gate` span finish (read-only
+                            // — does not change the veto behavior below).
+                            risk_veto_reason = Some(reason);
                             let note = format!(
                                 "risk veto `{reason}` at decision {decision_idx} ({asset}): \
                                  open {applied_action} rewritten to hold \
@@ -2010,6 +2271,31 @@ impl Executor {
                         }
                     }
                 };
+
+                // WS-13 (`trace-obs-risk-gate`): close the `risk.gate`
+                // span with a verdict derived READ-ONLY from what the
+                // guardrail + risk-config checks above already did. The
+                // mapping (checked in this order — a veto also rewrites
+                // the action, so the veto case must win over "modified"):
+                //   * `vetoed`   — the risk-config block rewrote a new
+                //                  open to `hold` (reason carried).
+                //   * `modified` — the guardrail rewrote the trader's
+                //                  action (action changed, no veto).
+                //   * `approved` — risk ran, the action is unchanged.
+                // Emitted for ALL THREE verdicts so `risk.gate` shows
+                // every decision, not only the bars where risk fired.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let (verdict, veto_reason): (&str, Option<&str>) = if let Some(reason) = risk_veto_reason
+                    {
+                        ("vetoed", Some(reason))
+                    } else if applied_action != trader_action_pre_risk {
+                        ("modified", None)
+                    } else {
+                        ("approved", None)
+                    };
+                    obs.emit_risk_gate_finished(&risk_gate_span_id, verdict, veto_reason, None)
+                        .await;
+                }
 
                 // eval-broker-rule-findings: validate new open orders against venue
                 // rules before calling simulate_fill. Only `long_open` and
@@ -2464,6 +2750,48 @@ impl Executor {
                         qty: fill.fill_size.unwrap_or(0.0),
                         fee: fill.fee.unwrap_or(0.0),
                     });
+
+                    // WS-14: emit a typed `broker.call` span around the simulated
+                    // fill so backtest fills are auditable on the trace dock the
+                    // same way live fills are (live emits these via
+                    // `RealBrokerFills`; only the simulated path was missing them).
+                    // Stamped with the `backtest` venue so a reader can tell a
+                    // simulated fill from a real one at a glance. Emit-only: the
+                    // fill geometry (side/qty/price/fee) is read from the
+                    // already-produced `FillRecord` — no change to fill logic.
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        let broker_side = if side == "buy" {
+                            xvision_observability::BrokerSide::Buy
+                        } else {
+                            xvision_observability::BrokerSide::Sell
+                        };
+                        let qty = fill.fill_size.unwrap_or(0.0);
+                        let broker_span_id = crate::agent::observability::fresh_span_id();
+                        obs.emit_broker_call_started(
+                            &broker_span_id,
+                            Some(decision_span_id.clone()),
+                            broker_side,
+                            asset.clone(),
+                            qty,
+                            Some(next_bar_open),
+                            "market",
+                            "backtest",
+                            Some(format!("backtest-{}-{}", asset, bar.timestamp.timestamp())),
+                        )
+                        .await;
+                        obs.emit_broker_call_finished(
+                            &broker_span_id,
+                            xvision_observability::BrokerCallOutcome::Filled,
+                            fill.fill_price,
+                            fill.fill_size,
+                            fill.fee,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
                 }
 
                 // F43 (`trace-dock-emitters`): emit `fill_attempted` per
@@ -2690,6 +3018,30 @@ impl Executor {
                 if let Some(obs) = self.obs_emitter.as_ref() {
                     obs.emit_span_finished_ok(&decision_span_id).await;
                     let post_fill_position = book.position(asset_sym);
+                    // WS-14: surface this decision's PnL/position arc on the
+                    // engine event so the per-decision outcome lives in the trace,
+                    // not only on the chart SSE. Every value is read from state
+                    // already mutated by the fill above — no extra computation
+                    // pass, no change to fill/book logic.
+                    //
+                    // `mark` is this asset's next-bar open (the same per-asset mark
+                    // the pooled-NAV step below uses) so `unrealized_pnl` /
+                    // `equity_delta` agree with the recorded equity series. The
+                    // decision entered with `equity` (last set at the prior
+                    // timestamp's NAV step); `equity_post` re-marks the book after
+                    // this decision's realized + position change.
+                    let mark = next_bar_open;
+                    let cumulative_realized = book.realized();
+                    let unrealized_pnl = if post_fill_position.abs() > f64::EPSILON {
+                        post_fill_position * (mark - book.entry_price(asset_sym))
+                    } else {
+                        0.0
+                    };
+                    let mut decision_marks: BTreeMap<xvision_core::trading::AssetSymbol, f64> =
+                        BTreeMap::new();
+                    decision_marks.insert(asset_sym, mark);
+                    let equity_post = book.equity(&decision_marks);
+                    let equity_delta = equity_post - equity;
                     let payload = serde_json::json!({
                         "decision_index": decision_idx,
                         "asset": asset,
@@ -2703,11 +3055,10 @@ impl Executor {
                         "fill_price": fill.fill_price,
                         "fill_size": fill.fill_size,
                         "fee": fill.fee,
-                        "realized_pnl": if fill.realized_pnl != 0.0 {
-                            Some(fill.realized_pnl)
-                        } else {
-                            None
-                        },
+                        "realized_pnl": fill.realized_pnl,
+                        "cumulative_realized": cumulative_realized,
+                        "unrealized_pnl": unrealized_pnl,
+                        "equity_delta": equity_delta,
                         "position_pre": pre_fill_position,
                         "position_post": post_fill_position,
                     });
@@ -3078,12 +3429,20 @@ impl Executor {
         // authoritative source for the deployment's drawdown_pct +
         // daily_loss_limit_remaining_usd, kept in lock-step with the loop-local
         // peak / day-start above. NOT a persisted snapshot table.
-        let mut session_tracker =
-            crate::eval::executor::live_session::LiveSessionTracker::new(initial);
+        let mut session_tracker = crate::eval::executor::live_session::LiveSessionTracker::new(initial);
         // CT5 (§6.3 option A): the most recent per-run unrealized PnL, persisted
         // to `eval_runs.unrealized_pnl_usd` in the buffered equity flush so the
         // poll path has an honest number between SSE ticks. `None` pre-first-mark.
         let mut latest_unrealized_pnl: Option<f64> = None;
+
+        // CT5: per-bar live_run_state upsert. One SQLite row per live run,
+        // written best-effort after each bar so the dashboard can display
+        // capital-risk state without waiting for the run to finish.
+        let mut risk_veto_count: i64 = 0;
+        let live_state = crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
+        let deployed_capital = initial;
+        let strategy_id = run.live_config.as_ref().map(|c| c.strategy_id.clone());
+        let strategy_name = run.live_config.as_ref().map(|c| c.display_name.clone());
 
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
@@ -3486,6 +3845,61 @@ impl Executor {
             )
             .await;
 
+            // CT5: per-bar capital-risk snapshot upserted into live_run_state.
+            // Best-effort — a snapshot write failure must never abort the live
+            // loop (real money may be riding on it).
+            if outcome.risk_vetoed {
+                risk_veto_count += 1;
+            }
+            {
+                let realized_today = book.realized() - daily_realized_at_day_start;
+                let kill_pct = strategy.risk.daily_loss_kill_pct;
+                let daily_loss_remaining = (kill_pct * initial + realized_today).max(0.0);
+                let unrealized: f64 = book
+                    .open_legs()
+                    .iter()
+                    .map(|(_, pos, entry, last_mark)| pos * (last_mark - entry))
+                    .sum();
+                let snap = crate::eval::live_run_state::LiveRunState {
+                    run_id: run.id.clone(),
+                    strategy_id: strategy_id.clone(),
+                    strategy_name: strategy_name.clone(),
+                    deployed_capital_usd: deployed_capital,
+                    equity_usd: Some(equity),
+                    unrealized_pnl_usd: Some(unrealized),
+                    realized_pnl_usd: Some(book.realized()),
+                    realized_today_usd: Some(realized_today),
+                    daily_loss_remaining_usd: Some(daily_loss_remaining),
+                    drawdown_pct: Some(drawdown_pct),
+                    peak_equity_usd: Some(peak_equity),
+                    risk_veto_count,
+                    last_decision_at: Some(decision_ts.to_rfc3339()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    daily_loss_budget_usd: Some(kill_pct * initial),
+                    stop_at: run
+                        .live_config
+                        .as_ref()
+                        .and_then(|c| c.stop_policy.time_limit_secs)
+                        .map(|secs| (run.started_at + chrono::Duration::seconds(secs as i64)).to_rfc3339()),
+                };
+                let _ = live_state.upsert(&snap).await;
+                // CT5 Task 8: broadcast the per-bar state snapshot over SSE so
+                // the live-deployments stream handler can forward it to clients.
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::LiveRunState(crate::api::chart::LiveRunStatePayload {
+                        equity_usd: snap.equity_usd,
+                        unrealized_pnl_usd: snap.unrealized_pnl_usd,
+                        realized_today_usd: snap.realized_today_usd,
+                        daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
+                        drawdown_pct: snap.drawdown_pct,
+                        risk_veto_count: snap.risk_veto_count,
+                        last_decision_at: snap.last_decision_at.clone(),
+                    }),
+                )
+                .await;
+            }
+
             decision_idx += 1;
 
             // LANE byu — periodic auto-attest. Only a FILLED trade advances
@@ -3497,8 +3911,24 @@ impl Executor {
             // chain submit) so a slow/failing attestation never stalls or
             // aborts the loop while we hold the runtime mutex. No hook (every
             // backtest, every test that does not wire one) is a no-op.
-            if let Some(hook) = self.attest_hook.as_ref() {
-                if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+            if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+                // WS-9: emit the chain-adjacent boundary event the ENGINE owns,
+                // regardless of which hook (if any) is wired. This is the one
+                // attestation-flow event that genuinely fires in a live run
+                // today, so it lands on the trace dock + export even with the
+                // no-op hook. The DOWNSTREAM lifecycle events (verdict / chain
+                // submit / posted) are the HOOK's to emit through the same
+                // emitter seam — the engine never adds an identity edge.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let payload = serde_json::json!({
+                        "agent_id": strategy.manifest.id,
+                        "n_trades": n_trades,
+                        "run_id": run.id,
+                    });
+                    obs.emit_engine_event("attest_boundary_reached", None, Some(payload.to_string()))
+                        .await;
+                }
+                if let Some(hook) = self.attest_hook.as_ref() {
                     let summary = super::attest_hook::AttestSummary {
                         run_id: run.id.clone(),
                         agent_id: strategy.manifest.id.clone(),
@@ -3513,7 +3943,12 @@ impl Executor {
                         },
                         equity,
                     };
-                    hook.maybe_attest(summary).await;
+                    // Thread the run's ObsEmitter into the hook so a future
+                    // identity-backed impl can emit `attest_verdict` /
+                    // `chain_submit_started` / `chain_submit_finished` /
+                    // `attestation_posted` onto the same bus. `None` for
+                    // non-observed runs keeps the legacy quiet path.
+                    hook.maybe_attest(summary, self.obs_emitter.clone()).await;
                 }
             }
 
@@ -3656,6 +4091,13 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
+        // LIVE PERPS ATTACH POINT: extracted to a named binding so the R3 veto
+        // below can read `perps_ctx.funding_rate` without duplicating the
+        // default. A follow-on track populates funding/OI here from an
+        // out-of-band poller (xvision_data::perp_feed::fetch_perp_snapshot).
+        // Until that poller exists all fields are None → the funding-carry veto
+        // no-ops regardless of `is_perp_venue`.
+        let perps_ctx = PerpsContext::default();
         // Shared seed-context prologue: position/entry/mark are derived inside
         // `build_seed_context` (single source of truth), so this path can't
         // drift from the backtest one.
@@ -3680,14 +4122,7 @@ impl Executor {
                 stop_loss_price: 0.0,
                 take_profit_price: 0.0,
                 risk_config: &strategy.risk,
-                // LIVE PERPS ATTACH POINT: this is the call-site for the perps
-                // feed. A network fetch in this sync hot loop is the wrong shape
-                // — an out-of-band poller
-                // (xvision_data::perp_feed::fetch_perp_snapshot) should cache the
-                // latest reading per asset; read that cache here and build
-                // PerpsContext { funding_rate, open_interest, .. }. Until that
-                // poller exists the agent simply sees no perps block (None).
-                perps: PerpsContext::default(),
+                perps: perps_ctx,
             },
         )));
 
@@ -3718,6 +4153,12 @@ impl Executor {
             recorder: self.recorder.as_deref(),
             runtime: self.agent_runtime,
             cline: self.cline.clone(),
+            // WS-17: the live `decide_one_live` path does not open an
+            // `agent.decision`/`decision.model` span around this dispatch,
+            // so there is no parent to thread — the captured reasoning
+            // emits top-level. Wiring a decision span here is a separate
+            // live-observability follow-up.
+            model_call_span_id: None,
         })
         .await?;
         let input_tokens = outs.total_input_tokens as u64;
@@ -3771,6 +4212,9 @@ impl Executor {
         //     holding an open position; a new open that would exceed the cap
         //     is vetoed. Re-opening / adjusting an asset that is already
         //     in-position is not blocked.
+        // CT5: track whether this cycle fired a risk veto so the loop driver
+        // can increment the monotonic `risk_veto_count` in `live_run_state`.
+        let mut risk_vetoed = false;
         let applied_action: String = {
             let is_new_open = applied_action == "long_open" || applied_action == "short_open";
             if !is_new_open {
@@ -3793,12 +4237,68 @@ impl Executor {
                 let max_positions_breached =
                     max_positions > 0 && !already_open && open_positions >= max_positions as usize;
 
-                if daily_loss_breached || max_positions_breached {
-                    let reason = if daily_loss_breached {
-                        "daily_loss_kill"
+                // Perps entry veto (venue-gated). `fill_sink.is_perp_venue()`
+                // returns true only for directional-perps brokers (Orderly,
+                // byreal/Hyperliquid, Bybit linear) — false on Alpaca and all
+                // other spot venues, keeping the perps guards permanently inert
+                // for spot runs. Funding rate comes from the named `perps_ctx`
+                // binding above (all None until the out-of-band poller lands).
+                // Liq-distance is not yet plumbed into the engine book
+                // (follow-on track); pass None → that check no-ops.
+                let is_perp_venue = fill_sink.is_perp_venue();
+                let perps_funding_rate = perps_ctx.funding_rate;
+                let direction = if applied_action == "short_open" {
+                    xvision_core::trading::Direction::Short
+                } else {
+                    xvision_core::trading::Direction::Long
+                };
+                let perps_veto = crate::strategies::risk::perps::perps_entry_veto(
+                    &strategy.risk,
+                    is_perp_venue,
+                    true, // is_new_open: this branch only runs for new opens
+                    direction,
+                    perps_funding_rate,
+                    None,
+                );
+
+                let exposure_breached = {
+                    let cap = strategy.risk.max_total_exposure_pct;
+                    if cap > 0.0 {
+                        let existing: f64 = book
+                            .open_legs()
+                            .iter()
+                            .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                            .sum();
+                        let new_notional = {
+                            let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                            usd_at_risk.max(0.0)
+                        };
+                        crate::strategies::risk::perps::exceeds_total_exposure(
+                            cap,
+                            equity,
+                            existing,
+                            new_notional,
+                        )
                     } else {
-                        "max_concurrent_positions"
-                    };
+                        false
+                    }
+                };
+
+                let breach_reason: Option<&str> = if daily_loss_breached {
+                    Some("daily_loss_kill")
+                } else if max_positions_breached {
+                    Some("max_concurrent_positions")
+                } else if exposure_breached {
+                    Some("max_total_exposure")
+                } else {
+                    match perps_veto {
+                        Some(xvision_core::trading::VetoReason::PunitiveFunding) => Some("punitive_funding"),
+                        Some(xvision_core::trading::VetoReason::NearLiquidation) => Some("near_liquidation"),
+                        _ => None,
+                    }
+                };
+
+                if let Some(reason) = breach_reason {
                     let note = format!(
                         "risk veto `{reason}` at decision {decision_idx} ({asset}): \
                          open {applied_action} rewritten to hold \
@@ -3818,6 +4318,7 @@ impl Executor {
                         obs.emit_engine_event("risk_veto", None, Some(payload.to_string()))
                             .await;
                     }
+                    risk_vetoed = true;
                     "hold".to_string()
                 } else {
                     applied_action
@@ -3997,6 +4498,7 @@ impl Executor {
             broker_error,
             daily_loss_day,
             daily_realized_at_day_start,
+            risk_vetoed, // CT5: propagate to loop driver for live_run_state counter
         })
     }
 
@@ -4440,6 +4942,10 @@ struct LiveDecisionOutcome {
     /// calls on the same run.
     daily_loss_day: Option<chrono::NaiveDate>,
     daily_realized_at_day_start: f64,
+    /// CT5: true when the risk gate vetoed an open this decision cycle.
+    /// The loop driver increments `risk_veto_count` and persists it to
+    /// `live_run_state` each bar.
+    pub(crate) risk_vetoed: bool,
 }
 
 // executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
@@ -4806,6 +5312,32 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
         let model = slot.effective_model();
         if !model.trim().is_empty() {
             return Some(model);
+        }
+    }
+    None
+}
+
+/// Find the trader slot's configured provider for the WS-17
+/// `decision.model` span attributes. Mirrors [`trader_model_id`]'s
+/// resolution order (attached agent with canonical role `trader`, then
+/// the legacy `strategy.trader_slot`). Returns `None` when the slot
+/// left `provider` unset — the span then records no provider, matching
+/// the `model_call`-span behaviour on the retired LlmDispatch path.
+fn trader_provider(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
+        if let Some(p) = resolved.slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        if let Some(p) = slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
         }
     }
     None
@@ -5646,6 +6178,222 @@ pub fn inject_briefing_indicators_into_seed(
     }
 }
 
+/// WS-10 (`trace-obs-decision-input`): build the structured snapshot of
+/// the market context the strategy agent saw this bar, from the trader
+/// `seed` (briefing) the executor already assembled. The result is
+/// attached to the `agent.decision` span attributes (under the
+/// `decision_input` key) so the indicator panel, current bar, regime,
+/// briefing mode, and a bounded `bar_history` summary are queryable and
+/// land in the run export — instead of surviving only inside the opaque
+/// model-call prompt.
+///
+/// Shape:
+///
+/// ```json
+/// {
+///   "indicators": { <indicator panel map> },
+///   "current_bar": { <OHLCV> },
+///   "regime": <label/value> | null,
+///   "briefing_mode": "full" | "delta",
+///   "changed_indicators": { ... },   // ONLY when "delta"
+///   "bar_history": { "count": N, "first_ts": <ts|null>, "last_ts": <ts|null> }
+/// }
+/// ```
+///
+/// Kept SMALL/structured: the full `bar_history` window is NEVER inlined
+/// — only a bounded `{count, first_ts, last_ts}` summary (full-window
+/// capture is a separate concern / a blob writer's job).
+///
+/// `briefing_mode` is `"delta"` only when delta was opted in AND a
+/// previous briefing was cached AND the indicator panel actually moved
+/// between the two bars; otherwise `"full"` (including the first bar of
+/// a run, where there's no prior briefing to diff against). When
+/// `"delta"`, `changed_indicators` carries the moved/new entries of the
+/// indicator panel (unchanged entries omitted; a key present last bar
+/// but gone this bar surfaces as `null`) — consistent with the
+/// `indicators` panel this snapshot reports. When `"full"`, no
+/// `changed_indicators` key is emitted.
+/// Compute the current market regime LABEL for an asset from the trailing
+/// window of bars up to and including the current decision bar.
+///
+/// WS-15 (`trace-obs` market-context): the regime label is **computed**
+/// here per decision (deterministic, cheap, no LLM) by delegating to the
+/// shared [`derive_regime_labels`](crate::eval::regime::derive_regime_labels)
+/// heuristic over the executor's own bar-history window. This is purely
+/// observational — the label feeds ONLY the `regime_transition` trace
+/// event; it is never injected into the trader seed / briefing / prompt,
+/// so it changes nothing about what the agent sees or decides.
+///
+/// `window` is the trailing slice of bars (oldest first) ending at the
+/// current decision bar. `derive_regime_labels` requires at least two bars;
+/// with fewer it returns `None` (no transition can fire on the first bar).
+/// The `&Ohlcv` view is converted to the `MarketBar` shape the heuristic
+/// expects (the two structs carry identical OHLCV fields).
+fn compute_regime_label(window: &[&Ohlcv]) -> Option<String> {
+    let bars: Vec<xvision_data::alpaca::MarketBar> = window
+        .iter()
+        .map(|b| xvision_data::alpaca::MarketBar {
+            timestamp: b.timestamp,
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume,
+        })
+        .collect();
+    crate::eval::regime::derive_regime_labels(&bars).regime_label
+}
+
+/// Detect a regime transition between two consecutive decisions on the
+/// same asset.
+///
+/// Returns `Some((from, to))` ONLY when a `prev` label exists AND it
+/// differs from `curr` AND `curr` is present — i.e. a concrete
+/// from→to label change. Returns `None` on the first observation
+/// (`prev` is `None`), when the regime is unchanged, or when the
+/// current label is absent. This is the predicate the executor uses to
+/// decide whether to emit a `regime_transition` engine event; it never
+/// fires on the first bar or on a stable regime.
+pub fn regime_changed(prev: Option<&str>, curr: Option<&str>) -> Option<(String, String)> {
+    match (prev, curr) {
+        (Some(p), Some(c)) if p != c => Some((p.to_string(), c.to_string())),
+        _ => None,
+    }
+}
+
+pub fn build_decision_input(
+    seed: &serde_json::Value,
+    prev_seed: Option<&serde_json::Value>,
+    delta_opt_in: bool,
+) -> serde_json::Value {
+    use serde_json::{Map, Value};
+
+    // ---- Indicator panel ------------------------------------------
+    // The executor injects indicators under `filter_context` (DSL filter
+    // trigger snapshot) and/or `briefing_indicators` (Pine import). Merge
+    // both into one panel; `briefing_indicators` wins on key collision
+    // (it's the strategy-authored set).
+    let indicator_panel = |s: &Value| -> Map<String, Value> {
+        let mut panel = Map::new();
+        if let Some(fc) = s.get("filter_context").and_then(Value::as_object) {
+            for (k, v) in fc {
+                panel.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(bi) = s.get("briefing_indicators").and_then(Value::as_object) {
+            for (k, v) in bi {
+                panel.insert(k.clone(), v.clone());
+            }
+        }
+        panel
+    };
+    let indicators = indicator_panel(seed);
+
+    // ---- Current bar OHLCV ----------------------------------------
+    let current_bar = seed
+        .get("market_data")
+        .and_then(|m| m.get("current_bar"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    // ---- Regime ---------------------------------------------------
+    // Prefer a top-level `regime` label; fall back to one carried inside
+    // the filter trigger context. `null` when neither is present.
+    let regime = seed
+        .get("regime")
+        .or_else(|| seed.get("filter_context").and_then(|fc| fc.get("regime")))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    // ---- Bounded bar_history summary ------------------------------
+    // NEVER inline the full window — only count + first/last ts.
+    let bar_history = bar_history_summary(seed);
+
+    // ---- Briefing mode (full vs delta) ----------------------------
+    // Honest about what the agent saw: "delta" only when delta was
+    // opted in, a prior briefing exists, AND the indicator panel
+    // actually moved between the two bars.
+    let mut out = Map::new();
+    out.insert("indicators".to_string(), Value::Object(indicators));
+    out.insert("current_bar".to_string(), current_bar);
+    out.insert("regime".to_string(), regime);
+    out.insert("bar_history".to_string(), Value::Object(bar_history));
+
+    let changed = if delta_opt_in {
+        prev_seed.and_then(|prev| {
+            let prev_panel = indicator_panel(prev);
+            let curr_panel = indicator_panel(seed);
+            let diff = diff_indicator_panel(&prev_panel, &curr_panel);
+            if diff.is_empty() {
+                None
+            } else {
+                Some(diff)
+            }
+        })
+    } else {
+        None
+    };
+
+    if let Some(diff) = changed {
+        out.insert("briefing_mode".to_string(), Value::String("delta".into()));
+        out.insert("changed_indicators".to_string(), Value::Object(diff));
+    } else {
+        out.insert("briefing_mode".to_string(), Value::String("full".into()));
+    }
+
+    Value::Object(out)
+}
+
+/// Indicator-panel diff: entries in `curr` that are new or changed vs
+/// `prev`, plus entries that disappeared (surfaced as `null`). Mirrors
+/// the dispatch-path indicator diff semantics
+/// ([`crate::agent::briefing`]) but over the eval seed's actual
+/// indicator panel (`filter_context` + `briefing_indicators`).
+fn diff_indicator_panel(
+    prev: &serde_json::Map<String, serde_json::Value>,
+    curr: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::{Map, Value};
+    let mut changed = Map::new();
+    for (k, v) in curr {
+        match prev.get(k) {
+            Some(prev_v) if prev_v == v => {}
+            _ => {
+                changed.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    for k in prev.keys() {
+        if !curr.contains_key(k) {
+            changed.insert(k.clone(), Value::Null);
+        }
+    }
+    changed
+}
+
+/// Bounded summary of the seed's `market_data.bar_history` window:
+/// `{ count, first_ts, last_ts }`. The full window is intentionally
+/// never inlined — this keeps the decision-span attribute small.
+fn bar_history_summary(seed: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::{Map, Value};
+    let bars = seed
+        .get("market_data")
+        .and_then(|m| m.get("bar_history"))
+        .and_then(Value::as_array);
+    let mut summary = Map::new();
+    let count = bars.map(|b| b.len()).unwrap_or(0);
+    summary.insert("count".to_string(), Value::from(count));
+    let ts_of = |entry: Option<&Value>| -> Value {
+        entry
+            .and_then(|e| e.get("timestamp"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    summary.insert("first_ts".to_string(), ts_of(bars.and_then(|b| b.first())));
+    summary.insert("last_ts".to_string(), ts_of(bars.and_then(|b| b.last())));
+    summary
+}
+
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
@@ -5856,16 +6604,15 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

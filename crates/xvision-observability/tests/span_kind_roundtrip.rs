@@ -26,7 +26,8 @@ fn all_variants() -> Vec<(SpanKind, &'static str)> {
     vec![
         (SpanKind::AgentRun, "agent.run"),
         (SpanKind::AgentPlan, "agent.plan"),
-        (SpanKind::ModelCall, "model.call"),
+        (SpanKind::DecisionModel, "decision.model"),
+        (SpanKind::DecisionReasoning, "decision.reasoning"),
         (SpanKind::ToolCall, "tool.call"),
         (SpanKind::ApprovalRequest, "approval.request"),
         (SpanKind::ApprovalResponse, "approval.response"),

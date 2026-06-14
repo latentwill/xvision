@@ -214,6 +214,8 @@ fn replay_input<'a>(
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
         record_slot_role: None,
         obs: None,
+        model_call_span_id: None,
+        reasoning_effort: None,
     }
 }
 
@@ -293,6 +295,7 @@ async fn built_sidecar_records_real_emit_frames_then_replays_from_store() {
             api_key: Some("test-key".into()),
             base_url: None,
             system_prompt: "Decide whether to trade.".into(),
+            reasoning_effort: None,
             // submit_decision is a built-in lifecycle tool (allowed without
             // registry registration); it is the only tool the scripted run calls.
             allowed_tools: vec!["submit_decision".into()],

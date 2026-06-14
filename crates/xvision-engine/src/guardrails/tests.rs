@@ -185,11 +185,11 @@ fn filter_signal_requested_but_absent_is_detected() {
 #[test]
 fn strategy_references_unattached_slot_is_detected() {
     let err =
-        check_slot_attached("critic", "01AGENT", false).expect_err("unattached slot must short-circuit");
+        check_slot_attached("reviewer", "01AGENT", false).expect_err("unattached slot must short-circuit");
     assert_eq!(
         err,
         ShortCircuit::StrategyReferencesUnattachedSlot {
-            role: "critic".into(),
+            role: "reviewer".into(),
             agent_id: "01AGENT".into(),
         }
     );
@@ -198,7 +198,7 @@ fn strategy_references_unattached_slot_is_detected() {
         "strategy_references_unattached_slot",
         "error_missing_capability",
     );
-    assert!(check_slot_attached("critic", "01AGENT", true).is_ok());
+    assert!(check_slot_attached("reviewer", "01AGENT", true).is_ok());
 }
 
 #[test]

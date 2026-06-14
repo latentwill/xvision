@@ -1039,11 +1039,11 @@ describe("EvalRunDetailRoute", () => {
     const { unmount } = renderDetail();
 
     await screen.findByRole("button", { name: /stop eval run/i });
-    expect(useTraceDock.getState().activeRunId).toBe("01LIVE");
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("01LIVE");
 
     unmount();
 
-    expect(useTraceDock.getState().activeRunId).toBeNull();
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBeNull();
   });
 
   it("pushes the eval-side cost into the trace dock so the capsule matches the meta strip", async () => {
@@ -1072,7 +1072,7 @@ describe("EvalRunDetailRoute", () => {
     await screen.findByRole("button", { name: /rerun eval run 01live/i });
 
     await waitFor(() =>
-      expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242),
+      expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBe(0.4242),
     );
 
     // And the stat rail in the page header renders the same number.

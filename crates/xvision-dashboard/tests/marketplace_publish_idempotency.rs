@@ -64,7 +64,10 @@ fn full_chain_config_empty_pinata() -> xvision_dashboard::chain_config::Marketpl
             usdc: addr,
             platform_agent_token_id: 0,
         }),
-        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(String::new(), String::new()))),
+        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(
+            String::new(),
+            String::new(),
+        ))),
         indexer: None,
         license_token: None,
         lit: None,
@@ -103,6 +106,7 @@ async fn republish_existing_agent_id_is_409_no_chain() {
         "7",
         "ab".repeat(32).as_str(),
         "2026-06-13T00:00:00Z",
+        None,
     )
     .await
     .expect("seed receipt");

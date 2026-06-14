@@ -72,12 +72,12 @@ pub fn verify_address_proof(
 
     // 2. Recover the signer. `recover_address_from_msg` hashes the EIP-191
     //    "\x19Ethereum Signed Message:\n<len><msg>" envelope internally.
-    let recovered = sig
-        .recover_address_from_msg(message.as_bytes())
-        .map_err(|e| DashboardError::Validation {
-            field: "signature".into(),
-            msg: format!("could not recover signer from signature: {e}"),
-        })?;
+    let recovered =
+        sig.recover_address_from_msg(message.as_bytes())
+            .map_err(|e| DashboardError::Validation {
+                field: "signature".into(),
+                msg: format!("could not recover signer from signature: {e}"),
+            })?;
 
     // 3. The recovered signer must equal the claimed address. 403: caller is
     //    identified (we have an address) but does not prove control of the one
@@ -99,9 +99,7 @@ pub fn verify_address_proof(
         )));
     }
     if parsed.nonce.len() < MIN_NONCE_LEN {
-        return Err(DashboardError::Unauthorized(
-            "nonce too short / missing".into(),
-        ));
+        return Err(DashboardError::Unauthorized("nonce too short / missing".into()));
     }
     if now_unix > parsed.expiry_unix {
         return Err(DashboardError::Unauthorized("message expired".into()));
@@ -220,10 +218,9 @@ mod tests {
     fn verify_address_proof_rejects_wrong_signer() {
         // Signer A signs, but the body claims a DIFFERENT address.
         let a = signer();
-        let b: PrivateKeySigner =
-            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-                .parse()
-                .unwrap();
+        let b: PrivateKeySigner = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+            .parse()
+            .unwrap();
         let msg = build_challenge_message(1, NONCE, FUTURE);
         let sig = sign(&a, &msg);
         let err = verify_address_proof(b.address(), &msg, &sig, 1, NOW).unwrap_err();
@@ -303,7 +300,8 @@ mod tests {
     #[test]
     fn parse_challenge_message_ignores_header_and_is_case_insensitive() {
         // Keys are case-insensitive; the header line (no colon) is ignored.
-        let msg = "XVISION SEALED-BUNDLE LICENSE REQUEST\nlisting: 7\nNONCE: 0123456789abcdef\nExpiry: 1760000000";
+        let msg =
+            "XVISION SEALED-BUNDLE LICENSE REQUEST\nlisting: 7\nNONCE: 0123456789abcdef\nExpiry: 1760000000";
         let parsed = parse_challenge_message(msg).unwrap();
         assert_eq!(parsed.listing_id, 7);
         assert_eq!(parsed.nonce, "0123456789abcdef");

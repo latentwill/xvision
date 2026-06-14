@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::autooptimizer::{
     cycle_runs::{
-        get_cycle_cost, get_cycle_run, list_cycle_runs, CycleCost, CycleRunDetail, CycleRunSummary,
+        get_cycle_cost, get_cycle_run, list_cycle_runs, list_cycle_runs_filtered, CycleCost, CycleRunDetail,
+        CycleRunSummary,
     },
     evidence::{load_findings, load_gate_record, FindingRow, GateRecordRow},
     lineage::{LineageNode, LineageStatus, LineageStore},
@@ -65,6 +66,7 @@ pub struct SessionSummary {
     pub kept_count: i64,
     pub suspect_count: i64,
     pub dropped_count: i64,
+    pub errored_count: i64,
     pub cost_usd: Option<f64>,
 }
 
@@ -79,6 +81,7 @@ impl From<OptimizerSession> for SessionSummary {
             kept_count: s.kept_count,
             suspect_count: s.suspect_count,
             dropped_count: s.dropped_count,
+            errored_count: s.errored_count,
             cost_usd: None,
         }
     }
@@ -446,6 +449,11 @@ pub struct CycleRunListQuery {
     pub limit: i64,
     #[serde(default)]
     pub offset: i64,
+    /// Filter to cycles belonging to a specific optimizer session.
+    /// Resolved via the `autooptimizer_events(session_id, cycle_id)` bridge —
+    /// the same join the stats and session-list handlers use. `None` returns
+    /// all cycles (existing behaviour).
+    pub session_id: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -604,9 +612,49 @@ pub async fn list_cycles(
     if !table_exists(&state.pool, "lineage_nodes").await? {
         return Ok(Json(Vec::new()));
     }
-    let runs = list_cycle_runs(&state.pool, q.limit, q.offset)
+
+    // When a session_id filter is requested, resolve the matching cycle_ids
+    // via the autooptimizer_events bridge (same join the stats handler uses).
+    let allowed_cycle_ids: Option<Vec<String>> = if let Some(ref sid) = q.session_id {
+        if !table_exists(&state.pool, "autooptimizer_events").await?
+            || !table_exists(&state.pool, "autooptimizer_session_state").await?
+        {
+            return Ok(Json(Vec::new()));
+        }
+        // Reuse the same bridge query shape as load_filtered_cycle_ids_stats.
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT DISTINCT cycle_id FROM autooptimizer_events \
+             WHERE session_id = ? AND cycle_id IS NOT NULL",
+        )
+        .bind(sid)
+        .fetch_all(&state.pool)
         .await
-        .map_err(DashboardError::Internal)?;
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+        let ids: Vec<String> = rows
+            .into_iter()
+            .map(|r| {
+                r.try_get::<String, _>("cycle_id")
+                    .map_err(|e| DashboardError::Internal(e.into()))
+            })
+            .collect::<Result<_, _>>()?;
+        if ids.is_empty() {
+            return Ok(Json(Vec::new()));
+        }
+        Some(ids)
+    } else {
+        None
+    };
+
+    let runs = if let Some(ref ids) = allowed_cycle_ids {
+        list_cycle_runs_filtered(&state.pool, ids, q.limit, q.offset)
+            .await
+            .map_err(DashboardError::Internal)?
+    } else {
+        list_cycle_runs(&state.pool, q.limit, q.offset)
+            .await
+            .map_err(DashboardError::Internal)?
+    };
 
     // Resolve each cycle's strategy via the events → session bridge. Skipped
     // entirely when the bridge tables are absent (fresh install), so the list
@@ -1909,6 +1957,7 @@ mod tests {
                 kept_count       INTEGER NOT NULL DEFAULT 0,
                 suspect_count    INTEGER NOT NULL DEFAULT 0,
                 dropped_count    INTEGER NOT NULL DEFAULT 0,
+                errored_count    INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             )",
@@ -2116,6 +2165,7 @@ mod tests {
                 kept_count       INTEGER NOT NULL DEFAULT 0,
                 suspect_count    INTEGER NOT NULL DEFAULT 0,
                 dropped_count    INTEGER NOT NULL DEFAULT 0,
+                errored_count    INTEGER NOT NULL DEFAULT 0,
                 created_at   TEXT NOT NULL
             )",
         )
@@ -2484,6 +2534,128 @@ mod tests {
         assert_eq!(session_cost_usd(&pool, "sess-empty").await.unwrap(), None);
         assert_eq!(session_latest_honesty(&pool, "sess-empty").await.unwrap(), None);
         assert_eq!(active_session_cycle_id(&pool, "sess-empty").await.unwrap(), None);
+    }
+
+    // ─── test_list_cycles_session_id_filter ──────────────────────────────────
+    //
+    // Verifies GET /api/autooptimizer/cycles?session_id=X filters out cycles
+    // that belong to other sessions and returns only the cycles from session X.
+
+    /// Two sessions (sess-1 owns cycle-1a + cycle-1b; sess-2 owns cycle-2).
+    /// Calling `list_cycles` with `session_id=sess-1` must return exactly the
+    /// two cycles from sess-1 and exclude cycle-2.
+    #[tokio::test]
+    async fn test_list_cycles_session_id_filter() {
+        let pool = open_stats_pool().await;
+
+        // Seed sessions.
+        for (sid, strat, ts) in [
+            ("sess-1", "strat-alpha", "2026-06-01T00:00:00Z"),
+            ("sess-2", "strat-beta", "2026-06-02T00:00:00Z"),
+        ] {
+            sqlx::query(
+                "INSERT INTO autooptimizer_session_state \
+                 (session_id, strategy_id, config_json, state, mode, created_at) \
+                 VALUES (?, ?, '{}', 'finished', 'once', ?)",
+            )
+            .bind(sid)
+            .bind(strat)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Link cycles to sessions via autooptimizer_events.
+        for (sid, cid, ts) in [
+            ("sess-1", "cycle-1a", "2026-06-01T00:00:00Z"),
+            ("sess-1", "cycle-1b", "2026-06-01T01:00:00Z"),
+            ("sess-2", "cycle-2", "2026-06-02T00:00:00Z"),
+        ] {
+            sqlx::query(
+                "INSERT INTO autooptimizer_events \
+                 (session_id, cycle_id, kind, payload_json, ts) \
+                 VALUES (?, ?, 'cycle_started', '{}', ?)",
+            )
+            .bind(sid)
+            .bind(cid)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Seed one lineage node per cycle so list_cycle_runs has rows.
+        // cycle-2 is newest overall; the scoped query below uses limit=1,
+        // so filtering after pagination would incorrectly return an empty
+        // page for sess-1.
+        for (cid, ts) in [
+            ("cycle-1a", "2026-06-01T00:05:00Z"),
+            ("cycle-1b", "2026-06-01T01:05:00Z"),
+            ("cycle-2", "2026-06-02T00:05:00Z"),
+        ] {
+            seed_cycle_nodes(&pool, cid, &[(cid, "active")], ts).await;
+        }
+
+        // Build an AppState-less query by exercising the bridge logic directly:
+        // resolve allowed cycle ids for sess-1.
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT DISTINCT cycle_id FROM autooptimizer_events \
+             WHERE session_id = ? AND cycle_id IS NOT NULL",
+        )
+        .bind("sess-1")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let ids: Vec<String> = rows
+            .into_iter()
+            .map(|r| r.try_get::<String, _>("cycle_id").unwrap())
+            .collect();
+
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["cycle-1a", "cycle-1b"],
+            "bridge must return both sess-1 cycles"
+        );
+
+        // Unfiltered list sees all cycles, newest first.
+        let all_runs = list_cycle_runs(&pool, 50, 0).await.expect("list_cycle_runs");
+        assert_eq!(all_runs.len(), 3, "unfiltered list must have all 3 cycles");
+
+        let filtered = list_cycle_runs_filtered(&pool, &ids, 50, 0)
+            .await
+            .expect("filtered list_cycle_runs");
+        assert_eq!(filtered.len(), 2, "session filter must keep exactly 2 cycles");
+        let cycle_ids: Vec<&str> = filtered.iter().map(|r| r.cycle_id.as_str()).collect();
+        assert!(cycle_ids.contains(&"cycle-1a"), "cycle-1a must be in result");
+        assert!(cycle_ids.contains(&"cycle-1b"), "cycle-1b must be in result");
+        assert!(!cycle_ids.contains(&"cycle-2"), "cycle-2 must be excluded");
+
+        let first_page = list_cycle_runs_filtered(&pool, &ids, 1, 0)
+            .await
+            .expect("filtered first page");
+        assert_eq!(
+            first_page.iter().map(|r| r.cycle_id.as_str()).collect::<Vec<_>>(),
+            vec!["cycle-1b"],
+            "session filtering must happen before LIMIT/OFFSET"
+        );
+
+        // No-session case: unknown session id returns empty bridge result.
+        let empty_rows = sqlx::query(
+            "SELECT DISTINCT cycle_id FROM autooptimizer_events \
+             WHERE session_id = ? AND cycle_id IS NOT NULL",
+        )
+        .bind("sess-nonexistent")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            empty_rows.is_empty(),
+            "unknown session must yield empty cycle list"
+        );
     }
 }
 

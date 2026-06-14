@@ -339,9 +339,8 @@ impl IndicatorName {
                 | IndicatorName::OpenInterest
                 | IndicatorName::MarkPrice
                 | IndicatorName::MarkIndexBasis
-                | IndicatorName::LongShortRatio
-            // WU5 new indicators all carry a period (or packed period+param)
-            // and are intentionally NOT listed here, so has_period() → true.
+                | IndicatorName::LongShortRatio // WU5 new indicators all carry a period (or packed period+param)
+                                                // and are intentionally NOT listed here, so has_period() → true.
         )
     }
 
@@ -634,59 +633,65 @@ impl IndicatorRef {
         if let Some(rest) = token.strip_prefix("supertrend_") {
             // rest = "<atr_period>_<mult_times_10>"
             let mut parts = rest.splitn(2, '_');
-            let atr_period: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
-            let mult10: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
+            let atr_period: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let mult10: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
             let packed = atr_period * 1000 + mult10;
             return Ok(Self::periodic(IndicatorName::SuperTrend, packed));
         }
         if let Some(rest) = token.strip_prefix("pivot_high_") {
             // rest = "<left>_<right>"
             let mut parts = rest.splitn(2, '_');
-            let left: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
-            let right: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
+            let left: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let right: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
             let packed = left * 1000 + right;
             return Ok(Self::periodic(IndicatorName::PivotHigh, packed));
         }
         if let Some(rest) = token.strip_prefix("pivot_low_") {
             let mut parts = rest.splitn(2, '_');
-            let left: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
-            let right: u32 = parts
-                .next()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| ParseError::IndicatorDsl {
-                    path: path.clone(),
-                    token: token.to_string(),
-                })?;
+            let left: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let right: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
             let packed = left * 1000 + right;
             return Ok(Self::periodic(IndicatorName::PivotLow, packed));
         }

@@ -89,6 +89,12 @@ pub struct PublishBody {
     /// Soulbound default is `false`.
     #[serde(default)]
     pub transferable_license: bool,
+    /// Creator-chosen listing name. Optional; when absent or blank the listing
+    /// inherits the strategy's display name. Stored on the publish receipt and
+    /// surfaced by the marketplace name-enrichment so the listing never renders
+    /// a generic "Strategy #N".
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Response for a successful publish.
@@ -343,6 +349,21 @@ pub async fn post_publish(
     //    safer no-duplicate posture: a missed receipt leaves the next publish
     //    able to duplicate (rare), but a hard-fail GUARANTEES the operator
     //    retries into a duplicate.
+    // Listing name persisted on the receipt: the creator-chosen name when
+    // supplied (trimmed, non-empty), otherwise the strategy's own display name
+    // so the listing inherits a real name instead of "Strategy #N". `None` only
+    // when both are blank, in which case enrichment keeps the gen-art name.
+    let listing_name: Option<String> = body
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            let dn = strategy.manifest.display_name.trim();
+            (!dn.is_empty()).then(|| dn.to_owned())
+        });
+
     if let Err(e) = insert_receipt(
         &state.pool,
         &agent_id,
@@ -350,6 +371,7 @@ pub async fn post_publish(
         &listing.listing_id.to_string(),
         &manifest_hash,
         &chrono::Utc::now().to_rfc3339(),
+        listing_name.as_deref(),
     )
     .await
     {
@@ -664,8 +686,7 @@ pub async fn post_import(
     // d. Fetch + hash-verify the bundle (404/409/503 per the shared fn).
     let manifest = crate::routes::marketplace_read::fetch_verified_manifest(&state, &listing).await?;
 
-    // e. Install as a NEW local strategy (fresh ULID; provenance stashed in
-    //    mechanical_params.metadata.imported_from).
+    // e. Install as a NEW local strategy (fresh ULID).
     let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
 
     Ok((
@@ -853,18 +874,22 @@ pub async fn post_import_sealed(
 
     // c. PROOF OF ADDRESS (lane cgz). The signed challenge + signature are
     //    required; a missing one is a clean 400 (after address/listing checks).
-    let message = body.message.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
-        DashboardError::Validation {
-            field: "message".into(),
-            msg: "sealed import requires the signed challenge message (GET …/import-challenge)".into(),
-        }
-    })?;
-    let signature = body.signature.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
-        DashboardError::Validation {
+    let message =
+        body.message
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| DashboardError::Validation {
+                field: "message".into(),
+                msg: "sealed import requires the signed challenge message (GET …/import-challenge)".into(),
+            })?;
+    let signature = body
+        .signature
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| DashboardError::Validation {
             field: "signature".into(),
             msg: "sealed import requires the personal_sign signature of the challenge message".into(),
-        }
-    })?;
+        })?;
     //    Recover the signer from the EIP-191 signature and require it to equal
     //    the claimed address, then validate the message's listing binding +
     //    freshness. Runs BEFORE the license gate so a forged/mismatched proof

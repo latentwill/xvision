@@ -12,9 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message, ResponseSchema};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::mutator::{
-    annotated_filter_paths_section, applicable_mutation_kinds, empty_mutation,
-    filter_create_directive, filter_tunable_paths, kind_focus_directive, tunable_param_keys,
-    MutationDiff, Mutator,
+    annotated_filter_paths_section, applicable_mutation_kinds, empty_mutation, filter_create_directive,
+    filter_tunable_paths, kind_focus_directive, tunable_param_keys, MutationDiff, Mutator,
 };
 use crate::autooptimizer::program_view;
 use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
@@ -136,7 +135,11 @@ impl TournamentRunner {
         };
         let param_keys = tunable_param_keys(parent);
         let filter_paths: Vec<(String, serde_json::Value)> = if kinds.iter().any(|k| k == "filter") {
-            parent.filter.as_ref().map(filter_tunable_paths).unwrap_or_default()
+            parent
+                .filter
+                .as_ref()
+                .map(filter_tunable_paths)
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -293,13 +296,11 @@ fn apply_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
         diff.params.len() <= MAX_PARAMS_APPLY,
         "params count exceeds bound"
     );
-    let mut s = base.clone();
-    if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
-        for change in &diff.params {
-            map.insert(change.key.clone(), change.after.clone());
-        }
-    }
-    s
+    // Delegate to the canonical applier so adversarial/synthesis candidates get
+    // the same risk.* / mechanistic.* / filter / prose routing as normal
+    // experiments. (Previously this inserted into the now-removed
+    // `mechanical_params` blob, bypassing that routing.)
+    diff.apply_to(base)
 }
 
 fn system_section(prompt_template: &str) -> String {
@@ -456,8 +457,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": {}
+            }
         });
         serde_json::from_value(v).expect("stub_strategy fixture must deserialise")
     }
@@ -505,7 +505,16 @@ mod tests {
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
         let out = build_proposal_user(
-            "PROGRAM", &allowed, &[], &filter_paths, &[], 0, 0, 0, /* filter_exists */ true, None,
+            "PROGRAM",
+            &allowed,
+            &[],
+            &filter_paths,
+            &[],
+            0,
+            0,
+            0,
+            /* filter_exists */ true,
+            None,
         );
         assert!(
             out.contains("conditions.0.op.zscore_lt: 3  (positive integer >= 1)"),
@@ -547,7 +556,16 @@ mod tests {
         let mut kinds_seen = std::collections::HashSet::new();
         for attempt in 0..3usize {
             let out = build_proposal_user(
-                "PROGRAM", &allowed, &param_keys, &filter_paths, &prose_roles, 0, attempt, attempt as u64, /* filter_exists */ true, None,
+                "PROGRAM",
+                &allowed,
+                &param_keys,
+                &filter_paths,
+                &prose_roles,
+                0,
+                attempt,
+                attempt as u64,
+                /* filter_exists */ true,
+                None,
             );
             kinds_seen.insert(focused_kind(&out));
         }
@@ -568,7 +586,16 @@ mod tests {
         // has none and `filter` is an allowed kind.
         let allowed = vec!["filter".to_string(), "param".to_string()];
         let out = build_proposal_user(
-            "PROGRAM", &allowed, &[], &[], &[], 0, 0, 0, /* filter_exists */ false, None,
+            "PROGRAM",
+            &allowed,
+            &[],
+            &[],
+            &[],
+            0,
+            0,
+            0,
+            /* filter_exists */ false,
+            None,
         );
         assert!(
             out.contains("create_filter"),

@@ -98,11 +98,22 @@ export function LiveRunDetailRoute() {
   useEffect(() => {
     if (q.data) {
       useTraceDock.getState().setActiveRun(
+        "live",
         q.data.summary.run_id,
         q.data.summary.status === "running" ? "live" : "post-hoc",
       );
     }
   }, [q.data?.summary.run_id, q.data?.summary.status]);
+
+  // Unconditional unmount cleanup (WS-2): this route owns the live scope,
+  // so it nulls live on the way out. Without this the live capsule
+  // followed navigation onto eval/other pages. Only the live scope is
+  // cleared — the eval scope is independent.
+  useEffect(() => {
+    return () => {
+      useTraceDock.getState().setActiveRun("live", null, "post-hoc");
+    };
+  }, []);
 
   if (q.isPending) {
     return (

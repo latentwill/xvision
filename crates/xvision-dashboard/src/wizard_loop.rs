@@ -24,6 +24,7 @@ use chrono::{TimeZone, Utc};
 use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ulid::Ulid;
+use xvision_core;
 use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl};
 
 use crate::cli_jobs::eval_run_bridge;
@@ -37,7 +38,8 @@ use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter, ScenarioMutations};
+use xvision_engine::api::settings::providers as api_providers;
 use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
@@ -88,6 +90,17 @@ struct WizardCreateStrategyInput {
 /// should stream progress, not block.
 const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Hard ceiling on a single model-dispatch (`LlmDispatch::complete`) call.
+/// The provider HTTP clients have their own per-attempt timeouts + retries,
+/// but a genuinely-wedged provider (black-holed TCP, a backend that accepts
+/// the request and never responds) can still hang the call indefinitely —
+/// which strands the whole turn with no tokens streamed and no error. This
+/// outer bound converts that into a typed `Error` event the rail can recover
+/// from. 120s is well above any healthy interactive completion (max_tokens is
+/// 1500) while still bounding a hang. Defense-in-depth companion to
+/// `TOOL_EXECUTION_TIMEOUT`.
+const MODEL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
@@ -96,6 +109,17 @@ const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// relying on the repeated same-tool/same-error streak guard below to stop
 /// noisy failure loops early.
 const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
+
+/// Maximum number of messages replayed from the persisted session history
+/// into every LLM context. Without this cap the context grows linearly with
+/// session length and was observed to cause a 24 s → 122 s latency blow-up
+/// across `MAX_TOOL_LOOP_ITERATIONS` iterations (xvision-t4u8 Finding #3).
+///
+/// 60 messages ≈ 30 user/assistant turn pairs, enough for meaningful
+/// multi-step authoring sessions while keeping context bounded.
+/// `window_chat_messages` enforces this cap and never splits a
+/// tool_use / tool_result pair.
+const CHAT_HISTORY_WINDOW_MESSAGES: usize = 60;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,7 +153,7 @@ impl AgentProfile {
                  new — do NOT default to picking an existing library entry unless the user \
                  explicitly asks you to reuse one. \
                  `create_strategy` always starts a blank draft — fill it in via \
-                 `create_strategy_agent` / `update_slot` / `set_mechanical_param` / `set_filter`. \
+                 `create_strategy_agent` / `update_slot` / `set_filter`. \
                  ## Completion contract\n\
                  Before you tell the user the strategy is ready (or surface the Open Strategy \
                  card), you MUST: (1) attach a trader agent with an explicit provider/model via \
@@ -161,11 +185,24 @@ pub enum WizardEvent {
     /// arrive; clients append to the visible bubble.
     Token { text: String },
     /// The agent is about to call an authoring verb. Front-end uses this
-    /// to render a "running tool" indicator.
-    ToolCall { tool: String, args: serde_json::Value },
-    /// Result of the most-recent tool call. Front-end uses this to update
-    /// the displayed draft state.
-    ToolResult { tool: String, result: serde_json::Value },
+    /// to render a "running tool" indicator. `id` is the model's
+    /// `tool_use` id (same value carried in the matching `ToolResult`),
+    /// so the unified projector can pair `tool_requested`→`tool_finished`
+    /// EXACTLY — by id, not by tool name — regardless of repeats or
+    /// out-of-order/interleaved results.
+    ToolCall {
+        id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
+    /// Result of the tool call identified by `id`. Front-end uses this to
+    /// update the displayed draft state; the projector closes the span its
+    /// matching `ToolCall` (same `id`) opened.
+    ToolResult {
+        id: String,
+        tool: String,
+        result: serde_json::Value,
+    },
     /// A typed rich display block to append to the active assistant bubble.
     ContentBlock { block: serde_json::Value },
     /// Conversation complete. `draft_id` carries the most recently created
@@ -196,6 +233,84 @@ pub struct PolicyEvent {
 enum PolicyVerdict {
     Allow,
     Blocked(serde_json::Value),
+}
+
+/// Trim `messages` to at most `cap` entries, keeping the **most recent** ones.
+///
+/// Tool-use/tool-result pairs are kept together: if the raw window boundary
+/// falls so that a `ToolResult` block would appear at the start of the window
+/// without its matching `ToolUse` (or vice versa), the boundary is shifted
+/// forward (dropping more messages) until the window starts on a clean
+/// message that is not an orphan `ToolResult`.
+///
+/// The system prompt is assembled separately and is NOT part of `messages`,
+/// so this function only touches the transcript messages — the system prompt
+/// is always preserved in full.
+///
+/// Callers that want the full history (e.g. `latest_text_for_role`,
+/// `ChatSessionStore::resolve`) should call `load_history` directly.
+fn window_chat_messages(mut messages: Vec<Message>, cap: usize) -> Vec<Message> {
+    if messages.len() <= cap {
+        return messages;
+    }
+
+    // Start with a naive tail slice of `cap` messages.
+    let mut start = messages.len() - cap;
+
+    // Collect the tool_use ids that appear in msgs[0..start] — these were
+    // dropped by the window. Any tool_result for one of those ids at
+    // msgs[start..] would be an orphan.
+    loop {
+        // Build the set of tool_use ids dropped by the current window.
+        let dropped_tool_use_ids: std::collections::HashSet<String> = messages[..start]
+            .iter()
+            .flat_map(|m| &m.content)
+            .filter_map(|b| {
+                if let ContentBlock::ToolUse { id, .. } = b {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if dropped_tool_use_ids.is_empty() {
+            // No dropped tool_use ids — no orphan risk.
+            break;
+        }
+
+        // Check whether the first message(s) in the window reference a
+        // dropped tool_use id via a ToolResult block.
+        let first_is_orphan = messages[start..]
+            .iter()
+            .next()
+            .map(|m| {
+                m.content.iter().any(|b| {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                        dropped_tool_use_ids.contains(tool_use_id.as_str())
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false);
+
+        if !first_is_orphan {
+            break;
+        }
+
+        // The first message in the current window is an orphan tool_result.
+        // Drop it and try again (also drop the matching tool_use if it's
+        // within the current window).
+        start += 1;
+        if start >= messages.len() {
+            // Entire history is orphaned (shouldn't happen in practice).
+            return vec![];
+        }
+    }
+
+    messages.drain(..start);
+    messages
 }
 
 pub struct WizardLoop {
@@ -251,6 +366,11 @@ pub struct WizardLoop {
     /// before P4. Recall/record errors are always swallowed — memory is
     /// best-effort and must never fail a chat turn.
     chat_memory: Option<Arc<MemoryRecorder>>,
+    /// Hard timeout applied to each `dispatch.complete` call. Defaults to
+    /// [`MODEL_DISPATCH_TIMEOUT`]; overridable (see
+    /// [`WizardLoop::with_dispatch_timeout`]) so tests can drive the
+    /// hung-provider path deterministically without waiting the full ceiling.
+    dispatch_timeout: Duration,
 }
 
 /// Hard cap on consecutive failures of the **same tool with the same
@@ -743,6 +863,7 @@ impl WizardLoop {
             pending: vec![],
             is_done: false,
             chat_memory: None,
+            dispatch_timeout: MODEL_DISPATCH_TIMEOUT,
         })
     }
 
@@ -752,6 +873,15 @@ impl WizardLoop {
     /// Pass `None` (or skip the call) to leave memory disabled.
     pub fn with_chat_memory(mut self, mem: Option<Arc<MemoryRecorder>>) -> Self {
         self.chat_memory = mem;
+        self
+    }
+
+    /// Override the per-dispatch timeout (default [`MODEL_DISPATCH_TIMEOUT`]).
+    /// Test-only seam: lets the hung-provider path be exercised in real time
+    /// with a tiny timeout instead of stalling on the production ceiling.
+    #[cfg(test)]
+    pub fn with_dispatch_timeout(mut self, timeout: Duration) -> Self {
+        self.dispatch_timeout = timeout;
         self
     }
 
@@ -1078,7 +1208,26 @@ impl WizardLoop {
                 cache_control: None,
                 force_json: false,
             };
-            let resp: LlmResponse = self.dispatch.complete(req).await?;
+            // Bound the model call so a wedged provider can't strand the turn
+            // with no tokens and no error. On elapse, surface a typed error
+            // that propagates to `next_event` as a `WizardEvent::Error`
+            // (→ `SessionFailed`, which also terminalizes any open tool spans).
+            let resp: LlmResponse =
+                match tokio::time::timeout(self.dispatch_timeout, self.dispatch.complete(req)).await {
+                    Ok(result) => result?,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            target: "xvision::dashboard::wizard_loop",
+                            session_id = %self.session_id,
+                            timeout_secs = self.dispatch_timeout.as_secs(),
+                            "model dispatch timed out — surfacing a typed error to the chat rail"
+                        );
+                        anyhow::bail!(
+                            "model dispatch timed out after {}s",
+                            self.dispatch_timeout.as_secs()
+                        );
+                    }
+                };
 
             // Persist the assistant turn — text + any tool_use blocks all
             // go to the same row. The store keeps the same JSON shape
@@ -1157,6 +1306,7 @@ impl WizardLoop {
             let mut rich_blocks: Vec<serde_json::Value> = Vec::new();
             for (id, name, input) in tool_uses {
                 self.pending.push(WizardEvent::ToolCall {
+                    id: id.clone(),
                     tool: name.clone(),
                     args: input.clone(),
                 });
@@ -1214,6 +1364,7 @@ impl WizardLoop {
                 self.maybe_track_draft_id(&name, &result_value);
                 self.update_tool_failure_streak(&name, &result_value);
                 self.pending.push(WizardEvent::ToolResult {
+                    id: id.clone(),
                     tool: name.clone(),
                     result: result_value.clone(),
                 });
@@ -1308,6 +1459,14 @@ impl WizardLoop {
     /// `ChatMessage.content_blocks` is a `Vec<serde_json::Value>` whose
     /// shape matches `ContentBlock`'s tagged-union derive — round-trip
     /// via `from_value`.
+    ///
+    /// The returned slice is capped at `CHAT_HISTORY_WINDOW_MESSAGES` so the
+    /// context sent to the model stays constant-bounded regardless of how many
+    /// turns the session has accumulated. Without this cap, every iteration of
+    /// the tool-use loop would replay the ENTIRE history, so a long session
+    /// would send a linearly-growing context on each of the up-to-12 loop
+    /// iterations — the dominant cause of the 24 s → 122 s latency blow-up
+    /// observed in long sessions (xvision-t4u8 Finding #3).
     async fn load_messages_from_store(&self) -> anyhow::Result<Vec<Message>> {
         let history = ChatSessionStore::load_history(&self.pool, &self.session_id).await?;
         let mut out = Vec::with_capacity(history.len());
@@ -1323,7 +1482,7 @@ impl WizardLoop {
                 content: blocks,
             });
         }
-        Ok(out)
+        Ok(window_chat_messages(out, CHAT_HISTORY_WINDOW_MESSAGES))
     }
 
     /// Track consecutive same-tool same-error failures. Generalised from
@@ -1795,8 +1954,60 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = api_strategy::get(&self.api_context, id).await?;
-                Ok(serde_json::to_value(out)?)
+                let strategy = api_strategy::get(&self.api_context, id).await?;
+                // W11 (Finding #13): resolve each AgentRef to its full Agent so
+                // the authoring agent can read back the system_prompt it wrote.
+                // Failures to resolve individual refs degrade gracefully (omit
+                // that entry) rather than failing the whole call.
+                let mut resolved_agents: Vec<serde_json::Value> = Vec::new();
+                for aref in &strategy.agents {
+                    match api_agents::get(&self.api_context, &aref.agent_id).await {
+                        Ok(agent) => {
+                            // Collect all slot system_prompts. Most strategies
+                            // have a single slot; expose them all so multi-slot
+                            // agents are fully visible.
+                            let slot_prompts: Vec<&str> =
+                                agent.slots.iter().map(|s| s.system_prompt.as_str()).collect();
+                            // Use the first slot's prompt as the primary
+                            // system_prompt for the role entry (the canonical
+                            // "what does this role's LLM see?" answer). If an
+                            // agent has multiple slots, all prompts are also
+                            // available under slot_system_prompts.
+                            let primary_prompt = slot_prompts.first().copied().unwrap_or("");
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": primary_prompt,
+                                "slot_system_prompts": slot_prompts,
+                            }));
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                strategy_id = id,
+                                agent_id = aref.agent_id.as_str(),
+                                error = %err,
+                                "get_strategy: could not resolve AgentRef — omitting from resolved_agents"
+                            );
+                            // Degrade gracefully: include a note so the
+                            // authoring agent knows one ref couldn't be resolved
+                            // rather than silently seeing a short list.
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": null,
+                                "error": "agent not found — the referenced agent may have been deleted",
+                            }));
+                        }
+                    }
+                }
+                let mut out = serde_json::to_value(&strategy)?;
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert(
+                        "resolved_agents".into(),
+                        serde_json::Value::Array(resolved_agents),
+                    );
+                }
+                Ok(out)
             }
             "list_strategies" => {
                 let out = api_strategy::list(&self.api_context).await?;
@@ -1846,11 +2057,6 @@ impl WizardLoop {
                 let out = api_strategy::update_manifest(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
-            "set_mechanical_param" => {
-                let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                let out = api_strategy::set_mechanical_param(&self.api_context, req).await?;
-                Ok(serde_json::to_value(out)?)
-            }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
                 let out = api_strategy::set_risk_config(&self.api_context, req).await?;
@@ -1881,10 +2087,8 @@ impl WizardLoop {
             "list_eval_runs" => {
                 let req: ListEvalRunsReq = serde_json::from_value(input)?;
                 let status = match req.status.as_deref() {
-                    Some(s) => Some(
-                        RunStatus::parse(s)
-                            .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?,
-                    ),
+                    Some(s) => Some(vec![RunStatus::parse(s)
+                        .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?]),
                     None => None,
                 };
                 let out = api_eval::list_summaries_paged(
@@ -1904,9 +2108,23 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "get_eval_run" => {
+                // Return the slim `RunSummary` shape (same as the REST
+                // `GET /api/eval/runs/:id` response) rather than the raw
+                // `Run` struct.  The raw struct serialises
+                // `metrics: Option<MetricsSummary>` as `"metrics": null`
+                // for failed / in-flight runs, which leaves the model with
+                // an opaque nested null it cannot reason over and trips the
+                // tool-failure circuit-breaker (Finding #4).
+                //
+                // `summarise_run` maps `metrics: None` → flat top-level
+                // `sharpe/max_drawdown_pct/total_return_pct` fields each
+                // serialised as `null`, and brings `status` and `error` to
+                // the top level as plain strings — a stable, agent-readable
+                // shape regardless of run status.
                 let req: GetEvalRunReq = serde_json::from_value(input)?;
-                let out = api_eval::get(&self.api_context, &req.id).await?;
-                Ok(serde_json::to_value(out)?)
+                let run = api_eval::get(&self.api_context, &req.id).await?;
+                let summary = api_eval::summarise_run(run);
+                Ok(serde_json::to_value(summary)?)
             }
             "list_eval_reviews" => {
                 let req: ListEvalReviewsReq = serde_json::from_value(input)?;
@@ -2242,6 +2460,132 @@ impl WizardLoop {
                 let ideas = strategies_folder::ideas::list_ideas(&self.api_context, filter).await?;
                 Ok(serde_json::to_value(ideas)?)
             }
+            // ── W5 read tools (Findings #5-7) ──────────────────────────
+            "list_providers" => {
+                // Return the configured provider/model list from the workspace
+                // config. This is the same data the REST GET /api/settings/providers
+                // route returns. Uses runtime_config_path() for consistent env-var
+                // precedence (XVN_CONFIG_PATH / XVN_CONFIG / xvn_home/config/default.toml).
+                //
+                // When the config file does not yet exist (fresh workspace before
+                // `xvn setup`), return an empty report rather than propagating the
+                // error — the agent can still see the shape and communicate that
+                // the operator needs to configure providers.
+                let config_path = xvision_core::config::runtime_config_path(&self.api_context.xvn_home);
+                let report = if config_path.exists() {
+                    api_providers::list(&self.api_context, &config_path).await?
+                } else {
+                    xvision_engine::api::settings::providers::ProvidersReport {
+                        providers: vec![],
+                        default_model: None,
+                        invalid: None,
+                    }
+                };
+                Ok(serde_json::to_value(report)?)
+            }
+            "get_agent" => {
+                // Return one Agent record by id. No mutation.
+                let agent_id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_agent: missing `id`"))?;
+                let out = api_agents::get(&self.api_context, agent_id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "filter_catalog" => {
+                // Return the filter-DSL token catalog as structured data.
+                // The catalog lives in the baked wiki page `filter-dsl-catalog`;
+                // here we return the key token lists as structured JSON so the
+                // agent can reason over them without parsing markdown.
+                Ok(filter_catalog_json())
+            }
+            // ── W10 Finding #9: scenario management tools ─────────────────
+            "clone_scenario" => {
+                let parent_id = input
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("clone_scenario: missing `parent_id`"))?;
+                let mutations = ScenarioMutations {
+                    display_name: input
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    description: input
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    time_window: None,
+                    granularity: None,
+                    venue: None,
+                    tags: input
+                        .get("tags")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    notes: input.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    warmup_bars: input
+                        .get("warmup_bars")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as u32),
+                };
+                let out = api_scenario::clone(&self.api_context, parent_id, mutations).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "archive_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("archive_scenario: missing `id`"))?;
+                api_scenario::archive(&self.api_context, id).await?;
+                Ok(serde_json::json!({ "archived": true, "id": id }))
+            }
+            "set_scenario_regime" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("set_scenario_regime: missing `id`"))?;
+                let regime = input.get("regime").and_then(|v| v.as_str());
+                let volatility = input.get("volatility").and_then(|v| v.as_str());
+                let direction = input.get("direction").and_then(|v| v.as_str());
+                let out =
+                    api_scenario::set_regime(&self.api_context, id, regime, volatility, direction).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "classify_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("classify_scenario: missing `id`"))?;
+                let force = input.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let result = api_scenario::classify(&self.api_context, id, force).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            "select_scenarios" => {
+                let target_decisions = input.get("target_decisions").and_then(|v| v.as_u64());
+                let same_decisions = input
+                    .get("same_decisions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let max_decisions = input.get("max_decisions").and_then(|v| v.as_u64());
+                let count = input.get("count").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let timeframe_minutes = input
+                    .get("timeframe_minutes")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
+                let regimes: Vec<String> = input
+                    .get("regimes")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let rows = api_scenario::select(
+                    &self.api_context,
+                    timeframe_minutes,
+                    &regimes,
+                    target_decisions,
+                    same_decisions,
+                    max_decisions,
+                    count,
+                )
+                .await?;
+                Ok(serde_json::to_value(rows)?)
+            }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
@@ -2395,11 +2739,23 @@ impl WizardLoop {
                     .collect::<String>();
                 format!("{} {role} agent {suffix}", strategy.manifest.display_name)
             });
-        let system_prompt = req
+        // Detect whether the caller supplied an explicit system_prompt.
+        // When no explicit prompt is given the default is stamped from the
+        // strategy's current asset_universe — if that universe is still the
+        // blank-draft default (["BTC/USD"]), the agent will say "Evaluate
+        // BTC/USD" even if the operator intended a different asset.  We do
+        // NOT block creation; we surface a non-fatal warning so the model can
+        // self-correct (Finding #14).
+        let explicit_system_prompt = req
             .system_prompt
             .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+            .filter(|s| !s.is_empty());
+        let using_default_prompt = explicit_system_prompt.is_none();
+        let system_prompt =
+            explicit_system_prompt.unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+        // Determine whether the strategy's asset_universe is still the
+        // blank-draft default so we can emit the stale-default warning.
+        let asset_universe_is_default = strategy.manifest.asset_universe == vec!["BTC/USD"];
         let skill_ids = tools_for_strategy_role(&strategy, &role);
         let description = req
             .description
@@ -2446,7 +2802,7 @@ impl WizardLoop {
             },
         )
         .await?;
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "strategy_id": strategy_id,
             "agent_id": agent.agent_id,
             "role": role,
@@ -2454,7 +2810,19 @@ impl WizardLoop {
             "model": model,
             "agents": attached.agents,
             "pipeline": attached.pipeline
-        }))
+        });
+        // Non-fatal warning: if the prompt was auto-generated from an
+        // asset_universe that is still the blank-draft default, surface it
+        // so the model can self-correct by calling update_manifest and then
+        // re-creating or patching the agent.
+        if using_default_prompt && asset_universe_is_default {
+            result["warning"] = serde_json::json!(
+                "agent prompt generated from default asset_universe BTC/USD — \
+                 call update_manifest first if you intended a different asset. \
+                 Verify the stamped prompt with get_strategy."
+            );
+        }
+        Ok(result)
     }
 
     async fn attach_existing_agent(
@@ -2533,13 +2901,6 @@ fn tools_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role
     if role == "trader" {
         return strategy
             .trader_slot
-            .as_ref()
-            .map(|slot| slot.allowed_tools.clone())
-            .unwrap_or_default();
-    }
-    if role == "intern" {
-        return strategy
-            .intern_slot
             .as_ref()
             .map(|slot| slot.allowed_tools.clone())
             .unwrap_or_default();
@@ -3056,7 +3417,6 @@ fn expects_id(tool: &str) -> bool {
         "get_strategy"
             | "update_slot"
             | "update_manifest"
-            | "set_mechanical_param"
             | "set_risk_config"
             | "set_filter"
             | "clear_filter"
@@ -3181,7 +3541,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             name: "create_strategy".into(),
             description: "Instantiate a blank strategy draft. Fill it in with \
                           `create_strategy_agent` (attach an agent) and \
-                          `update_slot` / `set_mechanical_param` / `update_manifest`. \
+                          `update_slot` / `update_manifest`. \
                           Returns { id }."
                 .into(),
             input_schema: serde_json::json!({
@@ -3241,13 +3601,13 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "update_slot".into(),
             description:
-                "Update a regime/intern/trader slot. `prompt` is not supported here; use `create_strategy_agent` for prompt updates. Only fields with non-null values are mutated."
+                "Update a regime/trader slot. `prompt` is not supported here; use `create_strategy_agent` for prompt updates. Only fields with non-null values are mutated."
                     .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
+                    "slot": {"type": "string", "enum": ["regime", "trader"]},
                     "attested_with": {"type": "string"},
                     "provider": {"type": "string"},
                     "model": {"type": "string"},
@@ -3258,33 +3618,39 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "update_manifest".into(),
-            description: "Persist manifest fields shown in the Strategy Inspector, including asset universe and decision cadence."
+            description: "Persist manifest fields shown in the Strategy Inspector, including \
+                display name, description, asset universe, decision cadence, and display color. \
+                All fields except `id` are optional — supply only the ones you want to change."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
+                    "display_name": {
+                        "type": "string",
+                        "description": "Human-readable strategy name shown in the UI."
+                    },
+                    "plain_summary": {
+                        "type": "string",
+                        "description": "One-line plain-English description of what the strategy does."
+                    },
+                    "color": {
+                        "type": "string",
+                        "description": "Optional display color as a 7-character CSS hex string (e.g. '#D4A547'). Pass an empty string to clear a previously set color."
+                    },
                     "asset_universe": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 1
+                        "minItems": 1,
+                        "description": "List of SYMBOL/QUOTE pairs this strategy trades (e.g. ['BTC/USD'])."
                     },
-                    "decision_cadence_minutes": {"type": "integer", "minimum": 1}
+                    "decision_cadence_minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How often (in minutes) the strategy evaluates whether to act."
+                    }
                 },
                 "required": ["id"]
-            }),
-        },
-        ToolDefinition {
-            name: "set_mechanical_param".into(),
-            description: "Set a key inside Strategy.mechanical_params (template-specific).".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "key": {"type": "string"},
-                    "value": {}
-                },
-                "required": ["id", "key", "value"]
             }),
         },
         ToolDefinition {
@@ -3345,7 +3711,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy_agent".into(),
-            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders.".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders. ORDERING: call update_manifest first (to set asset_universe and cadence) before calling this tool — the agent's default prompt is generated from the strategy's current asset_universe + cadence at the moment this tool runs. If you skip update_manifest, the prompt will reflect the blank-draft default (BTC/USD, 60 min). Pass an explicit `system_prompt` argument to override the default entirely.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3487,6 +3853,161 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "required": ["id"]
             }),
         },
+        // ── W10 Finding #9: scenario management tools ─────────────────────
+        ToolDefinition {
+            name: "clone_scenario".into(),
+            description: "Derive a new scenario from an existing one. Inherits every \
+                          unset field from the parent and stamps parent_scenario_id. \
+                          Refuses to clone an archived parent. Returns the new Scenario.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Id of the scenario to clone."
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "description": "Optional override for the clone's display name."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional override for the description."
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tag override."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes for the clone."
+                    },
+                    "warmup_bars": {
+                        "type": "integer",
+                        "description": "Optional override for pre-window warmup bars."
+                    }
+                },
+                "required": ["parent_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "archive_scenario".into(),
+            description: "Soft-delete a scenario (sets archived_at). \
+                          Archived scenarios are excluded from list_scenarios by default. \
+                          Returns {archived: true, id}.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to archive."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_scenario_regime".into(),
+            description: "Set operator-authored regime labels on a scenario \
+                          (regime_derived = false). All three label fields are optional; \
+                          omitting one leaves the existing value unchanged. \
+                          Returns the updated Scenario. \
+                          Valid regime values: trend | chop | crash | expansion | recovery. \
+                          Valid volatility values: low | normal | high | extreme. \
+                          Valid direction values: up | down | sideways.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id."
+                    },
+                    "regime": {
+                        "type": "string",
+                        "enum": ["trend", "chop", "crash", "expansion", "recovery"],
+                        "description": "Broad regime label."
+                    },
+                    "volatility": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "extreme"],
+                        "description": "Volatility label."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "sideways"],
+                        "description": "Trend direction."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "classify_scenario".into(),
+            description: "Auto-derive regime labels for a scenario from its bar window \
+                          (regime_derived = true). Requires bars to have been warmed via \
+                          `xvn bars fetch`. Returns `{ classified: bool, skipped_reason: \
+                          string|null, scenario }`: classified=true when labels were \
+                          derived and written; classified=false with a skipped_reason when \
+                          skipped (bars unavailable, or the scenario already has \
+                          operator-set labels and force=false). Pass force=true to \
+                          re-derive over operator-set labels.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to classify."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "If true, overwrite even operator-set labels."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "select_scenarios".into(),
+            description: "Stateless read-only selector: filter the scenario library \
+                          by timeframe, regime, and decision-count proximity. \
+                          Use this to find a comparable set of scenarios for A/B evaluation \
+                          without needing to hand-pick ids. Returns [{id, name, timeframe, decision_count}]. \
+                          Mode A: set target_decisions=N to find scenarios within ±10% of N. \
+                          Mode B: set same_decisions=true and max_decisions=N to find \
+                          the largest common decision count ≤ N in the candidate set.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target_decisions": {
+                        "type": "integer",
+                        "description": "[Mode A] Select scenarios within ±10% of this decision count."
+                    },
+                    "same_decisions": {
+                        "type": "boolean",
+                        "description": "[Mode B] Return scenarios sharing the largest common decision count ≤ max_decisions."
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "description": "[Mode B] Maximum decision count for the common-count search."
+                    },
+                    "timeframe_minutes": {
+                        "type": "integer",
+                        "description": "Optional granularity filter in minutes (e.g. 240 for 4h, 60 for 1h)."
+                    },
+                    "regimes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional regime label filter (OR semantics per scenario)."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return. Default 4."
+                    }
+                },
+                "required": []
+            }),
+        },
         ToolDefinition {
             name: "list_strategies_folder".into(),
             description: "Reads from the user's strategies folder (read-only); \
@@ -3566,6 +4087,54 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "required": []
             }),
         },
+        // ── W5 read tools (Findings #5-7) ──────────────────────────────────
+        ToolDefinition {
+            name: "list_providers".into(),
+            description: "List configured LLM providers and their enabled models. \
+                          Returns the same data as GET /api/settings/providers: \
+                          each provider's name, kind (anthropic/openai-compat/etc.), \
+                          enabled models, and whether an API key is set. \
+                          Use this before authoring a strategy agent to confirm \
+                          which (provider, model) pairs are launchable.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "get_agent".into(),
+            description: "Inspect one Agent library record by id. \
+                          Returns the Agent's name, description, tags, and slots \
+                          (each slot carries provider, model, system_prompt, \
+                          skill_ids). Use this to review a saved agent before \
+                          attaching it to a strategy with `attach_agent`.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The agent_id (ULID) to inspect."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "filter_catalog".into(),
+            description: "Return the filter-DSL token catalog so you can \
+                          author correct `set_filter` payloads without guessing. \
+                          Returns structured lists of: operators (DSL token + \
+                          description), indicator categories with per-indicator \
+                          names and parameter ranges, and required filter fields. \
+                          Call this before `set_filter` when you are unsure of the \
+                          exact token names or parameter constraints.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -3604,6 +4173,123 @@ fn workspace_tool_defs() -> Vec<ToolDefinition> {
             }),
         },
     ]
+}
+
+/// Return the filter-DSL token catalog as structured JSON for the
+/// `filter_catalog` chat tool (W5 Finding #7). Encoding the key operator
+/// and indicator tables here lets the agent reason over concrete token names
+/// without parsing the Markdown wiki page.
+///
+/// The data mirrors `crates/xvision-dashboard/wiki/filter-dsl-catalog.md`.
+/// Keep the two in sync: when a new indicator or operator is added to the
+/// DSL, update both the wiki page AND this function.
+fn filter_catalog_json() -> serde_json::Value {
+    serde_json::json!({
+        "description": "Filter DSL token catalog for `set_filter` payloads. \
+                        Use exact token names from this catalog when authoring \
+                        `conditions` clauses. Parameterized tokens encode the \
+                        period directly, e.g. `rsi_14`, `ema_20`, `atr_pct_7`.",
+        "required_fields": ["display_name", "asset_scope", "timeframe", "conditions"],
+        "optional_fields": [
+            "cooldown_bars",
+            "max_wakeups_per_day",
+            "scan_cadence",
+            "wake_when_in_position",
+            "description"
+        ],
+        "wake_when_in_position_tokens": [
+            {
+                "token": "on_invalidation_or_target_only",
+                "description": "Default. Wake only on a fresh trip of the condition tree while holding. Suppresses sustained-true bars. Cost-safe default."
+            },
+            {
+                "token": "always",
+                "description": "Wake on every bar the tree is true while holding. Expensive: one trader-LLM call per in-position bar. Opt-in only."
+            },
+            {
+                "token": "never",
+                "description": "Never wake while holding; exits rely entirely on risk.stop_loss_atr_multiple."
+            }
+        ],
+        "operators": [
+            {"token": ">", "description": "Greater than. indicator lhs, indicator or numeric rhs."},
+            {"token": "<", "description": "Less than. indicator lhs, indicator or numeric rhs."},
+            {"token": ">=", "description": "Greater or equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "<=", "description": "Less or equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "==", "description": "Equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "crosses_above", "description": "Crosses above. indicator lhs, indicator rhs only (no numeric rhs)."},
+            {"token": "crosses_below", "description": "Crosses below. indicator lhs, indicator rhs only (no numeric rhs)."},
+            {"token": "between", "description": "Between inclusive. indicator lhs, two-number range rhs."},
+            {"token": "above_for_<bars>", "description": "lhs > rhs for N bars (current + N-1 prior). Example: `above_for_3`."},
+            {"token": "below_for_<bars>", "description": "lhs < rhs for N bars. Example: `below_for_3`."},
+            {"token": "crossed_above_<bars>", "description": "Cross occurred on current bar or within N-1 prior bars. Example: `crossed_above_5`."},
+            {"token": "crossed_below_<bars>", "description": "Same as crossed_above but downward."},
+            {"token": "slope_gt_<bars>", "description": "lhs change vs N bars ago > numeric rhs. Example: `slope_gt_4`."},
+            {"token": "slope_lt_<bars>", "description": "lhs change vs N bars ago < numeric rhs."},
+            {"token": "zscore_gt_<period>", "description": "lhs z-score over N bars > numeric rhs. Example: `zscore_gt_20`."},
+            {"token": "zscore_lt_<period>", "description": "lhs z-score over N bars < numeric rhs."},
+            {"token": "within_pct_<pct>", "description": "lhs within pct% of rhs. Example: `within_pct_1.5`."}
+        ],
+        "indicators": {
+            "price_and_volume": ["open", "high", "low", "close", "volume"],
+            "moving_averages_and_trend": [
+                "sma_<period>", "ema_<period>", "wma_<period>",
+                "adx_<period>", "di_plus_<period>", "di_minus_<period>",
+                "donchian_upper_<period>", "donchian_middle_<period>", "donchian_lower_<period>",
+                "highest_<period>", "lowest_<period>",
+                "opening_range_high_<minutes>", "opening_range_low_<minutes>", "opening_range_mid_<minutes>"
+            ],
+            "ichimoku": [
+                "tenkan", "kijun", "senkou_a", "senkou_b", "chikou",
+                "cloud_top", "cloud_bottom", "cloud_thickness"
+            ],
+            "momentum_and_oscillators": [
+                "rsi_<period>", "roc_<period>",
+                "stoch_k_<period>", "stoch_d_<period>",
+                "stoch_rsi_<period>", "stoch_rsi_k_<period>", "stoch_rsi_d_<period>",
+                "cci_<period>", "mfi_<period>", "williams_r_<period>"
+            ],
+            "volatility_and_bands": [
+                "atr_<period>", "atr_pct_<period>",
+                "bb_upper_<period>", "bb_middle_<period>", "bb_lower_<period>",
+                "bb_width_<period>", "bb_pct_b_<period>",
+                "keltner_upper_<period>", "keltner_middle_<period>", "keltner_lower_<period>"
+            ],
+            "macd": [
+                "macd_line", "macd", "macd_12_26_9",
+                "macd_signal", "macd_signal_12_26_9",
+                "macd_hist", "macd_histogram", "macd_hist_12_26_9"
+            ],
+            "volume": [
+                "vwap_<period>", "volume_sma_<period>",
+                "rvol_<period>", "rvol_tod_<period>", "volume_zscore_<period>", "obv"
+            ],
+            "session_and_reference_levels": [
+                "prev_day_open", "prev_day_high", "prev_day_low", "prev_day_close",
+                "prev_week_high", "prev_week_low", "prev_week_close",
+                "prev_month_open", "prev_month_high", "prev_month_low", "prev_month_close",
+                "premarket_high", "premarket_low",
+                "gap_pct", "gap_up", "gap_down"
+            ]
+        },
+        "period_ranges": {
+            "default": "2 to 500 for most indicators",
+            "adx_di": "2 to 200; numeric thresholds must be 0 to 100",
+            "rsi": "2 to 200; numeric thresholds must be 0 to 100",
+            "stoch": "2 to 200; numeric thresholds must be 0 to 100",
+            "williams_r": "2 to 200; numeric thresholds must be -100 to 0",
+            "atr_pct": "2 to 200; numeric thresholds must be > 0"
+        },
+        "conditions_structure": {
+            "description": "Conditions use a boolean tree of `all`/`any` nodes. Each leaf is `{lhs, op, rhs}`.",
+            "example": {
+                "all": [
+                    {"lhs": "rsi_14", "op": ">", "rhs": 50},
+                    {"lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26"}
+                ]
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -3730,7 +4416,7 @@ mod tests {
         let events = drain(&mut wl).await;
         assert!(matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_strategies"));
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategies");
                 assert!(result.is_array(), "expected an array, got {result}");
             }
@@ -3851,7 +4537,7 @@ mod tests {
             events.first()
         );
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategies_folder");
                 let arr = result.as_array().expect("entries[]");
                 assert!(
@@ -3900,13 +4586,13 @@ mod tests {
 
         let events = drain(&mut wl).await;
         assert!(
-            matches!(&events[0], WizardEvent::ToolCall { tool, args } if tool == "list_strategy_ideas"
+            matches!(&events[0], WizardEvent::ToolCall { tool, args, .. } if tool == "list_strategy_ideas"
                 && args.get("category").and_then(|v| v.as_str()) == Some("ema")),
             "expected list_strategy_ideas with category=ema, got {:?}",
             events.first()
         );
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategy_ideas");
                 let arr = result.as_array().expect("ideas[]");
                 assert!(
@@ -5018,7 +5704,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let job_id = events
             .iter()
             .find_map(|e| match e {
-                WizardEvent::ToolResult { tool, result } if tool == "fetch_bars" => {
+                WizardEvent::ToolResult { tool, result, .. } if tool == "fetch_bars" => {
                     result.get("job_id").and_then(|v| v.as_str()).map(str::to_string)
                 }
                 _ => None,
@@ -5056,7 +5742,6 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             "create_scenario",
             "update_slot",
             "update_manifest",
-            "set_mechanical_param",
             "set_risk_config",
             "set_filter",
             "clear_filter",
@@ -5268,6 +5953,45 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             "system prompt did not include scope header: {}",
             prompts[0]
         );
+    }
+
+    /// A genuinely-hung provider (the model dispatch never returns) must not
+    /// wedge the turn forever: the loop bounds `dispatch.complete` with
+    /// `dispatch_timeout` and surfaces a typed `Error` event so the chat rail
+    /// can recover instead of streaming nothing indefinitely. The timeout is
+    /// shrunk via `with_dispatch_timeout` so the path runs in real time
+    /// (tokio's paused clock can't be used here — it trips the sqlx pool's
+    /// internal acquire timeout during setup).
+    #[tokio::test]
+    async fn hung_model_dispatch_times_out_with_error_event() {
+        struct HangingDispatch;
+        #[async_trait::async_trait]
+        impl LlmDispatch for HangingDispatch {
+            async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+                // Far longer than the (shrunk) dispatch timeout — models a
+                // wedged provider / black-holed connection.
+                tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
+                unreachable!("the model-dispatch timeout must cut this off");
+            }
+        }
+
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(HangingDispatch);
+        let (wl, _pool, _td, _sid) = loop_with_session(dispatch, "hello", ContextScope::Workspace).await;
+        let mut wl = wl.with_dispatch_timeout(Duration::from_millis(20));
+        let events = drain(&mut wl).await;
+
+        assert_eq!(
+            events.len(),
+            1,
+            "a hung provider should surface exactly one Error event; got {events:?}"
+        );
+        match &events[0] {
+            WizardEvent::Error { message } => assert!(
+                message.to_lowercase().contains("timed out"),
+                "error should report the model dispatch timed out, got: {message}"
+            ),
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 
     // ---- F-10: chat-rail-tool-id-validation -------------------------------
@@ -5751,7 +6475,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let updated = events.iter().any(|e| {
             matches!(
                 e,
-                WizardEvent::ToolResult { tool, result }
+                WizardEvent::ToolResult { tool, result, .. }
                     if tool == "update_manifest" && result.get("error").is_none()
             )
         });
@@ -5906,5 +6630,756 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .iter()
             .any(|pe| matches!(pe.payload, UnifiedPayload::FocusInjected(_)));
         assert!(!any_focus, "no focus file → no FocusInjected event");
+    }
+
+    // -- Chat history windowing tests (W3 / xvision-t4u8.3) -------------------
+
+    use xvision_engine::agent::llm::{ContentBlock, Message};
+
+    /// Build a user message containing a ToolResult block.
+    fn tool_result_msg(tool_use_id: &str) -> Message {
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: tool_use_id.to_string(),
+                content: "result".into(),
+                is_error: None,
+            }],
+        }
+    }
+
+    /// Build an assistant message containing a ToolUse block.
+    fn tool_use_msg(id: &str) -> Message {
+        Message {
+            role: "assistant".into(),
+            content: vec![ContentBlock::ToolUse {
+                id: id.to_string(),
+                name: "list_strategies".into(),
+                input: serde_json::json!({}),
+            }],
+        }
+    }
+
+    /// Build a plain user or assistant text message.
+    fn text_msg(role: &str, text: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: vec![ContentBlock::Text { text: text.into() }],
+        }
+    }
+
+    /// A short session (N messages ≤ cap) must come back completely unchanged.
+    #[test]
+    fn window_short_session_returns_all_messages() {
+        // 3 messages, cap of 10 — all should survive.
+        let msgs = vec![
+            text_msg("user", "hello"),
+            text_msg("assistant", "hi"),
+            text_msg("user", "what time is it"),
+        ];
+        let windowed = window_chat_messages(msgs.clone(), 10);
+        assert_eq!(windowed.len(), 3);
+        assert_eq!(windowed, msgs);
+    }
+
+    /// When the cap boundary falls cleanly between messages (no orphan
+    /// tool_use/tool_result pair), the window drops the oldest messages
+    /// and the count equals the cap.
+    #[test]
+    fn window_drops_oldest_messages_respecting_cap() {
+        let msgs: Vec<Message> = (0..8)
+            .map(|i| {
+                if i % 2 == 0 {
+                    text_msg("user", &format!("msg {i}"))
+                } else {
+                    text_msg("assistant", &format!("reply {i}"))
+                }
+            })
+            .collect();
+        // cap = 4 → keep the last 4
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        assert_eq!(windowed.len(), 4);
+        // The last 4 messages of the original 8 must survive.
+        assert_eq!(windowed, msgs[4..]);
+    }
+
+    /// CORE PAIRING TEST (spec DoD §1):
+    /// When the raw cap boundary falls BETWEEN a tool_use and its matching
+    /// tool_result (i.e. the tool_use is the last message inside the window
+    /// and its tool_result is the first message dropped — or vice versa),
+    /// the windower must extend or shrink the boundary so both messages
+    /// are either kept or dropped together. No orphan must be returned.
+    ///
+    /// Layout (8 messages, cap = 5):
+    ///   0: user "msg 0"
+    ///   1: assistant "reply 1"
+    ///   2: user "msg 2"
+    ///   3: assistant tool_use id="tu_1"   ← raw tail of cap-5 window (msgs[3..])
+    ///   4: user tool_result id="tu_1"     ← paired with 3
+    ///   5: assistant "reply 5"
+    ///   6: user "msg 6"
+    ///   7: assistant "reply 7"
+    ///
+    /// A naive slice of msgs[3..] keeps msg[3] (tool_use) + msg[4..7]
+    /// — that's exactly 5 messages, and msgs[3]/msgs[4] form a complete
+    /// pair, so there is actually no orphan. We need the boundary to fall
+    /// INSIDE the pair. Adjust: cap = 4.
+    ///   msgs[4..] = tool_result "tu_1" (orphan — its tool_use was at [3]).
+    ///
+    /// The windower MUST shrink the window further to [5..] to avoid
+    /// the orphan tool_result.
+    #[test]
+    fn window_snaps_boundary_to_avoid_orphan_tool_result() {
+        let msgs = vec![
+            text_msg("user", "msg 0"),        // 0
+            text_msg("assistant", "reply 1"), // 1
+            text_msg("user", "msg 2"),        // 2
+            tool_use_msg("tu_1"),             // 3  ← tool_use
+            tool_result_msg("tu_1"),          // 4  ← matching tool_result
+            text_msg("assistant", "reply 5"), // 5
+            text_msg("user", "msg 6"),        // 6
+            text_msg("assistant", "reply 7"), // 7
+        ];
+        // cap = 4 → raw slice starts at msgs[4] = tool_result "tu_1" (orphan!).
+        // The windower must snap to msgs[5..] so the orphan tool_result is dropped.
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        // Must NOT contain the orphan tool_result.
+        for m in &windowed {
+            for block in &m.content {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                    assert_ne!(
+                        tool_use_id, "tu_1",
+                        "orphan tool_result for tu_1 must not appear in the window"
+                    );
+                }
+            }
+        }
+        // Must NOT contain the tool_use for tu_1 either (both must be dropped or
+        // both kept — since the tool_result was orphaned, both are dropped).
+        for m in &windowed {
+            for block in &m.content {
+                if let ContentBlock::ToolUse { id, .. } = block {
+                    assert_ne!(
+                        id, "tu_1",
+                        "tool_use for tu_1 was paired with a dropped tool_result and must also be dropped"
+                    );
+                }
+            }
+        }
+        // The remaining messages (msgs[5..]) must all be present.
+        assert_eq!(windowed.len(), 3, "windowed: {windowed:?}");
+    }
+
+    /// A tool_use/tool_result pair that fits entirely within the window
+    /// must be preserved intact.
+    #[test]
+    fn window_keeps_intact_tool_pair_within_cap() {
+        let msgs = vec![
+            text_msg("user", "old msg"),        // 0 — will be dropped
+            text_msg("assistant", "old reply"), // 1 — will be dropped
+            text_msg("user", "ask"),            // 2
+            tool_use_msg("tu_2"),               // 3
+            tool_result_msg("tu_2"),            // 4
+            text_msg("assistant", "done"),      // 5
+        ];
+        // cap = 4 → raw slice starts at msgs[2] (no orphan — tu_2 pair is fully inside).
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        assert_eq!(windowed, msgs[2..], "windowed: {windowed:?}");
+    }
+
+    // ── W5 new read tool tests (Findings #5-7) ────────────────────────────
+
+    /// `filter_catalog` tool returns a non-empty JSON object with the
+    /// DSL token catalog. The agent can call this in research/THINK mode
+    /// to learn the correct operator and indicator tokens.
+    #[tokio::test]
+    async fn filter_catalog_tool_returns_non_empty_dsl_token_list() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "what filters can I use?", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool("filter_catalog", serde_json::json!({}))
+            .await
+            .expect("filter_catalog must succeed");
+
+        // Must return a non-empty object.
+        let obj = out.as_object().expect("filter_catalog must return an object");
+        assert!(!obj.is_empty(), "catalog must not be empty: {out}");
+
+        // Must include the operators array with known tokens.
+        let operators = out["operators"]
+            .as_array()
+            .expect("filter_catalog must include an `operators` array");
+        assert!(
+            operators.len() > 5,
+            "expected multiple operators, got {}: {out}",
+            operators.len()
+        );
+        let op_tokens: Vec<_> = operators.iter().filter_map(|op| op["token"].as_str()).collect();
+        assert!(op_tokens.contains(&">"), "missing `>` operator in {op_tokens:?}");
+        assert!(
+            op_tokens.contains(&"crosses_above"),
+            "missing `crosses_above` operator in {op_tokens:?}"
+        );
+
+        // Must include indicator categories.
+        let indicators = out["indicators"]
+            .as_object()
+            .expect("filter_catalog must include an `indicators` object");
+        assert!(
+            indicators.contains_key("momentum_and_oscillators"),
+            "missing momentum_and_oscillators category in {out}"
+        );
+        let momentum = indicators["momentum_and_oscillators"]
+            .as_array()
+            .expect("momentum_and_oscillators must be an array");
+        let momentum_names: Vec<_> = momentum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            momentum_names.iter().any(|n| n.contains("rsi")),
+            "expected rsi_<period> in momentum indicators: {momentum_names:?}"
+        );
+
+        // Must include required_fields.
+        let required = out["required_fields"]
+            .as_array()
+            .expect("filter_catalog must include required_fields");
+        let required_names: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+        for field in ["display_name", "asset_scope", "timeframe", "conditions"] {
+            assert!(
+                required_names.contains(&field),
+                "missing required field `{field}` in {required_names:?}"
+            );
+        }
+    }
+
+    /// `list_providers` tool returns a JSON object with a `providers` array.
+    /// The array may be empty in a fresh tempdir (no config written), which
+    /// is the correct response — the test asserts the shape is present and
+    /// the tool does not error.
+    #[tokio::test]
+    async fn list_providers_tool_returns_providers_report_shape() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "list providers", ContextScope::Workspace).await;
+
+        // In a fresh tempdir there is no config/default.toml, so providers is
+        // empty (the api::settings::providers::list function returns an empty
+        // ProvidersReport when the file is missing). Assert the shape — the
+        // tool must not error and must return a parseable ProvidersReport.
+        let out = wl
+            .run_tool("list_providers", serde_json::json!({}))
+            .await
+            .expect("list_providers must not error in a fresh tempdir");
+
+        // ProvidersReport serialises as { providers: [...], default_model?: ... }
+        assert!(
+            out.get("providers").is_some(),
+            "list_providers must return an object with a `providers` field: {out}"
+        );
+        let providers = out["providers"].as_array().expect("providers must be an array");
+        // In a fresh tempdir the array is empty — that is correct.
+        let _ = providers; // length is 0, which is expected
+    }
+
+    /// `get_agent` tool dispatches to `api_agents::get` and returns the Agent
+    /// record. Uses a created agent so the store has something to return.
+    #[tokio::test]
+    async fn get_agent_tool_returns_agent_record_by_id() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, td, _sid) = loop_with_session(mock, "inspect agent", ContextScope::Workspace).await;
+
+        // Create an agent in the DB so get_agent has something to return.
+        let ctx = ApiContext::new(
+            _pool.clone(),
+            Actor::Cli { user: "test".into() },
+            td.path().to_path_buf(),
+        );
+        let created = api_agents::create(
+            &ctx,
+            api_agents::CreateAgentRequest {
+                name: "W5 Test Agent".into(),
+                description: "Test agent for W5 get_agent tool.".into(),
+                tags: vec![],
+                slots: vec![xvision_engine::agents::AgentSlot {
+                    name: "main".into(),
+                    provider: "anthropic".into(),
+                    model: "claude-sonnet-4-6".into(),
+                    system_prompt: "You are a quantitative trading assistant. Analyse the OHLCV data \
+                             provided and respond with a JSON object containing: action (buy/sell/hold), \
+                             size_pct (0–100), and reason. Apply disciplined risk management: never risk \
+                             more than 1% of notional equity per trade, and always respect configured \
+                             stop-loss and take-profit levels. Avoid over-trading on low-volume bars."
+                        .into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    allowed_tools: Vec::new(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .expect("create agent for get_agent test");
+
+        let out = wl
+            .run_tool("get_agent", serde_json::json!({ "id": created.agent_id }))
+            .await
+            .expect("get_agent must succeed for an existing agent");
+
+        assert_eq!(
+            out["agent_id"].as_str(),
+            Some(created.agent_id.as_str()),
+            "get_agent must return the requested agent id: {out}"
+        );
+        assert_eq!(
+            out["name"].as_str(),
+            Some("W5 Test Agent"),
+            "get_agent must return the agent name: {out}"
+        );
+    }
+
+    /// `get_agent` returns an error for an unknown agent id.
+    #[tokio::test]
+    async fn get_agent_tool_errors_for_unknown_id() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "inspect agent", ContextScope::Workspace).await;
+
+        let err = wl
+            .run_tool(
+                "get_agent",
+                serde_json::json!({ "id": "01ZZNONEXISTENTAGENT000000" }),
+            )
+            .await
+            .expect_err("get_agent must error for an unknown id");
+
+        assert!(
+            err.to_string().contains("not found") || err.to_string().contains("01ZZNONEXISTENTAGENT000000"),
+            "error must mention not-found or the id: {err}"
+        );
+    }
+
+    /// The three new W5 read tools appear in the tool defs for both profiles.
+    #[test]
+    fn w5_read_tools_appear_in_strategy_tool_defs() {
+        let defs = wizard_tool_defs();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        for tool in ["list_providers", "get_agent", "filter_catalog"] {
+            assert!(
+                names.contains(&tool),
+                "W5 tool `{tool}` missing from strategy_tool_defs: {names:?}"
+            );
+        }
+    }
+
+    /// `validate_draft` remains in strategy tool defs (still advertised to the model).
+    #[test]
+    fn validate_draft_still_in_tool_defs_after_reclassification() {
+        let defs = wizard_tool_defs();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            names.contains(&"validate_draft"),
+            "validate_draft must still be in tool defs after Read reclassification: {names:?}"
+        );
+    }
+
+    // -- W7: agent-creation context bleed prevention -----------------------
+
+    /// The `create_strategy_agent` tool description must mention `update_manifest`
+    /// so the model understands the ordering dependency (Finding #14).
+    #[test]
+    fn create_strategy_agent_tool_description_mentions_update_manifest() {
+        let defs = wizard_tool_defs();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "create_strategy_agent")
+            .expect("create_strategy_agent must be in tool defs");
+        assert!(
+            def.description.contains("update_manifest"),
+            "create_strategy_agent description must mention update_manifest (ordering dependency): {}",
+            def.description
+        );
+    }
+
+    /// The wizard system prompt must contain ordering guidance — specifically
+    /// that update_manifest must be called BEFORE create_strategy_agent when
+    /// a specific asset universe was discussed (Finding #14 fix).
+    #[test]
+    fn wizard_system_prompt_contains_update_manifest_ordering_guidance() {
+        // The guidance must mention the "before" ordering constraint.
+        // We check for "before" adjacent to one of the two tool names so the
+        // test catches the actual ordering rule, not just incidental mentions.
+        // The content uses backtick-quoted tool names in markdown, so we match
+        // against the raw text (not lowercased to avoid backtick confusion).
+        let has_ordering_rule = WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest")
+            && (
+                // "Call `update_manifest` before `create_strategy_agent`" (markdown backticks)
+                WIZARD_SYSTEM_PROMPT_BASE.contains("before `create_strategy_agent`")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("before calling create_strategy_agent")
+            );
+        assert!(
+            has_ordering_rule,
+            "wizard.md must contain an explicit ordering rule that update_manifest \
+             precedes create_strategy_agent. Current content:\n{}",
+            WIZARD_SYSTEM_PROMPT_BASE
+        );
+    }
+
+    /// When create_strategy_agent is called WITHOUT an explicit system_prompt
+    /// and the strategy's asset_universe is still the blank-draft default
+    /// (["BTC/USD"]), the tool result must include a "warning" field so
+    /// the model can self-correct before the agent prompt is wrong.
+    #[tokio::test]
+    async fn create_strategy_agent_warns_when_asset_universe_is_default_and_no_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strategy agent", ContextScope::Workspace).await;
+
+        // Create a blank strategy — asset_universe defaults to ["BTC/USD"].
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strategy" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Call create_strategy_agent WITHOUT system_prompt and without
+        // calling update_manifest first — simulates the context-bleed scenario.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent should succeed (non-fatal warning)");
+
+        // Agent must still be created.
+        assert_eq!(out["strategy_id"], id);
+        assert_eq!(out["role"], "trader");
+
+        // Must include a warning about the default asset_universe.
+        let warning = out.get("warning").and_then(|w| w.as_str()).unwrap_or("");
+        assert!(
+            !warning.is_empty(),
+            "expected a warning when asset_universe is default BTC/USD and no prompt given, got: {out}"
+        );
+        assert!(
+            warning.contains("BTC/USD") || warning.contains("update_manifest"),
+            "warning must mention BTC/USD or update_manifest: {warning}"
+        );
+    }
+
+    /// When create_strategy_agent IS given an explicit system_prompt, no
+    /// warning should appear — the caller took responsibility for the prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_when_explicit_system_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me a BTC strategy agent", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "BTC Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "system_prompt": "You are the ETH/USD trader for this strategy. Evaluate the provided OHLCV bars, active filters, risk configuration, and current position state before deciding. Return only structured JSON with action, size_pct, confidence, and concise rationale. Respect configured stop loss, take profit, and max risk limits; hold when evidence is weak or liquidity is poor."
+                }),
+            )
+            .await
+            .expect("create_strategy_agent with explicit prompt");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning when explicit system_prompt is supplied: {out}"
+        );
+    }
+
+    /// When update_manifest was called first to set a non-default asset_universe,
+    /// create_strategy_agent should not warn even without an explicit system_prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_after_update_manifest() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strat", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Update manifest first — asset_universe is no longer the default.
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "id": id,
+                "asset_universe": ["ETH/USD"]
+            }),
+        )
+        .await
+        .expect("update_manifest");
+
+        // Now create the agent without an explicit system_prompt.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent after update_manifest");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning expected when asset_universe was updated before agent creation: {out}"
+        );
+    }
+
+    // ── W10 scenario management tools ────────────────────────────────────────
+
+    /// Helper: create a scenario through the wizard and return its id.
+    async fn create_test_scenario(wl: &WizardLoop) -> String {
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "display_name": "W10 Test Scenario",
+                    "granularity": "4h"
+                }),
+            )
+            .await
+            .expect("create_scenario for W10 tests");
+        out["id"].as_str().expect("id field").to_string()
+    }
+
+    /// W10: clone_scenario creates a derived scenario from a parent.
+    #[tokio::test]
+    async fn w10_clone_scenario_creates_child() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "clone scenario", ContextScope::Workspace).await;
+
+        let parent_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "clone_scenario",
+                serde_json::json!({
+                    "parent_id": parent_id,
+                    "display_name": "W10 Clone"
+                }),
+            )
+            .await
+            .expect("clone_scenario should succeed");
+
+        assert!(out["id"].as_str().is_some(), "cloned scenario must have an id");
+        assert_ne!(out["id"], parent_id, "clone id must differ from parent id");
+        assert_eq!(
+            out["parent_scenario_id"].as_str(),
+            Some(parent_id.as_str()),
+            "cloned scenario must reference parent"
+        );
+    }
+
+    /// W10: archive_scenario soft-deletes a scenario (sets archived_at).
+    #[tokio::test]
+    async fn w10_archive_scenario_sets_archived_at() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "archive scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool("archive_scenario", serde_json::json!({ "id": sc_id }))
+            .await
+            .expect("archive_scenario should succeed");
+
+        assert_eq!(
+            out["archived"].as_bool(),
+            Some(true),
+            "archived field must be true: {out}"
+        );
+    }
+
+    /// W10: set_scenario_regime writes operator-set regime labels.
+    #[tokio::test]
+    async fn w10_set_scenario_regime_persists_labels() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "set regime", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "set_scenario_regime",
+                serde_json::json!({
+                    "id": sc_id,
+                    "regime": "trend",
+                    "volatility": "high",
+                    "direction": "up"
+                }),
+            )
+            .await
+            .expect("set_scenario_regime should succeed");
+
+        assert_eq!(
+            out["regime_label"].as_str(),
+            Some("trend"),
+            "regime_label must be persisted"
+        );
+        assert_eq!(
+            out["volatility_label"].as_str(),
+            Some("high"),
+            "volatility_label must be persisted"
+        );
+        assert_eq!(
+            out["trend_direction"].as_str(),
+            Some("up"),
+            "trend_direction must be persisted"
+        );
+        assert_eq!(
+            out["regime_derived"].as_bool(),
+            Some(false),
+            "regime_derived must be false for operator-set labels"
+        );
+    }
+
+    /// W10: select_scenarios returns a filtered list of scenarios by decision count.
+    #[tokio::test]
+    async fn w10_select_scenarios_returns_matching_rows() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "select scenarios", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // 1. No-mode select returns all candidates (up to `count`). Our scenario
+        //    must be present with a well-formed row shape.
+        let all = wl
+            .run_tool("select_scenarios", serde_json::json!({ "count": 10 }))
+            .await
+            .expect("select_scenarios (no mode) should succeed");
+        let arr = all.as_array().expect("select_scenarios must return an array");
+        let row = arr
+            .iter()
+            .find(|r| r["id"].as_str() == Some(sc_id.as_str()))
+            .unwrap_or_else(|| panic!("no-mode select must include the created scenario; got: {all}"));
+        assert!(row["name"].as_str().is_some(), "row must have name: {row}");
+        assert!(
+            row["timeframe"].as_str().is_some(),
+            "row must have timeframe: {row}"
+        );
+        let dc = row["decision_count"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("row must have decision_count: {row}"));
+        assert!(dc > 0, "decision_count must be positive: {row}");
+
+        // 2. target_decisions == the scenario's own count is inside the ±10%
+        //    window → the scenario IS selected (positive filter path).
+        let matched = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (target) should succeed");
+        assert!(
+            matched
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "target_decisions == own count must select the scenario; got: {matched}"
+        );
+
+        // 3. A target_decisions far outside ±10% → the scenario is excluded
+        //    (negative filter path — proves the filter actually filters).
+        let excluded = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc * 10 + 1000, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (far target) should succeed");
+        assert!(
+            !excluded
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "far-off target_decisions must exclude the scenario; got: {excluded}"
+        );
+    }
+
+    /// W10: classify_scenario skips gracefully when bars are not cached.
+    /// classify_scenario must SKIP (no re-derivation) when the scenario already
+    /// carries an operator-set regime label and `force=false`. This skip path is
+    /// deterministic and independent of whether bar data is cached, so it is the
+    /// reliable way to exercise the graceful `ClassifyResult { classified:false,
+    /// skipped_reason:Some(..) }` branch.
+    #[tokio::test]
+    async fn w10_classify_scenario_skips_when_operator_labeled() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "classify scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // Stamp an operator-authored regime label (regime_derived = false).
+        wl.run_tool(
+            "set_scenario_regime",
+            serde_json::json!({ "id": sc_id, "regime": "trend" }),
+        )
+        .await
+        .expect("set_scenario_regime should succeed");
+
+        let out = wl
+            .run_tool(
+                "classify_scenario",
+                serde_json::json!({ "id": sc_id, "force": false }),
+            )
+            .await
+            .expect("classify_scenario returns Ok");
+
+        // Skip path: classified=false plus a human-readable skipped_reason.
+        // (`ClassifyResult` has no `skipped` field — assert on the real fields.)
+        assert_eq!(
+            out["classified"].as_bool(),
+            Some(false),
+            "classify(force=false) on an operator-labeled scenario must skip: {out}"
+        );
+        assert!(
+            out["skipped_reason"].as_str().is_some(),
+            "a skipped classification must carry a skipped_reason: {out}"
+        );
     }
 }

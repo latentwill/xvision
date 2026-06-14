@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Fibonacci Cycle Alignment",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_cycle_alignment",
   "plain_summary": "Some markets move in nested waves. This strategy only acts when short-term, medium-term, and higher-timeframe structure line up, using Fibonacci-like spacing as a way to think about cycle rhythm and confirmation.",
   "regime_fit": [

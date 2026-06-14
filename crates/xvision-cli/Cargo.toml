@@ -22,11 +22,7 @@ anyhow = { workspace = true }
 xvision-core      = { path = "../xvision-core" }
 xvision-data      = { path = "../xvision-data" }
 xvision-eval      = { path = "../xvision-eval" }
-xvision-intern    = { path = "../xvision-intern" }
-xvision-trader    = { path = "../xvision-trader" }
-xvision-risk      = { path = "../xvision-risk" }
 xvision-execution = { path = "../xvision-execution" }
-xvision-harness   = { path = "../xvision-harness" }
 xvision-engine        = { path = "../xvision-engine" }
 xvision-filters       = { path = "../xvision-filters" }
 xvision-dashboard     = { path = "../xvision-dashboard" }

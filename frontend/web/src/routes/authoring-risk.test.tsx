@@ -181,7 +181,6 @@ describe("AuthoringRoute risk editor", () => {
         published_at: null,
       },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -189,9 +188,6 @@ describe("AuthoringRoute risk editor", () => {
         max_leverage: 3,
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
-      },
-      mechanical_params: {
-        lookback: 20,
       },
     });
 
@@ -225,7 +221,6 @@ describe("AuthoringRoute risk editor", () => {
       },
       decision_mode: "agentic",
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -234,7 +229,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.setMechanisticConfig).mockResolvedValue({
       manifest: {
@@ -254,7 +248,6 @@ describe("AuthoringRoute risk editor", () => {
       decision_mode: "mechanistic",
       mechanistic_config: { entry_rules: [], close_policies: [] },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -263,7 +256,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
 
     renderRoute();
@@ -310,7 +302,6 @@ describe("AuthoringRoute risk editor", () => {
         published_at: null,
       },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -319,7 +310,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -353,7 +343,6 @@ describe("AuthoringRoute risk editor", () => {
         published_at: null,
       },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -362,7 +351,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -394,7 +382,6 @@ describe("AuthoringRoute risk editor", () => {
         published_at: null,
       },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -403,7 +390,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -458,7 +444,6 @@ describe("AuthoringRoute agent composition", () => {
       agents: [],
       pipeline: { kind: "single" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -467,7 +452,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -533,7 +517,6 @@ describe("AuthoringRoute agent composition", () => {
       agents: [],
       pipeline: { kind: "single" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -542,7 +525,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.addStrategyAgent).mockResolvedValue({
       strategy_id: "01TEST",
@@ -610,7 +592,6 @@ describe("AuthoringRoute agent composition", () => {
       agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
       pipeline: { kind: "single" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -619,7 +600,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
 
     renderRoute();
@@ -652,12 +632,11 @@ describe("AuthoringRoute agent composition", () => {
         published_at: null,
       },
       agents: [
-        { agent_id: "01INTERN", role: "intern" },
+        { agent_id: "01INTERN", role: "analyst" },
         { agent_id: "01TRADER", role: "trader" },
       ],
       pipeline: { kind: "sequential" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -666,7 +645,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -703,12 +681,11 @@ describe("AuthoringRoute agent composition", () => {
         published_at: null,
       },
       agents: [
-        { agent_id: "01INTERN", role: "intern" },
+        { agent_id: "01INTERN", role: "analyst" },
         { agent_id: "01TRADER", role: "trader" },
       ],
       pipeline: { kind: "single" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -717,7 +694,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -727,7 +703,7 @@ describe("AuthoringRoute agent composition", () => {
     vi.mocked(strategyApi.setStrategyPipeline).mockResolvedValue({
       strategy_id: "01TEST",
       agents: [
-        { agent_id: "01INTERN", role: "intern" },
+        { agent_id: "01INTERN", role: "analyst" },
         { agent_id: "01TRADER", role: "trader" },
       ],
       pipeline: { kind: "sequential" },
@@ -799,7 +775,6 @@ describe("AuthoringRoute agent composition", () => {
       agents: [],
       pipeline: { kind: "single" },
       regime_slot: null,
-      intern_slot: null,
       trader_slot: null,
       risk: {
         risk_pct_per_trade: 0.015,
@@ -808,7 +783,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",

@@ -44,8 +44,8 @@ segmented counts (expected at audit time: 40 user awaiting · 2 optimizer · 54 
    win rate rather than fake it, and leaderboard sample-size chips currently
    key off run counts. Both research-mandated metrics need backend fields.
 3. **Agent-run detail endpoint enrichment**: `GET /api/agent-runs/:id` serves
-   the versioned `xvn.agent_run.v1` export (shared with `xvn run inspect`);
-   adding the live-money fields requires a schema version bump.
+   the versioned `xvn.agent_run.v2` export (shared with `xvn run inspect`);
+   remaining live-money fields should land in a future schema bump.
 
 ### P2 — product surface
 4. **Mobile home (audit F7)**: at 390px the phone shell still lands on the

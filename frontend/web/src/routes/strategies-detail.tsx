@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "@/api/client";
+import { Icon } from "@/components/primitives/Icon";
 import { InlineEditField } from "@/features/strategies/InlineEditField";
 import { StrategyReadinessPanel } from "@/components/diagnostics/StrategyReadinessPanel";
 import { CHART2_STRATEGY_ROTATION } from "@/theme/themes";
+import { cloneStrategy, type TunableBound } from "@/api/strategies";
 
 /**
  * Minimal strategy-detail route added by the
@@ -37,6 +39,7 @@ type StrategyManifest = {
 
 type StrategyDetail = {
   manifest: StrategyManifest;
+  tunable_bounds?: TunableBound[];
 };
 
 type MetadataPatch = {
@@ -64,6 +67,131 @@ function patchStrategyMetadata(
 
 // The 8-color rotation palette extracted for swatch display.
 const ROTATION_SWATCHES = CHART2_STRATEGY_ROTATION.map((e) => e.color);
+
+// ─── Tunable bounds helpers ──────────────────────────────────────────────────
+
+/**
+ * Derive a human-readable label from a dot-separated tunable-bound path.
+ *
+ * Supported patterns (from the Pine import surface):
+ *   conditions.N.*        → "Condition N+1 threshold"
+ *   mechanistic.close_policies.N.pct → "Stop/target %"
+ *   mechanistic.close_policies.N.bars → "Time exit bars"
+ *   mechanistic.close_policies.N.usd  → "Target PnL $"
+ *   conditions.N.lhs.*   → "Condition N+1 left side"
+ *   <anything else>      → humanize the last meaningful segment
+ *
+ * The function is intentionally simple and path-driven: if the optimizer
+ * surfaces new path shapes in future, add patterns here.
+ */
+function deriveBoundLabel(path: string): string {
+  const parts = path.split(".");
+
+  // conditions.N.rhs.numeric  →  "Condition N+1 threshold"
+  // conditions.N.*            →  "Condition N+1 threshold" (generic fallback)
+  if (parts[0] === "conditions" && parts.length >= 2) {
+    const idx = parseInt(parts[1] ?? "", 10);
+    const n = isNaN(idx) ? 1 : idx + 1;
+    const sub = parts[2] ?? "";
+    if (sub === "lhs") return `Condition ${n} left side`;
+    // rhs.numeric, rhs.*, or no sub → threshold
+    return `Condition ${n} threshold`;
+  }
+
+  // mechanistic.close_policies.N.<field>
+  if (
+    parts[0] === "mechanistic" &&
+    parts[1] === "close_policies" &&
+    parts.length >= 4
+  ) {
+    const field = parts[3] ?? "";
+    if (field === "pct") return "Stop/target %";
+    if (field === "bars") return "Time exit bars";
+    if (field === "usd") return "Target PnL $";
+    // fallthrough to generic humanizer
+  }
+
+  // Generic: take the last non-numeric, non-empty segment and humanize it.
+  const meaningful = parts
+    .filter((p) => p.length > 0 && isNaN(parseInt(p, 10)))
+    .pop();
+  if (!meaningful) return path;
+  // snake_case → Title Case words
+  return meaningful
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Auto-generated settings strip sourced from `strategy.tunable_bounds`.
+ *
+ * Layout rules (CLAUDE.md, mandatory):
+ * - Inline, single full-width column, no right-side box.
+ * - No popups / modals / overlays.
+ * - Dark-mode-safe borders: border-border only; never border-white / border-gray-*.
+ * - Colored badges use low-opacity bg + dark: variants.
+ *
+ * v1 is READ-ONLY: it displays the declared search space.
+ */
+function TunableBoundsPanel({ bounds }: { bounds: TunableBound[] }) {
+  if (bounds.length === 0) return null;
+
+  return (
+    <section
+      aria-label="Tunable input bounds"
+      data-testid="tunable-bounds-panel"
+      className="mt-6"
+    >
+      <h2 className="text-[15px] font-medium mb-3">Input search space</h2>
+      <div className="rounded border border-border bg-surface-elev overflow-hidden">
+        {bounds.map((b, i) => (
+          <div
+            key={b.path}
+            data-testid="tunable-bound-row"
+            className={[
+              "flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[12.5px]",
+              i < bounds.length - 1 ? "border-b border-border" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {/* Human label */}
+            <span className="font-medium text-text min-w-[140px]">
+              {deriveBoundLabel(b.path)}
+            </span>
+
+            {/* Kind badge */}
+            <span
+              className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-mono
+                         bg-indigo-500/10 text-indigo-700 dark:text-indigo-300"
+            >
+              {b.kind}
+            </span>
+
+            {/* Range */}
+            <span className="text-text-2 font-mono tabular-nums">
+              {b.min !== null ? b.min : "−∞"}
+              {" – "}
+              {b.max !== null ? b.max : "+∞"}
+              {b.step !== null ? (
+                <span className="text-text-3 ml-1.5">step {b.step}</span>
+              ) : null}
+            </span>
+
+            {/* Path — muted mono, truncated on narrow viewports */}
+            <span
+              className="ml-auto text-text-3 font-mono text-[11px] truncate max-w-[260px]"
+              title={b.path}
+            >
+              {b.path}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 /**
  * Inline color picker row. No modal/popover — displays as a
@@ -237,6 +365,7 @@ export function StrategyDetailRoute() {
 
 function StrategyDetailView({ id }: { id: string }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const query = useQuery({
     queryKey: detailQueryKey(id),
     queryFn: () => getStrategy(id),
@@ -249,6 +378,28 @@ function StrategyDetailView({ id }: { id: string }) {
   const [plainSummaryError, setPlainSummaryError] = useState<string | null>(
     null,
   );
+  const [cloneError, setCloneError] = useState<string | null>(null);
+
+  // Clone the strategy via the shared `POST /api/strategy/:id/clone`
+  // endpoint (same flow the strategies list "Duplicate" action uses),
+  // then navigate to the new draft's detail page. The display name is
+  // derived from the loaded strategy at click time, so the mutation
+  // closure reads `query.data` rather than the post-load `m` binding
+  // (which is declared below the rules-of-hooks early returns).
+  const cloneMutation = useMutation({
+    mutationFn: () => {
+      const name = query.data?.manifest.display_name ?? "Strategy";
+      return cloneStrategy(id, { display_name: `${name} (clone)` });
+    },
+    onSuccess: (created) => {
+      navigate(`/strategies/${encodeURIComponent(created.manifest.id)}`);
+    },
+    onError: (err) => {
+      setCloneError(
+        err instanceof ApiError ? err.message : "Could not clone strategy.",
+      );
+    },
+  });
 
   const patchMutation = useMutation({
     mutationFn: (patch: MetadataPatch) => patchStrategyMetadata(id, patch),
@@ -315,17 +466,45 @@ function StrategyDetailView({ id }: { id: string }) {
 
   const strategy = query.data;
   const m = strategy.manifest;
+  const tunableBounds = strategy.tunable_bounds ?? [];
 
   return (
     <main data-testid="strategy-detail-view" data-strategy-id={m.id}>
       <header>
-        <Link
-          to="/strategies"
-          data-testid="strategy-detail-back"
-          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
-        >
-          ← Back to strategies
-        </Link>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <Link
+            to="/strategies"
+            data-testid="strategy-detail-back"
+            className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text"
+          >
+            ← Back to strategies
+          </Link>
+          <div className="flex items-center gap-2">
+            {cloneError ? (
+              <span
+                role="alert"
+                data-testid="strategy-detail-clone-error"
+                title={cloneError}
+                className="max-w-[240px] truncate text-[12px] text-rose-300"
+              >
+                {cloneError}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              data-testid="strategy-detail-clone"
+              onClick={() => {
+                setCloneError(null);
+                cloneMutation.mutate();
+              }}
+              disabled={cloneMutation.isPending}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text transition-colors hover:border-text-3 active:border-text-2 focus:outline-none focus-visible:ring-1 focus-visible:ring-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Icon name="copy" size={13} />
+              {cloneMutation.isPending ? "Cloning…" : "Clone strategy"}
+            </button>
+          </div>
+        </div>
         <h1>
           <InlineEditField
             id="display-name"
@@ -387,6 +566,8 @@ function StrategyDetailView({ id }: { id: string }) {
         <h2 className="text-[15px] font-medium mb-3">Agent readiness</h2>
         <StrategyReadinessPanel strategyId={m.id} />
       </section>
+
+      <TunableBoundsPanel bounds={tunableBounds} />
     </main>
   );
 }

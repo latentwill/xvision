@@ -11,10 +11,6 @@
 //!   keep producing the same outputs.
 //! * `Filter`  → stub handler returning a placeholder [`FilterSignal`].
 //!   Phase C wires the real Filter LLM call + predicate-payload schema.
-//! * `Critic`  → stub handler returning a placeholder [`Critique`].
-//!   Phase D wires the real Critic semantics.
-//! * `Intern`  → stub handler returning a placeholder [`InternObservation`].
-//!   Phase D wires the real Intern semantics.
 //! * `Router`  → fully implemented in v1 per operator Decision 2. Runs
 //!   the slot's LLM with a JSON response schema enforcing the
 //!   `{ "target_agent_ref_index": <usize> }` shape, then validates the
@@ -36,7 +32,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use xvision_core::trading::AssetSymbol;
 
-use crate::agent::execute::{execute_slot, SlotInput};
+// SlotInput and execute_slot were removed in WU-6 (LlmDispatch trader retirement).
 use crate::agent::execute_cline::{execute_slot_cline, ClineSlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agent::memory_recorder::MemoryRecorder;
@@ -50,12 +46,11 @@ use xvision_core::config::{AgentRuntime, ProviderEntry};
 use xvision_core::providers::Catalog;
 use xvision_observability::Recorder;
 
-/// Everything the Cline branch of a capability dispatch needs that the
-/// `LlmDispatch` branch does not: the live sidecar client plus the
-/// provider identity + key required to start a Cline run. Threaded from
-/// `PipelineInputs` so the dispatcher stays oblivious to how the client
-/// was spawned. `None` (the default) keeps every dispatch on the
-/// `LlmDispatch` path regardless of the `runtime` flag.
+/// The Cline sidecar context for a capability dispatch: the live sidecar
+/// client plus the provider identity + key required to start a Cline run.
+/// Threaded from `PipelineInputs` so the dispatcher stays oblivious to how
+/// the client was spawned. `None` means no sidecar — which since WU-6 is
+/// a hard error for the trader (see `execute_slot_for_runtime`).
 #[derive(Clone)]
 pub struct ClineDispatchCtx {
     /// The shared, already-spawned sidecar client (one per run).
@@ -152,34 +147,6 @@ pub enum FilterGranularity {
     Decision,
 }
 
-/// Critic verdict — Phase D wires the actual model call. Phase B stubs
-/// emit `Info` severity with placeholder text so downstream consumers
-/// don't crash on the stub.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CritiqueSeverity {
-    Info,
-    Warning,
-    Reject,
-}
-
-/// Phase B stub for a Critic's output. Phase D replaces the body with
-/// the real verdict (Approve / Reject / SuggestModification) plus a
-/// structured rationale.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Critique {
-    pub severity: CritiqueSeverity,
-    pub text: String,
-}
-
-/// Phase B stub for an Intern's structured observation. Phase D replaces
-/// the body with the real free-form JSON note merged into the trader's
-/// briefing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InternObservation {
-    pub text: String,
-}
-
 /// Router's typed output. Phase B ships this fully — the dispatcher
 /// validates `target_agent_ref_index > current_index` AND
 /// `target_agent_ref_index < agents.len()` at runtime. The strategy
@@ -193,15 +160,11 @@ pub struct RouteSelection {
     pub target_agent_ref_index: usize,
 }
 
-/// Typed sum of every capability-handler return value. Phase B wires
-/// all five variants; only Trader has its real shape — the other four
-/// are stub-shaped per the contract and gain semantics in Phases C–E.
+/// Typed sum of every capability-handler return value.
 #[derive(Debug, Clone)]
 pub enum AgentOutput {
     Trader(TraderDecision),
     Filter(FilterSignal),
-    Critic(Critique),
-    Intern(InternObservation),
     Router(RouteSelection),
 }
 
@@ -209,7 +172,7 @@ impl AgentOutput {
     /// Convenience: extract a reference to the inner `FilterSignal` for
     /// edge-predicate evaluation. Returns `None` for any non-Filter
     /// output (the predicate evaluator treats this as "predicate fails"
-    /// — a Critic / Trader output never satisfies a `FilterSignal`
+    /// — a Trader / Router output never satisfies a `FilterSignal`
     /// predicate).
     pub fn as_filter_signal(&self) -> Option<&FilterSignal> {
         match self {
@@ -251,6 +214,11 @@ pub struct DispatchInput<'a> {
     pub run_id: String,
     pub scenario_id: String,
     pub cycle_idx: i64,
+    /// Optional stable suffix for multiple logical dispatches of the same
+    /// slot inside one decision cycle. The Cline sidecar deduplicates by
+    /// run_id, so multi-filter re-fires of `trader` need distinct ids while
+    /// preserving retry stability for each logical invocation.
+    pub invocation_suffix: Option<String>,
     pub catalog: Option<Arc<Catalog>>,
     pub delta_briefing: bool,
     pub prev_briefing: Option<serde_json::Value>,
@@ -278,36 +246,36 @@ pub struct DispatchInput<'a> {
     /// without code changes. Phase D's pipeline + executor wiring sets
     /// this explicitly.
     pub recorder: Option<&'a dyn Recorder>,
-    /// Stage 1 (Cline runtime unification): which runtime drives the
-    /// Trader / Router LLM calls. `LlmDispatch` (the default) keeps the
-    /// raw-reqwest path; `Cline` routes the slot through the sidecar via
-    /// [`execute_slot_cline`] — but only when `cline` is `Some` (the eval
-    /// entry point spawned a client). When `runtime == Cline` and `cline`
-    /// is `None` the dispatcher falls back to `LlmDispatch` so tests and
-    /// non-eval callers that flip the flag without wiring a client keep
-    /// working.
+    /// Agent runtime selector. Always `AgentRuntime::Cline` since WU-6
+    /// retired `LlmDispatch`. Retained on the struct for call-site
+    /// compatibility; `should_use_cline` now only checks `cline.is_some()`.
     pub runtime: AgentRuntime,
-    /// The live sidecar context, present only when the eval entry point
-    /// spawned a Cline client for this run. See [`ClineDispatchCtx`].
+    /// The live sidecar context, spawned by the eval entry point for this run.
+    /// Since WU-6, the trader hard-errors if this is `None`. See [`ClineDispatchCtx`].
     pub cline: Option<ClineDispatchCtx>,
+    /// WS-17 parent: the `decision.model` span id the executor opened
+    /// around the enclosing `run_pipeline` call. Forwarded into
+    /// `ClineSlotInput.model_call_span_id` so the captured
+    /// `decision.reasoning` span nests under `decision.model`. `None`
+    /// keeps the reasoning span top-level (rehearsal / non-eval paths).
+    pub model_call_span_id: Option<String>,
 }
 
 /// Result of `dispatch_capability`: the typed `AgentOutput` AND the
 /// accumulated input/output token counts from the underlying LLM call(s).
-/// Stub handlers report `(0, 0)`; Trader and Router report whatever the
-/// dispatcher returned.
+/// Filter stub handlers report `(0, 0)`; Trader and Router report whatever
+/// the dispatcher returned.
 #[derive(Debug)]
 pub struct DispatchOutcome {
     pub output: AgentOutput,
     pub input_tokens: u32,
     pub output_tokens: u32,
     /// The raw `LlmResponse` from `execute_slot`, when a real LLM call
-    /// happened. Trader and Router carry this; stub handlers (Filter /
-    /// Critic / Intern in Phase B) carry `None`.
+    /// happened. Trader and Router carry this; the Filter stub carries `None`.
     ///
     /// The pipeline reads this for two reasons: (1) eval executors still
     /// inspect the raw trader response, (2) the legacy
-    /// `PipelineOutputs { regime, intern, trader }` shape needs the
+    /// `PipelineOutputs { regime, trader }` shape needs the
     /// trader's `LlmResponse` until the post-v1 cleanup deletes those
     /// fields.
     pub raw_response: Option<LlmResponse>,
@@ -324,8 +292,6 @@ pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<Dis
     match input.capability_to_dispatch() {
         Capability::Trader => dispatch_trader(input).await,
         Capability::Filter => dispatch_filter(input).await,
-        Capability::Critic => Ok(dispatch_critic_stub()),
-        Capability::Intern => Ok(dispatch_intern_stub()),
         Capability::Router => dispatch_router(input).await,
     }
 }
@@ -437,31 +403,35 @@ impl DispatchInput<'_> {
     }
 }
 
-/// True when this dispatch should route through the Cline sidecar:
-/// the runtime flag selects `Cline` AND the entry point actually spawned
-/// a client. When the flag is `Cline` but no client is wired (tests,
-/// non-eval callers), this returns `false` and the caller stays on the
-/// `LlmDispatch` path — never a silent empty decision.
+/// True when this dispatch has a live Cline sidecar context wired.
+/// Since WU-6 retired `LlmDispatch`, the Cline path is mandatory for the
+/// trader; `cline` being `None` is now an error rather than a silent fallback.
 fn should_use_cline(input: &DispatchInput<'_>) -> bool {
-    matches!(input.runtime, AgentRuntime::Cline) && input.cline.is_some()
+    input.cline.is_some()
 }
 
-/// Build the Cline idempotency `run_id` (item 2) for a slot invocation:
-/// `{eval_run_id}::{role}::cycle{cycle_idx}`. Unique per logical slot per
-/// cycle so a retried cycle re-uses the same id and the sidecar dedups it.
+/// Build the Cline idempotency `run_id` (item 2) for a slot invocation.
+/// The default shape is `{eval_run_id}::{role}::cycle{cycle_idx}`. Pipeline
+/// paths that invoke the same slot more than once in one decision cycle append
+/// a stable suffix so the sidecar dedups retries of each logical invocation
+/// without treating sibling invocations as duplicates.
 fn cline_run_id(input: &DispatchInput<'_>) -> String {
     let base = if input.run_id.is_empty() {
         input.scenario_id.as_str()
     } else {
         input.run_id.as_str()
     };
-    format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx)
+    let mut run_id = format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx);
+    if let Some(suffix) = input.invocation_suffix.as_deref().filter(|s| !s.is_empty()) {
+        run_id.push_str("::");
+        run_id.push_str(suffix);
+    }
+    run_id
 }
 
-/// Run the slot's LLM call through whichever runtime is selected. The
-/// Cline branch (item 4 of the Stage 1 design) builds a `ClineSlotInput`
-/// from the dispatch context and calls [`execute_slot_cline`]; otherwise
-/// it falls through to the unchanged [`execute_slot`] path.
+/// Run the slot's LLM call through the Cline sidecar. Since WU-6 retired
+/// `LlmDispatch`, the Cline path is the ONLY trader runtime. If no
+/// `ClineDispatchCtx` is wired, this is a hard error — never a silent fallback.
 async fn execute_slot_for_runtime(
     input: &DispatchInput<'_>,
     response_schema: ResponseSchema,
@@ -503,43 +473,38 @@ async fn execute_slot_for_runtime(
             // correct the child `agent_runs` row status (see
             // `ClineSlotInput::obs` field docs).
             obs: input.obs.clone(),
+            // WS-17 (reasoning capture): the executor opens a `decision.model`
+            // span around `run_pipeline` (child of the `agent.decision`
+            // span) and threads its id down to here, so the captured
+            // `<think>` chain-of-thought emits as a `decision.reasoning`
+            // span nested under `decision.model`. `None` (rehearsal /
+            // non-eval call sites that don't own a decision-model span)
+            // keeps the reasoning span top-level — it still reaches the
+            // trace.
+            model_call_span_id: input.model_call_span_id.clone(),
+            // Derive reasoning_effort from model metadata so CoT models
+            // (deepseek-r1, qwq, etc.) get an explicit effort hint forwarded
+            // to the provider gateway. Non-CoT models produce None (field
+            // omitted on the wire).
+            reasoning_effort: crate::agents::model::default_reasoning_effort(&input.slot.effective_model()),
         })
         .await;
     }
 
-    execute_slot(SlotInput {
-        slot: input.slot,
-        system_prompt: input.system_prompt.clone(),
-        upstream_inputs: input.upstream_inputs.clone(),
-        dispatch: input.dispatch.clone(),
-        tools: input.tools.clone(),
-        response_schema: Some(response_schema),
-        max_tokens: input.max_tokens,
-        temperature: input.temperature,
-        obs: input.obs.clone(),
-        memory: input.memory.clone(),
-        memory_mode: input.memory_mode,
-        agent_id: input.agent_id.clone(),
-        scenario_start: input.scenario_start,
-        source_window_start: input.source_window_start,
-        source_window_end: input.source_window_end,
-        run_id: input.run_id.clone(),
-        scenario_id: input.scenario_id.clone(),
-        cycle_idx: input.cycle_idx,
-        catalog: input.catalog.clone(),
-        delta_briefing: input.delta_briefing,
-        prev_briefing: input.prev_briefing.clone(),
-        trace_name: input.trace_name.clone(),
-        trace_attrs: input.trace_attrs.clone(),
-    })
-    .await
+    // WU-6: LlmDispatch was retired. A slot dispatched without a Cline
+    // context is a programmer error — the sidecar must be spawned before
+    // the pipeline is entered.
+    anyhow::bail!(
+        "trader requires the Cline sidecar (WU-6: LlmDispatch was retired); \
+         ensure XVN_AGENTD_BIN is set and spawn_cline_ctx was called before \
+         entering the pipeline (slot role: {})",
+        input.slot.role
+    )
 }
 
-/// Trader handler — byte-identical to the pre-Phase-B path on the
-/// `LlmDispatch` runtime. The surrounding pipeline still handles the
-/// `noop_skip` short-circuit before reaching this seam, so the LLM call
-/// below is unconditional. Stage 1: when `runtime == Cline` and a client
-/// is wired, the call routes through the sidecar instead.
+/// Trader handler. The surrounding pipeline handles the `noop_skip`
+/// short-circuit before reaching this seam, so the LLM call is unconditional.
+/// Since WU-6, the call always routes through the Cline sidecar.
 async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let resp = execute_slot_for_runtime(&input, ResponseSchema::trader_output()).await?;
 
@@ -553,31 +518,6 @@ async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
         output_tokens,
         raw_response: Some(resp),
     })
-}
-
-/// Phase B Critic stub. Phase D wires the real verdict + rationale.
-fn dispatch_critic_stub() -> DispatchOutcome {
-    DispatchOutcome {
-        output: AgentOutput::Critic(Critique {
-            severity: CritiqueSeverity::Info,
-            text: "stub critique".to_string(),
-        }),
-        input_tokens: 0,
-        output_tokens: 0,
-        raw_response: None,
-    }
-}
-
-/// Phase B Intern stub. Phase D wires the real free-form note.
-fn dispatch_intern_stub() -> DispatchOutcome {
-    DispatchOutcome {
-        output: AgentOutput::Intern(InternObservation {
-            text: "stub intern".to_string(),
-        }),
-        input_tokens: 0,
-        output_tokens: 0,
-        raw_response: None,
-    }
 }
 
 /// Router handler. Runs the slot's LLM with a strict JSON response
@@ -660,7 +600,7 @@ fn parse_router_response(
 ///
 /// * `Some(c)` → `c`.
 /// * `None` → first capability in the slot's `BTreeSet` iteration order
-///   (the enum declaration order: Trader, Filter, Critic, Intern, Router).
+///   (the enum declaration order: Trader, Filter, Router).
 ///   The default capability set is `{Trader}` so legacy/pre-033 slots
 ///   resolve to `Trader` and behave identically to the pre-Phase-B path.
 /// * Empty set (defensive) → `Trader`.
@@ -707,21 +647,21 @@ mod tests {
 
     #[test]
     fn resolve_activates_prefers_explicit_field() {
-        let caps: BTreeSet<Capability> = [Capability::Trader, Capability::Critic].into_iter().collect();
+        let caps: BTreeSet<Capability> = [Capability::Trader, Capability::Router].into_iter().collect();
         assert_eq!(
-            resolve_activates(Some(Capability::Critic), &caps),
-            Capability::Critic,
+            resolve_activates(Some(Capability::Router), &caps),
+            Capability::Router,
         );
     }
 
     #[test]
     fn resolve_activates_falls_back_to_first_capability_in_btreeset_order() {
-        // BTreeSet iteration is enum-declaration order: Trader < Filter < Critic < Intern < Router.
-        let caps: BTreeSet<Capability> = [Capability::Critic, Capability::Trader].into_iter().collect();
+        // BTreeSet iteration is enum-declaration order: Trader < Filter < Router.
+        let caps: BTreeSet<Capability> = [Capability::Router, Capability::Trader].into_iter().collect();
         assert_eq!(resolve_activates(None, &caps), Capability::Trader);
 
         // No Trader present — the first non-Trader wins.
-        let caps: BTreeSet<Capability> = [Capability::Critic, Capability::Filter].into_iter().collect();
+        let caps: BTreeSet<Capability> = [Capability::Router, Capability::Filter].into_iter().collect();
         assert_eq!(resolve_activates(None, &caps), Capability::Filter);
     }
 

@@ -12,19 +12,13 @@
 ///   6. FidelityReport has correct structure (captured / approximated / dropped vectors).
 ///   7. Agentic-fallback items appear in `approximated` with correct prefix.
 ///   8. `ImportOutcome` carries both strategy and fidelity report.
-
-use xvision_engine::strategies::pine_import::{
-    import_pine, FidelityReport, ImportOutcome, PineImportError,
-};
+use xvision_engine::strategies::pine_import::{import_pine, FidelityReport, ImportOutcome, PineImportError};
 use xvision_engine::strategies::validate::validate_strategy;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn load_fixture(name: &str) -> String {
-    let path = format!(
-        "{}/tests/fixtures/pine/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = format!("{}/tests/fixtures/pine/{name}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("fixture {name}: {e}"))
 }
 
@@ -38,8 +32,7 @@ fn pyramiding_htf_has_dropped_pyramiding_and_htf() {
 
     // The pyramiding= strategy header option should be dropped
     let has_pyramiding_dropped = fidelity.dropped.iter().any(|item| {
-        item.item.to_lowercase().contains("pyramiding")
-            || item.reason.to_lowercase().contains("pyramiding")
+        item.item.to_lowercase().contains("pyramiding") || item.reason.to_lowercase().contains("pyramiding")
     });
     assert!(
         has_pyramiding_dropped,
@@ -75,8 +68,7 @@ fn pyramiding_htf_has_dropped_pyramiding_and_htf() {
 fn rsi_threshold_import_succeeds_and_strategy_is_valid() {
     let src = load_fixture("rsi_threshold.pine");
     let outcome = import_pine(&src).expect("rsi_threshold must import Ok");
-    validate_strategy(&outcome.strategy)
-        .expect("imported strategy must pass validate_strategy");
+    validate_strategy(&outcome.strategy).expect("imported strategy must pass validate_strategy");
 }
 
 #[test]
@@ -122,7 +114,10 @@ strategy.exit("Long Exit", "Long", loss=2.0, profit=4.0)
     );
     // No pyramiding or HTF reference → those specific drop reasons should not appear
     let has_pyramiding_drop = fidelity.dropped.iter().any(|i| i.item.contains("pyramiding"));
-    let has_htf_drop = fidelity.dropped.iter().any(|i| i.item.contains("request.security"));
+    let has_htf_drop = fidelity
+        .dropped
+        .iter()
+        .any(|i| i.item.contains("request.security"));
     assert!(!has_pyramiding_drop, "no pyramiding in clean script");
     assert!(!has_htf_drop, "no HTF in clean script");
 }
@@ -133,7 +128,11 @@ strategy.exit("Long Exit", "Long", loss=2.0, profit=4.0)
 fn import_pine_clean_fixture_returns_ok_with_outcome() {
     let src = load_fixture("ma_cross_stop_target.pine");
     let result = import_pine(&src);
-    assert!(result.is_ok(), "ma_cross_stop_target must return Ok; got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "ma_cross_stop_target must return Ok; got: {:?}",
+        result.err()
+    );
     let outcome = result.unwrap();
 
     // strategy must pass validation
@@ -177,16 +176,18 @@ fn fidelity_report_json_round_trips() {
     let fidelity = &outcome.fidelity;
 
     // Serialize once
-    let json1 = serde_json::to_string_pretty(fidelity)
-        .expect("FidelityReport must be serializable");
+    let json1 = serde_json::to_string_pretty(fidelity).expect("FidelityReport must be serializable");
     // Deserialize back
-    let fidelity2: FidelityReport = serde_json::from_str(&json1)
-        .expect("FidelityReport must be deserializable");
+    let fidelity2: FidelityReport =
+        serde_json::from_str(&json1).expect("FidelityReport must be deserializable");
     // Serialize again — must be identical
-    let json2 = serde_json::to_string_pretty(&fidelity2)
-        .expect("re-serialized FidelityReport must be serializable");
+    let json2 =
+        serde_json::to_string_pretty(&fidelity2).expect("re-serialized FidelityReport must be serializable");
 
-    assert_eq!(json1, json2, "FidelityReport JSON must be stable across round-trip");
+    assert_eq!(
+        json1, json2,
+        "FidelityReport JSON must be stable across round-trip"
+    );
 }
 
 // ── 6. FidelityReport structure: all three vectors accessible ─────────────────
@@ -203,7 +204,12 @@ fn fidelity_report_has_three_vectors() {
     let _dropped: &Vec<_> = &fidelity.dropped;
 
     // Each item should have `item` and `reason` string fields
-    for item in fidelity.captured.iter().chain(fidelity.approximated.iter()).chain(fidelity.dropped.iter()) {
+    for item in fidelity
+        .captured
+        .iter()
+        .chain(fidelity.approximated.iter())
+        .chain(fidelity.dropped.iter())
+    {
         assert!(!item.item.is_empty(), "item.item must not be empty");
         assert!(!item.reason.is_empty(), "item.reason must not be empty");
     }
@@ -454,21 +460,117 @@ fn cost_model_reference_serde_round_trip() {
     let outcome = import_pine(&src).expect("full_strategy must import");
     let fidelity = &outcome.fidelity;
 
-    let json = serde_json::to_string_pretty(fidelity)
-        .expect("FidelityReport (with cost_model) must serialize");
+    let json =
+        serde_json::to_string_pretty(fidelity).expect("FidelityReport (with cost_model) must serialize");
 
-    let restored: FidelityReport = serde_json::from_str(&json)
-        .expect("FidelityReport (with cost_model) must deserialize");
+    let restored: FidelityReport =
+        serde_json::from_str(&json).expect("FidelityReport (with cost_model) must deserialize");
 
     // The cost_model block must survive a round-trip intact
     assert_eq!(
-        fidelity.cost_model.commission_type,
-        restored.cost_model.commission_type,
+        fidelity.cost_model.commission_type, restored.cost_model.commission_type,
         "commission_type must survive serde round-trip"
     );
     assert_eq!(
-        fidelity.cost_model.fill_timing,
-        restored.cost_model.fill_timing,
+        fidelity.cost_model.fill_timing, restored.cost_model.fill_timing,
         "fill_timing must survive serde round-trip"
+    );
+}
+
+// ── Feature 1 fidelity: if-guard captured → appears in captured, not dropped ──
+//
+// TDD: will fail until if-guard capture is implemented.
+
+#[test]
+fn if_guard_condition_appears_in_captured_not_dropped() {
+    // `if ta.rsi(close,14) < 30` with a strategy.entry inside should produce:
+    // - entry rule in captured
+    // - filter condition (rsi < 30) in captured
+    // - nothing extra in dropped for the if-guard line itself
+    let src = "//@version=5\nstrategy(\"T\")\nif ta.rsi(close,14) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let outcome = import_pine(src).expect("must import");
+    let fidelity = &outcome.fidelity;
+
+    // Entry rule must be captured
+    let entry_captured = fidelity.captured.iter().any(|i| i.item.contains("entry_rule"));
+    assert!(
+        entry_captured,
+        "entry rule from if-guard script must be in captured; captured={:?}",
+        fidelity.captured
+    );
+
+    // Filter condition must be captured (rsi < 30)
+    let filter_captured = fidelity
+        .captured
+        .iter()
+        .any(|i| i.item.contains("filter_condition"));
+    assert!(
+        filter_captured,
+        "rsi < 30 if-guard condition must produce a captured filter_condition; captured={:?}",
+        fidelity.captured
+    );
+
+    // The if-guard condition must NOT appear as a plain "dropped" Unsupported item
+    // (previously the `if ...` line was Unsupported and dropped)
+    let if_dropped = fidelity.dropped.iter().any(|i| {
+        let raw = i.item.to_lowercase() + &i.reason.to_lowercase();
+        raw.starts_with("if ") || raw.contains("if ta.rsi")
+    });
+    assert!(
+        !if_dropped,
+        "the if-guard line itself must not appear as a dropped item; dropped={:?}",
+        fidelity.dropped
+    );
+}
+
+// ── Feature 2 fidelity: standalone request.security → dropped ─────────────────
+//
+// TDD: after namespaced-call honesty, `htf = request.security(...)` in a
+// standalone assignment must cause `script_has_htf` to return true, putting
+// "request.security" in the dropped list even when the assignment value is a
+// standalone expr (not inside an if or Unsupported line).
+
+#[test]
+fn standalone_request_security_assignment_appears_in_dropped() {
+    // This is a standalone assignment (not inside a string/Unsupported line).
+    // Before fix: `htf = request.security(...)` → Assignment { value: Ident("request") }
+    //             → `script_has_htf` sees Ident("request"), matches the heuristic `name == "request"`.
+    // After fix: value = Expr::Unsupported { raw: "request.security(...)" }
+    //             → `script_has_htf` sees Unsupported.raw.contains("request.security").
+    // Both paths should surface it in dropped; this test verifies the post-fix path is clean.
+    let src = "//@version=5\nstrategy(\"T\")\nhtf = request.security(\"AAPL\", \"1D\", close)\nstrategy.entry(\"Long\", strategy.long)\n";
+    let outcome = import_pine(src).expect("must import");
+    let fidelity = &outcome.fidelity;
+
+    let has_htf_dropped = fidelity.dropped.iter().any(|i| {
+        i.item.to_lowercase().contains("request.security")
+            || i.reason.to_lowercase().contains("request.security")
+            || i.reason.to_lowercase().contains("htf")
+    });
+    assert!(
+        has_htf_dropped,
+        "standalone request.security assignment must appear in dropped; dropped={:?}",
+        fidelity.dropped
+    );
+}
+
+#[test]
+fn captured_if_guard_does_not_appear_in_dropped() {
+    // A captured if-guard (rsi < 30 with literal period) should appear in
+    // captured, not dropped. The old Unsupported `if` line was in dropped;
+    // now it must be gone from dropped.
+    let src = "//@version=5\nstrategy(\"T\")\nif ta.rsi(close,14) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let outcome = import_pine(src).expect("must import");
+    let fidelity = &outcome.fidelity;
+
+    // No "if ta.rsi" or bare "if" string should appear in dropped
+    let if_line_dropped = fidelity
+        .dropped
+        .iter()
+        .any(|i| i.item.to_lowercase().starts_with("if ") || i.item.to_lowercase().contains("ta.rsi"));
+    assert!(
+        !if_line_dropped,
+        "captured if-guard must not appear as dropped Unsupported item; dropped={:?}",
+        fidelity.dropped
     );
 }

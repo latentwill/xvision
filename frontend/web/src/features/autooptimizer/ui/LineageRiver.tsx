@@ -54,7 +54,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
   const [y0, y1] = layout.yDomain;
   const sy = (y: number) =>
     H - PAD - (y1 === y0 ? 0.5 : (y - y0) / (y1 - y0)) * (H - 2 * PAD);
-  const keptCount = layout.lines.reduce((n, l) => n + l.points.length - 1, 0);
+  const keptCount = layout.lines.reduce((n, l) => n + l.points.length, 0);
   const active = pinned ?? lastHovered;
 
   return (

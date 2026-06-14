@@ -46,9 +46,7 @@ use crate::eval::store::RunStore;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
-pub use attest_hook::{
-    clamp_every_n, is_attest_boundary, AttestHook, AttestSummary, NoopAttestHook,
-};
+pub use attest_hook::{clamp_every_n, is_attest_boundary, AttestHook, AttestSummary, NoopAttestHook};
 pub use backtest::Executor;
 pub use live_session::LiveSessionTracker;
 pub use live_source::{LiveStream, LiveStreamError, MultiLiveStream, TaggedBar};

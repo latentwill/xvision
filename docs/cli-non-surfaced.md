@@ -58,13 +58,13 @@ and the reproducibility story.
 Read paths (`xvn show-decision`, `xvn show-briefing`, `xvn store stats`) are
 fine. Write paths happen only inside the harness, never as a CLI primitive.
 
-### Direct `RiskLayer` config edits
+### Direct risk config edits
 
 **Reason:** risk thresholds are committed in `config/risk.toml` and
 `config/whitelist.toml`. Editing them per-run via CLI defeats the audit trail.
 
-`xvn risk show-config` exposes the *effective* values for inspection; mutation
-goes through git on those TOML files.
+Mutation goes through git on those TOML files. (The `xvn risk` command was
+retired in 2026-06 when `xvision-risk` was deleted.)
 
 ---
 
@@ -89,23 +89,20 @@ what `xvn strategy run` already exercises.
 
 ---
 
-### ACPX intern subprocess (removed 2026-05-10)
+### Stage 1 Intern subprocess and `xvn intern` (removed 2026-06)
 
-Previously, `xvn run-setup --intern acpx[:agent]` spawned the [acpx](https://github.com/openclaw/acpx) CLI to
-delegate Stage 1 to a coding-agent harness (codex / claude / openclaw / pi /
-…). Removed in favor of API-only intern paths (Anthropic Messages, OpenAI
-Chat Completions). Agents now drive xvn directly via Bash; the `xvn intern
-brief` command exposes Stage 1 in isolation. If multi-step tool-use ever lands
-again it will arrive as a new `InternBackend` impl, not as a subprocess shim.
+Previously, the two-stage Intern→Trader architecture included a separate Stage 1
+(briefing) run via `xvn intern brief/preview`. This stage has been retired and
+folded into the single-stage agent model (2026-06). Agents now dispatch directly
+without a separate briefing stage. If multi-step tool-use ever lands again it
+will arrive as a new backend impl, not as a subprocess shim.
 
 ## Surfaced as of this audit
 
 See `crates/xvision-cli/src/lib.rs` for the live list. The current set, in
 addition to the pre-existing commands, exposes:
 
-- `xvn intern brief` / `xvn intern preview` — Stage 1 in isolation
-- `xvn trader run` / `xvn trader preview` — Stage 2 in isolation
-- `xvn risk evaluate` / `xvn risk show-config` — Stage 3 deterministic gate
+- `xvn trader run` / `xvn trader preview` — Agent dispatch in isolation
 - `xvn portfolio --venue {alpaca,orderly}` — read live venue state
 - `xvn close-position --venue {alpaca,orderly} --asset BTC` — flatten one symbol
 - `xvn fire-trade --venue {alpaca,orderly}` — extends the Alpaca-only path

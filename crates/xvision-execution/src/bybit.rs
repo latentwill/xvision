@@ -353,4 +353,30 @@ impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A> {
     async fn balance(&self) -> anyhow::Result<f64> {
         self.api.wallet_balance().await.context("bybit wallet_balance")
     }
+
+    fn venue(&self) -> &str {
+        "bybit"
+    }
+
+    fn signing_scheme(&self) -> &str {
+        "api-key"
+    }
+
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+mod venue_identity_tests {
+    use super::*;
+
+    #[test]
+    fn paper_surface_reports_bybit_api_key_identity() {
+        // WS-4: bybit signs with an HMAC API key/secret, so the trace
+        // must stamp venue=bybit / scheme=api-key.
+        let surface = BybitPaperSurface::with_api(Arc::new(MockBybitClient::new()));
+        assert_eq!(surface.venue(), "bybit");
+        assert_eq!(surface.signing_scheme(), "api-key");
+    }
 }

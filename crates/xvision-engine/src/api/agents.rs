@@ -533,15 +533,33 @@ pub async fn templates(_ctx: &ApiContext) -> ApiResult<Vec<AgentTemplate>> {
     Ok(builtin_templates())
 }
 
-/// Returns the `limit` most-recent eval runs attributed to any strategy
-/// that references `agent_id`, sorted by `started_at` descending.
+/// Returns the `limit` most-recent eval runs attributed to `agent_id`,
+/// sorted by `started_at` descending.
+///
+/// Uses a DUAL PATH to cover both old and new runs:
+///
+/// (a) **Strategy-hop path** — finds strategies whose `agents` vec references
+///     `agent_id` (post-2026-05-12 refactor), then queries runs by strategy id
+///     (`eval_runs.agent_id`). This covers post-refactor runs.
+///
+/// (b) **Direct path** — queries `eval_runs.agents_agent_id = agent_id`
+///     (migration 022 column). This covers new runs where the workspace agent
+///     ULID was written directly into the run row.
+///
+/// Pre-2026-05-12 ("legacy") strategies have an empty `agents: Vec<AgentRef>`,
+/// so path (a) misses them. Those legacy runs may only be reachable via path (b)
+/// if they pre-date migration 022 as well — in that case `agents_agent_id` is
+/// also NULL and neither path finds them, which is an accepted limitation
+/// (legacy-on-legacy gap, no backfill).
+///
+/// Results from both paths are merged and deduplicated by run id before the
+/// final `limit` is applied.
 pub async fn recent_runs(ctx: &ApiContext, agent_id: &str, limit: u32) -> ApiResult<Vec<RunRef>> {
-    let referencing = referencing_strategy_ids(ctx, agent_id).await?;
-    if referencing.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let run_store = RunStore::new(ctx.db.clone());
+
+    // (a) Strategy-hop path: find strategies that reference this agent, then
+    //     fetch runs attributed to those strategies.
+    let referencing = referencing_strategy_ids(ctx, agent_id).await?;
     let mut all_runs = Vec::new();
     for strategy_id in referencing {
         let runs = run_store
@@ -555,6 +573,23 @@ pub async fn recent_runs(ctx: &ApiContext, agent_id: &str, limit: u32) -> ApiRes
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         all_runs.extend(runs);
     }
+
+    // (b) Direct path: runs that carry the workspace agent ULID in
+    //     `agents_agent_id` (migration 022). Covers runs where the strategy
+    //     files have an empty `agents` vec (pre-refactor legacy strategies)
+    //     or were created via a path that populates `agents_agent_id` directly.
+    let direct_runs = run_store
+        .list(RunListFilter {
+            agents_agent_id: Some(agent_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    all_runs.extend(direct_runs);
+
+    // Dedup by run id (a run matched by both paths would appear twice).
+    let mut seen = std::collections::HashSet::new();
+    all_runs.retain(|r| seen.insert(r.id.clone()));
 
     // Sort newest-first and take the requested limit.
     all_runs.sort_by_key(|r| Reverse(r.started_at));
@@ -639,16 +674,15 @@ mod tests {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -775,6 +809,107 @@ mod tests {
         // Newest first: run_ids[2] then run_ids[1].
         assert_eq!(result[0].run_id, run_ids[2]);
         assert_eq!(result[1].run_id, run_ids[1]);
+    }
+
+    // ── W25 dual-path recent_runs tests ──────────────────────────────────────
+
+    /// A run whose strategy file has an empty `agents` vec (legacy pre-refactor
+    /// strategy) is invisible to the strategy-hop path. The direct
+    /// `agents_agent_id` path must still surface it so the "RECENT RUNS" panel
+    /// shows real activity instead of "No runs yet".
+    #[tokio::test]
+    async fn recent_runs_via_direct_agents_agent_id_path_finds_legacy_strategy_run() {
+        let (ctx, _dir) = fresh_ctx().await;
+
+        // Store a legacy strategy with an EMPTY `agents` vec — it won't
+        // match the strategy-hop path because `strategy.agents.iter().any(...)` returns false.
+        use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, PipelineDef, Strategy};
+        let legacy_strategy_id = "01HZSTRATEGY_LEGACY000000001";
+        let agent_ulid = "01HZAGENT_LEGACY00000000001";
+        let legacy = Strategy {
+            manifest: PublicManifest {
+                id: legacy_strategy_id.to_string(),
+                display_name: "Legacy Strategy".into(),
+                plain_summary: "test".into(),
+                creator: "@test".into(),
+                template: "custom".into(),
+                regime_fit: vec![],
+                asset_universe: vec![],
+                decision_cadence_minutes: 60,
+                attested_with: vec![],
+                required_tools: vec![],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
+            },
+            hypothesis: None,
+            agents: vec![], // intentionally EMPTY — simulates pre-refactor strategy
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
+            acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
+            briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
+        };
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        store.save(&legacy).await.unwrap();
+
+        // Create a run attributed to the legacy strategy but with `agents_agent_id` set —
+        // simulating a run created by the direct path (migration 022+ run on a legacy strategy).
+        let mut run = queued_run(legacy_strategy_id, SEEDED_SCENARIO_ID);
+        run.agents_agent_id = Some(agent_ulid.to_string());
+        let run_id = run.id.clone();
+        RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
+
+        // `referencing_strategy_ids` returns nothing for this agent because the strategy's
+        // `agents` vec is empty — proving the strategy-hop path is blind to this run.
+        let refs = referencing_strategy_ids(&ctx, agent_ulid).await.unwrap();
+        assert!(
+            refs.is_empty(),
+            "strategy-hop path must not find the empty-agents strategy"
+        );
+
+        // But `recent_runs` must find the run via the direct path.
+        let result = recent_runs(&ctx, agent_ulid, 5).await.unwrap();
+        assert_eq!(result.len(), 1, "dual-path must surface the run; got {result:?}");
+        assert_eq!(result[0].run_id, run_id);
+    }
+
+    /// A run reachable by BOTH paths (strategy-hop and direct) must appear
+    /// exactly once in the result (deduplication check).
+    #[tokio::test]
+    async fn recent_runs_deduplicates_run_visible_on_both_paths() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let agent_ulid = "01HZAGENT_DEDUP0000000001";
+        let strategy_id = "01HZSTRATEGY_DEDUP0000001";
+
+        // Save a strategy whose `agents` vec DOES reference the agent.
+        let strategy = strategy_referencing(strategy_id, "Dedup Strategy", agent_ulid);
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        store.save(&strategy).await.unwrap();
+
+        // Create a run attributed to the strategy AND carrying `agents_agent_id` —
+        // it would be returned by both paths without dedup.
+        let mut run = queued_run(strategy_id, SEEDED_SCENARIO_ID);
+        run.agents_agent_id = Some(agent_ulid.to_string());
+        let run_id = run.id.clone();
+        RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
+
+        let result = recent_runs(&ctx, agent_ulid, 10).await.unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "run visible on both paths must appear exactly once; got {result:?}"
+        );
+        assert_eq!(result[0].run_id, run_id);
     }
 
     // ── delete tests ──────────────────────────────────────────────────────────

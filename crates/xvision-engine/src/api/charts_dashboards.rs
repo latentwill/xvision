@@ -187,7 +187,7 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
         let runs = run_store
             .list(ListFilter {
                 agent_id: Some(strategy.manifest.id.clone()),
-                status: Some(RunStatus::Completed),
+                status: Some(vec![RunStatus::Completed]),
                 limit: Some(1),
                 ..Default::default()
             })

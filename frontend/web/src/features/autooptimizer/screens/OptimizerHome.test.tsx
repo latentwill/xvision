@@ -300,7 +300,7 @@ describe("OptimizerHome — paused", () => {
 });
 
 describe("OptimizerHome — ?session= scoping", () => {
-  it("passes session_id to useOptimizerStats and shows a clearable scope chip", async () => {
+  it("passes session_id to useOptimizerStats and shows a clearable session-scope banner", async () => {
     const statsSpy = vi
       .spyOn(apiModule, "useOptimizerStats")
       .mockReturnValue(q(statsRows));
@@ -309,9 +309,11 @@ describe("OptimizerHome — ?session= scoping", () => {
 
     renderWithProviders(<OptimizerHome />, { route: "/optimizer?session=sess-1" });
 
-    expect(await screen.findByText(/Session sess-1/)).toBeInTheDocument();
+    // W19: session scope is now a prominent inline banner (not a cramped chip).
+    expect(await screen.findByText("Session view")).toBeInTheDocument();
+    expect(screen.getByText("sess-1")).toBeInTheDocument();
     expect(statsSpy).toHaveBeenCalledWith({ session_id: "sess-1" });
-    const clear = screen.getByRole("link", { name: /clear session filter/i });
+    const clear = screen.getByRole("link", { name: /exit session view/i });
     expect(clear).toHaveAttribute("href", "/optimizer");
     expect(screen.queryByText(/waiting for/i)).toBeNull();
   });

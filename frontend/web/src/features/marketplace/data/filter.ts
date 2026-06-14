@@ -44,6 +44,10 @@ export function applyFilter(
     if (q && !`${r.id} ${r.creator.handle ?? ""}`.toLowerCase().includes(q)) return false;
     return true;
   });
+  // Segment is a pure FILTER — it never overrides the sort chosen by the user
+  // (or set by the segment click handler in Toolbar). The Sort dropdown label
+  // ALWAYS matches the actual result order. Segment-canonical sorts are set via
+  // setFilter({ segment, sort }) at the call site so the dropdown reflects them.
   const sorted = [...matched].sort(SORTERS[f.sort]);
   return { rows: sorted, total: rows.length, matched: matched.length };
 }

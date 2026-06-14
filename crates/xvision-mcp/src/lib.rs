@@ -2,7 +2,7 @@
 //! indicator surface as agent-callable tools.
 //!
 //! Registered as Cline agent tools via the `xvision-agentd` sidecar so any
-//! Cline-driven agent stage (intern, trader, risk, critic, …) can recompute
+//! Cline-driven agent stage (trader, risk, …) can recompute
 //! indicators at parameter sets the snapshot doesn't pre-bake (e.g.
 //! RSI(7) when the snapshot only carries RSI(14)).
 //!

@@ -166,6 +166,7 @@ mod tests {
               kept_count        INTEGER NOT NULL DEFAULT 0,
               suspect_count     INTEGER NOT NULL DEFAULT 0,
               dropped_count     INTEGER NOT NULL DEFAULT 0,
+              errored_count     INTEGER NOT NULL DEFAULT 0,
               error             TEXT,
               created_at        TEXT NOT NULL,
               started_at        TEXT,

@@ -34,7 +34,10 @@ pub struct FidelityItem {
 
 impl FidelityItem {
     fn new(item: impl Into<String>, reason: impl Into<String>) -> Self {
-        FidelityItem { item: item.into(), reason: reason.into() }
+        FidelityItem {
+            item: item.into(),
+            reason: reason.into(),
+        }
     }
 }
 
@@ -106,16 +109,17 @@ impl Default for CostModelReference {
     fn default() -> Self {
         CostModelReference {
             commission_type: "Percent of order value".to_string(),
-            commission_value_bps: 10.0,  // VenueSettings::default().fees.taker_bps = 10
+            commission_value_bps: 10.0, // VenueSettings::default().fees.taker_bps = 10
             slippage_model: "Linear (flat basis points)".to_string(),
-            slippage_value_bps: 2.0,     // VenueSettings::default().slippage = Linear { bps: 2 }
+            slippage_value_bps: 2.0, // VenueSettings::default().slippage = Linear { bps: 2 }
             fill_timing: "Next bar open".to_string(), // MarketOrderFill::NextBarOpen
             note: "These are xvision's DEFAULT backtest cost assumptions (configurable per \
                    scenario). Commission = 10 bps taker (0.10%), slippage = 2 bps flat, \
                    fills at next-bar open. TradingView Strategy Tester defaults differ \
                    (commission 0%, slippage 1–2 ticks, intrabar fills) — expect P&L \
                    divergence. Configure the scenario's VenueSettings to align with \
-                   the source's TradingView settings.".to_string(),
+                   the source's TradingView settings."
+                .to_string(),
         }
     }
 }
@@ -189,6 +193,9 @@ fn stmt_references_request_security(stmt: &Statement) -> bool {
     match stmt {
         Statement::Assignment { value, .. } => expr_references_request_security(value),
         Statement::Unsupported { raw, .. } => raw.contains("request.security"),
+        Statement::If { condition, body } => {
+            expr_references_request_security(condition) || body.iter().any(stmt_references_request_security)
+        }
         _ => false,
     }
 }
@@ -198,8 +205,7 @@ fn expr_references_request_security(expr: &Expr) -> bool {
         Expr::Unsupported { raw } => raw.contains("request.security"),
         Expr::Ident { name } => name.contains("request.security"),
         Expr::TaCall { name, args } => {
-            name.contains("request.security")
-                || args.iter().any(expr_references_request_security)
+            name.contains("request.security") || args.iter().any(expr_references_request_security)
         }
         Expr::BinOp { left, right, .. } => {
             expr_references_request_security(left) || expr_references_request_security(right)
@@ -253,10 +259,7 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
         for rule in &cfg.entry_rules {
             captured.push(FidelityItem::new(
                 format!("entry_rule:{}", rule.signal_name),
-                format!(
-                    "captured: strategy.entry → EntryRule({:?})",
-                    rule.direction
-                ),
+                format!("captured: strategy.entry → EntryRule({:?})", rule.direction),
             ));
         }
 
@@ -305,9 +308,7 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
         if condition_count > 0 {
             captured.push(FidelityItem::new(
                 format!("filter_conditions:{condition_count}"),
-                format!(
-                    "captured: {condition_count} filter condition(s) mapped to xvision ConditionTree"
-                ),
+                format!("captured: {condition_count} filter condition(s) mapped to xvision ConditionTree"),
             ));
         }
     }
@@ -389,7 +390,12 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
     // `crates/xvision-engine/src/eval/scenario.rs`.
     let cost_model = CostModelReference::default();
 
-    FidelityReport { captured, approximated, dropped, cost_model }
+    FidelityReport {
+        captured,
+        approximated,
+        dropped,
+        cost_model,
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -446,7 +452,10 @@ strategy.exit("Long Exit", "Long", loss=2.0, profit=4.0)
         );
         // No pyramiding or HTF in this script
         assert!(!fidelity.dropped.iter().any(|i| i.item.contains("pyramiding")));
-        assert!(!fidelity.dropped.iter().any(|i| i.item.contains("request.security")));
+        assert!(!fidelity
+            .dropped
+            .iter()
+            .any(|i| i.item.contains("request.security")));
     }
 
     #[test]
@@ -461,8 +470,16 @@ if close < 100.0
         let (fidelity, _) = parse_and_map_fidelity(src);
         let long_captured = fidelity.captured.iter().any(|i| i.item.contains("Long"));
         let short_captured = fidelity.captured.iter().any(|i| i.item.contains("Short"));
-        assert!(long_captured, "Long entry rule must be captured; captured={:?}", fidelity.captured);
-        assert!(short_captured, "Short entry rule must be captured; captured={:?}", fidelity.captured);
+        assert!(
+            long_captured,
+            "Long entry rule must be captured; captured={:?}",
+            fidelity.captured
+        );
+        assert!(
+            short_captured,
+            "Short entry rule must be captured; captured={:?}",
+            fidelity.captured
+        );
     }
 
     #[test]
@@ -473,9 +490,10 @@ if close > 100.0
     strategy.entry("Long", strategy.long)
 "#;
         let (fidelity, _) = parse_and_map_fidelity(src);
-        let has_pyramiding = fidelity.dropped.iter().any(|i| {
-            i.item.contains("pyramiding") || i.reason.contains("pyramiding")
-        });
+        let has_pyramiding = fidelity
+            .dropped
+            .iter()
+            .any(|i| i.item.contains("pyramiding") || i.reason.contains("pyramiding"));
         assert!(
             has_pyramiding,
             "pyramiding=5 must be in dropped; dropped={:?}",
@@ -487,7 +505,10 @@ if close > 100.0
     fn fidelity_report_serializes_and_deserializes() {
         let report = FidelityReport {
             captured: vec![FidelityItem::new("entry_rule:Long", "captured: entry rule")],
-            approximated: vec![FidelityItem::new("indicator:ema_val", "agentic-fallback: ema_val passed as briefing feature")],
+            approximated: vec![FidelityItem::new(
+                "indicator:ema_val",
+                "agentic-fallback: ema_val passed as briefing feature",
+            )],
             dropped: vec![FidelityItem::new("pyramiding", "dropped: pyramiding")],
             cost_model: CostModelReference::default(),
         };
@@ -514,14 +535,13 @@ result = my_rsi < 30
 "#;
         let (fidelity, _) = parse_and_map_fidelity(src);
         // No entry rules → Agentic; SMA / RSI briefing indicators → approximated
-        let has_agentic = fidelity.approximated.iter().any(|i| {
-            i.reason.contains("agentic-fallback") || i.reason.contains("briefing")
-        });
+        let has_agentic = fidelity
+            .approximated
+            .iter()
+            .any(|i| i.reason.contains("agentic-fallback") || i.reason.contains("briefing"));
         // The script may not populate briefing_indicators if the RSI is unmapped —
         // accept either: approximated has briefing OR dropped has the unmapped node.
-        let has_something = has_agentic
-            || !fidelity.dropped.is_empty()
-            || !fidelity.captured.is_empty();
+        let has_something = has_agentic || !fidelity.dropped.is_empty() || !fidelity.captured.is_empty();
         assert!(
             has_something,
             "Agentic script must surface something in fidelity report; report={:?}",

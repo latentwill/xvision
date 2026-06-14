@@ -9,12 +9,6 @@
 //! provider-resolution refusal is verified independently of clap /
 //! stdout plumbing. The CLI integration sibling lives at
 //! `crates/xvision-cli/tests/strategy_clone_cli.rs`.
-//!
-//! Provenance: `cloned_from` is stashed in
-//! `strategy.mechanical_params.metadata.cloned_from` (per the contract's
-//! "extend Strategy.metadata JSON — no migration" guidance). The
-//! `cloned_from_from_strategy` helper below reads that path for the
-//! assertions.
 
 mod common;
 
@@ -80,14 +74,6 @@ fn write_default_config(ctx: &ApiContext, body: &str) {
     std::fs::create_dir_all(&config_dir).expect("config dir");
     let p = config_dir.join("default.toml");
     std::fs::write(&p, body).expect("write default.toml");
-}
-
-fn cloned_from_from_strategy(s: &Strategy) -> Option<String> {
-    s.mechanical_params
-        .get("metadata")?
-        .get("cloned_from")?
-        .as_str()
-        .map(str::to_string)
 }
 
 async fn seed_trader_agent(ctx: &ApiContext, provider: &str, model: &str) -> String {
@@ -156,16 +142,15 @@ fn seed_strategy(id: &str, agent_id: &str) -> Strategy {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -216,7 +201,6 @@ async fn clone_refuses_when_override_provider_is_unknown() {
     let reloaded = store.load(source_id).await.expect("reload source");
     assert_eq!(reloaded.manifest.id, source_id);
     assert_eq!(reloaded.agents[0].agent_id, agent_id);
-    assert!(cloned_from_from_strategy(&reloaded).is_none());
 }
 
 /// Override with a known provider but a model not in the configured
@@ -296,10 +280,10 @@ async fn clone_refuses_half_supplied_override_pair() {
 }
 
 /// Happy path with no override: the clone is a verbatim copy of the
-/// source except for id, display_name, paired agent_ids (newly minted),
-/// and `cloned_from`. Source byte-identical post-clone.
+/// source except for id, display_name, and paired agent_ids (newly
+/// minted). Source byte-identical post-clone.
 #[tokio::test]
-async fn clone_without_override_creates_verbatim_copy_with_cloned_from_set() {
+async fn clone_without_override_creates_verbatim_copy() {
     let (ctx, _d) = open_api_context().await;
     write_default_config(&ctx, &config_with_key_env("OPENROUTER_CLONE_TEST_VERBATIM"));
 
@@ -328,20 +312,14 @@ async fn clone_without_override_creates_verbatim_copy_with_cloned_from_set() {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let cloned = store.load(&out.strategy_id).await.expect("load clone");
     assert_eq!(cloned.manifest.display_name, "verbatim-clone");
-    assert_eq!(cloned_from_from_strategy(&cloned).as_deref(), Some(source_id));
     assert_eq!(cloned.agents.len(), 1);
     assert_eq!(cloned.agents[0].role, "trader");
     assert_eq!(cloned.agents[0].agent_id, out.agent_ids[0]);
-
-    // The shared `cloned_from` helper on the API surface reads the same
-    // path the explicit walker uses.
-    assert_eq!(api_strategy::cloned_from(&cloned), Some(source_id));
 
     // Source byte-identical.
     let source_reloaded = store.load(source_id).await.expect("reload source");
     assert_eq!(source_reloaded.manifest.id, source_id);
     assert_eq!(source_reloaded.agents[0].agent_id, agent_id);
-    assert!(cloned_from_from_strategy(&source_reloaded).is_none());
 
     // The cloned agent's slot is unchanged from the source's slot.
     let cloned_agent = agents_api::get(&ctx, &out.agent_ids[0])
@@ -452,45 +430,6 @@ async fn clone_can_run_twice_without_agent_name_collision() {
     let first_agent = agents_api::get(&ctx, &first.agent_ids[0]).await.unwrap();
     let second_agent = agents_api::get(&ctx, &second.agent_ids[0]).await.unwrap();
     assert_ne!(first_agent.name, second_agent.name);
-}
-
-#[tokio::test]
-async fn clone_preserves_non_object_metadata_under_legacy_key() {
-    let (ctx, _d) = open_api_context().await;
-    write_default_config(&ctx, &config_with_key_env("OPENROUTER_CLONE_TEST_METADATA"));
-
-    let agent_id = seed_trader_agent(&ctx, "openrouter", "deepseek/deepseek-chat").await;
-    let source_id = "01HZSTRATEGYCLONEMETADATA1";
-    let mut strategy = seed_strategy(source_id, &agent_id);
-    strategy.mechanical_params = serde_json::json!({
-        "metadata": "legacy-note",
-        "execution": { "cadence": "slow" }
-    });
-    persist_strategy(&ctx, &strategy).await;
-
-    let out = api_strategy::clone_strategy_full(
-        &ctx,
-        source_id,
-        CloneStrategyFullReq {
-            display_name: Some("metadata-clone".into()),
-            provider: None,
-            model: None,
-        },
-    )
-    .await
-    .expect("clone should succeed");
-
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let cloned = store.load(&out.strategy_id).await.expect("load clone");
-    assert_eq!(
-        cloned.mechanical_params["metadata"]["_legacy"],
-        serde_json::Value::String("legacy-note".into())
-    );
-    assert_eq!(
-        cloned.mechanical_params["metadata"]["cloned_from"],
-        serde_json::Value::String(source_id.into())
-    );
-    assert_eq!(cloned.mechanical_params["execution"]["cadence"], "slow");
 }
 
 /// Happy path with override: the cloned strategy's paired agent slot

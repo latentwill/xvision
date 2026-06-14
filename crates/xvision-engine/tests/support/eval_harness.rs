@@ -101,7 +101,6 @@ fn strategy_with_manifest(
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),
@@ -110,14 +109,14 @@ fn strategy_with_manifest(
             model: None,
         }),
         risk,
-        mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

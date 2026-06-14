@@ -6,10 +6,8 @@ pub mod backtest;
 pub mod baselines;
 pub mod bootstrap;
 pub mod gate;
-pub mod harness;
 pub mod metrics;
 pub mod prober;
-pub mod provider_registry;
 pub mod report;
 pub mod result;
 

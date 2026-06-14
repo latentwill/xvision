@@ -17,10 +17,9 @@ use xvision_filters::ActivationMode;
 /// Scope is deliberately narrow: only the four operator-editable
 /// top-level manifest fields a typo in the create wizard could land
 /// on. The strategy `id`, `creator`, `template`, `published_at`,
-/// `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
-/// `mechanical_params` are out of scope — they either have dedicated
-/// sub-routes (slot/agents/pipeline/risk) or are immutable
-/// post-create.
+/// `risk_preset_or_config`, `agents`, `pipeline`, and `risk` are out
+/// of scope — they either have dedicated sub-routes
+/// (slot/agents/pipeline/risk) or are immutable post-create.
 ///
 /// # Color clear convention
 ///
@@ -207,13 +206,13 @@ pub fn apply_metadata_patch(
 /// implementation.
 ///
 /// Before the 2026-05-21 template-registry removal this ran an F-6
-/// typed parse of `mechanical_params` against `manifest.template` to
-/// catch `deny_unknown_fields` violations that bypassed the
-/// deserialize boundary via direct struct construction. With the
-/// template registry gone there is no per-strategy schema to dispatch
-/// against, so the seam is currently a no-op. Kept as a seam so the
-/// V2F per-strategy schema work (declared per seed in
-/// `docs/strategies/templates/`) has a fixed place to slot in.
+/// typed parse against `manifest.template` to catch
+/// `deny_unknown_fields` violations that bypassed the deserialize
+/// boundary via direct struct construction. With the template registry
+/// gone there is no per-strategy schema to dispatch against, so the
+/// seam is currently a no-op. Kept as a seam so the V2F per-strategy
+/// schema work (declared per seed in `docs/strategies/templates/`) has
+/// a fixed place to slot in.
 ///
 /// Public so alternative `StrategyStore` impls (in-memory stubs,
 /// future remote stores) can call the same seam instead of
@@ -376,16 +375,15 @@ mod tests {
             agents: vec![],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -457,32 +455,6 @@ mod tests {
         // Loading after delete returns IO not-found, not a validation error.
         let err = store.load("01HZSTRATEGY00000000000000").await.unwrap_err();
         assert!(err.downcast_ref::<StrategyIdError>().is_none());
-    }
-
-    // ── post-template-registry-removal: validate seam is a no-op ──
-    //
-    // Before the 2026-05-21 template-registry removal this seam ran
-    // typed `MechanicalParams::from_value(template, value)` dispatch
-    // and rejected unknown keys for canonical templates. With the
-    // registry gone every strategy is treated as operator-authored;
-    // arbitrary JSON in `mechanical_params` is preserved verbatim
-    // through save/load.
-
-    #[tokio::test]
-    async fn save_accepts_arbitrary_mechanical_params_keys() {
-        let (store, _td) = store_in_tmp();
-        let mut s = strategy_with_id("01HZSTRATEGYANY00000000000");
-        s.manifest.template = "my-experimental-label".into();
-        s.mechanical_params = serde_json::json!({"weird": "shape", "n": 42});
-        store
-            .save(&s)
-            .await
-            .expect("arbitrary mechanical_params keys preserved post-registry-removal");
-        let loaded = store.load("01HZSTRATEGYANY00000000000").await.unwrap();
-        assert_eq!(
-            loaded.mechanical_params,
-            serde_json::json!({"weird": "shape", "n": 42})
-        );
     }
 
     // ── risk round-trip regression — set-filter must not reset risk ──
@@ -573,8 +545,7 @@ mod tests {
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
                 // max_position_pct_nav intentionally absent
-            },
-            "mechanical_params": {}
+            }
         });
         let path = td.path().join(format!("{id}.json"));
         tokio::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap())

@@ -25,10 +25,10 @@
 mod ast;
 pub mod fidelity;
 pub mod inputs;
-pub mod library;
 mod lexer;
-mod parser;
+pub mod library;
 pub mod map;
+mod parser;
 
 pub use ast::{Expr, PineHeader, PineParseError, PineScript, Statement};
 pub use fidelity::{build_fidelity_report, CostModelReference, FidelityItem, FidelityReport};
@@ -37,8 +37,20 @@ pub use map::{map_script, MapOutcome, UnmappedNode};
 // Re-export BriefingIndicator from its canonical home in strategies::mod
 pub use crate::strategies::BriefingIndicator;
 
+use crate::strategies::{Strategy, TunableBound};
 use std::fmt;
-use crate::strategies::Strategy;
+
+impl From<InputTarget> for TunableBound {
+    fn from(t: InputTarget) -> Self {
+        TunableBound {
+            path: t.path,
+            min: t.min,
+            max: t.max,
+            step: t.step,
+            kind: t.kind,
+        }
+    }
+}
 
 // ── WU4 types ─────────────────────────────────────────────────────────────────
 
@@ -112,10 +124,13 @@ pub fn import_pine(src: &str) -> Result<ImportOutcome, PineImportError> {
     // Step 3: Build fidelity report
     let fidelity = fidelity::build_fidelity_report(&script, &outcome);
 
-    Ok(ImportOutcome {
-        strategy: outcome.strategy,
-        fidelity,
-    })
+    // Step 4 (WU-A): Collect input mutation targets → tunable bounds
+    let targets = inputs::input_mutation_targets(&script, &outcome);
+    let tunable_bounds: Vec<TunableBound> = targets.into_iter().map(TunableBound::from).collect();
+    let mut strategy = outcome.strategy;
+    strategy.tunable_bounds = tunable_bounds;
+
+    Ok(ImportOutcome { strategy, fidelity })
 }
 
 // ── WU1 entry-point ───────────────────────────────────────────────────────────

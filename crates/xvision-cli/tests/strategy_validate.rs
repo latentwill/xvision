@@ -126,10 +126,8 @@ fn seed_strategy_with_trader(
                 edges: vec![],
             },
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
@@ -137,6 +135,7 @@ fn seed_strategy_with_trader(
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));
@@ -179,10 +178,8 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
             edges: vec![],
         },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: ActivationMode::EveryBar,
         filter: None,
@@ -190,6 +187,7 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

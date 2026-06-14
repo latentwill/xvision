@@ -1,0 +1,182 @@
+{
+  "schema_version": "xvn.agent_run.v3",
+  "run_id": "run_export_fixture_01",
+  "objective": "Improve BTC mean reversion strategy",
+  "strategy_id": "strat_export_fixture",
+  "eval_run_id": null,
+  "status": "completed",
+  "retention_mode": "hash_only",
+  "started_at": "2026-05-17T16:00:00Z",
+  "finished_at": "2026-05-17T16:00:08Z",
+  "otel_trace_id": "trace_export_fixture",
+  "totals": {
+    "model_calls": 1,
+    "tool_calls": 1,
+    "approvals": 0,
+    "input_tokens": 1234,
+    "output_tokens": 456,
+    "cost_usd": 0.0123
+  },
+  "accounting": {
+    "source": "agent_model_calls",
+    "eval_run_id": null,
+    "eval_mode": null,
+    "eval_status": null,
+    "eval_actual_input_tokens": null,
+    "eval_actual_output_tokens": null,
+    "eval_model_calls": 0,
+    "eval_model_call_input_tokens": null,
+    "eval_model_call_output_tokens": null,
+    "eval_model_call_cost_usd": null
+  },
+  "spans": [
+    {
+      "id": "span_run_root",
+      "run_id": "run_export_fixture_01",
+      "parent_span_id": null,
+      "otel_trace_id": "trace_export_fixture",
+      "otel_span_id": "span_root_otel",
+      "kind": "agent.run",
+      "name": "agent.run",
+      "status": "ok",
+      "started_at": "2026-05-17T16:00:01Z",
+      "ended_at": "2026-05-17T16:00:08Z",
+      "duration_ms": 7000,
+      "attributes_json": null,
+      "error_json": null,
+      "children": [
+        {
+          "id": "span_model_0",
+          "run_id": "run_export_fixture_01",
+          "parent_span_id": "span_run_root",
+          "otel_trace_id": "trace_export_fixture",
+          "otel_span_id": "span_model_otel",
+          "kind": "decision.model",
+          "name": "decision.model.plan",
+          "status": "ok",
+          "started_at": "2026-05-17T16:00:02Z",
+          "ended_at": "2026-05-17T16:00:03Z",
+          "duration_ms": 999,
+          "attributes_json": null,
+          "error_json": null,
+          "children": []
+        },
+        {
+          "id": "span_tool_0",
+          "run_id": "run_export_fixture_01",
+          "parent_span_id": "span_run_root",
+          "otel_trace_id": "trace_export_fixture",
+          "otel_span_id": "span_tool_otel",
+          "kind": "tool.call",
+          "name": "tool.call.fetch_bars",
+          "status": "ok",
+          "started_at": "2026-05-17T16:00:04Z",
+          "ended_at": "2026-05-17T16:00:05Z",
+          "duration_ms": 999,
+          "attributes_json": null,
+          "error_json": null,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "model_calls": [
+    {
+      "span_id": "span_model_0",
+      "provider": "anthropic",
+      "model": "claude-opus-4-7",
+      "input_token_count": 1234,
+      "output_token_count": 456,
+      "cost_usd": 0.0123,
+      "prompt_hash": "sha256:prompt_fixture",
+      "response_hash": "sha256:response_fixture",
+      "prompt_text": "prompt fixture plaintext",
+      "response_text": "response fixture plaintext",
+      "prompt_payload_ref": null,
+      "response_payload_ref": null,
+      "tool_calls_requested": "[\"tool_fixture_0\"]",
+      "capability_path": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "span_id": "span_tool_0",
+      "tool_name": "fetch_bars",
+      "origin": "native",
+      "tool_version": "0.1.0",
+      "tool_hash": "sha256:tool_fixture",
+      "input_hash": "sha256:in_fixture",
+      "output_hash": "sha256:out_fixture",
+      "input_text": null,
+      "output_text": null,
+      "input_payload_ref": null,
+      "output_payload_ref": null,
+      "side_effect_level": "read_only",
+      "risk_level": "safe_read",
+      "requires_approval": false,
+      "approval_id": null,
+      "exit_code": 0,
+      "is_run_terminator": false
+    }
+  ],
+  "approvals": [],
+  "sandbox_results": [],
+  "supervisor_notes": [
+    {
+      "id": "note_fixture_01",
+      "run_id": "run_export_fixture_01",
+      "role": "reviewer",
+      "content": "Sharpe drop on holdout suggests overfit.",
+      "severity": "warn",
+      "created_at": "2026-05-17T16:00:06Z"
+    }
+  ],
+  "events": [
+    {
+      "span_id": "span_model_0",
+      "kind": "model_call_payload",
+      "payload_json": {
+        "model": "claude-opus-4-7",
+        "prompt": "prompt fixture plaintext",
+        "provider": "anthropic",
+        "response": "response fixture plaintext"
+      },
+      "created_at": "2026-05-17T16:00:02Z"
+    }
+  ],
+  "final_artifact": {
+    "id": "art_export_fixture_01",
+    "kind": "final",
+    "title": "Reduce overfitting in BTC mean reversion",
+    "summary": "Tighten stops, drop a noisy feature.",
+    "hypothesis": "Stops were too wide.",
+    "recommendation": "Set stop ATR multiple to 1.5x.",
+    "evidence": [
+      {
+        "label": "Sharpe drop on holdout",
+        "source_span_id": "span_model_0",
+        "value": "0.4 -> 0.1"
+      }
+    ],
+    "next_experiments": [
+      {
+        "rationale": "Reduce drawdown.",
+        "title": "Tighten stop ATR multiple"
+      }
+    ],
+    "created_at": "2026-05-17T16:00:07Z"
+  },
+  "sidecar_version": "sidecar-1.2.3",
+  "cline_sdk_version": "cline-0.4.0",
+  "protocol_version": "xvision/1",
+  "mcp_servers": [
+    {
+      "name": "market_data",
+      "version": "0.1.0"
+    }
+  ],
+  "skills": [
+    "financial-eval",
+    "supervisor-review"
+  ]
+}

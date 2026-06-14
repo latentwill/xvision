@@ -41,7 +41,6 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
             provider: None,
             model: None,
         }),
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
@@ -50,19 +49,13 @@ fn mean_reversion_fixture(id: &str) -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({
-            "rsi_oversold": 30,
-            "rsi_overbought": 70,
-            "bollinger_period": 20,
-            "bollinger_sigma": 2.0,
-            "atr_period": 14
-        }),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 
@@ -94,11 +87,7 @@ fn estimator_scales_with_decision_points() {
 fn slot_iterator_estimate_matches_legacy_slot_estimate() {
     let b = mean_reversion_fixture("01H8N7ZITER");
     let est_legacy = estimate_pipeline_tokens(&b, 25);
-    let est_from_slots = estimate_pipeline_tokens_from_slots(
-        [&b.regime_slot, &b.intern_slot, &b.trader_slot]
-            .into_iter()
-            .flatten(),
-        25,
-    );
+    let est_from_slots =
+        estimate_pipeline_tokens_from_slots([&b.regime_slot, &b.trader_slot].into_iter().flatten(), 25);
     assert_eq!(est_from_slots, est_legacy);
 }

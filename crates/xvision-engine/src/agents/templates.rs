@@ -109,10 +109,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    // Synthesizes briefing-shaped observations the downstream
-                    // executor consumes — semantically an Intern, not a Trader.
-                    // Not in the Phase E spec table (the table doesn't include
-                    // this template); using {Intern} matches news-reader-plus-trader.
                     allowed_tools: Vec::new(),
                     delta_briefing: None,
                 },
@@ -184,9 +180,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    // Phase E spec table: risk_check → {Critic}. Observes the
-                    // upstream trader's decision and emits an approve/modify/veto
-                    // critique — not a new trader.
                     allowed_tools: Vec::new(),
                     delta_briefing: None,
                 },
@@ -474,9 +467,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    // Phase E spec table: news_reader → {Intern}. Produces a
-                    // structured briefing-extension digest the Trader reads via
-                    // accumulated upstream inputs. Slot name "news" preserved.
                     allowed_tools: Vec::new(),
                     delta_briefing: None,
                 },
@@ -563,10 +553,6 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    // Phase E spec table: live_executor → {Critic}. v1 ships as
-                    // Critic-observation (spec Decision 4) — the slot observes
-                    // the paper-trader's proposal and emits confirm/downgrade/veto.
-                    // v2 may promote to a veto-capable Critic.
                     allowed_tools: Vec::new(),
                     delta_briefing: None,
                 },

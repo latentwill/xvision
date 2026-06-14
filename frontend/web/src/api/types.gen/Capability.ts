@@ -7,4 +7,4 @@
  * Adding a new variant is a schema change — the wave-coordinator must
  * reserve a migration row + update the dispatcher.
  */
-export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
+export type Capability = "trader" | "filter" | "router";

@@ -252,11 +252,10 @@ export async function* streamChat(
     session_id: string;
     message: string;
     /// Explicit provider name (must exist in Settings → Providers).
-    /// When omitted, the dashboard falls back to the intern's default
-    /// provider.
+    /// When omitted, the dashboard falls back to the default LLM provider.
     provider?: string;
     /// Explicit model id. When omitted, the dashboard falls back to
-    /// [intern].model for the default provider.
+    /// [default_llm].model for the default provider.
     model?: string;
     /// Prompt/tool profile for the shared agent runtime.
     profile?: AgentProfile;

@@ -2,7 +2,6 @@ pub mod agent_ref;
 pub mod exec_mode;
 pub mod id;
 pub mod manifest;
-pub mod mechanical;
 pub mod mechanistic;
 pub mod pine_import;
 pub mod risk;
@@ -36,13 +35,34 @@ pub struct BriefingIndicator {
     pub source_token: String,
 }
 
+/// A single optimizer search-space bound derived from a Pine Script `input.*`
+/// declaration. Persisted on `Strategy` so the optimizer and settings UI can
+/// enforce/display the author-declared parameter ranges.
+///
+/// Populated by `pine_import::import_pine`; empty for non-Pine strategies.
+/// Uses `InputKind` from `pine_import::inputs` (re-imported here to avoid
+/// dep inversion — `TunableBound` lives in `strategies`, not in `pine_import`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TunableBound {
+    /// Stable optimizer mutation path (same address space as
+    /// `mechanistic_tunable_paths` / `filter_tunable_paths`).
+    pub path: String,
+    /// Minimum allowed value. `None` when not declared in the Pine `input.*` call.
+    pub min: Option<f64>,
+    /// Maximum allowed value. `None` when not declared.
+    pub max: Option<f64>,
+    /// Step size. `None` for `Bool` and when no explicit step was declared.
+    pub step: Option<f64>,
+    /// The Pine type this input was declared as.
+    pub kind: crate::strategies::pine_import::inputs::InputKind,
+}
+
 use serde::{Deserialize, Serialize};
 pub use xvision_filters::{ActivationMode, Filter};
 
 pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
 pub use crate::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use crate::strategies::manifest::PublicManifest;
-pub use crate::strategies::mechanical::MechanicalParams;
 pub use crate::strategies::mechanistic::{
     ClosePolicy, DecisionMode, EntryDirection, EntryRule, ExitReason, MechanisticConfig,
 };
@@ -147,10 +167,6 @@ pub struct Strategy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regime_slot: Option<LLMSlot>,
 
-    /// DEPRECATED — see `regime_slot`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub intern_slot: Option<LLMSlot>,
-
     /// DEPRECATED — see `regime_slot`. Pre-refactor: at least one slot
     /// must be filled; trader was required. Post-refactor: presence in
     /// `agents` replaces this constraint.
@@ -158,9 +174,6 @@ pub struct Strategy {
     pub trader_slot: Option<LLMSlot>,
 
     pub risk: RiskConfig,
-
-    /// Template-specific mechanical params (e.g., rsi thresholds, EMA periods).
-    pub mechanical_params: serde_json::Value,
 
     // ── Filter v1 (track-plan-touches) ───────────────────────────────────
     /// When the strategy's pipeline should be invoked per bar.
@@ -179,7 +192,7 @@ pub struct Strategy {
     pub filter: Option<Filter>,
 
     /// Suppresses the no-Filter soft-warning that `validate_strategy`
-    /// emits when a Trader/Critic agent has no upstream Filter wired
+    /// emits when a Trader agent has no upstream Filter wired
     /// into the pipeline. Operators who deliberately want every-bar
     /// dispatch (e.g. a long-horizon trader where Filter would be over-
     /// optimization) set this to `true` to acknowledge the cost.
@@ -217,6 +230,17 @@ pub struct Strategy {
     /// remain byte-stable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub briefing_indicators: Vec<BriefingIndicator>,
+
+    // ── WU-A: Pine Script import — tunable bounds ─────────────────────────
+    /// Per-input optimizer search-space bounds derived from a Pine Script
+    /// `input.*` declaration. Populated by `pine_import::import_pine`;
+    /// empty for non-Pine strategies. The optimizer enforces these bounds
+    /// on proposed mutations (WU-B); the settings UI renders them (WU-C).
+    ///
+    /// Skipped on serialization when empty so pre-WU-A strategy JSON files
+    /// remain byte-stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tunable_bounds: Vec<TunableBound>,
 }
 
 fn default_activation_mode() -> ActivationMode {
@@ -227,8 +251,7 @@ fn is_default_pipeline(p: &PipelineDef) -> bool {
     p.kind == PipelineKind::Single && p.edges.is_empty()
 }
 
-/// Fallback warmup-bar count when neither `manifest.min_warmup_bars` nor
-/// any indicator period can be derived from `mechanical_params`.
+/// Fallback warmup-bar count when `manifest.min_warmup_bars` is unset.
 pub const FALLBACK_MIN_WARMUP_BARS: u32 = 0;
 
 impl Strategy {
@@ -236,43 +259,23 @@ impl Strategy {
     ///
     /// Resolution order:
     /// 1. `manifest.min_warmup_bars`, if set.
-    /// 2. JSON walker over `mechanical_params` — picks the largest
-    ///    period-like field × 2.
-    /// 3. [`FALLBACK_MIN_WARMUP_BARS`].
+    /// 2. [`FALLBACK_MIN_WARMUP_BARS`].
     ///
-    /// Post-template-registry-removal there is no per-template typed
-    /// dispatch; every strategy is treated as operator-authored and
-    /// the period-key walker is the single derivation path.
+    /// Warmup is purely a manifest concern — set `manifest.min_warmup_bars`
+    /// explicitly when a strategy's indicators need prior-bar history.
     pub fn min_warmup_bars(&self) -> u32 {
-        if let Some(explicit) = self.manifest.min_warmup_bars {
-            return explicit;
-        }
-        let derived = self.typed_params().min_warmup_bars();
-        if derived == 0 {
-            FALLBACK_MIN_WARMUP_BARS
-        } else {
-            derived
-        }
-    }
-
-    /// View of `mechanical_params` wrapped as [`MechanicalParams`].
-    /// Always succeeds — the enum has a single `Custom` arm that
-    /// preserves arbitrary JSON. Kept as `typed_params()` for
-    /// call-site compatibility with the pre-registry-removal API.
-    pub fn typed_params(&self) -> MechanicalParams {
-        MechanicalParams::Custom(self.mechanical_params.clone())
+        self.manifest.min_warmup_bars.unwrap_or(FALLBACK_MIN_WARMUP_BARS)
     }
 }
 
 // ── Custom Deserialize ───────────────────────────────────────────────
 //
-// Before the 2026-05-21 template-registry removal this seam ran
-// `MechanicalParams::from_value(template, value)` to surface
-// `deny_unknown_fields` violations on canonical templates as
-// structured deserialize errors. Post-removal there is no per-template
-// dispatch, so the custom impl is a thin pass-through that lets
+// The custom impl is a thin pass-through that lets
 // `#[derive(Deserialize)]`-equivalent default field handling proceed
-// against the same private `StrategyRaw` mirror struct.
+// against a private `StrategyRaw` mirror struct. `StrategyRaw` has no
+// `deny_unknown_fields`, so legacy on-disk strategy JSON carrying
+// removed keys (e.g. `mechanical_params`) deserializes cleanly — the
+// unknown key is ignored.
 //
 // The mirror struct is kept (rather than reverting to a plain derive)
 // so the `serde(default)` semantics on agents/pipeline/slots stay
@@ -291,11 +294,8 @@ struct StrategyRaw {
     #[serde(default)]
     regime_slot: Option<LLMSlot>,
     #[serde(default)]
-    intern_slot: Option<LLMSlot>,
-    #[serde(default)]
     trader_slot: Option<LLMSlot>,
     risk: RiskConfig,
-    mechanical_params: serde_json::Value,
     #[serde(default = "default_activation_mode")]
     activation_mode: ActivationMode,
     #[serde(default)]
@@ -308,6 +308,8 @@ struct StrategyRaw {
     mechanistic_config: Option<MechanisticConfig>,
     #[serde(default)]
     briefing_indicators: Vec<BriefingIndicator>,
+    #[serde(default)]
+    tunable_bounds: Vec<TunableBound>,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -322,16 +324,15 @@ impl<'de> Deserialize<'de> for Strategy {
             agents: raw.agents,
             pipeline: raw.pipeline,
             regime_slot: raw.regime_slot,
-            intern_slot: raw.intern_slot,
             trader_slot: raw.trader_slot,
             risk: raw.risk,
-            mechanical_params: raw.mechanical_params,
             activation_mode: raw.activation_mode,
             filter: raw.filter,
             acknowledge_no_filter: raw.acknowledge_no_filter,
             decision_mode: raw.decision_mode,
             mechanistic_config: raw.mechanistic_config,
             briefing_indicators: raw.briefing_indicators,
+            tunable_bounds: raw.tunable_bounds,
         })
     }
 }
@@ -344,9 +345,9 @@ mod tests {
     use crate::strategies::risk::{RiskConfig, RiskPreset};
     use serde_json::json;
 
-    // ── q15-scenario-warmup-bars — min_warmup_bars derivation ──────────
+    // ── q15-scenario-warmup-bars — min_warmup_bars resolution ──────────
 
-    fn strategy_with_params(min_explicit: Option<u32>, params: serde_json::Value) -> Strategy {
+    fn strategy_with_warmup(min_explicit: Option<u32>) -> Strategy {
         Strategy {
             manifest: PublicManifest {
                 min_warmup_bars: min_explicit,
@@ -356,67 +357,27 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: params,
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
     #[test]
-    fn min_warmup_bars_prefers_explicit_manifest_value() {
-        let s = strategy_with_params(Some(42), json!({"ema_slow": 50}));
-        // Explicit wins over the derived max-period heuristic.
+    fn min_warmup_bars_uses_explicit_manifest_value() {
+        let s = strategy_with_warmup(Some(42));
         assert_eq!(s.min_warmup_bars(), 42);
     }
 
     #[test]
-    fn min_warmup_bars_derives_from_max_indicator_period_when_unset() {
-        let s = strategy_with_params(None, json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50}));
-        // Max period is 50 -> doubled to 100.
-        assert_eq!(s.min_warmup_bars(), 100);
-    }
-
-    #[test]
-    fn min_warmup_bars_walks_nested_objects_and_arrays() {
-        let s = strategy_with_params(
-            None,
-            json!({
-                "outer": {"inner_period": 25},
-                "list": [
-                    {"fast_window": 3},
-                    {"slow_window": 30},
-                    {"threshold": 70}
-                ],
-                "non_int": "ignored",
-            }),
-        );
-        assert_eq!(s.min_warmup_bars(), 60);
-    }
-
-    #[test]
-    fn min_warmup_bars_ignores_non_period_thresholds() {
-        let s = strategy_with_params(
-            None,
-            json!({
-                "rsi_oversold": 30,
-                "rsi_overbought": 70,
-                "bollinger_period": 20,
-                "atr_period": 14
-            }),
-        );
-        assert_eq!(s.min_warmup_bars(), 40);
-    }
-
-    #[test]
-    fn min_warmup_bars_falls_back_when_no_periods_present() {
-        let s = strategy_with_params(None, json!({}));
+    fn min_warmup_bars_falls_back_when_manifest_value_unset() {
+        let s = strategy_with_warmup(None);
         assert_eq!(s.min_warmup_bars(), FALLBACK_MIN_WARMUP_BARS);
     }
 
@@ -443,7 +404,7 @@ mod tests {
 
     #[test]
     fn legacy_strategy_json_parses_with_empty_agents() {
-        // Strategy authored before the refactor: has regime/intern/trader_slot
+        // Strategy authored before the refactor: has regime/trader_slot
         // fields and no `agents`/`pipeline`. Must still parse — serde(default)
         // gives empty agents and Single pipeline.
         let raw = json!({
@@ -453,8 +414,7 @@ mod tests {
                 "attested_with": "anthropic.claude-sonnet-4.6+",
                 "allowed_tools": []
             },
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         assert!(strategy.agents.is_empty(), "agents defaults to empty");
@@ -476,8 +436,7 @@ mod tests {
                 { "agent_id": "01HZAGENT1", "role": "trader" }
             ],
             "pipeline": { "kind": "single" },
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         assert_eq!(strategy.agents.len(), 1);
@@ -504,8 +463,7 @@ mod tests {
                 "attested_with": "anthropic.claude-sonnet-4.6+",
                 "allowed_tools": []
             },
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         assert_eq!(strategy.agents.len(), 1);
@@ -522,16 +480,15 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -564,16 +521,15 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(
@@ -600,8 +556,7 @@ mod tests {
                     "no_direct_flips": true
                 }
             },
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         let h = strategy.hypothesis.as_ref().expect("hypothesis must be Some");
@@ -632,8 +587,7 @@ mod tests {
         // Legacy strategy JSON with no hypothesis key → defaults to None.
         let raw = json!({
             "manifest": make_manifest(),
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         assert!(
@@ -651,8 +605,7 @@ mod tests {
                 "family": "mean-reversion",
                 "statement": "Asset reverts after extension."
             },
-            "risk": RiskPreset::Balanced.expand(),
-            "mechanical_params": {}
+            "risk": RiskPreset::Balanced.expand()
         });
         let strategy: Strategy = serde_json::from_value(raw).unwrap();
         let h = strategy.hypothesis.as_ref().unwrap();

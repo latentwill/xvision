@@ -701,6 +701,18 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
             .map_err(|e| anyhow::anyhow!("byreal account_info: {e}"))?;
         Ok(acct.equity_usd)
     }
+
+    fn venue(&self) -> &str {
+        "byreal"
+    }
+
+    fn signing_scheme(&self) -> &str {
+        "cli"
+    }
+
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -949,6 +961,16 @@ mod tests {
         assert_eq!(surface.position("BTC/USD").await.unwrap(), 0.02);
         assert_eq!(surface.position("ETH/USD").await.unwrap(), 0.0);
         assert_eq!(surface.balance().await.unwrap(), 12_345.0);
+    }
+
+    #[tokio::test]
+    async fn live_surface_reports_byreal_venue_identity() {
+        // WS-4: the live order path stamps the broker's real venue +
+        // signing scheme onto the trace (broker_call_started / order_signed)
+        // instead of the hardcoded "live"/"broker" placeholders.
+        let surface = ByrealLiveSurface::new(MockByrealApi::default());
+        assert_eq!(surface.venue(), "byreal");
+        assert_eq!(surface.signing_scheme(), "cli");
     }
 
     #[tokio::test]

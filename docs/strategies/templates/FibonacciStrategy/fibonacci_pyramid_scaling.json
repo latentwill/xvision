@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Fibonacci Pyramid Scaling",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_pyramid_scaling",
   "plain_summary": "Instead of entering a full position at once, this strategy scales in as the trade proves itself. It adds exposure in Fibonacci-sized increments when the trend persists and volatility stays controlled.",
   "regime_fit": [

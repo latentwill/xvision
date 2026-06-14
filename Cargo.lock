@@ -8049,14 +8049,10 @@ dependencies = [
  "xvision-eval",
  "xvision-execution",
  "xvision-filters",
- "xvision-harness",
  "xvision-identity",
- "xvision-intern",
  "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
- "xvision-risk",
- "xvision-trader",
 ]
 
 [[package]]
@@ -8197,7 +8193,6 @@ dependencies = [
  "xvision-identity",
  "xvision-memory",
  "xvision-observability",
- "xvision-risk",
 ]
 
 [[package]]
@@ -8215,10 +8210,7 @@ dependencies = [
  "uuid",
  "xvision-core",
  "xvision-execution",
- "xvision-intern",
  "xvision-observability",
- "xvision-risk",
- "xvision-trader",
 ]
 
 [[package]]
@@ -8263,17 +8255,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xvision-harness"
-version = "0.21.0"
-dependencies = [
- "chrono",
- "tracing",
- "uuid",
- "xvision-core",
- "xvision-risk",
-]
-
-[[package]]
 name = "xvision-identity"
 version = "0.21.0"
 dependencies = [
@@ -8285,22 +8266,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
- "xvision-core",
-]
-
-[[package]]
-name = "xvision-intern"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "chrono",
- "garde",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
  "uuid",
  "xvision-core",
 ]
@@ -8385,38 +8350,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "xvision-risk"
-version = "0.21.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml",
- "tracing",
- "uuid",
- "xvision-core",
-]
-
-[[package]]
-name = "xvision-trader"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "chrono",
- "garde",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "xvision-core",
- "xvision-intern",
 ]
 
 [[package]]

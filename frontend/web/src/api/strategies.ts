@@ -60,7 +60,7 @@ export type PipelineKind = "single" | "sequential" | "graph";
 // `frontend/web/src/api/types.gen/Capability.ts` for the canonical
 // generated form; mirror it locally so this module doesn't have to
 // import the generated barrel for one type.
-export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
+export type Capability = "trader" | "filter" | "router";
 
 // Predicate evaluated against an upstream Filter agent's signal. Mirrors
 // `EdgePredicate` from the engine — kept inline so strategies.ts stays
@@ -152,13 +152,24 @@ export type { Filter } from "./types.gen/Filter";
 import type { Filter } from "./types.gen/Filter";
 import type { ActivationMode } from "./types.gen/ActivationMode";
 
+/// One input knob declared in a Pine Script (or manually added) that the
+/// optimizer is allowed to tune. Mirrors `TunableBound` in the Rust engine
+/// (`crates/xvision-engine/src/strategies/mod.rs`). Added by WU-A; surfaced
+/// in the settings UI by WU-C.
+export type TunableBound = {
+  /// Dot-separated path into the strategy (e.g. `conditions.0.rhs.numeric`).
+  path: string;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  kind: "int" | "float" | "bool";
+};
+
 export type Strategy = {
   manifest: PublicManifest;
   regime_slot: LLMSlot | null;
-  intern_slot: LLMSlot | null;
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
-  mechanical_params: unknown;
   agents?: AgentRef[];
   pipeline?: PipelineDef;
   /// Per-strategy deterministic gate. `null` (or absent) means
@@ -172,6 +183,15 @@ export type Strategy = {
   /// Rule-based entry/exit config. Required when decision_mode is
   /// "mechanistic"; absent for agentic strategies.
   mechanistic_config?: MechanisticConfig | null;
+  /// Declared search-space bounds, one per Pine `input.*` knob (or
+  /// manually added). Populated by WU-A from `input_mutation_targets`.
+  /// Absent / empty for non-Pine strategies — treat as `[]`.
+  tunable_bounds?: TunableBound[];
+  /// Indicators referenced in briefings (e.g. RSI, EMA column names).
+  /// Added to the TS type for parity with the Rust engine field
+  /// (`briefing_indicators`) which landed in #998. Absent for strategies
+  /// that pre-date that release — treat as `[]`.
+  briefing_indicators?: string[];
 };
 
 export type SetFilterBody = {
@@ -205,9 +225,9 @@ export type ValidateDraftOut = {
   errors: string[];
   /// Soft signals — saveable but worth surfacing in the strategy editor
   /// alongside errors. As of the firing-filter wave the engine populates
-  /// this with the no-Filter warning (Trader/Critic agent with no
-  /// upstream Filter). Optional on the wire so older server responses
-  /// continue to parse — treat `undefined` as `[]`.
+  /// this with the no-Filter warning (Trader agent with no upstream
+  /// Filter). Optional on the wire so older server responses continue to
+  /// parse — treat `undefined` as `[]`.
   warnings?: string[];
 };
 

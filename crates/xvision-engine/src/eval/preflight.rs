@@ -547,7 +547,7 @@ kind = "{kind}"
 base_url = "{base_url}"
 api_key_env = ""
 
-[intern]
+[default_llm]
 provider = "{kind}"
 base_url = "{base_url}"
 model = "test"
@@ -602,7 +602,7 @@ mode = "backtest"
 executor = "alpaca"
 random_seed = 42
 
-[intern]
+[default_llm]
 provider = "openai-compat"
 base_url = ""
 model = "x"

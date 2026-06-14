@@ -5,12 +5,13 @@
 # XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).
 
 # Agent runtime for LLM-backed slots. "cline" routes every slot dispatch
-# through the xvision-agentd sidecar (the unified live + eval + replay path);
-# the sidecar binary is resolved from XVN_AGENTD_BIN (set in the deploy image).
-# This line is deliberately EXPLICIT: the eval resolver treats a missing field
-# as "not opted in" and silently falls back to the legacy llm-dispatch path
-# when XVN_AGENTD_BIN is unset. Emergency rollback to the legacy path:
-# XVN_EMERGENCY_LLM_DISPATCH=1 (see MANUAL.md, "Emergency rollback").
+# through the xvision-agentd sidecar (the unified live + eval + replay + optimizer
+# path); the sidecar binary is resolved from XVN_AGENTD_BIN (set in the deploy
+# image, which builds the sidecar in its agentd stage). "cline" is now the ONLY
+# valid value: the legacy llm-dispatch trader path and the XVN_EMERGENCY_LLM_DISPATCH
+# emergency rollback were RETIRED (2026-06-14) — a missing XVN_AGENTD_BIN or an
+# unlaunchable sidecar is a HARD ERROR with an actionable message, NOT a silent
+# fallback. (The LlmDispatch trait still backs the optimizer mutator/judge.)
 agent_runtime = "cline"
 
 [runtime]
@@ -41,8 +42,8 @@ api_key_env = "NOUS_API_KEY"
 [default_llm]
 # Workspace-level default LLM. Used by the chat rail, the setup wizard, and
 # as a fallback for any agent slot that doesn't override its own provider/
-# model. Renamed from [intern] on 2026-05-12 — old configs with [intern]
-# still parse (one-release deprecation alias).
+# model. (Formerly the [intern] section; the Intern stage was retired and the
+# [intern] alias removed — use [default_llm].)
 provider          = "anthropic"  # anthropic | openai-compat | local-candle
 base_url          = "https://api.anthropic.com"
 model             = "claude-haiku-4-5"

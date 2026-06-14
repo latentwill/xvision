@@ -6,9 +6,8 @@
 //! at the cost of one extra parse per call; performance is irrelevant for this
 //! workload (≤100 rows per backtest run).
 //!
-//! Tier 1 fix #1: `briefings` is keyed on `cycle_id` alone — every arm reads
-//! the same briefing. `decisions` and `risk_outcomes` are keyed on
-//! `(cycle_id, arm_name)` so multiple strategy arms persist independently.
+//! `decisions` and `risk_outcomes` are keyed on `(cycle_id, arm_name)` so
+//! multiple strategy arms persist independently.
 
 use std::path::Path;
 
@@ -19,7 +18,7 @@ use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::trading::{InternBriefing, RiskDecision, TraderDecision};
+use crate::trading::{RiskDecision, TraderDecision};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -106,43 +105,6 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(())
-    }
-
-    // --- briefings -------------------------------------------------------
-
-    /// Insert or replace the briefing for `cycle_id`. All arms read
-    /// the same row (Tier 1 fix #1).
-    pub async fn upsert_briefing(
-        &self,
-        provider: &str,
-        model: &str,
-        briefing: &InternBriefing,
-    ) -> Result<(), StoreError> {
-        let json = serde_json::to_string(briefing)?;
-        sqlx::query(
-            "INSERT OR REPLACE INTO briefings (cycle_id, provider, model, briefing_json, created_at) \
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(briefing.cycle_id.to_string())
-        .bind(provider)
-        .bind(model)
-        .bind(json)
-        .bind(Utc::now().to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn get_briefing(&self, cycle_id: &Uuid) -> Result<Option<InternBriefing>, StoreError> {
-        let row = sqlx::query("SELECT briefing_json FROM briefings WHERE cycle_id = ?")
-            .bind(cycle_id.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
-        row.map(|r| {
-            let s: String = r.get(0);
-            serde_json::from_str::<InternBriefing>(&s).map_err(StoreError::Json)
-        })
-        .transpose()
     }
 
     // --- decisions -------------------------------------------------------
@@ -251,25 +213,8 @@ pub struct TraceSpan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trading::{Action, AssetSymbol, Direction, EvidenceTag, Regime, TraderDecision, VetoReason};
+    use crate::trading::{Action, AssetSymbol, Direction, TraderDecision, VetoReason};
     use chrono::TimeZone;
-
-    fn fixture_briefing() -> InternBriefing {
-        InternBriefing {
-            cycle_id: Uuid::nil(),
-            asset: AssetSymbol::Btc,
-            bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
-            bear_case: "Realized vol expanding; long-leverage near prior squeeze.".into(),
-            flat_case: "Range-bound between SMA20 and SMA50; await break.".into(),
-            evidence_long: vec![EvidenceTag::Onchain("smart_money_inflow".into())],
-            evidence_short: vec![EvidenceTag::Technical("rsi_overbought".into())],
-            evidence_flat: vec![EvidenceTag::Technical("range_bound".into())],
-            regime: Regime::Chop,
-            signal_quality: 0.6,
-            horizon_hours: 24,
-            created_at: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
-        }
-    }
 
     fn make_decision() -> TraderDecision {
         TraderDecision {
@@ -305,32 +250,6 @@ mod tests {
             .await
             .expect("seed setup row");
         s
-    }
-
-    #[tokio::test]
-    async fn briefing_round_trips() {
-        let s = fresh_store().await;
-        let b = fixture_briefing();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
-            .await
-            .unwrap();
-        let back = s.get_briefing(&b.cycle_id).await.unwrap().expect("present");
-        assert_eq!(b, back);
-    }
-
-    #[tokio::test]
-    async fn upsert_briefing_replaces_same_cycle() {
-        let s = fresh_store().await;
-        let mut b = fixture_briefing();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
-            .await
-            .unwrap();
-        b.bull_case = "Updated bull case with sufficiently long content.".into();
-        s.upsert_briefing("anthropic", "claude-haiku-4-5", &b)
-            .await
-            .unwrap();
-        let back = s.get_briefing(&b.cycle_id).await.unwrap().expect("present");
-        assert_eq!(back.bull_case, b.bull_case);
     }
 
     #[tokio::test]
@@ -379,7 +298,7 @@ mod tests {
             parent_id: None,
             run_id: "r1".into(),
             cycle_id: Some(Uuid::nil()),
-            stage: "intern".into(),
+            stage: "briefing".into(),
             name: "brief".into(),
             attrs: serde_json::json!({"provider": "anthropic"}),
             started_at: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
@@ -391,7 +310,7 @@ mod tests {
             .fetch_one(s.pool())
             .await
             .unwrap();
-        assert_eq!(row, ("intern".into(), "brief".into()));
+        assert_eq!(row, ("briefing".into(), "brief".into()));
     }
 
     #[tokio::test]

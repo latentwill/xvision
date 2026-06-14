@@ -22,11 +22,9 @@ import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import { evalKeys, listRuns } from "@/api/eval";
 import {
-  createStrategy,
   cloneStrategy,
   listStrategiesPaged,
   strategyKeys,
-  type CreateStrategyOut,
   type StrategiesPage,
   type Strategy,
   type StrategyListItem,
@@ -98,7 +96,7 @@ function decisionMode(row: StrategyListItem): {
       : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
   }
   return agents > 0
-    ? { label: "agent-direct", pillTone: "warn", badgeColor: "warn" }
+    ? { label: "agent-direct", pillTone: "default", badgeColor: "muted" }
     : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
 }
 
@@ -189,16 +187,6 @@ function ViewToggle({
 function StrategiesListView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const create = useMutation<CreateStrategyOut, unknown, void>({
-    mutationFn: () =>
-      createStrategy({
-        name: "Untitled strategy",
-        creator: null,
-      }),
-    onSuccess: (out) => {
-      navigate(`/strategies/${encodeURIComponent(out.id)}`);
-    },
-  });
   const clone = useMutation<Strategy, unknown, StrategyListItem>({
     mutationFn: (row) =>
       cloneStrategy(row.agent_id, {
@@ -295,21 +283,11 @@ function StrategiesListView() {
         <span className="text-[12.5px] text-text-3">{subtitle}</span>
         <div className="flex flex-wrap items-center gap-2">
           <NewStrategyButton
-            pending={create.isPending}
-            onClick={() => create.mutate()}
+            pending={false}
+            onClick={() => navigate("/strategies/new")}
           />
         </div>
       </div>
-
-      {create.isError ? (
-        <div
-          role="alert"
-          className="mb-3 rounded border border-danger/30 bg-danger/[0.06] px-3 py-2 text-[12.5px] text-danger"
-        >
-          Couldn't create strategy:{" "}
-          <code className="font-mono">{errorDetail(create.error)}</code>
-        </div>
-      ) : null}
 
       <ResponsiveListCard<StrategyListItem>
         listId="strategies"
@@ -337,8 +315,8 @@ function StrategiesListView() {
         emptyAction={
           <NewStrategyButton
             compact
-            pending={create.isPending}
-            onClick={() => create.mutate()}
+            pending={false}
+            onClick={() => navigate("/strategies/new")}
           />
         }
         renderRow={(row, _i, visibleKeys) => (
