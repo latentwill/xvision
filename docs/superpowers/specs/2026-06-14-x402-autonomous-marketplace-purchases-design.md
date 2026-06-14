@@ -122,6 +122,7 @@ the agent's environment ONLY (never to the platform).
 | C8 | MCP tools: browse / get_listing / buy / import / wallet | `xvision-mcp/src/tools.rs` (+ `tests/parity.rs` + matrix doc) | **new** |
 | C9 | Mainnet deploy (gate removal, EOA admin, chainid guard) | `contracts/script/DeployMainnet.s.sol` | **new** (mirror of testnet) |
 | C10 | Rust address wiring for mainnet | `xvision-identity/src/contracts.rs`, `config/mantle.toml`, env | **new** |
+| C11 | Rate-limiting on public x402/facilitator routes | `xvision-dashboard` (per-IP token-bucket middleware) | **new** |
 
 ### 5.1 x402 protocol mapping (net-new vs existing)
 
@@ -264,6 +265,10 @@ Each phase is testable on **Mantle Sepolia** before mainnet.
   authorization's private material (only the signature, which is safe).
 - **Replay / nonce:** EIP-3009 nonces are single-use on-chain; `/verify` should
   also pre-check `authorizationState` to fail fast and avoid wasted gas.
+- **Rate-limiting (C11):** the public `/x402`, `/facilitator/verify`, and
+  `/facilitator/settle` routes stay unauthenticated for interop but get a
+  per-IP token-bucket limiter to bound abuse / gas-drain attempts against the
+  relayer. Tunable; sane hackathon defaults.
 
 ## 12. Out of scope (YAGNI)
 
@@ -276,10 +281,13 @@ Each phase is testable on **Mantle Sepolia** before mainnet.
 
 ## 13. Open questions for review
 
-1. **Shape A key handling:** default = MCP tool holds the key and signs
-   locally; strict variant = tool only accepts a pre-signed authorization.
-   Confirm the default.
+1. ~~**Shape A key handling**~~ — ✅ RESOLVED (2026-06-15): the MCP `buy` tool
+   **holds the local key and signs locally** (the autonomous default). The
+   strict pre-signed-only variant is dropped for v1. Key never leaves the local
+   MCP process; the platform only ever receives the signature.
 2. ~~**USDC fallback appetite**~~ — ✅ RESOLVED (2026-06-15): EIP-3009 confirmed
    live on Mantle mainnet USDC.e (§8). No fallback needed; Permit2 path dropped.
-3. **Endpoint auth/rate-limiting:** the public 402 endpoint is unauthenticated
-   by design — any abuse controls needed for the hackathon, or open?
+3. ~~**Endpoint auth/rate-limiting**~~ — ✅ RESOLVED (2026-06-15): the public
+   402/facilitator endpoints stay unauthenticated (open interop) but **add
+   rate-limiting** (see C11 / §11). Per-IP token-bucket on
+   `/x402`, `/facilitator/verify`, `/facilitator/settle`.
