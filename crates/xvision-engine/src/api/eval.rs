@@ -3548,6 +3548,26 @@ fn resolve_live_venue(
     }
 }
 
+/// Defense-in-depth build-time consistency check for Byreal runs: the run's
+/// configured `venue_label` (from `LiveConfig`) must match the broker label
+/// derived from `BYREAL_NETWORK`. A mismatch means the operator configured the
+/// run for one environment (e.g. Live) but pointed `BYREAL_NETWORK` at another
+/// (e.g. testnet), which would produce a silently-wrong execution. Rejecting at
+/// build-time gives a clearer error than a runtime gate denial and catches both
+/// directions: Live-label + testnet-network and Testnet-label + mainnet-network.
+///
+/// Only called for `LiveVenue::ByrealLive`; other venues have no network env.
+fn check_byreal_label_network(run: VenueLabel, broker: VenueLabel) -> ApiResult<()> {
+    if run != broker {
+        return Err(ApiError::Validation(format!(
+            "Byreal run venue_label ({run:?}) must match BYREAL_NETWORK \
+             (resolved broker label {broker:?}): set BYREAL_NETWORK=mainnet for a \
+             Live run or BYREAL_NETWORK=testnet for a Testnet run."
+        )));
+    }
+    Ok(())
+}
+
 /// Map a `LiveVenue` + optional `BYREAL_NETWORK` value to the `VenueLabel`
 /// that describes what the **broker** is doing (as opposed to what the *run*
 /// is labelled). Used to populate the `broker_venue_label` argument of
@@ -3674,11 +3694,20 @@ async fn build_live_executor(
     // so the safety gate fires on every live submit, regardless of venue or
     // whether the broker came from a broker_override. The wrap happens AFTER
     // the override/venue match so even injected test brokers are gated.
+    let broker_lbl = broker_label_for(venue, byreal_network.as_deref());
+    // WU-2.3: defense-in-depth build-time check — for Byreal runs the run's
+    // venue_label must agree with the network resolved from BYREAL_NETWORK.
+    // Catches Live-label+testnet-network and Testnet-label+mainnet-network
+    // before the executor is built, giving a clearer error than a runtime gate
+    // denial.
+    if venue == LiveVenue::ByrealLive {
+        check_byreal_label_network(cfg.venue_label, broker_lbl)?;
+    }
     let broker: Arc<dyn BrokerSurface> = Arc::new(GatedBrokerSurface::new(
         broker,
         ctx.safety_gate.clone(),
         cfg.venue_label,
-        broker_label_for(venue, byreal_network.as_deref()),
+        broker_lbl,
         AuthContext::system(),
     ));
     let granularity = xvision_data::alpaca::BarGranularity::Minute1;
@@ -5447,6 +5476,53 @@ pub async fn get_live_deployment(
         .fetch_optional(&ctx.db)
         .await?;
     Ok(row.map(Into::into))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — check_byreal_label_network (WU-2.3)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod check_byreal_label_network_tests {
+    use super::check_byreal_label_network;
+    use crate::safety::VenueLabel;
+
+    #[test]
+    fn live_run_testnet_broker_is_err() {
+        // Live-label run against a testnet broker → must be rejected.
+        let result = check_byreal_label_network(VenueLabel::Live, VenueLabel::Testnet);
+        assert!(result.is_err(), "Live run + Testnet broker must return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("venue_label"),
+            "error message must mention venue_label; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn testnet_run_live_broker_is_err() {
+        // Testnet-label run against a live (mainnet) broker → must be rejected.
+        let result = check_byreal_label_network(VenueLabel::Testnet, VenueLabel::Live);
+        assert!(result.is_err(), "Testnet run + Live broker must return Err");
+    }
+
+    #[test]
+    fn live_run_live_broker_is_ok() {
+        // Matching labels → always Ok.
+        assert!(
+            check_byreal_label_network(VenueLabel::Live, VenueLabel::Live).is_ok(),
+            "Live run + Live broker must be Ok"
+        );
+    }
+
+    #[test]
+    fn testnet_run_testnet_broker_is_ok() {
+        // Matching labels → always Ok.
+        assert!(
+            check_byreal_label_network(VenueLabel::Testnet, VenueLabel::Testnet).is_ok(),
+            "Testnet run + Testnet broker must be Ok"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
