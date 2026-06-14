@@ -1,5 +1,5 @@
 {
-  "schema_version": "xvn.agent_run.v2",
+  "schema_version": "xvn.agent_run.v3",
   "run_id": "run_export_fixture_01",
   "objective": "Improve BTC mean reversion strategy",
   "strategy_id": "strat_export_fixture",
@@ -129,6 +129,19 @@
       "content": "Sharpe drop on holdout suggests overfit.",
       "severity": "warn",
       "created_at": "2026-05-17T16:00:06Z"
+    }
+  ],
+  "events": [
+    {
+      "span_id": "span_model_0",
+      "kind": "model_call_payload",
+      "payload_json": {
+        "model": "claude-opus-4-7",
+        "prompt": "prompt fixture plaintext",
+        "provider": "anthropic",
+        "response": "response fixture plaintext"
+      },
+      "created_at": "2026-05-17T16:00:02Z"
     }
   ],
   "final_artifact": {
