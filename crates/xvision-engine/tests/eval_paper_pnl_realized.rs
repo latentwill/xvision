@@ -116,7 +116,6 @@ fn minimal_strategy() -> Strategy {
             risk.risk_pct_per_trade = 0.015;
             risk
         },
-        mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,

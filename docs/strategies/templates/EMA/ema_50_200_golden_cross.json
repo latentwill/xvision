@@ -2,40 +2,8 @@
   "base_template": "trend_follower",
   "display_name": "EMA 50 200 Golden Cross",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "50",
-      "name": "fast_period",
-      "range": "fixed (cultural)"
-    },
-    {
-      "default": "200",
-      "name": "slow_period",
-      "range": "fixed (cultural)"
-    },
-    {
-      "default": "0",
-      "name": "min_slope_slow",
-      "range": "0 \u2013 0.001 (per bar fraction of price)"
-    },
-    {
-      "default": "1",
-      "name": "confirmation_bars",
-      "range": "1 \u2013 5"
-    },
-    {
-      "default": "2.5",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 4.0"
-    },
-    {
-      "default": "2.0",
-      "name": "take_profit_rr",
-      "range": "1.0 \u2013 4.0"
-    }
-  ],
   "name": "ema_50_200_golden_cross",
-  "plain_summary": "The canonical cross. When the 50-EMA crosses above the 200-EMA on a sustained trend, the cohort of traders who watch this signal coordinates into long positions \u2014 and so do the institutional desks whose risk models use the 200-EMA as their primary regime line. The signal's reliability comes from this coordination, not from any property of the underlying math: an 87/213 cross has identical mathematical content and zero edge, because nobody watches it.",
+  "plain_summary": "The canonical cross. When the 50-EMA crosses above the 200-EMA on a sustained trend, the cohort of traders who watch this signal coordinates into long positions — and so do the institutional desks whose risk models use the 200-EMA as their primary regime line. The signal's reliability comes from this coordination, not from any property of the underlying math: an 87/213 cross has identical mathematical content and zero edge, because nobody watches it.",
   "regime_fit": [
     "chop",
     "event_driven"
@@ -48,14 +16,14 @@
   "sections": {
     "data_dependencies": "None beyond price. Pure TA.",
     "decision_rule": "```\ngolden_cross = ema_50 crossed above ema_200 within last `confirmation_bars`\ndeath_cross  = ema_50 crossed below ema_200 within last `confirmation_bars`\n\nif golden_cross and slope(ema_200, window=5) >= min_slope_slow:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif death_cross and slope(ema_200, window=5) <= -min_slope_slow:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on opposite cross or stop/take-profit hit.\n```",
-    "expected_regime": "R1 (strong trend) and the *transition* into R1. Underperforms in R5\n(chop) \u2014 `min_slope_slow` is the regime filter that prevents entries\nduring R5 crossings.",
-    "inputs": "- `IndicatorPanel.ema_50` \u2014 50-period EMA of close.\n- `IndicatorPanel.ema_200` \u2014 200-period EMA of close.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14` \u2014 for stop placement.",
-    "parameters": "| Param                    | Default | Range          |\n| ------------------------ | ------- | -------------- |\n| `fast_period`            | 50      | fixed (cultural) |\n| `slow_period`            | 200     | fixed (cultural) |\n| `min_slope_slow`         | 0       | 0 \u2013 0.001 (per bar fraction of price) |\n| `confirmation_bars`      | 1       | 1 \u2013 5          |\n| `stop_atr_multiple`      | 2.5     | 1.5 \u2013 4.0      |\n| `take_profit_rr`         | 2.0     | 1.0 \u2013 4.0      |\n\n`min_slope_slow` filters out crossings that occur because the slow EMA\nis rolling sideways \u2014 those are R5 (chop) cross-events, not R1 trend\ncrossings.",
-    "references": "- Atlas Page 3 (P2 \u00d7 R1) and Page 4 (cultural weight of 50/200).\n- `crates/xvision-eval/src/baselines/ma_crossover.rs` \u2014 existing infrastructure.\n- Standard reference: any TA textbook from the last forty years.",
-    "status": "`queued` \u2014 first to ship; sets the floor every other EMA strategy must\nbeat. The existing `ma_crossover.rs` baseline can host this as a\nparameterization.",
-    "thesis": "The canonical cross. When the 50-EMA crosses above the 200-EMA on a\nsustained trend, the cohort of traders who watch this signal coordinates\ninto long positions \u2014 and so do the institutional desks whose risk models\nuse the 200-EMA as their primary regime line. The signal's reliability\ncomes from this coordination, not from any property of the underlying\nmath: an 87/213 cross has identical mathematical content and zero edge,\nbecause nobody watches it.\n\nThis strategy lives in the cell where the design intention (smoothing) and\nthe cultural-emergent property (self-fulfilling S/R) align maximally.\nIncluding it as a baseline is non-negotiable; the question is what\n*beats* it, not whether to include it."
+    "expected_regime": "R1 (strong trend) and the *transition* into R1. Underperforms in R5\n(chop) — `min_slope_slow` is the regime filter that prevents entries\nduring R5 crossings.",
+    "inputs": "- `IndicatorPanel.ema_50` — 50-period EMA of close.\n- `IndicatorPanel.ema_200` — 200-period EMA of close.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14` — for stop placement.",
+    "parameters": "| Param                    | Default | Range          |\n| ------------------------ | ------- | -------------- |\n| `fast_period`            | 50      | fixed (cultural) |\n| `slow_period`            | 200     | fixed (cultural) |\n| `min_slope_slow`         | 0       | 0 – 0.001 (per bar fraction of price) |\n| `confirmation_bars`      | 1       | 1 – 5          |\n| `stop_atr_multiple`      | 2.5     | 1.5 – 4.0      |\n| `take_profit_rr`         | 2.0     | 1.0 – 4.0      |\n\n`min_slope_slow` filters out crossings that occur because the slow EMA\nis rolling sideways — those are R5 (chop) cross-events, not R1 trend\ncrossings.",
+    "references": "- Atlas Page 3 (P2 × R1) and Page 4 (cultural weight of 50/200).\n- `crates/xvision-eval/src/baselines/ma_crossover.rs` — existing infrastructure.\n- Standard reference: any TA textbook from the last forty years.",
+    "status": "`queued` — first to ship; sets the floor every other EMA strategy must\nbeat. The existing `ma_crossover.rs` baseline can host this as a\nparameterization.",
+    "thesis": "The canonical cross. When the 50-EMA crosses above the 200-EMA on a\nsustained trend, the cohort of traders who watch this signal coordinates\ninto long positions — and so do the institutional desks whose risk models\nuse the 200-EMA as their primary regime line. The signal's reliability\ncomes from this coordination, not from any property of the underlying\nmath: an 87/213 cross has identical mathematical content and zero edge,\nbecause nobody watches it.\n\nThis strategy lives in the cell where the design intention (smoothing) and\nthe cultural-emergent property (self-fulfilling S/R) align maximally.\nIncluding it as a baseline is non-negotiable; the question is what\n*beats* it, not whether to include it."
   },
   "source_doc": "strategies/EMA/ema_50_200_golden_cross.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `EMA 50 200 Golden Cross` strategy.\n\nThesis:\nThe canonical cross. When the 50-EMA crosses above the 200-EMA on a sustained trend, the cohort of traders who watch this signal coordinates into long positions \u2014 and so do the institutional desks whose risk models use the 200-EMA as their primary regime line. The signal's reliability comes from this coordination, not from any property of the underlying math: an 87/213 cross has identical mathematical content and zero edge, because nobody watches it.\n\nInputs:\n- `IndicatorPanel.ema_50` \u2014 50-period EMA of close.\n- `IndicatorPanel.ema_200` \u2014 200-period EMA of close.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14` \u2014 for stop placement.\n\nDecision rule:\n```\ngolden_cross = ema_50 crossed above ema_200 within last `confirmation_bars`\ndeath_cross  = ema_50 crossed below ema_200 within last `confirmation_bars`\n\nif golden_cross and slope(ema_200, window=5) >= min_slope_slow:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif death_cross and slope(ema_200, window=5) <= -min_slope_slow:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on opposite cross or stop/take-profit hit.\n```\n\nExpected regime:\nR1 (strong trend) and the transition into R1. Underperforms in R5 (chop) \u2014 min_slope_slow is the regime filter that prevents entries during R5 crossings.\n\nData dependencies:\nNone beyond price. Pure TA.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA 50 200 Golden Cross` strategy.\n\nThesis:\nThe canonical cross. When the 50-EMA crosses above the 200-EMA on a sustained trend, the cohort of traders who watch this signal coordinates into long positions — and so do the institutional desks whose risk models use the 200-EMA as their primary regime line. The signal's reliability comes from this coordination, not from any property of the underlying math: an 87/213 cross has identical mathematical content and zero edge, because nobody watches it.\n\nInputs:\n- `IndicatorPanel.ema_50` — 50-period EMA of close.\n- `IndicatorPanel.ema_200` — 200-period EMA of close.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14` — for stop placement.\n\nDecision rule:\n```\ngolden_cross = ema_50 crossed above ema_200 within last `confirmation_bars`\ndeath_cross  = ema_50 crossed below ema_200 within last `confirmation_bars`\n\nif golden_cross and slope(ema_200, window=5) >= min_slope_slow:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif death_cross and slope(ema_200, window=5) <= -min_slope_slow:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on opposite cross or stop/take-profit hit.\n```\n\nExpected regime:\nR1 (strong trend) and the transition into R1. Underperforms in R5 (chop) — min_slope_slow is the regime filter that prevents entries during R5 crossings.\n\nData dependencies:\nNone beyond price. Pure TA.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

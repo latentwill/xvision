@@ -2,40 +2,8 @@
   "base_template": "trend_follower",
   "display_name": "EMA Pullback Bounce",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "21",
-      "name": "bounce_ema_period",
-      "range": "13 / 21 / 34"
-    },
-    {
-      "default": "200",
-      "name": "regime_ema_period",
-      "range": "100 / 200"
-    },
-    {
-      "default": "0.5",
-      "name": "pullback_tolerance_atr",
-      "range": "0.2 \u2013 1.5"
-    },
-    {
-      "default": "true",
-      "name": "confirm_with_close_above",
-      "range": "bool \u2014 require close back above EMA after touch"
-    },
-    {
-      "default": "1.0",
-      "name": "stop_atr_multiple",
-      "range": "0.5 \u2013 2.0"
-    },
-    {
-      "default": "1.5",
-      "name": "take_profit_rr",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "ema_pullback_bounce",
-  "plain_summary": "In an established trend (regime R1 / R2), price periodically pulls back to a fast EMA (typically 21) and bounces. The EMA functions as dynamic support in uptrends and dynamic resistance in downtrends. The bounce is high-conviction only when the underlying trend is intact \u2014 confirmed by price > 200-EMA for longs.",
+  "plain_summary": "In an established trend (regime R1 / R2), price periodically pulls back to a fast EMA (typically 21) and bounces. The EMA functions as dynamic support in uptrends and dynamic resistance in downtrends. The bounce is high-conviction only when the underlying trend is intact — confirmed by price > 200-EMA for longs.",
   "regime_fit": [
     "trending_bull",
     "trending_bear",
@@ -49,14 +17,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nin_bull_regime  = price > ema_200 and slope(ema_200) >= 0\nin_bear_regime  = price < ema_200 and slope(ema_200) <= 0\n\nbull_pullback = in_bull_regime\n                and recent_low within pullback_tolerance_atr * atr_14 of ema_21\n                and current_close > ema_21  (bounce confirmed)\n\nbear_pullback = mirror condition\n\nif bull_pullback and is_flat:\n    enter long\n    stop = recent_low - stop_atr_multiple * atr_14   (just below the touched EMA)\n    target = entry + take_profit_rr * (entry - stop)\nelif bear_pullback and is_flat:\n    enter short with mirror stops/targets\n\nexit on stop, target, or break of ema_21 against the position.\n```",
-    "expected_regime": "R2 (pullback) inside R1 (trend). Strictly bounded by the regime gate \u2014\nwithout `in_bull_regime` / `in_bear_regime`, the strategy fails in R5\n(chop) where every \"pullback to EMA\" is just price wandering through.",
-    "inputs": "- `IndicatorPanel.ema_21` \u2014 bounce EMA.\n- `IndicatorPanel.ema_200` \u2014 regime gate.\n- `IndicatorPanel.atr_14` \u2014 for \"pullback close enough\" tolerance and stop.\n- `PriceFrame.close`, `PriceFrame.low`, `PriceFrame.high`.",
-    "parameters": "| Param                      | Default | Range            |\n| -------------------------- | ------- | ---------------- |\n| `bounce_ema_period`        | 21      | 13 / 21 / 34     |\n| `regime_ema_period`        | 200     | 100 / 200        |\n| `pullback_tolerance_atr`   | 0.5     | 0.2 \u2013 1.5        |\n| `confirm_with_close_above` | `true`  | bool \u2014 require close back above EMA after touch |\n| `stop_atr_multiple`        | 1.0     | 0.5 \u2013 2.0        |\n| `take_profit_rr`           | 1.5     | 1.0 \u2013 3.0        |\n\n`pullback_tolerance_atr` defines \"close enough to EMA to count as a\ntouch\" \u2014 if price wicks within `0.5 * ATR` of the EMA, it counts. Pure\nmid-line touches are too rare; small wick-tolerance materially increases\ntrade count without degrading win rate.",
-    "references": "- Atlas Page 3 (P1/P6 \u00d7 R2).\n- Regime gate: [`ema_bullbear_regime_filter`](ema_bullbear_regime_filter.md) implements the filter directly.",
-    "status": "`queued`. Pairs naturally with `ema_50_200_golden_cross` \u2014 golden-cross\nprovides initial entry, pullback-bounce provides re-entries on the same\ntrend. Both can run on the same instrument simultaneously.",
-    "thesis": "In an established trend (regime R1 / R2), price periodically pulls back\nto a fast EMA (typically 21) and bounces. The EMA functions as dynamic\nsupport in uptrends and dynamic resistance in downtrends. The bounce is\nhigh-conviction *only* when the underlying trend is intact \u2014 confirmed\nby price > 200-EMA for longs.\n\nThis is the highest win-rate setup in the EMA family. Pays for it with\nrelatively small per-trade R, so depends on the win rate being real and\nthe regime gate keeping it real."
+    "expected_regime": "R2 (pullback) inside R1 (trend). Strictly bounded by the regime gate —\nwithout `in_bull_regime` / `in_bear_regime`, the strategy fails in R5\n(chop) where every \"pullback to EMA\" is just price wandering through.",
+    "inputs": "- `IndicatorPanel.ema_21` — bounce EMA.\n- `IndicatorPanel.ema_200` — regime gate.\n- `IndicatorPanel.atr_14` — for \"pullback close enough\" tolerance and stop.\n- `PriceFrame.close`, `PriceFrame.low`, `PriceFrame.high`.",
+    "parameters": "| Param                      | Default | Range            |\n| -------------------------- | ------- | ---------------- |\n| `bounce_ema_period`        | 21      | 13 / 21 / 34     |\n| `regime_ema_period`        | 200     | 100 / 200        |\n| `pullback_tolerance_atr`   | 0.5     | 0.2 – 1.5        |\n| `confirm_with_close_above` | `true`  | bool — require close back above EMA after touch |\n| `stop_atr_multiple`        | 1.0     | 0.5 – 2.0        |\n| `take_profit_rr`           | 1.5     | 1.0 – 3.0        |\n\n`pullback_tolerance_atr` defines \"close enough to EMA to count as a\ntouch\" — if price wicks within `0.5 * ATR` of the EMA, it counts. Pure\nmid-line touches are too rare; small wick-tolerance materially increases\ntrade count without degrading win rate.",
+    "references": "- Atlas Page 3 (P1/P6 × R2).\n- Regime gate: [`ema_bullbear_regime_filter`](ema_bullbear_regime_filter.md) implements the filter directly.",
+    "status": "`queued`. Pairs naturally with `ema_50_200_golden_cross` — golden-cross\nprovides initial entry, pullback-bounce provides re-entries on the same\ntrend. Both can run on the same instrument simultaneously.",
+    "thesis": "In an established trend (regime R1 / R2), price periodically pulls back\nto a fast EMA (typically 21) and bounces. The EMA functions as dynamic\nsupport in uptrends and dynamic resistance in downtrends. The bounce is\nhigh-conviction *only* when the underlying trend is intact — confirmed\nby price > 200-EMA for longs.\n\nThis is the highest win-rate setup in the EMA family. Pays for it with\nrelatively small per-trade R, so depends on the win rate being real and\nthe regime gate keeping it real."
   },
   "source_doc": "strategies/EMA/ema_pullback_bounce.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `EMA Pullback Bounce` strategy.\n\nThesis:\nIn an established trend (regime R1 / R2), price periodically pulls back to a fast EMA (typically 21) and bounces. The EMA functions as dynamic support in uptrends and dynamic resistance in downtrends. The bounce is high-conviction only when the underlying trend is intact \u2014 confirmed by price > 200-EMA for longs.\n\nInputs:\n- `IndicatorPanel.ema_21` \u2014 bounce EMA.\n- `IndicatorPanel.ema_200` \u2014 regime gate.\n- `IndicatorPanel.atr_14` \u2014 for \"pullback close enough\" tolerance and stop.\n- `PriceFrame.close`, `PriceFrame.low`, `PriceFrame.high`.\n\nDecision rule:\n```\nin_bull_regime  = price > ema_200 and slope(ema_200) >= 0\nin_bear_regime  = price < ema_200 and slope(ema_200) <= 0\n\nbull_pullback = in_bull_regime\n                and recent_low within pullback_tolerance_atr * atr_14 of ema_21\n                and current_close > ema_21  (bounce confirmed)\n\nbear_pullback = mirror condition\n\nif bull_pullback and is_flat:\n    enter long\n    stop = recent_low - stop_atr_multiple * atr_14   (just below the touched EMA)\n    target = entry + take_profit_rr * (entry - stop)\nelif bear_pullback and is_flat:\n    enter short with mirror stops/targets\n\nexit on stop, target, or break of ema_21 against the position.\n```\n\nExpected regime:\nR2 (pullback) inside R1 (trend). Strictly bounded by the regime gate \u2014 without in_bull_regime / in_bear_regime, the strategy fails in R5 (chop) where every \"pullback to EMA\" is just price wandering through.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA Pullback Bounce` strategy.\n\nThesis:\nIn an established trend (regime R1 / R2), price periodically pulls back to a fast EMA (typically 21) and bounces. The EMA functions as dynamic support in uptrends and dynamic resistance in downtrends. The bounce is high-conviction only when the underlying trend is intact — confirmed by price > 200-EMA for longs.\n\nInputs:\n- `IndicatorPanel.ema_21` — bounce EMA.\n- `IndicatorPanel.ema_200` — regime gate.\n- `IndicatorPanel.atr_14` — for \"pullback close enough\" tolerance and stop.\n- `PriceFrame.close`, `PriceFrame.low`, `PriceFrame.high`.\n\nDecision rule:\n```\nin_bull_regime  = price > ema_200 and slope(ema_200) >= 0\nin_bear_regime  = price < ema_200 and slope(ema_200) <= 0\n\nbull_pullback = in_bull_regime\n                and recent_low within pullback_tolerance_atr * atr_14 of ema_21\n                and current_close > ema_21  (bounce confirmed)\n\nbear_pullback = mirror condition\n\nif bull_pullback and is_flat:\n    enter long\n    stop = recent_low - stop_atr_multiple * atr_14   (just below the touched EMA)\n    target = entry + take_profit_rr * (entry - stop)\nelif bear_pullback and is_flat:\n    enter short with mirror stops/targets\n\nexit on stop, target, or break of ema_21 against the position.\n```\n\nExpected regime:\nR2 (pullback) inside R1 (trend). Strictly bounded by the regime gate — without in_bull_regime / in_bear_regime, the strategy fails in R5 (chop) where every \"pullback to EMA\" is just price wandering through.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

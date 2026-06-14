@@ -2,33 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Price EMA Distance Meanrev",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "21",
-      "name": "anchor_ema_period",
-      "range": "13 / 21 / 34"
-    },
-    {
-      "default": "2.5",
-      "name": "min_distance_atr",
-      "range": "1.5 \u2013 4.0"
-    },
-    {
-      "default": "0.05%",
-      "name": "max_regime_slope_atr_pct",
-      "range": "0.0% \u2013 0.2%"
-    },
-    {
-      "default": "0.5",
-      "name": "target_distance_atr",
-      "range": "0.0 \u2013 1.0"
-    },
-    {
-      "default": "4.0",
-      "name": "stop_distance_atr",
-      "range": "2.5 \u2013 6.0"
-    }
-  ],
   "name": "price_ema_distance_meanrev",
   "plain_summary": "Price stretches away from its EMA, then snaps back. The further the stretch (measured in ATRs), the higher the mean-reversion pressure. This is the simplest form of the Bollinger Band logic, expressed directly: when |price - EMA| / ATR exceeds a threshold, fade the stretch.",
   "regime_fit": [
@@ -42,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\ndistance = (price - ema_21) / atr_14\nregime_slope = slope(ema_200, window=10) / atr_14\n\nabs_regime_slope = abs(regime_slope)\nin_chop_or_weak_trend = abs_regime_slope <= max_regime_slope_atr_pct\n\nif in_chop_or_weak_trend\n   and distance >= +min_distance_atr\n   and is_flat:\n    enter short, target = ema_21 + target_distance_atr * atr_14\n                stop   = ema_21 + stop_distance_atr   * atr_14\nelif in_chop_or_weak_trend\n   and distance <= -min_distance_atr\n   and is_flat:\n    enter long,  target = ema_21 - target_distance_atr * atr_14\n                stop   = ema_21 - stop_distance_atr   * atr_14\n```",
-    "expected_regime": "R5 (chop) and weak R2/R4 transitions. Strictly excluded from R1 by the\nregime gate. Surprisingly poor on intraday \u2014 distance signals fire fast\nand resolve faster, often inside one bar.",
-    "inputs": "- `IndicatorPanel.ema_21` \u2014 typical mean-reversion anchor.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n- `IndicatorPanel.ema_200` and its slope \u2014 for the *avoid R1* regime gate.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `anchor_ema_period`            | 21      | 13 / 21 / 34     |\n| `min_distance_atr`             | 2.5     | 1.5 \u2013 4.0        |\n| `max_regime_slope_atr_pct`     | 0.05%   | 0.0% \u2013 0.2%      |\n| `target_distance_atr`          | 0.5     | 0.0 \u2013 1.0        |\n| `stop_distance_atr`            | 4.0     | 2.5 \u2013 6.0        |\n\n`max_regime_slope_atr_pct` is the *anti-trend* gate: if the 200-EMA is\nsloping faster than this threshold, we're in R1 and the strategy must\nnot fire.",
-    "references": "- Atlas Page 5 (Distance side-effect).\n- Bollinger Bands \u2014 same logic, different anchor (SMA + \u03c3).\n- Regime-anti-gate: this strategy *avoids* R1, opposite of most others.",
+    "expected_regime": "R5 (chop) and weak R2/R4 transitions. Strictly excluded from R1 by the\nregime gate. Surprisingly poor on intraday — distance signals fire fast\nand resolve faster, often inside one bar.",
+    "inputs": "- `IndicatorPanel.ema_21` — typical mean-reversion anchor.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n- `IndicatorPanel.ema_200` and its slope — for the *avoid R1* regime gate.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `anchor_ema_period`            | 21      | 13 / 21 / 34     |\n| `min_distance_atr`             | 2.5     | 1.5 – 4.0        |\n| `max_regime_slope_atr_pct`     | 0.05%   | 0.0% – 0.2%      |\n| `target_distance_atr`          | 0.5     | 0.0 – 1.0        |\n| `stop_distance_atr`            | 4.0     | 2.5 – 6.0        |\n\n`max_regime_slope_atr_pct` is the *anti-trend* gate: if the 200-EMA is\nsloping faster than this threshold, we're in R1 and the strategy must\nnot fire.",
+    "references": "- Atlas Page 5 (Distance side-effect).\n- Bollinger Bands — same logic, different anchor (SMA + σ).\n- Regime-anti-gate: this strategy *avoids* R1, opposite of most others.",
     "status": "`queued`. Mean-reversion counterweight to the trend-following strategies;\nensures the strategy population is not 100% trend-aligned.",
-    "thesis": "Price stretches away from its EMA, then snaps back. The further the\nstretch (measured in ATRs), the higher the mean-reversion pressure.\nThis is the simplest form of the Bollinger Band logic, expressed\ndirectly: when `|price - EMA| / ATR` exceeds a threshold, fade the\nstretch.\n\nThe strategy works *only* in R5 (chop / range) and weakly trending\nmarkets. In R1 (strong trend), price-EMA-distance is high *for a reason* \u2014\nthe trend is real and fading it is suicide. Therefore this strategy must\nbe regime-gated to *avoid* R1, the inverse of most other strategies'\ngating."
+    "thesis": "Price stretches away from its EMA, then snaps back. The further the\nstretch (measured in ATRs), the higher the mean-reversion pressure.\nThis is the simplest form of the Bollinger Band logic, expressed\ndirectly: when `|price - EMA| / ATR` exceeds a threshold, fade the\nstretch.\n\nThe strategy works *only* in R5 (chop / range) and weakly trending\nmarkets. In R1 (strong trend), price-EMA-distance is high *for a reason* —\nthe trend is real and fading it is suicide. Therefore this strategy must\nbe regime-gated to *avoid* R1, the inverse of most other strategies'\ngating."
   },
   "source_doc": "strategies/EMA/price_ema_distance_meanrev.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `Price EMA Distance Meanrev` strategy.\n\nThesis:\nPrice stretches away from its EMA, then snaps back. The further the stretch (measured in ATRs), the higher the mean-reversion pressure. This is the simplest form of the Bollinger Band logic, expressed directly: when |price - EMA| / ATR exceeds a threshold, fade the stretch.\n\nInputs:\n- `IndicatorPanel.ema_21` \u2014 typical mean-reversion anchor.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n- `IndicatorPanel.ema_200` and its slope \u2014 for the *avoid R1* regime gate.\n\nDecision rule:\n```\ndistance = (price - ema_21) / atr_14\nregime_slope = slope(ema_200, window=10) / atr_14\n\nabs_regime_slope = abs(regime_slope)\nin_chop_or_weak_trend = abs_regime_slope <= max_regime_slope_atr_pct\n\nif in_chop_or_weak_trend\n   and distance >= +min_distance_atr\n   and is_flat:\n    enter short, target = ema_21 + target_distance_atr * atr_14\n                stop   = ema_21 + stop_distance_atr   * atr_14\nelif in_chop_or_weak_trend\n   and distance <= -min_distance_atr\n   and is_flat:\n    enter long,  target = ema_21 - target_distance_atr * atr_14\n                stop   = ema_21 - stop_distance_atr   * atr_14\n```\n\nExpected regime:\nR5 (chop) and weak R2/R4 transitions. Strictly excluded from R1 by the regime gate. Surprisingly poor on intraday \u2014 distance signals fire fast and resolve faster, often inside one bar.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `Price EMA Distance Meanrev` strategy.\n\nThesis:\nPrice stretches away from its EMA, then snaps back. The further the stretch (measured in ATRs), the higher the mean-reversion pressure. This is the simplest form of the Bollinger Band logic, expressed directly: when |price - EMA| / ATR exceeds a threshold, fade the stretch.\n\nInputs:\n- `IndicatorPanel.ema_21` — typical mean-reversion anchor.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n- `IndicatorPanel.ema_200` and its slope — for the *avoid R1* regime gate.\n\nDecision rule:\n```\ndistance = (price - ema_21) / atr_14\nregime_slope = slope(ema_200, window=10) / atr_14\n\nabs_regime_slope = abs(regime_slope)\nin_chop_or_weak_trend = abs_regime_slope <= max_regime_slope_atr_pct\n\nif in_chop_or_weak_trend\n   and distance >= +min_distance_atr\n   and is_flat:\n    enter short, target = ema_21 + target_distance_atr * atr_14\n                stop   = ema_21 + stop_distance_atr   * atr_14\nelif in_chop_or_weak_trend\n   and distance <= -min_distance_atr\n   and is_flat:\n    enter long,  target = ema_21 - target_distance_atr * atr_14\n                stop   = ema_21 - stop_distance_atr   * atr_14\n```\n\nExpected regime:\nR5 (chop) and weak R2/R4 transitions. Strictly excluded from R1 by the regime gate. Surprisingly poor on intraday — distance signals fire fast and resolve faster, often inside one bar.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

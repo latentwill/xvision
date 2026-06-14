@@ -2,50 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "RSI Dry Bottom Long",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "rsi_oversold",
-      "range": "15 \u2013 30"
-    },
-    {
-      "default": "20",
-      "name": "volume_pct_max",
-      "range": "10 \u2013 30"
-    },
-    {
-      "default": "5",
-      "name": "volume_decay_bars",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "3",
-      "name": "confirmation_bars",
-      "range": "2 \u2013 6"
-    },
-    {
-      "default": "5%",
-      "name": "min_decline_pct_5d",
-      "range": "2% \u2013 15%"
-    },
-    {
-      "default": "50",
-      "name": "target_rsi",
-      "range": "40 \u2013 60"
-    },
-    {
-      "default": "12",
-      "name": "time_stop_bars",
-      "range": "6 \u2013 25"
-    },
-    {
-      "default": "1.5",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "rsi_dry_bottom_long",
-  "plain_summary": "The mirror of rsi_dry_top_fade. When RSI is oversold but volume is dry, the decline is exhausted: there are no more sellers willing to push the price lower, even though RSI says the market wants to. The phrase \"selling on no volume\" is an old equity desk maxim \u2014 declines without participation are bear traps that resolve with sharp recoveries when real bid emerges.",
+  "plain_summary": "The mirror of rsi_dry_top_fade. When RSI is oversold but volume is dry, the decline is exhausted: there are no more sellers willing to push the price lower, even though RSI says the market wants to. The phrase \"selling on no volume\" is an old equity desk maxim — declines without participation are bear traps that resolve with sharp recoveries when real bid emerges.",
   "regime_fit": [
     "any"
   ],
@@ -59,12 +17,12 @@
     "decision_rule": "```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\nreal_decline = (close[t-5] - close[t]) / close[t-5] >= min_decline_pct_5d\n\ndry_bottom = rsi_14 <= rsi_oversold\n             AND volume_decaying\n             AND real_decline\n             AND <event holds for confirmation_bars>\n\nif dry_bottom and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```",
     "expected_regime": "End-of-decline phases where selling has dried up. Best on assets\npost-flush, after the initial panic has resolved. Underperforms in\nslow-grind declines that haven't yet reached exhaustion (no \"no-volume\"\ncondition until late).",
     "inputs": "Same as `rsi_dry_top_fade`.",
-    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_oversold`            | 20      | 15 \u2013 30          |\n| `volume_pct_max`          | 20      | 10 \u2013 30          |\n| `volume_decay_bars`       | 5       | 3 \u2013 10           |\n| `confirmation_bars`       | 3       | 2 \u2013 6            |\n| `min_decline_pct_5d`      | 5%      | 2% \u2013 15%         |\n| `target_rsi`              | 50      | 40 \u2013 60          |\n| `time_stop_bars`          | 12      | 6 \u2013 25           |\n| `stop_atr_multiple`       | 1.5     | 1.0 \u2013 3.0        |\n\n`min_decline_pct_5d` ensures we're entering after a real decline, not on\na fluke oversold print at sideways prices. The premise of \"selling\nexhaustion\" requires that there has been recent selling.",
-    "references": "- Compendium README \u00a7Map, WHIMPER COVE.\n- Pair (panic-flush form): [`rsi_capitulation_long`](rsi_capitulation_long.md).\n- Mirror (overbought side): [`rsi_dry_top_fade`](rsi_dry_top_fade.md).",
-    "status": "`queued`. Pair with `rsi_capitulation_long` \u2014 between them they cover\nboth microstructure forms of an oversold setup.",
-    "thesis": "The mirror of `rsi_dry_top_fade`. When RSI is oversold but volume is dry,\nthe decline is exhausted: there are no more sellers willing to push the\nprice lower, even though RSI says the market wants to. The phrase\n\"selling on no volume\" is an old equity desk maxim \u2014 declines without\nparticipation are bear traps that resolve with sharp recoveries when\nreal bid emerges.\n\nDiffers sharply from `rsi_capitulation_long`: that one trades the\n*panic flush* (volume extreme); this one trades the *whimper bottom*\n(volume gone). Both go long oversold RSI, but for opposite microstructure\nreasons. Both should be in the strategy population because they trigger\non different days."
+    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_oversold`            | 20      | 15 – 30          |\n| `volume_pct_max`          | 20      | 10 – 30          |\n| `volume_decay_bars`       | 5       | 3 – 10           |\n| `confirmation_bars`       | 3       | 2 – 6            |\n| `min_decline_pct_5d`      | 5%      | 2% – 15%         |\n| `target_rsi`              | 50      | 40 – 60          |\n| `time_stop_bars`          | 12      | 6 – 25           |\n| `stop_atr_multiple`       | 1.5     | 1.0 – 3.0        |\n\n`min_decline_pct_5d` ensures we're entering after a real decline, not on\na fluke oversold print at sideways prices. The premise of \"selling\nexhaustion\" requires that there has been recent selling.",
+    "references": "- Compendium README §Map, WHIMPER COVE.\n- Pair (panic-flush form): [`rsi_capitulation_long`](rsi_capitulation_long.md).\n- Mirror (overbought side): [`rsi_dry_top_fade`](rsi_dry_top_fade.md).",
+    "status": "`queued`. Pair with `rsi_capitulation_long` — between them they cover\nboth microstructure forms of an oversold setup.",
+    "thesis": "The mirror of `rsi_dry_top_fade`. When RSI is oversold but volume is dry,\nthe decline is exhausted: there are no more sellers willing to push the\nprice lower, even though RSI says the market wants to. The phrase\n\"selling on no volume\" is an old equity desk maxim — declines without\nparticipation are bear traps that resolve with sharp recoveries when\nreal bid emerges.\n\nDiffers sharply from `rsi_capitulation_long`: that one trades the\n*panic flush* (volume extreme); this one trades the *whimper bottom*\n(volume gone). Both go long oversold RSI, but for opposite microstructure\nreasons. Both should be in the strategy population because they trigger\non different days."
   },
   "source_doc": "strategies/rsi_volume/rsi_dry_bottom_long.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `RSI Dry Bottom Long` strategy.\n\nThesis:\nThe mirror of rsi_dry_top_fade. When RSI is oversold but volume is dry, the decline is exhausted: there are no more sellers willing to push the price lower, even though RSI says the market wants to. The phrase \"selling on no volume\" is an old equity desk maxim \u2014 declines without participation are bear traps that resolve with sharp recoveries when real bid emerges.\n\nInputs:\nSame as `rsi_dry_top_fade`.\n\nDecision rule:\n```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\nreal_decline = (close[t-5] - close[t]) / close[t-5] >= min_decline_pct_5d\n\ndry_bottom = rsi_14 <= rsi_oversold\n             AND volume_decaying\n             AND real_decline\n             AND <event holds for confirmation_bars>\n\nif dry_bottom and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nEnd-of-decline phases where selling has dried up. Best on assets post-flush, after the initial panic has resolved. Underperforms in slow-grind declines that haven't yet reached exhaustion (no \"no-volume\" condition until late).\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `RSI Dry Bottom Long` strategy.\n\nThesis:\nThe mirror of rsi_dry_top_fade. When RSI is oversold but volume is dry, the decline is exhausted: there are no more sellers willing to push the price lower, even though RSI says the market wants to. The phrase \"selling on no volume\" is an old equity desk maxim — declines without participation are bear traps that resolve with sharp recoveries when real bid emerges.\n\nInputs:\nSame as `rsi_dry_top_fade`.\n\nDecision rule:\n```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\nreal_decline = (close[t-5] - close[t]) / close[t-5] >= min_decline_pct_5d\n\ndry_bottom = rsi_14 <= rsi_oversold\n             AND volume_decaying\n             AND real_decline\n             AND <event holds for confirmation_bars>\n\nif dry_bottom and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nEnd-of-decline phases where selling has dried up. Best on assets post-flush, after the initial panic has resolved. Underperforms in slow-grind declines that haven't yet reached exhaustion (no \"no-volume\" condition until late).\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

@@ -109,7 +109,6 @@ fn strategy_with_manifest(
             model: None,
         }),
         risk,
-        mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,

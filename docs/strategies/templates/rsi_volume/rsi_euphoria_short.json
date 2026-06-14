@@ -2,50 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "RSI Euphoria Short",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "14",
-      "name": "rsi_period",
-      "range": "7 / 14 / 21"
-    },
-    {
-      "default": "80",
-      "name": "rsi_overbought",
-      "range": "70 \u2013 85"
-    },
-    {
-      "default": "95",
-      "name": "volume_pct_min",
-      "range": "85 \u2013 99"
-    },
-    {
-      "default": "2",
-      "name": "confirmation_bars",
-      "range": "1 \u2013 4"
-    },
-    {
-      "default": "50",
-      "name": "target_rsi",
-      "range": "40 \u2013 60"
-    },
-    {
-      "default": "20",
-      "name": "time_stop_bars",
-      "range": "10 \u2013 50"
-    },
-    {
-      "default": "4.0",
-      "name": "stop_atr_multiple",
-      "range": "2.5 \u2013 6.0"
-    },
-    {
-      "default": "0.7",
-      "name": "position_size_factor",
-      "range": "0.4 \u2013 1.0"
-    }
-  ],
   "name": "rsi_euphoria_short",
-  "plain_summary": "The mirror of rsi_capitulation_long. When RSI prints an extreme overbought reading (\u2265 80) at the same time as volume at the 95th percentile, the move is exhibiting blow-off characteristics: high participation chasing a price that has already moved a lot. The combination signals euphoria \u2014 fresh longs entering at the worst possible price.",
+  "plain_summary": "The mirror of rsi_capitulation_long. When RSI prints an extreme overbought reading (≥ 80) at the same time as volume at the 95th percentile, the move is exhibiting blow-off characteristics: high participation chasing a price that has already moved a lot. The combination signals euphoria — fresh longs entering at the worst possible price.",
   "regime_fit": [
     "event_driven"
   ],
@@ -59,12 +17,12 @@
     "decision_rule": "```\neuphoria_event = rsi_14 >= rsi_overbought\n                 AND volume_pct >= volume_pct_min\n                 AND <event holds for confirmation_bars>\n\nif euphoria_event and is_flat:\n    enter short with size = base_size * position_size_factor\n    stop = entry + stop_atr_multiple * atr_14\n    target = exit when rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n```",
     "expected_regime": "Late-stage rallies, blow-off tops, news-driven euphoria. Often dies in\nstrong reflexive trends (meme rallies, narrative-driven parabolics) where\nRSI stays >80 for many days; the time_stop cuts losses there.",
     "inputs": "Same as `rsi_capitulation_long`.",
-    "parameters": "| Param                     | Default | Range            | Asymmetric vs long-side |\n| ------------------------- | ------- | ---------------- | ----------------------- |\n| `rsi_period`              | 14      | 7 / 14 / 21      | same                    |\n| `rsi_overbought`          | 80      | 70 \u2013 85          | mirror of `rsi_oversold`|\n| `volume_pct_min`          | 95      | 85 \u2013 99          | same                    |\n| `confirmation_bars`       | 2       | 1 \u2013 4            | **higher** \u2014 euphoria persists |\n| `target_rsi`              | 50      | 40 \u2013 60          | same                    |\n| `time_stop_bars`          | 20      | 10 \u2013 50          | **higher** than long-side (10) |\n| `stop_atr_multiple`       | 4.0     | 2.5 \u2013 6.0        | **higher** than long-side (3.0) |\n| `position_size_factor`    | 0.7     | 0.4 \u2013 1.0        | **lower** than long-side |\n\nThe asymmetric defaults encode the empirical observation that euphoria\nmoves are slower to resolve than capitulation moves and risk overshoot;\nparameters that work for the long-side fade are too tight for the\nshort-side fade.",
-    "references": "- Compendium README \u00a7Map, CLIMAX COAST.\n- Pair: [`rsi_capitulation_long`](rsi_capitulation_long.md).\n- Symmetry-breaking analog: [`../bollinger/bb_climax_fade`](../bollinger/bb_climax_fade.md) \u2014 same insight (capitulation faster than euphoria) operationalized in BB.",
-    "status": "`queued`. Asymmetric pair to `rsi_capitulation_long` \u2014 the asymmetry is\nthe point, not a parameter accident.",
-    "thesis": "The mirror of `rsi_capitulation_long`. When RSI prints an extreme\noverbought reading (\u2265 80) at the same time as volume at the 95th\npercentile, the move is exhibiting blow-off characteristics: high\nparticipation chasing a price that has already moved a lot. The\ncombination signals euphoria \u2014 fresh longs entering at the worst possible\nprice.\n\nAsymmetric tuning vs the long-side mirror: euphoria takes *longer* to\nresolve than capitulation (the BB compendium's symmetry-breaking insight\napplies here too). Time-stops are longer; stops wider; position size\nmodest because the move can extend further than capitulation moves can\nextend down."
+    "parameters": "| Param                     | Default | Range            | Asymmetric vs long-side |\n| ------------------------- | ------- | ---------------- | ----------------------- |\n| `rsi_period`              | 14      | 7 / 14 / 21      | same                    |\n| `rsi_overbought`          | 80      | 70 – 85          | mirror of `rsi_oversold`|\n| `volume_pct_min`          | 95      | 85 – 99          | same                    |\n| `confirmation_bars`       | 2       | 1 – 4            | **higher** — euphoria persists |\n| `target_rsi`              | 50      | 40 – 60          | same                    |\n| `time_stop_bars`          | 20      | 10 – 50          | **higher** than long-side (10) |\n| `stop_atr_multiple`       | 4.0     | 2.5 – 6.0        | **higher** than long-side (3.0) |\n| `position_size_factor`    | 0.7     | 0.4 – 1.0        | **lower** than long-side |\n\nThe asymmetric defaults encode the empirical observation that euphoria\nmoves are slower to resolve than capitulation moves and risk overshoot;\nparameters that work for the long-side fade are too tight for the\nshort-side fade.",
+    "references": "- Compendium README §Map, CLIMAX COAST.\n- Pair: [`rsi_capitulation_long`](rsi_capitulation_long.md).\n- Symmetry-breaking analog: [`../bollinger/bb_climax_fade`](../bollinger/bb_climax_fade.md) — same insight (capitulation faster than euphoria) operationalized in BB.",
+    "status": "`queued`. Asymmetric pair to `rsi_capitulation_long` — the asymmetry is\nthe point, not a parameter accident.",
+    "thesis": "The mirror of `rsi_capitulation_long`. When RSI prints an extreme\noverbought reading (≥ 80) at the same time as volume at the 95th\npercentile, the move is exhibiting blow-off characteristics: high\nparticipation chasing a price that has already moved a lot. The\ncombination signals euphoria — fresh longs entering at the worst possible\nprice.\n\nAsymmetric tuning vs the long-side mirror: euphoria takes *longer* to\nresolve than capitulation (the BB compendium's symmetry-breaking insight\napplies here too). Time-stops are longer; stops wider; position size\nmodest because the move can extend further than capitulation moves can\nextend down."
   },
   "source_doc": "strategies/rsi_volume/rsi_euphoria_short.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `RSI Euphoria Short` strategy.\n\nThesis:\nThe mirror of rsi_capitulation_long. When RSI prints an extreme overbought reading (\u2265 80) at the same time as volume at the 95th percentile, the move is exhibiting blow-off characteristics: high participation chasing a price that has already moved a lot. The combination signals euphoria \u2014 fresh longs entering at the worst possible price.\n\nInputs:\nSame as `rsi_capitulation_long`.\n\nDecision rule:\n```\neuphoria_event = rsi_14 >= rsi_overbought\n                 AND volume_pct >= volume_pct_min\n                 AND <event holds for confirmation_bars>\n\nif euphoria_event and is_flat:\n    enter short with size = base_size * position_size_factor\n    stop = entry + stop_atr_multiple * atr_14\n    target = exit when rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nLate-stage rallies, blow-off tops, news-driven euphoria. Often dies in strong reflexive trends (meme rallies, narrative-driven parabolics) where RSI stays >80 for many days; the time_stop cuts losses there.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `RSI Euphoria Short` strategy.\n\nThesis:\nThe mirror of rsi_capitulation_long. When RSI prints an extreme overbought reading (≥ 80) at the same time as volume at the 95th percentile, the move is exhibiting blow-off characteristics: high participation chasing a price that has already moved a lot. The combination signals euphoria — fresh longs entering at the worst possible price.\n\nInputs:\nSame as `rsi_capitulation_long`.\n\nDecision rule:\n```\neuphoria_event = rsi_14 >= rsi_overbought\n                 AND volume_pct >= volume_pct_min\n                 AND <event holds for confirmation_bars>\n\nif euphoria_event and is_flat:\n    enter short with size = base_size * position_size_factor\n    stop = entry + stop_atr_multiple * atr_14\n    target = exit when rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nLate-stage rallies, blow-off tops, news-driven euphoria. Often dies in strong reflexive trends (meme rallies, narrative-driven parabolics) where RSI stays >80 for many days; the time_stop cuts losses there.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

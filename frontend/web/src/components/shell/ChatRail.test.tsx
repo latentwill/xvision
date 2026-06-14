@@ -1156,7 +1156,6 @@ describe("invalidateForToolResult", () => {
   it.each([
     "update_slot",
     "update_manifest",
-    "set_mechanical_param",
     "set_risk_config",
     "attach_agent",
   ])("invalidates the strategies list on %s", (tool) => {

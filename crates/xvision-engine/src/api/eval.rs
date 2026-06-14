@@ -1251,8 +1251,9 @@ pub struct EvalRunRequest {
     /// currently returns a not-implemented error pending the
     /// `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
     pub mode: RunMode,
-    /// Optional per-run override of `Strategy.mechanical_params`. Persisted as
-    /// `eval_runs.params_override_json`.
+    /// Optional free-form per-run config bag, persisted verbatim as
+    /// `eval_runs.params_override_json`. Used as part of the run's dedup
+    /// fingerprint and read by the watchdog (e.g. `max_run_duration_secs`).
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
     /// Required for `mode = live`. Backtest runs must leave this unset.
@@ -4948,7 +4949,6 @@ mod tests {
             regime_slot: None,
             trader_slot: Some(legacy_slot),
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,

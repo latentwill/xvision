@@ -93,7 +93,6 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,

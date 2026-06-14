@@ -2,7 +2,6 @@
   "base_template": "breakout",
   "display_name": "BB Asymmetric Breakouts",
   "family": "bollinger",
-  "mechanical_params": [],
   "name": "bb_asymmetric_breakouts",
   "plain_summary": "The structural symmetry of Bollinger Bands (upper and lower equidistant from the SMA) is a property of the indicator, not of the market. Markets exhibit behavioral asymmetry:",
   "regime_fit": [
@@ -18,7 +17,7 @@
     "decision_rule": "```\nupper_event = pct_b >= upper_touch_pct_b and volume_z >= upper_volume_z_min\nlower_event = pct_b <= lower_touch_pct_b and volume_z >= lower_volume_z_min\n\nregime = \"expansion\" if bandwidth_percentile >= 80 else \"normal\"\n\nif upper_event:\n    if regime == \"normal\":\n        action = upper_action_normal_vol     # default: short\n    else:\n        action = upper_action_expansion_vol  # default: flat (don't chase)\n\nif lower_event:\n    if regime == \"normal\":\n        action = lower_action_normal_vol     # default: long\n    else:\n        action = lower_action_expansion_vol  # default: long (capitulation)\n```",
     "expected_regime": "All regimes; the strategy is regime-aware in its decision rule rather\nthan gated to one regime. The point of the strategy is to *exploit*\nregime variation in the asymmetry, not to filter it out.",
     "inputs": "- Standard BB indicators: `bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- `pct_b`, `bandwidth_percentile`.\n- `PriceFrame.volume` and rolling z-score thereof.\n- `IndicatorPanel.atr_14`.",
-    "references": "- Compendium README \u00a7Symmetry-breaking.\n- Symmetric counterparts: [`bb_meanrev_zscore`](bb_meanrev_zscore.md), [`bb_band_walk_follow`](bb_band_walk_follow.md), [`bb_climax_fade`](bb_climax_fade.md).\n- Head-to-head evaluation: this strategy vs. the symmetric three combined,\n  on the same instrument and window.",
+    "references": "- Compendium README §Symmetry-breaking.\n- Symmetric counterparts: [`bb_meanrev_zscore`](bb_meanrev_zscore.md), [`bb_band_walk_follow`](bb_band_walk_follow.md), [`bb_climax_fade`](bb_climax_fade.md).\n- Head-to-head evaluation: this strategy vs. the symmetric three combined,\n  on the same instrument and window.",
     "status": "`queued`. Highest-novelty BB strategy; encodes the compendium's pivot\ndimension as concrete rules. If it doesn't outperform symmetric variants\nin evaluation, the symmetry-as-edge thesis needs revisiting.",
     "thesis": "The structural symmetry of Bollinger Bands (upper and lower equidistant\nfrom the SMA) is a property of the indicator, not of the market. Markets\nexhibit behavioral asymmetry:\n\n- **Capitulation is faster than euphoria.** Drawdowns close in fewer bars than rallies, with sharper volume spikes.\n- **Volume profile differs.** Lower-band touches under high volume = capitulation flush (long-bias); upper-band touches under high volume = distribution into strength (short-bias).\n- **Walks differ.** Lower-band walks (downtrends) often end with a sharp V-bottom; upper-band walks (uptrends) often end with extended distribution / rounding tops.\n\nThis strategy encodes those asymmetries: upper-band events and lower-band\nevents follow *different* decision rules, not mirrored versions of one\nrule. It is the operational answer to the compendium's pivot dimension."
   },

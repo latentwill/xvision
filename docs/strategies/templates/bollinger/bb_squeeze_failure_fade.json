@@ -2,45 +2,8 @@
   "base_template": "breakout",
   "display_name": "BB Squeeze Failure Fade",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    },
-    {
-      "default": "20",
-      "name": "bandwidth_percentile_max",
-      "range": "5 \u2013 30"
-    },
-    {
-      "default": "true",
-      "name": "failure_close_back_inside",
-      "range": "bool \u2014 require close back inside bands"
-    },
-    {
-      "default": "5",
-      "name": "max_bars_to_fail",
-      "range": "2 \u2013 10"
-    },
-    {
-      "default": "0.5",
-      "name": "stop_buffer_atr",
-      "range": "0.2 \u2013 1.5"
-    },
-    {
-      "default": "true",
-      "name": "target_bb_middle",
-      "range": "exit at SMA centerline"
-    }
-  ],
   "name": "bb_squeeze_failure_fade",
-  "plain_summary": "The contrarian sibling of bb_squeeze_breakout. Empirically, a non-trivial fraction of first squeeze-breaks are false \u2014 driven by a stop-run or a liquidity sweep \u2014 and reverse before establishing a real trend. The failure-fade strategy waits for a squeeze break, then waits for it to fail (price re-enters the band on a close), and takes the fade in the opposite direction.",
+  "plain_summary": "The contrarian sibling of bb_squeeze_breakout. Empirically, a non-trivial fraction of first squeeze-breaks are false — driven by a stop-run or a liquidity sweep — and reverse before establishing a real trend. The failure-fade strategy waits for a squeeze break, then waits for it to fail (price re-enters the band on a close), and takes the fade in the opposite direction.",
   "regime_fit": [
     "high_volatility"
   ],
@@ -51,15 +14,15 @@
   "schema_version": "xvision.strategy_template.v1",
   "sections": {
     "data_dependencies": "None beyond price.",
-    "decision_rule": "```\nstate machine:\n    track recent squeeze-break direction and extreme price during break\n\nif a break_up occurred within last `max_bars_to_fail` bars\n   AND close_now < bb_upper  (back inside the band)\n   AND is_flat:\n       enter SHORT\n       stop = recent_break_high + stop_buffer_atr * atr_14\n       target = bb_middle (centerline) if target_bb_middle else lower band\n\nif break_down + close > bb_lower \u2192 mirror long entry\n```",
-    "expected_regime": "B0 \u2192 B1 reversion (failed break that returns to mean). Pairs with\n`bb_squeeze_breakout` on the same instrument: when one fires the other\nsits on its hands; when the breakout fails the failure-fade picks up.",
+    "decision_rule": "```\nstate machine:\n    track recent squeeze-break direction and extreme price during break\n\nif a break_up occurred within last `max_bars_to_fail` bars\n   AND close_now < bb_upper  (back inside the band)\n   AND is_flat:\n       enter SHORT\n       stop = recent_break_high + stop_buffer_atr * atr_14\n       target = bb_middle (centerline) if target_bb_middle else lower band\n\nif break_down + close > bb_lower → mirror long entry\n```",
+    "expected_regime": "B0 → B1 reversion (failed break that returns to mean). Pairs with\n`bb_squeeze_breakout` on the same instrument: when one fires the other\nsits on its hands; when the breakout fails the failure-fade picks up.",
     "inputs": "Same as `bb_squeeze_breakout`. Plus state machine tracking `was_break_up`\n/ `was_break_down` and the extreme price reached during the break.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 \u2013 2.5        |\n| `bandwidth_percentile_max`     | 20      | 5 \u2013 30           |\n| `failure_close_back_inside`    | `true`  | bool \u2014 require close back inside bands |\n| `max_bars_to_fail`             | 5       | 2 \u2013 10           |\n| `stop_buffer_atr`              | 0.5     | 0.2 \u2013 1.5        |\n| `target_bb_middle`             | `true`  | exit at SMA centerline |\n\n`max_bars_to_fail` bounds how long the strategy waits for failure\nconfirmation. Beyond this window, treat the break as real and stand\ndown.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 – 2.5        |\n| `bandwidth_percentile_max`     | 20      | 5 – 30           |\n| `failure_close_back_inside`    | `true`  | bool — require close back inside bands |\n| `max_bars_to_fail`             | 5       | 2 – 10           |\n| `stop_buffer_atr`              | 0.5     | 0.2 – 1.5        |\n| `target_bb_middle`             | `true`  | exit at SMA centerline |\n\n`max_bars_to_fail` bounds how long the strategy waits for failure\nconfirmation. Beyond this window, treat the break as real and stand\ndown.",
     "references": "- Pair: [`bb_squeeze_breakout`](bb_squeeze_breakout.md).\n- The failure-fade pattern shows up in equities literature as the \"false\n  breakout\" trade and in price-action communities as \"stop run reversal.\"",
     "status": "`queued`. Diversifier; runs against the conventional reading of the same\nindicator, which is exactly the kind of asymmetric exposure the strategy\nensemble benefits from.",
-    "thesis": "The contrarian sibling of `bb_squeeze_breakout`. Empirically, a non-trivial\nfraction of first squeeze-breaks are *false* \u2014 driven by a stop-run or a\nliquidity sweep \u2014 and reverse before establishing a real trend. The\nfailure-fade strategy waits for a squeeze break, then waits for it to\nfail (price re-enters the band on a close), and takes the fade in the\nopposite direction.\n\nLower trade count than `bb_squeeze_breakout` (only fires on failed breaks),\nbut per-trade R can be higher because the failed-break level becomes a\nclean stop-loss reference (entries are inside the band; stops are just\nbeyond the failed extreme)."
+    "thesis": "The contrarian sibling of `bb_squeeze_breakout`. Empirically, a non-trivial\nfraction of first squeeze-breaks are *false* — driven by a stop-run or a\nliquidity sweep — and reverse before establishing a real trend. The\nfailure-fade strategy waits for a squeeze break, then waits for it to\nfail (price re-enters the band on a close), and takes the fade in the\nopposite direction.\n\nLower trade count than `bb_squeeze_breakout` (only fires on failed breaks),\nbut per-trade R can be higher because the failed-break level becomes a\nclean stop-loss reference (entries are inside the band; stops are just\nbeyond the failed extreme)."
   },
   "source_doc": "strategies/bollinger/bb_squeeze_failure_fade.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Squeeze Failure Fade` strategy.\n\nThesis:\nThe contrarian sibling of bb_squeeze_breakout. Empirically, a non-trivial fraction of first squeeze-breaks are false \u2014 driven by a stop-run or a liquidity sweep \u2014 and reverse before establishing a real trend. The failure-fade strategy waits for a squeeze break, then waits for it to fail (price re-enters the band on a close), and takes the fade in the opposite direction.\n\nInputs:\nSame as `bb_squeeze_breakout`. Plus state machine tracking `was_break_up`\n/ `was_break_down` and the extreme price reached during the break.\n\nDecision rule:\n```\nstate machine:\n    track recent squeeze-break direction and extreme price during break\n\nif a break_up occurred within last `max_bars_to_fail` bars\n   AND close_now < bb_upper  (back inside the band)\n   AND is_flat:\n       enter SHORT\n       stop = recent_break_high + stop_buffer_atr * atr_14\n       target = bb_middle (centerline) if target_bb_middle else lower band\n\nif break_down + close > bb_lower \u2192 mirror long entry\n```\n\nExpected regime:\nB0 \u2192 B1 reversion (failed break that returns to mean). Pairs with bb_squeeze_breakout on the same instrument: when one fires the other sits on its hands; when the breakout fails the failure-fade picks up.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Squeeze Failure Fade` strategy.\n\nThesis:\nThe contrarian sibling of bb_squeeze_breakout. Empirically, a non-trivial fraction of first squeeze-breaks are false — driven by a stop-run or a liquidity sweep — and reverse before establishing a real trend. The failure-fade strategy waits for a squeeze break, then waits for it to fail (price re-enters the band on a close), and takes the fade in the opposite direction.\n\nInputs:\nSame as `bb_squeeze_breakout`. Plus state machine tracking `was_break_up`\n/ `was_break_down` and the extreme price reached during the break.\n\nDecision rule:\n```\nstate machine:\n    track recent squeeze-break direction and extreme price during break\n\nif a break_up occurred within last `max_bars_to_fail` bars\n   AND close_now < bb_upper  (back inside the band)\n   AND is_flat:\n       enter SHORT\n       stop = recent_break_high + stop_buffer_atr * atr_14\n       target = bb_middle (centerline) if target_bb_middle else lower band\n\nif break_down + close > bb_lower → mirror long entry\n```\n\nExpected regime:\nB0 → B1 reversion (failed break that returns to mean). Pairs with bb_squeeze_breakout on the same instrument: when one fires the other sits on its hands; when the breakout fails the failure-fade picks up.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

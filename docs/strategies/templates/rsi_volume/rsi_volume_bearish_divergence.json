@@ -2,50 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "RSI Volume Bearish Divergence",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "14",
-      "name": "rsi_period",
-      "range": "7 / 14 / 21"
-    },
-    {
-      "default": "5",
-      "name": "pivot_lookback",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "8",
-      "name": "min_pivot_distance_bars",
-      "range": "5 \u2013 20"
-    },
-    {
-      "default": "30",
-      "name": "divergence_lookback_bars",
-      "range": "15 \u2013 60"
-    },
-    {
-      "default": "70",
-      "name": "min_rsi_at_first_pivot",
-      "range": "60 \u2013 80"
-    },
-    {
-      "default": "20%",
-      "name": "volume_decline_pct",
-      "range": "10% \u2013 40%"
-    },
-    {
-      "default": "true",
-      "name": "confirmation_close_below",
-      "range": "bool \u2014 confirm break of recent low after pivot"
-    },
-    {
-      "default": "0.5",
-      "name": "stop_buffer_atr",
-      "range": "0.2 \u2013 1.5"
-    }
-  ],
   "name": "rsi_volume_bearish_divergence",
-  "plain_summary": "Classical divergence. Price makes a new high, RSI makes a new high (or merely confirms the high), but volume fades \u2014 each successive push higher comes on lower participation than the prior. The disagreement between price/RSI (saying \"still going up\") and volume (saying \"fewer people care\") is information: the rally is running out of buyers without yet having peaked technically.",
+  "plain_summary": "Classical divergence. Price makes a new high, RSI makes a new high (or merely confirms the high), but volume fades — each successive push higher comes on lower participation than the prior. The disagreement between price/RSI (saying \"still going up\") and volume (saying \"fewer people care\") is information: the rally is running out of buyers without yet having peaked technically.",
   "regime_fit": [
     "trending_bear"
   ],
@@ -59,12 +17,12 @@
     "decision_rule": "```\nstate machine over pivot-highs:\n    - identify pivot-high at bar t1 (rolling-max in last pivot_lookback bars).\n    - require rsi_14[t1] >= min_rsi_at_first_pivot.\n    - wait for next pivot-high at bar t2, with t2 - t1 >= min_pivot_distance_bars\n      and t2 within divergence_lookback_bars of t1.\n    - confirm: price[t2] >= price[t1] (new or equal high)\n              AND ema_volume_20[t2] <= ema_volume_20[t1] * (1 - volume_decline_pct)\n\nonce divergence confirmed, wait for confirmation_close_below\n    (close < the lowest low between t1 and t2) to enter SHORT.\n\nstop = recent pivot high (t2) + stop_buffer_atr * atr_14\ntarget = test of the swing-low between t1 and t2, then trail.\n```",
     "expected_regime": "End-of-rally distribution phases. Multi-day setup; rare but high-quality.",
     "inputs": "- `IndicatorPanel.rsi_14`.\n- `PriceFrame.high`, `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: pivot-high detection on price (rolling N-bar local maxima).\n- Computed: volume EMA-20 trend at each pivot.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `rsi_period`                   | 14      | 7 / 14 / 21      |\n| `pivot_lookback`               | 5       | 3 \u2013 10           |\n| `min_pivot_distance_bars`      | 8       | 5 \u2013 20           |\n| `divergence_lookback_bars`     | 30      | 15 \u2013 60          |\n| `min_rsi_at_first_pivot`       | 70      | 60 \u2013 80          |\n| `volume_decline_pct`           | 20%     | 10% \u2013 40%        |\n| `confirmation_close_below`     | `true`  | bool \u2014 confirm break of recent low after pivot |\n| `stop_buffer_atr`              | 0.5     | 0.2 \u2013 1.5        |\n\n`min_rsi_at_first_pivot` ensures the divergence is forming in\noverbought territory, not at a random local high mid-trend.\n\n`volume_decline_pct = 20%` requires the second-pivot volume EMA to be at\nleast 20% below the first-pivot volume EMA \u2014 a meaningful drop, not a\nsmall one.",
-    "references": "- Compendium README \u00a7Map, COAST \u2194 TRAP CITY border zone.\n- Mirror: `rsi_volume_bullish_divergence` (idea pool) \u2014 same pattern at lows.\n- Classical reference: Pring, *Technical Analysis Explained*, divergence chapter.",
-    "status": "`queued`. Multi-bar pattern strategy \u2014 different from the\nsingle-bar event strategies elsewhere in the folder. Implementation\nrequires a small state machine (pivot detection + memory) which the\nexisting baseline crate's `Strategy` trait may need a helper for.",
-    "thesis": "Classical divergence. Price makes a new high, RSI makes a new high\n(or merely confirms the high), but *volume fades* \u2014 each successive\npush higher comes on lower participation than the prior. The\ndisagreement between price/RSI (saying \"still going up\") and volume\n(saying \"fewer people care\") is information: the rally is running out\nof buyers without yet having peaked technically.\n\nThe astronomy template fits cleanly: a star whose light-curve says\n\"variable\" but whose spectroscopy says \"stable composition\" is sending\nmixed signals \u2014 and the resolution is usually that the simpler\nexplanation (instrument artifact, third-body interference) wins.\nTranslating: the simpler explanation for \"rallying price + falling\nvolume\" is \"a few large holders are running out of paper to sell into.\""
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `rsi_period`                   | 14      | 7 / 14 / 21      |\n| `pivot_lookback`               | 5       | 3 – 10           |\n| `min_pivot_distance_bars`      | 8       | 5 – 20           |\n| `divergence_lookback_bars`     | 30      | 15 – 60          |\n| `min_rsi_at_first_pivot`       | 70      | 60 – 80          |\n| `volume_decline_pct`           | 20%     | 10% – 40%        |\n| `confirmation_close_below`     | `true`  | bool — confirm break of recent low after pivot |\n| `stop_buffer_atr`              | 0.5     | 0.2 – 1.5        |\n\n`min_rsi_at_first_pivot` ensures the divergence is forming in\noverbought territory, not at a random local high mid-trend.\n\n`volume_decline_pct = 20%` requires the second-pivot volume EMA to be at\nleast 20% below the first-pivot volume EMA — a meaningful drop, not a\nsmall one.",
+    "references": "- Compendium README §Map, COAST ↔ TRAP CITY border zone.\n- Mirror: `rsi_volume_bullish_divergence` (idea pool) — same pattern at lows.\n- Classical reference: Pring, *Technical Analysis Explained*, divergence chapter.",
+    "status": "`queued`. Multi-bar pattern strategy — different from the\nsingle-bar event strategies elsewhere in the folder. Implementation\nrequires a small state machine (pivot detection + memory) which the\nexisting baseline crate's `Strategy` trait may need a helper for.",
+    "thesis": "Classical divergence. Price makes a new high, RSI makes a new high\n(or merely confirms the high), but *volume fades* — each successive\npush higher comes on lower participation than the prior. The\ndisagreement between price/RSI (saying \"still going up\") and volume\n(saying \"fewer people care\") is information: the rally is running out\nof buyers without yet having peaked technically.\n\nThe astronomy template fits cleanly: a star whose light-curve says\n\"variable\" but whose spectroscopy says \"stable composition\" is sending\nmixed signals — and the resolution is usually that the simpler\nexplanation (instrument artifact, third-body interference) wins.\nTranslating: the simpler explanation for \"rallying price + falling\nvolume\" is \"a few large holders are running out of paper to sell into.\""
   },
   "source_doc": "strategies/rsi_volume/rsi_volume_bearish_divergence.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `RSI Volume Bearish Divergence` strategy.\n\nThesis:\nClassical divergence. Price makes a new high, RSI makes a new high (or merely confirms the high), but volume fades \u2014 each successive push higher comes on lower participation than the prior. The disagreement between price/RSI (saying \"still going up\") and volume (saying \"fewer people care\") is information: the rally is running out of buyers without yet having peaked technically.\n\nInputs:\n- `IndicatorPanel.rsi_14`.\n- `PriceFrame.high`, `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: pivot-high detection on price (rolling N-bar local maxima).\n- Computed: volume EMA-20 trend at each pivot.\n\nDecision rule:\n```\nstate machine over pivot-highs:\n    - identify pivot-high at bar t1 (rolling-max in last pivot_lookback bars).\n    - require rsi_14[t1] >= min_rsi_at_first_pivot.\n    - wait for next pivot-high at bar t2, with t2 - t1 >= min_pivot_distance_bars\n      and t2 within divergence_lookback_bars of t1.\n    - confirm: price[t2] >= price[t1] (new or equal high)\n              AND ema_volume_20[t2] <= ema_volume_20[t1] * (1 - volume_decline_pct)\n\nonce divergence confirmed, wait for confirmation_close_below\n    (close < the lowest low between t1 and t2) to enter SHORT.\n\nstop = recent pivot high (t2) + stop_buffer_atr * atr_14\ntarget = test of the swing-low between t1 and t2, then trail.\n```\n\nExpected regime:\nEnd-of-rally distribution phases. Multi-day setup; rare but high-quality.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `RSI Volume Bearish Divergence` strategy.\n\nThesis:\nClassical divergence. Price makes a new high, RSI makes a new high (or merely confirms the high), but volume fades — each successive push higher comes on lower participation than the prior. The disagreement between price/RSI (saying \"still going up\") and volume (saying \"fewer people care\") is information: the rally is running out of buyers without yet having peaked technically.\n\nInputs:\n- `IndicatorPanel.rsi_14`.\n- `PriceFrame.high`, `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: pivot-high detection on price (rolling N-bar local maxima).\n- Computed: volume EMA-20 trend at each pivot.\n\nDecision rule:\n```\nstate machine over pivot-highs:\n    - identify pivot-high at bar t1 (rolling-max in last pivot_lookback bars).\n    - require rsi_14[t1] >= min_rsi_at_first_pivot.\n    - wait for next pivot-high at bar t2, with t2 - t1 >= min_pivot_distance_bars\n      and t2 within divergence_lookback_bars of t1.\n    - confirm: price[t2] >= price[t1] (new or equal high)\n              AND ema_volume_20[t2] <= ema_volume_20[t1] * (1 - volume_decline_pct)\n\nonce divergence confirmed, wait for confirmation_close_below\n    (close < the lowest low between t1 and t2) to enter SHORT.\n\nstop = recent pivot high (t2) + stop_buffer_atr * atr_14\ntarget = test of the swing-low between t1 and t2, then trail.\n```\n\nExpected regime:\nEnd-of-rally distribution phases. Multi-day setup; rare but high-quality.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

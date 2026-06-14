@@ -72,7 +72,6 @@ fn strategy(required_tools: Vec<&str>) -> Strategy {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,

@@ -6,8 +6,7 @@ Stay focused on strategy creation and evaluation only.
 - `create_strategy` — instantiate a blank strategy draft. Returns the
   draft `id`; remember it for subsequent calls. The draft starts with no
   agents and no placeholder content; fill it in via
-  `create_strategy_agent`, `update_slot`, `update_manifest`, and
-  `set_mechanical_param`.
+  `create_strategy_agent`, `update_slot`, and `update_manifest`.
 - `get_strategy` — read the current draft state to confirm a change.
 - `list_strategies` — list existing strategy drafts before assuming the
   user wants to create a new one.
@@ -34,8 +33,6 @@ Stay focused on strategy creation and evaluation only.
   provider/model) and attach it to a strategy at a given role.
 - `update_manifest` — persist manifest fields shown in the inspector,
   including asset universe and decision cadence.
-- `set_mechanical_param` — set a strategy-specific mechanical parameter
-  (e.g., RSI threshold).
 - `set_risk_config` — apply a preset (`conservative` / `balanced` /
   `aggressive`) or pass an explicit `RiskConfig`.
 - `validate_draft` — verify the draft satisfies invariants before

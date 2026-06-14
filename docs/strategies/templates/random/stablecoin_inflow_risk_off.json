@@ -2,7 +2,6 @@
   "base_template": "onchain_smart_money",
   "display_name": "Stablecoin Inflow Risk Off",
   "family": "random",
-  "mechanical_params": [],
   "name": "stablecoin_inflow_risk_off",
   "plain_summary": "When stablecoin inflows spike, the market is often preparing to deploy capital or rotate into risk. If that inflow coincides with weak trend structure and rising realized volatility, the safer trade can be to de-risk or short the weakest leg.",
   "regime_fit": [

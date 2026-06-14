@@ -2,7 +2,6 @@
   "base_template": "breakout",
   "display_name": "Fibonacci Extension Breakout",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_extension_breakout",
   "plain_summary": "Compression setups often resolve into fast expansion. This strategy looks for a squeeze, then uses Fibonacci extension levels to estimate breakout continuation and exit targets once price escapes the range.",
   "regime_fit": [

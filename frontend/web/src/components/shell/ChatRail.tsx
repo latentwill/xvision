@@ -1041,7 +1041,6 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
     case "attach_agent":
     case "update_slot":
     case "update_manifest":
-    case "set_mechanical_param":
     case "set_risk_config":
       qc.invalidateQueries({ queryKey: strategyKeys.all });
       // `create_strategy_agent` always creates an agent row in the
@@ -1607,8 +1606,6 @@ function summarizeArgs(tool: string, args: unknown): string {
       }
       return bits.join("; ");
     }
-    case "set_mechanical_param":
-      return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
       return a["preset"] ? `preset=${a["preset"]}` : "explicit";
     case "create_strategy_agent":

@@ -2,43 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "EMA Acceleration Reversal",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "50",
-      "name": "ema_period",
-      "range": "34 / 50 / 100"
-    },
-    {
-      "default": "5",
-      "name": "slope_window",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "5",
-      "name": "accel_window",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "0.05%",
-      "name": "min_accel_atr_pct",
-      "range": "0.01% \u2013 0.3%"
-    },
-    {
-      "default": "3",
-      "name": "confirmation_bars",
-      "range": "2 \u2013 6"
-    },
-    {
-      "default": "reversal",
-      "name": "mode",
-      "range": "reversal / momentum_continuation"
-    },
-    {
-      "default": "1.5",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "ema_acceleration_reversal",
   "plain_summary": "If slope is momentum, acceleration is momentum-of-momentum. Acceleration flips before slope flips, which flips before EMA-cross occurs:",
   "regime_fit": [
@@ -51,15 +14,15 @@
   "schema_version": "xvision.strategy_template.v1",
   "sections": {
     "data_dependencies": "None beyond price.",
-    "decision_rule": "```\nslope[t] = (ema_50[t] - ema_50[t - slope_window]) / slope_window\naccel[t] = (slope[t] - slope[t - accel_window]) / accel_window\naccel_norm = accel / atr_14\n\n# Reversal mode \u2014 acceleration flips against current slope:\nif mode == \"reversal\"\n   and slope < 0   and accel_norm >= +min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter long  (downtrend losing steam, expect reversal)\nelif mode == \"reversal\"\n   and slope > 0   and accel_norm <= -min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter short (uptrend losing steam)\n\n# Momentum-continuation mode \u2014 acceleration agrees with slope:\nelif mode == \"momentum_continuation\"\n   and slope > 0 and accel_norm > 0 and is_flat:\n    enter long  (accelerating uptrend; rare but high-quality)\n... mirror short\n\nexit when acceleration reverses against position.\n```",
-    "expected_regime": "R4 (early reversal) primarily. The momentum-continuation sub-mode applies\nto R1 \u2192 stronger-R1 transitions where trend is accelerating. Toxic in\nR5 \u2014 second derivative of a flat line is pure noise; ZERO-cell rule\napplies.",
-    "inputs": "- `IndicatorPanel.ema_50` \u2014 the line whose acceleration is computed.\n- Computed: `slope[t] = ema_50[t] - ema_50[t-N]`,\n  `accel[t] = slope[t] - slope[t-N]`.\n- `IndicatorPanel.atr_14` for normalization and stop.\n- `PriceFrame.close`.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `ema_period`                   | 50      | 34 / 50 / 100    |\n| `slope_window`                 | 5       | 3 \u2013 10           |\n| `accel_window`                 | 5       | 3 \u2013 10           |\n| `min_accel_atr_pct`            | 0.05%   | 0.01% \u2013 0.3%     |\n| `confirmation_bars`            | 3       | 2 \u2013 6            |\n| `mode`                         | `reversal` | `reversal` / `momentum_continuation` |\n| `stop_atr_multiple`            | 1.5     | 1.0 \u2013 3.0        |\n\n`confirmation_bars` is the critical parameter \u2014 set too low (1\u20132), the\nstrategy fires constantly on noise; set too high (6+), the early-entry\nadvantage over slope-strategies disappears.",
-    "references": "- Atlas Page 5 (Acceleration side-effect).\n- Atlas Page 3, observation: P5 row is sparse \u2014 only 2 \u25cf cells.\n- Sibling: [`ema_slope_momentum`](ema_slope_momentum.md).",
-    "status": "`queued`. Highest-novelty strategy in the EMA folder; pair with the\nslope-momentum and golden-cross strategies on the same instrument to\nmeasure the entry-speed gradient (cross \u2192 slope \u2192 accel) against\nwin-rate cost.",
-    "thesis": "If slope is momentum, acceleration is momentum-of-momentum. Acceleration\nflips *before* slope flips, which flips before EMA-cross occurs:\n\n```\nacceleration sign change   \u2192  slope sign change   \u2192  EMA cross\n        (earliest)              (earlier)            (latest)\n```\n\nTrading acceleration is therefore the earliest possible reversal entry\ninside the EMA family. The cost of that early-ness is signal noise: the\nsecond derivative is much noisier than the first, so this strategy\nrequires *consecutive-bar confirmation* of the acceleration sign flip\nbefore acting.\n\nThis cell is sparsely populated in conventional TA \u2014 most traders stop\nat slope. The atlas page-3 matrix flagged P5 as a fertile under-explored\nprimitive; this is the prototype."
+    "decision_rule": "```\nslope[t] = (ema_50[t] - ema_50[t - slope_window]) / slope_window\naccel[t] = (slope[t] - slope[t - accel_window]) / accel_window\naccel_norm = accel / atr_14\n\n# Reversal mode — acceleration flips against current slope:\nif mode == \"reversal\"\n   and slope < 0   and accel_norm >= +min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter long  (downtrend losing steam, expect reversal)\nelif mode == \"reversal\"\n   and slope > 0   and accel_norm <= -min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter short (uptrend losing steam)\n\n# Momentum-continuation mode — acceleration agrees with slope:\nelif mode == \"momentum_continuation\"\n   and slope > 0 and accel_norm > 0 and is_flat:\n    enter long  (accelerating uptrend; rare but high-quality)\n... mirror short\n\nexit when acceleration reverses against position.\n```",
+    "expected_regime": "R4 (early reversal) primarily. The momentum-continuation sub-mode applies\nto R1 → stronger-R1 transitions where trend is accelerating. Toxic in\nR5 — second derivative of a flat line is pure noise; ZERO-cell rule\napplies.",
+    "inputs": "- `IndicatorPanel.ema_50` — the line whose acceleration is computed.\n- Computed: `slope[t] = ema_50[t] - ema_50[t-N]`,\n  `accel[t] = slope[t] - slope[t-N]`.\n- `IndicatorPanel.atr_14` for normalization and stop.\n- `PriceFrame.close`.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `ema_period`                   | 50      | 34 / 50 / 100    |\n| `slope_window`                 | 5       | 3 – 10           |\n| `accel_window`                 | 5       | 3 – 10           |\n| `min_accel_atr_pct`            | 0.05%   | 0.01% – 0.3%     |\n| `confirmation_bars`            | 3       | 2 – 6            |\n| `mode`                         | `reversal` | `reversal` / `momentum_continuation` |\n| `stop_atr_multiple`            | 1.5     | 1.0 – 3.0        |\n\n`confirmation_bars` is the critical parameter — set too low (1–2), the\nstrategy fires constantly on noise; set too high (6+), the early-entry\nadvantage over slope-strategies disappears.",
+    "references": "- Atlas Page 5 (Acceleration side-effect).\n- Atlas Page 3, observation: P5 row is sparse — only 2 ● cells.\n- Sibling: [`ema_slope_momentum`](ema_slope_momentum.md).",
+    "status": "`queued`. Highest-novelty strategy in the EMA folder; pair with the\nslope-momentum and golden-cross strategies on the same instrument to\nmeasure the entry-speed gradient (cross → slope → accel) against\nwin-rate cost.",
+    "thesis": "If slope is momentum, acceleration is momentum-of-momentum. Acceleration\nflips *before* slope flips, which flips before EMA-cross occurs:\n\n```\nacceleration sign change   →  slope sign change   →  EMA cross\n        (earliest)              (earlier)            (latest)\n```\n\nTrading acceleration is therefore the earliest possible reversal entry\ninside the EMA family. The cost of that early-ness is signal noise: the\nsecond derivative is much noisier than the first, so this strategy\nrequires *consecutive-bar confirmation* of the acceleration sign flip\nbefore acting.\n\nThis cell is sparsely populated in conventional TA — most traders stop\nat slope. The atlas page-3 matrix flagged P5 as a fertile under-explored\nprimitive; this is the prototype."
   },
   "source_doc": "strategies/EMA/ema_acceleration_reversal.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `EMA Acceleration Reversal` strategy.\n\nThesis:\nIf slope is momentum, acceleration is momentum-of-momentum. Acceleration flips before slope flips, which flips before EMA-cross occurs:\n\nInputs:\n- `IndicatorPanel.ema_50` \u2014 the line whose acceleration is computed.\n- Computed: `slope[t] = ema_50[t] - ema_50[t-N]`,\n  `accel[t] = slope[t] - slope[t-N]`.\n- `IndicatorPanel.atr_14` for normalization and stop.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nslope[t] = (ema_50[t] - ema_50[t - slope_window]) / slope_window\naccel[t] = (slope[t] - slope[t - accel_window]) / accel_window\naccel_norm = accel / atr_14\n\n# Reversal mode \u2014 acceleration flips against current slope:\nif mode == \"reversal\"\n   and slope < 0   and accel_norm >= +min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter long  (downtrend losing steam, expect reversal)\nelif mode == \"reversal\"\n   and slope > 0   and accel_norm <= -min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter short (uptrend losing steam)\n\n# Momentum-continuation mode \u2014 acceleration agrees with slope:\nelif mode == \"momentum_continuation\"\n   and slope > 0 and accel_norm > 0 and is_flat:\n    enter long  (accelerating uptrend; rare but high-quality)\n... mirror short\n\nexit when acceleration reverses against position.\n```\n\nExpected regime:\nR4 (early reversal) primarily. The momentum-continuation sub-mode applies to R1 \u2192 stronger-R1 transitions where trend is accelerating. Toxic in R5 \u2014 second derivative of a flat line is pure noise; ZERO-cell rule applies.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA Acceleration Reversal` strategy.\n\nThesis:\nIf slope is momentum, acceleration is momentum-of-momentum. Acceleration flips before slope flips, which flips before EMA-cross occurs:\n\nInputs:\n- `IndicatorPanel.ema_50` — the line whose acceleration is computed.\n- Computed: `slope[t] = ema_50[t] - ema_50[t-N]`,\n  `accel[t] = slope[t] - slope[t-N]`.\n- `IndicatorPanel.atr_14` for normalization and stop.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nslope[t] = (ema_50[t] - ema_50[t - slope_window]) / slope_window\naccel[t] = (slope[t] - slope[t - accel_window]) / accel_window\naccel_norm = accel / atr_14\n\n# Reversal mode — acceleration flips against current slope:\nif mode == \"reversal\"\n   and slope < 0   and accel_norm >= +min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter long  (downtrend losing steam, expect reversal)\nelif mode == \"reversal\"\n   and slope > 0   and accel_norm <= -min_accel_atr_pct\n       for >= confirmation_bars consecutive bars\n       and is_flat:\n    enter short (uptrend losing steam)\n\n# Momentum-continuation mode — acceleration agrees with slope:\nelif mode == \"momentum_continuation\"\n   and slope > 0 and accel_norm > 0 and is_flat:\n    enter long  (accelerating uptrend; rare but high-quality)\n... mirror short\n\nexit when acceleration reverses against position.\n```\n\nExpected regime:\nR4 (early reversal) primarily. The momentum-continuation sub-mode applies to R1 → stronger-R1 transitions where trend is accelerating. Toxic in R5 — second derivative of a flat line is pure noise; ZERO-cell rule applies.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

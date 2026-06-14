@@ -170,7 +170,6 @@ export type Strategy = {
   regime_slot: LLMSlot | null;
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
-  mechanical_params: unknown;
   agents?: AgentRef[];
   pipeline?: PipelineDef;
   /// Per-strategy deterministic gate. `null` (or absent) means

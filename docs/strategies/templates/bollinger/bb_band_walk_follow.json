@@ -2,55 +2,8 @@
   "base_template": "range_trade",
   "display_name": "BB Band Walk Follow",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    },
-    {
-      "default": "80",
-      "name": "min_bandwidth_percentile",
-      "range": "60 \u2013 95"
-    },
-    {
-      "default": "0",
-      "name": "min_bandwidth_slope",
-      "range": "0 \u2013 +small"
-    },
-    {
-      "default": "2",
-      "name": "walk_confirmation_bars",
-      "range": "1 \u2013 5"
-    },
-    {
-      "default": "0.85",
-      "name": "entry_pct_b_walk_high",
-      "range": "0.70 \u2013 1.0"
-    },
-    {
-      "default": "0.15",
-      "name": "entry_pct_b_walk_low",
-      "range": "0.0 \u2013 0.30"
-    },
-    {
-      "default": "true",
-      "name": "exit_on_close_below_middle",
-      "range": "bool"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 3.0"
-    }
-  ],
   "name": "bb_band_walk_follow",
-  "plain_summary": "In an expansion regime (B3 \u2014 bandwidth in the top 20% of the trailing distribution and rising), price often walks the band: it rides along the upper or lower band for an extended sequence of bars rather than reverting. The walk is the trend-follow signature inside the BB family.",
+  "plain_summary": "In an expansion regime (B3 — bandwidth in the top 20% of the trailing distribution and rising), price often walks the band: it rides along the upper or lower band for an extended sequence of bars rather than reverting. The walk is the trend-follow signature inside the BB family.",
   "regime_fit": [
     "any"
   ],
@@ -62,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nin_expansion = bandwidth_percentile >= min_bandwidth_percentile\n               and bandwidth_slope >= min_bandwidth_slope\n\nwalking_upper = in_expansion\n                and pct_b >= entry_pct_b_walk_high\n                for >= walk_confirmation_bars consecutive bars\n\nwalking_lower = in_expansion\n                and pct_b <= entry_pct_b_walk_low\n                for >= walk_confirmation_bars consecutive bars\n\nif walking_upper and is_flat:\n    enter long, stop = bb_middle - stop_atr_multiple * atr_14\n                exit = close < bb_middle (if exit_on_close_below_middle)\nelif walking_lower and is_flat:\n    enter short, mirror\n```",
-    "expected_regime": "B3 (expansion). Hard exit when price closes back through `bb_middle` \u2014\nthat's the canonical \"walk has ended\" signal.",
-    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- Computed: `bandwidth_slope` \u2014 is bandwidth still expanding?\n- `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                              | Default | Range            |\n| ---------------------------------- | ------- | ---------------- |\n| `bb_period`                        | 20      | 10 / 20 / 50     |\n| `bb_mult`                          | 2.0     | 1.5 \u2013 2.5        |\n| `min_bandwidth_percentile`         | 80      | 60 \u2013 95          |\n| `min_bandwidth_slope`              | 0       | 0 \u2013 +small       |\n| `walk_confirmation_bars`           | 2       | 1 \u2013 5            |\n| `entry_pct_b_walk_high`            | 0.85    | 0.70 \u2013 1.0       |\n| `entry_pct_b_walk_low`             | 0.15    | 0.0 \u2013 0.30       |\n| `exit_on_close_below_middle`       | `true`  | bool             |\n| `stop_atr_multiple`                | 2.0     | 1.5 \u2013 3.0        |\n\n`walk_confirmation_bars` requires price to be near the band for \u2265N bars,\nnot a single touch \u2014 that's what distinguishes a walk from a touch.",
-    "references": "- Inverse: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) \u2014 same touches, B1/B2 instead of B3.\n- The walk-the-band pattern was popularized by Connors / Alvarez (TPS strategies).",
+    "expected_regime": "B3 (expansion). Hard exit when price closes back through `bb_middle` —\nthat's the canonical \"walk has ended\" signal.",
+    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- Computed: `bandwidth_slope` — is bandwidth still expanding?\n- `IndicatorPanel.atr_14`.",
+    "parameters": "| Param                              | Default | Range            |\n| ---------------------------------- | ------- | ---------------- |\n| `bb_period`                        | 20      | 10 / 20 / 50     |\n| `bb_mult`                          | 2.0     | 1.5 – 2.5        |\n| `min_bandwidth_percentile`         | 80      | 60 – 95          |\n| `min_bandwidth_slope`              | 0       | 0 – +small       |\n| `walk_confirmation_bars`           | 2       | 1 – 5            |\n| `entry_pct_b_walk_high`            | 0.85    | 0.70 – 1.0       |\n| `entry_pct_b_walk_low`             | 0.15    | 0.0 – 0.30       |\n| `exit_on_close_below_middle`       | `true`  | bool             |\n| `stop_atr_multiple`                | 2.0     | 1.5 – 3.0        |\n\n`walk_confirmation_bars` requires price to be near the band for ≥N bars,\nnot a single touch — that's what distinguishes a walk from a touch.",
+    "references": "- Inverse: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) — same touches, B1/B2 instead of B3.\n- The walk-the-band pattern was popularized by Connors / Alvarez (TPS strategies).",
     "status": "`queued`. Trend-follow counterpart to mean-reversion; ensures BB strategy\npopulation covers both regime types, not just B1/B2.",
-    "thesis": "In an expansion regime (B3 \u2014 bandwidth in the top 20% of the trailing\ndistribution and rising), price often *walks* the band: it rides along\nthe upper or lower band for an extended sequence of bars rather than\nreverting. The walk is the trend-follow signature inside the BB family.\n\nThis strategy is the *exact inverse* of `bb_meanrev_zscore`: same\ntouches, opposite regime, opposite direction. Both strategies look at\nS5/S6 \u2014 what makes them differ is the bandwidth gate. Together they cover\nthe BB-touch signal across all volatility regimes."
+    "thesis": "In an expansion regime (B3 — bandwidth in the top 20% of the trailing\ndistribution and rising), price often *walks* the band: it rides along\nthe upper or lower band for an extended sequence of bars rather than\nreverting. The walk is the trend-follow signature inside the BB family.\n\nThis strategy is the *exact inverse* of `bb_meanrev_zscore`: same\ntouches, opposite regime, opposite direction. Both strategies look at\nS5/S6 — what makes them differ is the bandwidth gate. Together they cover\nthe BB-touch signal across all volatility regimes."
   },
   "source_doc": "strategies/bollinger/bb_band_walk_follow.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Band Walk Follow` strategy.\n\nThesis:\nIn an expansion regime (B3 \u2014 bandwidth in the top 20% of the trailing distribution and rising), price often walks the band: it rides along the upper or lower band for an extended sequence of bars rather than reverting. The walk is the trend-follow signature inside the BB family.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- Computed: `bandwidth_slope` \u2014 is bandwidth still expanding?\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nin_expansion = bandwidth_percentile >= min_bandwidth_percentile\n               and bandwidth_slope >= min_bandwidth_slope\n\nwalking_upper = in_expansion\n                and pct_b >= entry_pct_b_walk_high\n                for >= walk_confirmation_bars consecutive bars\n\nwalking_lower = in_expansion\n                and pct_b <= entry_pct_b_walk_low\n                for >= walk_confirmation_bars consecutive bars\n\nif walking_upper and is_flat:\n    enter long, stop = bb_middle - stop_atr_multiple * atr_14\n                exit = close < bb_middle (if exit_on_close_below_middle)\nelif walking_lower and is_flat:\n    enter short, mirror\n```\n\nExpected regime:\nB3 (expansion). Hard exit when price closes back through bb_middle \u2014 that's the canonical \"walk has ended\" signal.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Band Walk Follow` strategy.\n\nThesis:\nIn an expansion regime (B3 — bandwidth in the top 20% of the trailing distribution and rising), price often walks the band: it rides along the upper or lower band for an extended sequence of bars rather than reverting. The walk is the trend-follow signature inside the BB family.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- Computed: `bandwidth_slope` — is bandwidth still expanding?\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nin_expansion = bandwidth_percentile >= min_bandwidth_percentile\n               and bandwidth_slope >= min_bandwidth_slope\n\nwalking_upper = in_expansion\n                and pct_b >= entry_pct_b_walk_high\n                for >= walk_confirmation_bars consecutive bars\n\nwalking_lower = in_expansion\n                and pct_b <= entry_pct_b_walk_low\n                for >= walk_confirmation_bars consecutive bars\n\nif walking_upper and is_flat:\n    enter long, stop = bb_middle - stop_atr_multiple * atr_14\n                exit = close < bb_middle (if exit_on_close_below_middle)\nelif walking_lower and is_flat:\n    enter short, mirror\n```\n\nExpected regime:\nB3 (expansion). Hard exit when price closes back through bb_middle — that's the canonical \"walk has ended\" signal.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

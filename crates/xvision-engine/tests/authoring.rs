@@ -30,8 +30,7 @@ async fn fresh_api_context() -> (ApiContext, TempDir) {
 #[tokio::test]
 async fn create_blank_strategy_produces_no_agents_and_no_placeholder_slot() {
     // agents = vec![], trader_slot = None, template = "custom"
-    // (free-text label, no longer a registry key),
-    // mechanical_params = {}.
+    // (free-text label, no longer a registry key).
     let (ctx, _td) = fresh_api_context().await;
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let out = authoring::create_blank_strategy(&store, "Blank Draft".into(), Some("@op".into()))
@@ -50,7 +49,6 @@ async fn create_blank_strategy_produces_no_agents_and_no_placeholder_slot() {
     assert_eq!(draft.manifest.template, "custom");
     assert_eq!(draft.manifest.display_name, "Blank Draft");
     assert_eq!(draft.manifest.creator, "@op");
-    assert!(draft.mechanical_params.as_object().is_some_and(|m| m.is_empty()));
 }
 
 #[tokio::test]

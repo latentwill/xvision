@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Fibonacci Strategy Index",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_strategy_index",
   "plain_summary": "",
   "regime_fit": [

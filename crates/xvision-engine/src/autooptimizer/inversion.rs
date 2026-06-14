@@ -72,8 +72,7 @@ mod tests {
             "risk": {
                 "risk_pct_per_trade": 0.01, "max_concurrent_positions": 1,
                 "max_leverage": 1.0, "stop_loss_atr_multiple": 2.0, "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": {}
+            }
         });
         serde_json::from_value(v).expect("fixture strategy must deserialise")
     }
@@ -143,7 +142,6 @@ mod tests {
                 "risk_pct_per_trade": 0.01, "max_concurrent_positions": 1,
                 "max_leverage": 1.0, "stop_loss_atr_multiple": 2.0, "daily_loss_kill_pct": 0.05
             },
-            "mechanical_params": {},
             "activation_mode": "filter_gated",
             "filter": {
                 "id": "01HZFILTER000000000000000G",

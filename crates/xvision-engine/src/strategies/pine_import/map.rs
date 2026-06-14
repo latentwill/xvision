@@ -998,7 +998,6 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
         regime_slot: None,
         trader_slot: None,
         risk,
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: final_filter,
         acknowledge_no_filter: true, // pine-import strategies don't require a filter gate
@@ -1037,7 +1036,6 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 regime_slot: None,
                 trader_slot: None,
                 risk: RiskPreset::Balanced.expand(),
-                mechanical_params: serde_json::json!({}),
                 activation_mode: ActivationMode::EveryBar,
                 filter: None,
                 acknowledge_no_filter: true,

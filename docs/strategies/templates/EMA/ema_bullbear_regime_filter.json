@@ -2,35 +2,8 @@
   "base_template": "trend_follower",
   "display_name": "EMA Bullbear Regime Filter",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "200",
-      "name": "regime_ema_period",
-      "range": "100 / 200 / 300"
-    },
-    {
-      "default": "0.02%",
-      "name": "min_slope_atr_pct",
-      "range": "0.0% \u2013 0.1%"
-    },
-    {
-      "default": "10",
-      "name": "slope_window",
-      "range": "5 \u2013 30"
-    },
-    {
-      "default": "strict",
-      "name": "mode",
-      "range": "strict / loose"
-    },
-    {
-      "default": "flat",
-      "name": "chop_response",
-      "range": "flat / pass_through"
-    }
-  ],
   "name": "ema_bullbear_regime_filter",
-  "plain_summary": "This is not a standalone strategy. It is a filter \u2014 a meta-rule that takes another strategy's directional signal and either passes it through or vetoes it based on whether the regime supports it. The canonical example: price > 200-EMA for longs, price < 200-EMA for shorts, slope-of-200-EMA reinforces the gate.",
+  "plain_summary": "This is not a standalone strategy. It is a filter — a meta-rule that takes another strategy's directional signal and either passes it through or vetoes it based on whether the regime supports it. The canonical example: price > 200-EMA for longs, price < 200-EMA for shorts, slope-of-200-EMA reinforces the gate.",
   "regime_fit": [
     "trending_bull",
     "trending_bear"
@@ -43,13 +16,13 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nregime_slope = slope(ema_200, window=slope_window) / atr_14\nregime_slope_normalized = regime_slope * ATR_normalizer\n\nbull_regime = price > ema_200 and regime_slope_normalized >= +min_slope_atr_pct\nbear_regime = price < ema_200 and regime_slope_normalized <= -min_slope_atr_pct\nchop_regime = abs(regime_slope_normalized) < min_slope_atr_pct\n\n# loose mode: drop the slope condition.\nif mode == \"loose\":\n    bull_regime = price > ema_200\n    bear_regime = price < ema_200\n    chop_regime = price oscillated across ema_200 within last N bars\n\n# Filter the base strategy's action:\ndef filter(base_action):\n    if chop_regime and chop_response == \"flat\":\n        return Flat\n    if base_action == Buy  and not bull_regime: return Flat (veto long)\n    if base_action == Sell and not bear_regime: return Flat (veto short)\n    return base_action\n```",
-    "inputs": "- `IndicatorPanel.ema_200` \u2014 the regime line.\n- `PriceFrame.close`.\n- The base strategy's proposed action (`Buy` / `Sell` / `Flat` / `Close`).",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `regime_ema_period`            | 200     | 100 / 200 / 300  |\n| `min_slope_atr_pct`            | 0.02%   | 0.0% \u2013 0.1%      |\n| `slope_window`                 | 10      | 5 \u2013 30           |\n| `mode`                         | `strict` | `strict` / `loose` |\n| `chop_response`                | `flat`  | `flat` / `pass_through` |\n\n`mode = strict`: require both `price` side and `slope` side to agree.\n`mode = loose`: only require `price` side. Strict mode vetoes more\ntrades; loose mode catches more entries.\n\n`chop_response = flat`: when in chop (slope below threshold AND price\noscillating around EMA), force flat regardless of base signal.",
+    "inputs": "- `IndicatorPanel.ema_200` — the regime line.\n- `PriceFrame.close`.\n- The base strategy's proposed action (`Buy` / `Sell` / `Flat` / `Close`).",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `regime_ema_period`            | 200     | 100 / 200 / 300  |\n| `min_slope_atr_pct`            | 0.02%   | 0.0% – 0.1%      |\n| `slope_window`                 | 10      | 5 – 30           |\n| `mode`                         | `strict` | `strict` / `loose` |\n| `chop_response`                | `flat`  | `flat` / `pass_through` |\n\n`mode = strict`: require both `price` side and `slope` side to agree.\n`mode = loose`: only require `price` side. Strict mode vetoes more\ntrades; loose mode catches more entries.\n\n`chop_response = flat`: when in chop (slope below threshold AND price\noscillating around EMA), force flat regardless of base signal.",
     "references": "- Atlas Page 3 (the AVOID / FILTER cells in R5 column).\n- Wraps: any directional strategy in this folder or `crates/xvision-eval/src/baselines/`.\n- Particularly impactful on: [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md), [`ema_ribbon_alignment`](ema_ribbon_alignment.md), [`ema_slope_momentum`](ema_slope_momentum.md).",
-    "status": "`queued`. Implemented as a `Strategy` *adapter* in the eval harness\nrather than a standalone \u2014 it composes with another strategy.\nEvaluation must report `(filtered_pnl, unfiltered_pnl, kept_trade_pct)`\nto make the trade-off visible.",
-    "thesis": "This is not a standalone strategy. It is a *filter* \u2014 a meta-rule that\ntakes another strategy's directional signal and either passes it\nthrough or vetoes it based on whether the regime supports it. The\ncanonical example: `price > 200-EMA` for longs, `price < 200-EMA` for\nshorts, slope-of-200-EMA reinforces the gate.\n\nThe atlas Page 3 matrix observed that R5 (chop) collapses every\ncross-strategy to AVOID. This filter implements that collapse. Without\nit, EMA-cross strategies bleed continuously in chop. With it, they sit\non their hands and preserve capital.\n\nShips separately because (a) it has its own parameters, (b) it can wrap\n*any* directional strategy in the population (including non-EMA ones),\nand (c) its evaluation requires comparing\n`base_strategy_alone vs base_strategy_filtered` \u2014 a meta-experiment."
+    "status": "`queued`. Implemented as a `Strategy` *adapter* in the eval harness\nrather than a standalone — it composes with another strategy.\nEvaluation must report `(filtered_pnl, unfiltered_pnl, kept_trade_pct)`\nto make the trade-off visible.",
+    "thesis": "This is not a standalone strategy. It is a *filter* — a meta-rule that\ntakes another strategy's directional signal and either passes it\nthrough or vetoes it based on whether the regime supports it. The\ncanonical example: `price > 200-EMA` for longs, `price < 200-EMA` for\nshorts, slope-of-200-EMA reinforces the gate.\n\nThe atlas Page 3 matrix observed that R5 (chop) collapses every\ncross-strategy to AVOID. This filter implements that collapse. Without\nit, EMA-cross strategies bleed continuously in chop. With it, they sit\non their hands and preserve capital.\n\nShips separately because (a) it has its own parameters, (b) it can wrap\n*any* directional strategy in the population (including non-EMA ones),\nand (c) its evaluation requires comparing\n`base_strategy_alone vs base_strategy_filtered` — a meta-experiment."
   },
   "source_doc": "strategies/EMA/ema_bullbear_regime_filter.md",
   "status": "queued (filter / meta-strategy, not standalone entry)",
-  "trader_prompt": "You are trading the `EMA Bullbear Regime Filter` strategy.\n\nThesis:\nThis is not a standalone strategy. It is a filter \u2014 a meta-rule that takes another strategy's directional signal and either passes it through or vetoes it based on whether the regime supports it. The canonical example: price > 200-EMA for longs, price < 200-EMA for shorts, slope-of-200-EMA reinforces the gate.\n\nInputs:\n- `IndicatorPanel.ema_200` \u2014 the regime line.\n- `PriceFrame.close`.\n- The base strategy's proposed action (`Buy` / `Sell` / `Flat` / `Close`).\n\nDecision rule:\n```\nregime_slope = slope(ema_200, window=slope_window) / atr_14\nregime_slope_normalized = regime_slope * ATR_normalizer\n\nbull_regime = price > ema_200 and regime_slope_normalized >= +min_slope_atr_pct\nbear_regime = price < ema_200 and regime_slope_normalized <= -min_slope_atr_pct\nchop_regime = abs(regime_slope_normalized) < min_slope_atr_pct\n\n# loose mode: drop the slope condition.\nif mode == \"loose\":\n    bull_regime = price > ema_200\n    bear_regime = price < ema_200\n    chop_regime = price oscillated across ema_200 within last N bars\n\n# Filter the base strategy's action:\ndef filter(base_action):\n    if chop_regime and chop_response == \"flat\":\n        return Flat\n    if base_action == Buy  and not bull_regime: return Flat (veto long)\n    if base_action == Sell and not bear_regime: return Flat (veto short)\n    return base_action\n```\n\nExpected regime:\n\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA Bullbear Regime Filter` strategy.\n\nThesis:\nThis is not a standalone strategy. It is a filter — a meta-rule that takes another strategy's directional signal and either passes it through or vetoes it based on whether the regime supports it. The canonical example: price > 200-EMA for longs, price < 200-EMA for shorts, slope-of-200-EMA reinforces the gate.\n\nInputs:\n- `IndicatorPanel.ema_200` — the regime line.\n- `PriceFrame.close`.\n- The base strategy's proposed action (`Buy` / `Sell` / `Flat` / `Close`).\n\nDecision rule:\n```\nregime_slope = slope(ema_200, window=slope_window) / atr_14\nregime_slope_normalized = regime_slope * ATR_normalizer\n\nbull_regime = price > ema_200 and regime_slope_normalized >= +min_slope_atr_pct\nbear_regime = price < ema_200 and regime_slope_normalized <= -min_slope_atr_pct\nchop_regime = abs(regime_slope_normalized) < min_slope_atr_pct\n\n# loose mode: drop the slope condition.\nif mode == \"loose\":\n    bull_regime = price > ema_200\n    bear_regime = price < ema_200\n    chop_regime = price oscillated across ema_200 within last N bars\n\n# Filter the base strategy's action:\ndef filter(base_action):\n    if chop_regime and chop_response == \"flat\":\n        return Flat\n    if base_action == Buy  and not bull_regime: return Flat (veto long)\n    if base_action == Sell and not bear_regime: return Flat (veto short)\n    return base_action\n```\n\nExpected regime:\n\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

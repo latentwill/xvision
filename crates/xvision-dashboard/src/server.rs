@@ -30,7 +30,6 @@
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
-// 17b. PUT   /api/strategy/:id/mechanical_params      strategies::put_mechanical_params
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
 // 17e. PUT    /api/strategy/:id/mechanistic            strategies::put_mechanistic
@@ -594,10 +593,6 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
-        .route(
-            "/api/strategy/:id/mechanical_params",
-            put(strategies::put_mechanical_params),
-        )
         .route(
             "/api/strategy/:id/filter",
             put(strategies::put_filter).delete(strategies::delete_filter),

@@ -39,7 +39,6 @@ fresh sqlite pool scoped to the request.
 | `xvn_create_strategy` | `authoring::create_strategy` | `template`, `name`, `creator?` | `{id}` | yes — writes strategy file |
 | `xvn_get_strategy` | `authoring::get_strategy` | `id` | full Strategy JSON | no |
 | `xvn_update_slot` | `authoring::update_slot` | `id`, `slot`, `prompt?`, `attested_with?`, `provider?`, `model?`, `allowed_tools?` | `{id, updated}` | yes — mutates strategy |
-| `xvn_set_mechanical_param` | `authoring::set_mechanical_param` | `id`, `key`, `value` | `{id, key}` | yes — mutates strategy |
 | `xvn_set_risk_config` | `authoring::set_risk_config` | `id`, `preset` or `explicit` | `{id, applied}` | yes — mutates strategy |
 | `xvn_validate_draft` | `authoring::validate_draft` | `id` | `{id, ok, errors}` | no |
 | `xvn_strategy_create_atomic` | `api_agents::create` + strategy persist | `name`, `role`, `prompt`, `provider`, `model`, `asset?`, `timeframe?`, `creator?` | `{strategy_id, agent_id, eval_ready, provider, model, warnings}` | yes — writes strategy + agent |

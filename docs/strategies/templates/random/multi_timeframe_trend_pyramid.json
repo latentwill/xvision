@@ -2,7 +2,6 @@
   "base_template": "custom",
   "display_name": "Multi Timeframe Trend Pyramid",
   "family": "random",
-  "mechanical_params": [],
   "name": "multi_timeframe_trend_pyramid",
   "plain_summary": "Strong trends usually reward patience and scaling. This strategy only participates when the higher-timeframe structure agrees, then adds on shallow pullbacks instead of trying to predict tops.",
   "regime_fit": [

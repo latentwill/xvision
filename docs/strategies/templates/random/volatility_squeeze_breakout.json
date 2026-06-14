@@ -2,7 +2,6 @@
   "base_template": "breakout",
   "display_name": "Volatility Squeeze Breakout",
   "family": "random",
-  "mechanical_params": [],
   "name": "volatility_squeeze_breakout",
   "plain_summary": "Compression often precedes expansion. This strategy waits for low volatility, then enters with the breakout when price escapes a tight range and the direction agrees with the higher-level trend.",
   "regime_fit": [

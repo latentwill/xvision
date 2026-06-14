@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Liquidation Cascade Reversal",
   "family": "random",
-  "mechanical_params": [],
   "name": "liquidation_cascade_reversal",
   "plain_summary": "Big liquidation spikes often mark emotional exhaustion. After the flush, price frequently mean-reverts if the move was too fast relative to the recent range.",
   "regime_fit": [

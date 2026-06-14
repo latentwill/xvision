@@ -68,10 +68,6 @@ fn make_strategy() -> Strategy {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": {
-            "ema_fast": 12,
-            "atr_period": 14
         }
     });
     serde_json::from_value(v).expect("fixture strategy deserializes")

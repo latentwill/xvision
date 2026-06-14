@@ -54,7 +54,6 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode,
         filter,
         acknowledge_no_filter: false,

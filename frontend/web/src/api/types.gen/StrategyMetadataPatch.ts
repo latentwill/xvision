@@ -9,10 +9,9 @@
  * Scope is deliberately narrow: only the four operator-editable
  * top-level manifest fields a typo in the create wizard could land
  * on. The strategy `id`, `creator`, `template`, `published_at`,
- * `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
- * `mechanical_params` are out of scope — they either have dedicated
- * sub-routes (slot/agents/pipeline/risk) or are immutable
- * post-create.
+ * `risk_preset_or_config`, `agents`, `pipeline`, and `risk` are out
+ * of scope — they either have dedicated sub-routes
+ * (slot/agents/pipeline/risk) or are immutable post-create.
  *
  * # Color clear convention
  *

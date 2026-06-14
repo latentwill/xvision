@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Funding Skew Fade",
   "family": "random",
-  "mechanical_params": [],
   "name": "funding_skew_fade",
   "plain_summary": "When perp funding, long-short positioning, and momentum all lean the same way, the move is often crowded. This strategy fades extreme positioning when the market looks stretched and the regime is not clearly trending.",
   "regime_fit": [

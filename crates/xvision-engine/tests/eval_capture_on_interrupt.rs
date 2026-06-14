@@ -133,7 +133,6 @@ fn minimal_strategy() -> Strategy {
             model: Some("mock".into()),
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
