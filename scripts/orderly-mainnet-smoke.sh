@@ -19,6 +19,7 @@ set -euo pipefail
 XVN_BIN="${1:-xvn}"
 SIZE_BPS="${SIZE_BPS:-25}"   # 0.25% of equity — keep tiny; raise only if below venue min-notional
 ASSET="${ASSET:-SOL}"        # SOL: deeper book than BTC for a small market order
+DRY_RUN="${DRY_RUN:-0}"      # 1 = signed read only (confirm creds+signing on mainnet, no order, no funds)
 
 export ORDERLY_KEY=$(op read 'op://Olympus/xvision-orderly-mainnet/key')
 export ORDERLY_SECRET=$(op read 'op://Olympus/xvision-orderly-mainnet/secret')
@@ -35,10 +36,24 @@ case "$ORDERLY_BASE_URL" in
     exit 1 ;;
 esac
 
-# Fail-closed guard #2: real-money acknowledgement required.
+# Dry-run pre-flight: a signed READ only — confirms creds + Ed25519 signing
+# against the mainnet gateway through the real Rust executor (standard base64),
+# moves zero funds, places no order. Run this FIRST on mainnet.
+if [ "$DRY_RUN" = "1" ]; then
+  echo "== DRY RUN: signed read only (no order) =="
+  echo "   gateway: $ORDERLY_BASE_URL"
+  "$XVN_BIN" portfolio --venue orderly
+  echo
+  echo "== dry-run OK: creds + signing confirmed on mainnet =="
+  echo "   re-run with DRY_RUN=0 ORDERLY_MAINNET_CONFIRM=1 to fire the round-trip."
+  exit 0
+fi
+
+# Fail-closed guard #2: real-money acknowledgement required (live round-trip only).
 if [ "${ORDERLY_MAINNET_CONFIRM:-}" != "1" ]; then
   echo "refusing: this fires a REAL-MONEY order on Orderly mainnet ($ORDERLY_BASE_URL)." >&2
-  echo "          re-run with ORDERLY_MAINNET_CONFIRM=1 to proceed." >&2
+  echo "          confirm signing first with: DRY_RUN=1 scripts/orderly-mainnet-smoke.sh" >&2
+  echo "          then re-run with ORDERLY_MAINNET_CONFIRM=1 to proceed." >&2
   exit 1
 fi
 
