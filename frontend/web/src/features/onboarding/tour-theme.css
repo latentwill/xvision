@@ -254,3 +254,46 @@ body.tour-glow .xvn-tour.driver-popover {
 .driver-active-element {
   border-radius: 7px;
 }
+
+/*
+ * Finding #11 — make the tour non-trapping.
+ *
+ * driver.js renders a native `.driver-overlay` element (and an SVG stage
+ * inside it) that covers the entire viewport.  Even when `overlayOpacity`
+ * is 0 the element is present in the DOM and, without this rule, it
+ * intercepts every pointer event — making the whole app unclickable while
+ * the tour is active.
+ *
+ * Setting `pointer-events: none` on `.driver-overlay` lets clicks fall
+ * through to the underlying page.  The custom `#xvn-spotlight` scrim
+ * already has `pointer-events: none` (see above); this rule closes the
+ * gap for the driver.js-owned backdrop.
+ *
+ * `.driver-popover` is NOT affected — it retains the default
+ * `pointer-events: auto` so the close button, Next, Prev, and Esc
+ * continue to work normally.
+ */
+.driver-overlay {
+  pointer-events: none;
+}
+
+/*
+ * CRITICAL: driver.js sets `pointer-events: auto` as an INLINE style on the
+ * SVG `<path>` backdrop inside `.driver-overlay`. An inline style outranks any
+ * class selector, so `.driver-overlay { pointer-events: none }` alone does NOT
+ * stop the path from being the pointer-event target — and driver.js's
+ * document-level capture listener (which calls stopPropagation when
+ * `overlay.contains(event.target)`) then keeps swallowing every backdrop click.
+ * `!important` is the only thing that overrides the inline style; with the path
+ * non-interactive, backdrop clicks target the page beneath instead, so the
+ * contains() check fails and the listener lets the click through.
+ */
+.driver-overlay path {
+  pointer-events: none !important;
+}
+
+/* Re-enable pointer events on the popover so all its interactive
+   controls (close / next / prev / keyboard) remain fully clickable. */
+.driver-popover {
+  pointer-events: auto;
+}

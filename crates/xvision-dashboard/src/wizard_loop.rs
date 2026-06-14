@@ -38,7 +38,7 @@ use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter, ScenarioMutations};
 use xvision_engine::api::settings::providers as api_providers;
 use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
@@ -1894,8 +1894,60 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = api_strategy::get(&self.api_context, id).await?;
-                Ok(serde_json::to_value(out)?)
+                let strategy = api_strategy::get(&self.api_context, id).await?;
+                // W11 (Finding #13): resolve each AgentRef to its full Agent so
+                // the authoring agent can read back the system_prompt it wrote.
+                // Failures to resolve individual refs degrade gracefully (omit
+                // that entry) rather than failing the whole call.
+                let mut resolved_agents: Vec<serde_json::Value> = Vec::new();
+                for aref in &strategy.agents {
+                    match api_agents::get(&self.api_context, &aref.agent_id).await {
+                        Ok(agent) => {
+                            // Collect all slot system_prompts. Most strategies
+                            // have a single slot; expose them all so multi-slot
+                            // agents are fully visible.
+                            let slot_prompts: Vec<&str> =
+                                agent.slots.iter().map(|s| s.system_prompt.as_str()).collect();
+                            // Use the first slot's prompt as the primary
+                            // system_prompt for the role entry (the canonical
+                            // "what does this role's LLM see?" answer). If an
+                            // agent has multiple slots, all prompts are also
+                            // available under slot_system_prompts.
+                            let primary_prompt = slot_prompts.first().copied().unwrap_or("");
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": primary_prompt,
+                                "slot_system_prompts": slot_prompts,
+                            }));
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                strategy_id = id,
+                                agent_id = aref.agent_id.as_str(),
+                                error = %err,
+                                "get_strategy: could not resolve AgentRef — omitting from resolved_agents"
+                            );
+                            // Degrade gracefully: include a note so the
+                            // authoring agent knows one ref couldn't be resolved
+                            // rather than silently seeing a short list.
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": null,
+                                "error": "agent not found — the referenced agent may have been deleted",
+                            }));
+                        }
+                    }
+                }
+                let mut out = serde_json::to_value(&strategy)?;
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert(
+                        "resolved_agents".into(),
+                        serde_json::Value::Array(resolved_agents),
+                    );
+                }
+                Ok(out)
             }
             "list_strategies" => {
                 let out = api_strategy::list(&self.api_context).await?;
@@ -2392,6 +2444,93 @@ impl WizardLoop {
                 // agent can reason over them without parsing markdown.
                 Ok(filter_catalog_json())
             }
+            // ── W10 Finding #9: scenario management tools ─────────────────
+            "clone_scenario" => {
+                let parent_id = input
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("clone_scenario: missing `parent_id`"))?;
+                let mutations = ScenarioMutations {
+                    display_name: input
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    description: input
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    time_window: None,
+                    granularity: None,
+                    venue: None,
+                    tags: input
+                        .get("tags")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    notes: input.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    warmup_bars: input
+                        .get("warmup_bars")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as u32),
+                };
+                let out = api_scenario::clone(&self.api_context, parent_id, mutations).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "archive_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("archive_scenario: missing `id`"))?;
+                api_scenario::archive(&self.api_context, id).await?;
+                Ok(serde_json::json!({ "archived": true, "id": id }))
+            }
+            "set_scenario_regime" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("set_scenario_regime: missing `id`"))?;
+                let regime = input.get("regime").and_then(|v| v.as_str());
+                let volatility = input.get("volatility").and_then(|v| v.as_str());
+                let direction = input.get("direction").and_then(|v| v.as_str());
+                let out =
+                    api_scenario::set_regime(&self.api_context, id, regime, volatility, direction).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "classify_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("classify_scenario: missing `id`"))?;
+                let force = input.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let result = api_scenario::classify(&self.api_context, id, force).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            "select_scenarios" => {
+                let target_decisions = input.get("target_decisions").and_then(|v| v.as_u64());
+                let same_decisions = input
+                    .get("same_decisions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let max_decisions = input.get("max_decisions").and_then(|v| v.as_u64());
+                let count = input.get("count").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let timeframe_minutes = input
+                    .get("timeframe_minutes")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
+                let regimes: Vec<String> = input
+                    .get("regimes")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let rows = api_scenario::select(
+                    &self.api_context,
+                    timeframe_minutes,
+                    &regimes,
+                    target_decisions,
+                    same_decisions,
+                    max_decisions,
+                    count,
+                )
+                .await?;
+                Ok(serde_json::to_value(rows)?)
+            }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
@@ -2545,11 +2684,23 @@ impl WizardLoop {
                     .collect::<String>();
                 format!("{} {role} agent {suffix}", strategy.manifest.display_name)
             });
-        let system_prompt = req
+        // Detect whether the caller supplied an explicit system_prompt.
+        // When no explicit prompt is given the default is stamped from the
+        // strategy's current asset_universe — if that universe is still the
+        // blank-draft default (["BTC/USD"]), the agent will say "Evaluate
+        // BTC/USD" even if the operator intended a different asset.  We do
+        // NOT block creation; we surface a non-fatal warning so the model can
+        // self-correct (Finding #14).
+        let explicit_system_prompt = req
             .system_prompt
             .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+            .filter(|s| !s.is_empty());
+        let using_default_prompt = explicit_system_prompt.is_none();
+        let system_prompt =
+            explicit_system_prompt.unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+        // Determine whether the strategy's asset_universe is still the
+        // blank-draft default so we can emit the stale-default warning.
+        let asset_universe_is_default = strategy.manifest.asset_universe == vec!["BTC/USD"];
         let skill_ids = tools_for_strategy_role(&strategy, &role);
         let description = req
             .description
@@ -2596,7 +2747,7 @@ impl WizardLoop {
             },
         )
         .await?;
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "strategy_id": strategy_id,
             "agent_id": agent.agent_id,
             "role": role,
@@ -2604,7 +2755,19 @@ impl WizardLoop {
             "model": model,
             "agents": attached.agents,
             "pipeline": attached.pipeline
-        }))
+        });
+        // Non-fatal warning: if the prompt was auto-generated from an
+        // asset_universe that is still the blank-draft default, surface it
+        // so the model can self-correct by calling update_manifest and then
+        // re-creating or patching the agent.
+        if using_default_prompt && asset_universe_is_default {
+            result["warning"] = serde_json::json!(
+                "agent prompt generated from default asset_universe BTC/USD — \
+                 call update_manifest first if you intended a different asset. \
+                 Verify the stamped prompt with get_strategy."
+            );
+        }
+        Ok(result)
     }
 
     async fn attach_existing_agent(
@@ -3507,7 +3670,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy_agent".into(),
-            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders.".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders. ORDERING: call update_manifest first (to set asset_universe and cadence) before calling this tool — the agent's default prompt is generated from the strategy's current asset_universe + cadence at the moment this tool runs. If you skip update_manifest, the prompt will reflect the blank-draft default (BTC/USD, 60 min). Pass an explicit `system_prompt` argument to override the default entirely.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3647,6 +3810,161 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"]
+            }),
+        },
+        // ── W10 Finding #9: scenario management tools ─────────────────────
+        ToolDefinition {
+            name: "clone_scenario".into(),
+            description: "Derive a new scenario from an existing one. Inherits every \
+                          unset field from the parent and stamps parent_scenario_id. \
+                          Refuses to clone an archived parent. Returns the new Scenario.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Id of the scenario to clone."
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "description": "Optional override for the clone's display name."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional override for the description."
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tag override."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes for the clone."
+                    },
+                    "warmup_bars": {
+                        "type": "integer",
+                        "description": "Optional override for pre-window warmup bars."
+                    }
+                },
+                "required": ["parent_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "archive_scenario".into(),
+            description: "Soft-delete a scenario (sets archived_at). \
+                          Archived scenarios are excluded from list_scenarios by default. \
+                          Returns {archived: true, id}.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to archive."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_scenario_regime".into(),
+            description: "Set operator-authored regime labels on a scenario \
+                          (regime_derived = false). All three label fields are optional; \
+                          omitting one leaves the existing value unchanged. \
+                          Returns the updated Scenario. \
+                          Valid regime values: trend | chop | crash | expansion | recovery. \
+                          Valid volatility values: low | normal | high | extreme. \
+                          Valid direction values: up | down | sideways.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id."
+                    },
+                    "regime": {
+                        "type": "string",
+                        "enum": ["trend", "chop", "crash", "expansion", "recovery"],
+                        "description": "Broad regime label."
+                    },
+                    "volatility": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "extreme"],
+                        "description": "Volatility label."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "sideways"],
+                        "description": "Trend direction."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "classify_scenario".into(),
+            description: "Auto-derive regime labels for a scenario from its bar window \
+                          (regime_derived = true). Requires bars to have been warmed via \
+                          `xvn bars fetch`. Returns `{ classified: bool, skipped_reason: \
+                          string|null, scenario }`: classified=true when labels were \
+                          derived and written; classified=false with a skipped_reason when \
+                          skipped (bars unavailable, or the scenario already has \
+                          operator-set labels and force=false). Pass force=true to \
+                          re-derive over operator-set labels.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to classify."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "If true, overwrite even operator-set labels."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "select_scenarios".into(),
+            description: "Stateless read-only selector: filter the scenario library \
+                          by timeframe, regime, and decision-count proximity. \
+                          Use this to find a comparable set of scenarios for A/B evaluation \
+                          without needing to hand-pick ids. Returns [{id, name, timeframe, decision_count}]. \
+                          Mode A: set target_decisions=N to find scenarios within ±10% of N. \
+                          Mode B: set same_decisions=true and max_decisions=N to find \
+                          the largest common decision count ≤ N in the candidate set.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target_decisions": {
+                        "type": "integer",
+                        "description": "[Mode A] Select scenarios within ±10% of this decision count."
+                    },
+                    "same_decisions": {
+                        "type": "boolean",
+                        "description": "[Mode B] Return scenarios sharing the largest common decision count ≤ max_decisions."
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "description": "[Mode B] Maximum decision count for the common-count search."
+                    },
+                    "timeframe_minutes": {
+                        "type": "integer",
+                        "description": "Optional granularity filter in minutes (e.g. 240 for 4h, 60 for 1h)."
+                    },
+                    "regimes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional regime label filter (OR semantics per scenario)."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return. Default 4."
+                    }
+                },
+                "required": []
             }),
         },
         ToolDefinition {
@@ -6589,6 +6907,400 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         assert!(
             names.contains(&"validate_draft"),
             "validate_draft must still be in tool defs after Read reclassification: {names:?}"
+        );
+    }
+
+    // -- W7: agent-creation context bleed prevention -----------------------
+
+    /// The `create_strategy_agent` tool description must mention `update_manifest`
+    /// so the model understands the ordering dependency (Finding #14).
+    #[test]
+    fn create_strategy_agent_tool_description_mentions_update_manifest() {
+        let defs = wizard_tool_defs();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "create_strategy_agent")
+            .expect("create_strategy_agent must be in tool defs");
+        assert!(
+            def.description.contains("update_manifest"),
+            "create_strategy_agent description must mention update_manifest (ordering dependency): {}",
+            def.description
+        );
+    }
+
+    /// The wizard system prompt must contain ordering guidance — specifically
+    /// that update_manifest must be called BEFORE create_strategy_agent when
+    /// a specific asset universe was discussed (Finding #14 fix).
+    #[test]
+    fn wizard_system_prompt_contains_update_manifest_ordering_guidance() {
+        // The guidance must mention the "before" ordering constraint.
+        // We check for "before" adjacent to one of the two tool names so the
+        // test catches the actual ordering rule, not just incidental mentions.
+        // The content uses backtick-quoted tool names in markdown, so we match
+        // against the raw text (not lowercased to avoid backtick confusion).
+        let has_ordering_rule = WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest")
+            && (
+                // "Call `update_manifest` before `create_strategy_agent`" (markdown backticks)
+                WIZARD_SYSTEM_PROMPT_BASE.contains("before `create_strategy_agent`")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("before calling create_strategy_agent")
+            );
+        assert!(
+            has_ordering_rule,
+            "wizard.md must contain an explicit ordering rule that update_manifest \
+             precedes create_strategy_agent. Current content:\n{}",
+            WIZARD_SYSTEM_PROMPT_BASE
+        );
+    }
+
+    /// When create_strategy_agent is called WITHOUT an explicit system_prompt
+    /// and the strategy's asset_universe is still the blank-draft default
+    /// (["BTC/USD"]), the tool result must include a "warning" field so
+    /// the model can self-correct before the agent prompt is wrong.
+    #[tokio::test]
+    async fn create_strategy_agent_warns_when_asset_universe_is_default_and_no_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strategy agent", ContextScope::Workspace).await;
+
+        // Create a blank strategy — asset_universe defaults to ["BTC/USD"].
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strategy" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Call create_strategy_agent WITHOUT system_prompt and without
+        // calling update_manifest first — simulates the context-bleed scenario.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent should succeed (non-fatal warning)");
+
+        // Agent must still be created.
+        assert_eq!(out["strategy_id"], id);
+        assert_eq!(out["role"], "trader");
+
+        // Must include a warning about the default asset_universe.
+        let warning = out.get("warning").and_then(|w| w.as_str()).unwrap_or("");
+        assert!(
+            !warning.is_empty(),
+            "expected a warning when asset_universe is default BTC/USD and no prompt given, got: {out}"
+        );
+        assert!(
+            warning.contains("BTC/USD") || warning.contains("update_manifest"),
+            "warning must mention BTC/USD or update_manifest: {warning}"
+        );
+    }
+
+    /// When create_strategy_agent IS given an explicit system_prompt, no
+    /// warning should appear — the caller took responsibility for the prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_when_explicit_system_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me a BTC strategy agent", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "BTC Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "system_prompt": "You are the ETH/USD trader for this strategy. Evaluate the provided OHLCV bars, active filters, risk configuration, and current position state before deciding. Return only structured JSON with action, size_pct, confidence, and concise rationale. Respect configured stop loss, take profit, and max risk limits; hold when evidence is weak or liquidity is poor."
+                }),
+            )
+            .await
+            .expect("create_strategy_agent with explicit prompt");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning when explicit system_prompt is supplied: {out}"
+        );
+    }
+
+    /// When update_manifest was called first to set a non-default asset_universe,
+    /// create_strategy_agent should not warn even without an explicit system_prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_after_update_manifest() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strat", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Update manifest first — asset_universe is no longer the default.
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "id": id,
+                "asset_universe": ["ETH/USD"]
+            }),
+        )
+        .await
+        .expect("update_manifest");
+
+        // Now create the agent without an explicit system_prompt.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent after update_manifest");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning expected when asset_universe was updated before agent creation: {out}"
+        );
+    }
+
+    // ── W10 scenario management tools ────────────────────────────────────────
+
+    /// Helper: create a scenario through the wizard and return its id.
+    async fn create_test_scenario(wl: &WizardLoop) -> String {
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "display_name": "W10 Test Scenario",
+                    "granularity": "4h"
+                }),
+            )
+            .await
+            .expect("create_scenario for W10 tests");
+        out["id"].as_str().expect("id field").to_string()
+    }
+
+    /// W10: clone_scenario creates a derived scenario from a parent.
+    #[tokio::test]
+    async fn w10_clone_scenario_creates_child() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "clone scenario", ContextScope::Workspace).await;
+
+        let parent_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "clone_scenario",
+                serde_json::json!({
+                    "parent_id": parent_id,
+                    "display_name": "W10 Clone"
+                }),
+            )
+            .await
+            .expect("clone_scenario should succeed");
+
+        assert!(out["id"].as_str().is_some(), "cloned scenario must have an id");
+        assert_ne!(out["id"], parent_id, "clone id must differ from parent id");
+        assert_eq!(
+            out["parent_scenario_id"].as_str(),
+            Some(parent_id.as_str()),
+            "cloned scenario must reference parent"
+        );
+    }
+
+    /// W10: archive_scenario soft-deletes a scenario (sets archived_at).
+    #[tokio::test]
+    async fn w10_archive_scenario_sets_archived_at() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "archive scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool("archive_scenario", serde_json::json!({ "id": sc_id }))
+            .await
+            .expect("archive_scenario should succeed");
+
+        assert_eq!(
+            out["archived"].as_bool(),
+            Some(true),
+            "archived field must be true: {out}"
+        );
+    }
+
+    /// W10: set_scenario_regime writes operator-set regime labels.
+    #[tokio::test]
+    async fn w10_set_scenario_regime_persists_labels() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "set regime", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "set_scenario_regime",
+                serde_json::json!({
+                    "id": sc_id,
+                    "regime": "trend",
+                    "volatility": "high",
+                    "direction": "up"
+                }),
+            )
+            .await
+            .expect("set_scenario_regime should succeed");
+
+        assert_eq!(
+            out["regime_label"].as_str(),
+            Some("trend"),
+            "regime_label must be persisted"
+        );
+        assert_eq!(
+            out["volatility_label"].as_str(),
+            Some("high"),
+            "volatility_label must be persisted"
+        );
+        assert_eq!(
+            out["trend_direction"].as_str(),
+            Some("up"),
+            "trend_direction must be persisted"
+        );
+        assert_eq!(
+            out["regime_derived"].as_bool(),
+            Some(false),
+            "regime_derived must be false for operator-set labels"
+        );
+    }
+
+    /// W10: select_scenarios returns a filtered list of scenarios by decision count.
+    #[tokio::test]
+    async fn w10_select_scenarios_returns_matching_rows() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "select scenarios", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // 1. No-mode select returns all candidates (up to `count`). Our scenario
+        //    must be present with a well-formed row shape.
+        let all = wl
+            .run_tool("select_scenarios", serde_json::json!({ "count": 10 }))
+            .await
+            .expect("select_scenarios (no mode) should succeed");
+        let arr = all.as_array().expect("select_scenarios must return an array");
+        let row = arr
+            .iter()
+            .find(|r| r["id"].as_str() == Some(sc_id.as_str()))
+            .unwrap_or_else(|| panic!("no-mode select must include the created scenario; got: {all}"));
+        assert!(row["name"].as_str().is_some(), "row must have name: {row}");
+        assert!(
+            row["timeframe"].as_str().is_some(),
+            "row must have timeframe: {row}"
+        );
+        let dc = row["decision_count"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("row must have decision_count: {row}"));
+        assert!(dc > 0, "decision_count must be positive: {row}");
+
+        // 2. target_decisions == the scenario's own count is inside the ±10%
+        //    window → the scenario IS selected (positive filter path).
+        let matched = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (target) should succeed");
+        assert!(
+            matched
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "target_decisions == own count must select the scenario; got: {matched}"
+        );
+
+        // 3. A target_decisions far outside ±10% → the scenario is excluded
+        //    (negative filter path — proves the filter actually filters).
+        let excluded = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc * 10 + 1000, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (far target) should succeed");
+        assert!(
+            !excluded
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "far-off target_decisions must exclude the scenario; got: {excluded}"
+        );
+    }
+
+    /// W10: classify_scenario skips gracefully when bars are not cached.
+    /// classify_scenario must SKIP (no re-derivation) when the scenario already
+    /// carries an operator-set regime label and `force=false`. This skip path is
+    /// deterministic and independent of whether bar data is cached, so it is the
+    /// reliable way to exercise the graceful `ClassifyResult { classified:false,
+    /// skipped_reason:Some(..) }` branch.
+    #[tokio::test]
+    async fn w10_classify_scenario_skips_when_operator_labeled() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "classify scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // Stamp an operator-authored regime label (regime_derived = false).
+        wl.run_tool(
+            "set_scenario_regime",
+            serde_json::json!({ "id": sc_id, "regime": "trend" }),
+        )
+        .await
+        .expect("set_scenario_regime should succeed");
+
+        let out = wl
+            .run_tool(
+                "classify_scenario",
+                serde_json::json!({ "id": sc_id, "force": false }),
+            )
+            .await
+            .expect("classify_scenario returns Ok");
+
+        // Skip path: classified=false plus a human-readable skipped_reason.
+        // (`ClassifyResult` has no `skipped` field — assert on the real fields.)
+        assert_eq!(
+            out["classified"].as_bool(),
+            Some(false),
+            "classify(force=false) on an operator-labeled scenario must skip: {out}"
+        );
+        assert!(
+            out["skipped_reason"].as_str().is_some(),
+            "a skipped classification must carry a skipped_reason: {out}"
         );
     }
 }

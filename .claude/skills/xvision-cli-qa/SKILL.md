@@ -269,6 +269,14 @@ Watch for:
 - tool-policy three-state drift: Disabled tool offered to the model or running;
   Ask tool (`enabled=true, auto_approve=false`) auto-running without approval
 - an **unknown tool** not failing safe to write
+- **policy-denial events on the wrong stream** — a policy denial produces typed
+  `tool_denied` + `error_policy_denied` events on the **unified session stream**
+  (`GET /api/chat-rail/sessions/:id/stream`) only.  The legacy
+  `POST /api/chat-rail/chat` SSE carries only a `tool_result`(denied) shim and
+  never emits these typed frames.  Harnesses instrumenting the legacy SSE will
+  never observe policy denials; they must read the unified stream.  If a harness
+  reports "no tool_denied event seen," check which stream it is subscribing to
+  before filing a denial-emission bug.
 - stream not replaying idempotently on reconnect, gaps in `seq`, or duplicate
   `event_id`s changing row state (reducer must order/dedupe on `(session_id, seq)`)
 - `replay_complete` missing or carrying the wrong `last_seq`
@@ -321,6 +329,12 @@ Watch for:
 - removed sub-commands (`memory-demos`, `accept-as-child-agent`, `export-demos`, `import-demos`, `explain-missing-data`) responding with exit 0 instead of a not-found error
 - a chat-rail write tool runs in research mode, or a spoofed client mode
   bypasses the persisted-mode enforcement
+- **policy-denial events not visible to a harness** — `tool_denied` and
+  `error_policy_denied` are emitted on the **unified session stream** only
+  (`/api/chat-rail/sessions/:id/stream`); the legacy `POST /api/chat-rail/chat`
+  SSE carries only a `tool_result`(denied) shim.  Before filing a
+  "denial events missing" bug, confirm the harness reads the unified stream,
+  not the legacy SSE.
 
 ## Evidence to Capture
 
