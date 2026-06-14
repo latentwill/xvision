@@ -198,6 +198,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
             is_run_terminator: false,
             input_hash: format!("sha256:in_{i:064x}"),
             input_payload_ref: None,
+            input_text: None,
         }))
         .await;
         bus.publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
@@ -205,6 +206,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
             output_hash: Some(format!("sha256:out_{i:064x}")),
             output_payload_ref: None,
             exit_code: Some(0),
+            output_text: None,
         }))
         .await;
         bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {

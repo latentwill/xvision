@@ -107,6 +107,8 @@
       "tool_hash": "sha256:tool_fixture",
       "input_hash": "sha256:in_fixture",
       "output_hash": "sha256:out_fixture",
+      "input_text": null,
+      "output_text": null,
       "input_payload_ref": null,
       "output_payload_ref": null,
       "side_effect_level": "read_only",

@@ -216,6 +216,7 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
         is_run_terminator: false,
         input_hash: "sha256:beadfeed".to_string(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await;
     bus.publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
@@ -223,6 +224,7 @@ async fn otel_tee_records_sqlite_and_emits_parallel_span_tree() {
         output_hash: Some("sha256:facefeed".to_string()),
         output_payload_ref: None,
         exit_code: Some(0),
+        output_text: None,
     }))
     .await;
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {

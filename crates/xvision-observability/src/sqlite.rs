@@ -345,6 +345,33 @@ impl AgentRunRecorder for SqliteRecorder {
                 .bind(e.is_run_terminator as i64)
                 .execute(&self.pool)
                 .await?;
+                // Plaintext tool input → `tool_call_payload` side-row,
+                // mirroring the `model_call_payload` path. Only written
+                // when the producer carried plaintext (redacted /
+                // full_debug retention); hash_only leaves `input_text`
+                // None and no side-row is written.
+                if let Some(input_text) = e.input_text.as_ref() {
+                    if let Some(run_id) = self.resolve_run(&e.span_id).await {
+                        let payload_json = serde_json::json!({
+                            "tool": e.tool_name,
+                            "input": input_text,
+                        })
+                        .to_string();
+                        let id = format!("tool_payload_{}", uuid::Uuid::new_v4());
+                        sqlx::query(
+                            "INSERT INTO events (\
+                                id, run_id, span_id, kind, payload_json, created_at) \
+                             VALUES (?, ?, ?, 'tool_call_payload', ?, ?)",
+                        )
+                        .bind(id)
+                        .bind(run_id)
+                        .bind(&e.span_id)
+                        .bind(payload_json)
+                        .bind(ts(&Utc::now()))
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                }
             }
 
             RunEvent::ToolCallFinished(e) => {
@@ -359,6 +386,31 @@ impl AgentRunRecorder for SqliteRecorder {
                 .bind(&e.span_id)
                 .execute(&self.pool)
                 .await?;
+                // Plaintext tool output → `tool_call_payload` side-row.
+                // Written as a separate row from the input side-row
+                // (the two arrive on separate events); `export.rs`
+                // coalesces input + output per span.
+                if let Some(output_text) = e.output_text.as_ref() {
+                    if let Some(run_id) = self.resolve_run(&e.span_id).await {
+                        let payload_json = serde_json::json!({
+                            "output": output_text,
+                        })
+                        .to_string();
+                        let id = format!("tool_payload_{}", uuid::Uuid::new_v4());
+                        sqlx::query(
+                            "INSERT INTO events (\
+                                id, run_id, span_id, kind, payload_json, created_at) \
+                             VALUES (?, ?, ?, 'tool_call_payload', ?, ?)",
+                        )
+                        .bind(id)
+                        .bind(run_id)
+                        .bind(&e.span_id)
+                        .bind(payload_json)
+                        .bind(ts(&Utc::now()))
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                }
             }
 
             RunEvent::ToolCallFailed(e) => {

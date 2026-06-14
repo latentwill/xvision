@@ -816,9 +816,14 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             let tool_span_id = fresh_span_id();
             let tool_started_at = std::time::Instant::now();
             if let Some(obs) = input.obs.as_ref() {
+                // Pass RAW args — `emit_tool_call_started_with_payload`
+                // applies the `Redactor` internally under `redacted`
+                // retention and blob-writes the (redacted / verbatim)
+                // input, mirroring the model-call prompt path. Under
+                // `hash_only` it stores no plaintext and the row stays
+                // hash-only, identical to the old `emit_tool_call_started`.
                 let raw_args = serde_json::to_string(&tu_input).unwrap_or_default();
-                let redacted = Redactor::new().redact(&raw_args).text;
-                obs.emit_tool_call_started(&tool_span_id, None, &tu_name, &redacted)
+                obs.emit_tool_call_started_with_payload(&tool_span_id, None, &tu_name, &raw_args)
                     .await;
             }
             // F-5: short-circuit if the block-list says this exact
@@ -899,8 +904,13 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                         obs.emit_tool_call_failed(&tool_span_id, &redacted_error).await;
                     }
                     _ => {
-                        let redacted_out = Redactor::new().redact(&content).text;
-                        obs.emit_tool_call_finished(&tool_span_id, &redacted_out).await;
+                        // Pass RAW output — the payload-aware emitter
+                        // redacts internally under `redacted` and
+                        // blob-writes the body (hash-only stores no
+                        // plaintext), mirroring the model-call response
+                        // path.
+                        obs.emit_tool_call_finished_with_payload(&tool_span_id, &content)
+                            .await;
                     }
                 }
                 // Emit a `fill_attempted`-style engine event for the

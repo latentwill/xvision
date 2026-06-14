@@ -243,6 +243,7 @@ async fn saturation_preserves_lifecycle_and_attributes_span_drops() {
             is_run_terminator: false,
             input_hash: "sha256:in".to_string(),
             input_payload_ref: None,
+            input_text: None,
         }))
         .await;
     }

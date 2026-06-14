@@ -723,8 +723,140 @@ impl ObsEmitter {
                 is_run_terminator: false,
                 input_hash,
                 input_payload_ref: None,
+                input_text: None,
             }))
             .await;
+    }
+
+    /// Payload-aware companion to `emit_tool_call_started`. Gives tool
+    /// input the SAME plaintext path model-call prompts have: under the
+    /// run's retention (`Redacted` / `FullDebug` only — NEVER
+    /// `HashOnly`) the redacted-or-verbatim input is blob-written and
+    /// the resulting `BlobRef` is wired onto `input_payload_ref`, while
+    /// the plaintext is carried on `input_text` so the recorder writes
+    /// a `tool_call_payload` side-row.
+    ///
+    /// `input_raw` is the RAW tool args (e.g. the serialized
+    /// `tool_use.input` JSON). The redactor is applied INSIDE this
+    /// method under `Redacted` — mirroring
+    /// `emit_model_call_finished_with_payloads`, which takes the raw
+    /// `LlmRequest` and redacts internally. The `input_hash` is still
+    /// computed over the (pre-)redacted text so the hash contract
+    /// matches `emit_tool_call_started`.
+    ///
+    /// Blob-write failure under `Redacted`/`FullDebug` logs at `error!`
+    /// (supervisor channel) and drops the ref to `None` — the row still
+    /// records, the operator sees the failure surface.
+    pub async fn emit_tool_call_started_with_payload(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+        input_raw: &str,
+    ) {
+        // Open the parent span row first so the tool_calls row has a FK
+        // target — identical to `emit_tool_call_started`.
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            tool_name: Some(tool_name.to_string()),
+            ..SpanAttributes::default()
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::ToolCall,
+                name: tool_name.to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: attrs.to_attributes_json(),
+            }))
+            .await;
+
+        // Retention-gated plaintext: redact under Redacted, verbatim
+        // under FullDebug, suppressed otherwise. The hash is taken over
+        // this same gated text so the row's `input_hash` matches the
+        // stored body.
+        let (input_text, input_payload_ref) = self
+            .persist_tool_payload(span_id, input_raw, self.retention.store_prompts)
+            .await;
+        let hash_input = input_text.as_deref().unwrap_or(input_raw);
+        let input_hash = format!("sha256:{}", hex::encode(Sha256::digest(hash_input.as_bytes())));
+
+        self.bus
+            .publish(RunEvent::ToolCallStarted(ToolCallStartedEvent {
+                span_id: span_id.to_string(),
+                tool_name: tool_name.to_string(),
+                origin: ToolOrigin::Native,
+                tool_version: None,
+                tool_hash: None,
+                side_effect_level: SideEffectLevel::ReadOnly,
+                risk_level: RiskLevel::SafeRead,
+                requires_approval: false,
+                is_run_terminator: false,
+                input_hash,
+                input_payload_ref,
+                input_text,
+            }))
+            .await;
+    }
+
+    /// Retention-gated blob persistence for a single tool payload
+    /// (input or output). Returns `(plaintext_for_side_row,
+    /// blob_payload_ref)`:
+    ///
+    /// - `HashOnly` (or any non-store mode) → `(None, None)`; no blob
+    ///   write, no side-row.
+    /// - `FullDebug` → verbatim bytes blob-written; `(Some(text),
+    ///   Some(ref))`.
+    /// - `Redacted` → `Redactor`-scrubbed bytes blob-written;
+    ///   `(Some(scrubbed), Some(ref))`.
+    ///
+    /// Mirrors the prompt/response branch in
+    /// `emit_model_call_finished_with_payloads`: applies
+    /// `max_payload_bytes` before the `BlobStore::write`, and on write
+    /// failure logs at `error!` and drops the ref to `None` while still
+    /// returning the plaintext so the side-row records.
+    async fn persist_tool_payload(
+        &self,
+        span_id: &str,
+        raw: &str,
+        store_flag: bool,
+    ) -> (Option<String>, Option<String>) {
+        let write = store_flag
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+        if !write {
+            return (None, None);
+        }
+        let text: String = match self.retention.mode {
+            RetentionMode::FullDebug => raw.to_string(),
+            RetentionMode::Redacted => Redactor::new().redact(raw).text,
+            // Unreachable — gated by `write` above; explicit for future
+            // modes.
+            _ => raw.to_string(),
+        };
+        let mut payload_ref: Option<String> = None;
+        if let Some(store) = self.blob_store.as_ref() {
+            let bytes = cap_blob_bytes(text.clone().into_bytes(), self.retention.max_payload_bytes);
+            match store.write(&bytes) {
+                Ok(blob_ref) => payload_ref = Some(blob_ref.as_str().to_string()),
+                Err(e) => {
+                    tracing::error!(
+                        run_id = %self.run_id,
+                        span_id = %span_id,
+                        error = %e,
+                        "BlobStore::write failed for tool payload — \
+                         ref will be None, hash still recorded",
+                    );
+                }
+            }
+        }
+        (Some(text), payload_ref)
     }
 
     /// Finish a tool call as success. Closes the matching `tool.call`
@@ -743,6 +875,44 @@ impl ObsEmitter {
                 output_hash: Some(output_hash),
                 output_payload_ref: None,
                 exit_code: Some(0),
+                output_text: None,
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status: SpanStatus::Ok,
+                error_json: None,
+            }))
+            .await;
+    }
+
+    /// Payload-aware companion to `emit_tool_call_finished`. Gives tool
+    /// output the SAME plaintext path model-call responses have: under
+    /// the run's retention (`Redacted` / `FullDebug` only — NEVER
+    /// `HashOnly`) the redacted-or-verbatim output is blob-written, the
+    /// ref is wired onto `output_payload_ref`, and the plaintext rides
+    /// on `output_text` for the recorder's `tool_call_payload`
+    /// side-row.
+    ///
+    /// `output_raw` is the RAW tool result; the redactor is applied
+    /// INSIDE this method under `Redacted` (same contract as
+    /// `emit_tool_call_started_with_payload`). The `output_hash` is
+    /// computed over the gated text so it matches the stored body.
+    pub async fn emit_tool_call_finished_with_payload(&self, span_id: &str, output_raw: &str) {
+        let (output_text, output_payload_ref) = self
+            .persist_tool_payload(span_id, output_raw, self.retention.store_responses)
+            .await;
+        let hash_input = output_text.as_deref().unwrap_or(output_raw);
+        let output_hash = format!("sha256:{}", hex::encode(Sha256::digest(hash_input.as_bytes())));
+        self.bus
+            .publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
+                span_id: span_id.to_string(),
+                output_hash: Some(output_hash),
+                output_payload_ref,
+                exit_code: Some(0),
+                output_text,
             }))
             .await;
         self.bus

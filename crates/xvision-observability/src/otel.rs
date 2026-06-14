@@ -438,6 +438,40 @@ fn emit_otel_for(event: &RunEvent) {
             add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
             add_attribute(&s, attr::DROPPED_COUNT, Attribute::count(e.dropped as i64));
         }
+        // Memory + engine events carry operator/agent text (recall item
+        // previews, memory bodies, engine payload_json) — those bodies
+        // belong in SQLite, NEVER OTel. The tee emits id / count
+        // markers only so the per-event payload text never crosses the
+        // OTel boundary (enforced by `tests/otel_no_payload_lint.rs`).
+        RunEvent::MemoryRecall(e) => {
+            let s = span!(Level::INFO, "xvision.memory.recall");
+            let _g = s.enter();
+            add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
+            add_attribute(&s, "xvision.memory.namespace", Attribute::id(&e.namespace));
+            add_attribute(&s, "xvision.memory.decision_id", Attribute::count(e.decision_id));
+            add_attribute(
+                &s,
+                "xvision.memory.recall_count",
+                Attribute::count(e.items.len() as i64),
+            );
+        }
+        RunEvent::MemoryWrite(e) => {
+            let s = span!(Level::INFO, "xvision.memory.write");
+            let _g = s.enter();
+            add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
+            add_attribute(&s, "xvision.memory.namespace", Attribute::id(&e.namespace));
+            add_attribute(&s, "xvision.memory.decision_id", Attribute::count(e.decision_id));
+            add_attribute(&s, "xvision.memory.item_id", Attribute::id(&e.memory_item_id));
+        }
+        RunEvent::EngineEvent(e) => {
+            let s = span!(Level::INFO, "xvision.engine.event");
+            let _g = s.enter();
+            add_attribute(&s, attr::RUN_ID, Attribute::id(&e.run_id));
+            add_attribute(&s, "xvision.engine.kind", Attribute::id(&e.kind));
+            if let Some(span_id) = e.span_id.as_ref() {
+                add_attribute(&s, attr::SPAN_ID, Attribute::id(span_id));
+            }
+        }
     }
 }
 

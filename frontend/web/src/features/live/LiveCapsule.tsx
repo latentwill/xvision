@@ -23,7 +23,7 @@ import {
   STATUS,
   type EvalCapsuleFocused,
 } from "../agent-runs/CapsuleShell";
-import type { BrokerCallDetail, RunSpan } from "@/api/types-agent-runs";
+import type { BrokerCallDetail, RetentionMode, RunSpan } from "@/api/types-agent-runs";
 
 export type LiveCapsuleProps = {
   /**
@@ -44,6 +44,12 @@ export type LiveCapsuleProps = {
   onPopOut?: () => void;
   /** Optional test hook id. Default `"live-capsule"`. */
   testId?: string;
+  /**
+   * The run's retention/fidelity (`AgentRunSummary.retention_mode`).
+   * Forwarded to `CapsuleShell` so the operator sees whether bodies are
+   * present. Optional — omitted on legacy call sites.
+   */
+  retentionMode?: RetentionMode;
 };
 
 /** Compact numeric formatter for the order line — trims trailing zeros. */
@@ -115,6 +121,7 @@ export function LiveCapsule({
   onExpandDock,
   onPopOut,
   testId = "live-capsule",
+  retentionMode,
 }: LiveCapsuleProps) {
   // Status drives the border + the row pill. Running (eval tone) pulses;
   // terminal tones (pass/warn/error) are frozen. Error/warn tint the border
@@ -141,6 +148,7 @@ export function LiveCapsule({
       borderColor={borderColor}
       // Live capsule is always boxed (it has a body), never a bare pill.
       expanded={true}
+      retentionMode={retentionMode}
     >
       {/* Focused live run row (single run — no sibling stack). */}
       <div

@@ -23,7 +23,70 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import type { RetentionMode } from "../../api/types-agent-runs";
+
 export type EvalCapsuleStatus = "eval" | "pass" | "warn" | "error" | "queued";
+
+/**
+ * Operator-facing fidelity token per retention mode. Tells the operator
+ * at a glance whether prompt/response/tool bodies are present on this
+ * run (the badge sits beside the capsule rows so it's always visible,
+ * not buried in the inspector).
+ *
+ * Mapping (WS-5 Gap 2):
+ *   - `hash_only`  → "hash-only" — only hashes/counts stored, no bodies.
+ *   - `redacted`   → "redacted"  — bodies present but secret-scrubbed.
+ *   - `full_debug` → "full"      — raw bodies on disk.
+ */
+const FIDELITY_TOKEN: Record<
+  RetentionMode,
+  { label: string; tint: string; title: string }
+> = {
+  hash_only: {
+    label: "hash-only",
+    tint: "var(--text-3)",
+    title: "Hash-only retention — no prompt/response/tool bodies stored on disk",
+  },
+  redacted: {
+    label: "redacted",
+    tint: "var(--warn)",
+    title: "Redacted retention — secret-scrubbed bodies stored on disk",
+  },
+  full_debug: {
+    label: "full",
+    tint: "var(--info)",
+    title: "Full retention — raw prompt/response/tool bodies stored on disk",
+  },
+};
+
+/**
+ * Small fidelity chip surfacing the run's retention mode. Matches the
+ * capsule's `text-[10px] font-mono tracking` chip language (same family
+ * as the EVAL/LIVE prefix + status label) and is keyed by
+ * `data-fidelity` for deep-linking / testing.
+ */
+export function FidelityBadge({
+  retentionMode,
+}: {
+  retentionMode: RetentionMode;
+}): ReactNode {
+  const tok = FIDELITY_TOKEN[retentionMode] ?? FIDELITY_TOKEN.hash_only;
+  return (
+    <span
+      data-testid="capsule-fidelity-badge"
+      data-fidelity={retentionMode}
+      title={tok.title}
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase shrink-0"
+      style={{
+        color: tok.tint,
+        background: "color-mix(in srgb, currentColor 12%, transparent)",
+        border: "1px solid color-mix(in srgb, currentColor 30%, transparent)",
+      }}
+    >
+      {tok.label}
+    </span>
+  );
+}
 
 export type EvalCapsuleCurrentSpan = {
   color: string;     // hex / css color (typically span_colors)
@@ -241,12 +304,21 @@ export function CapsuleShell({
   tone,
   borderColor,
   expanded = false,
+  retentionMode,
   children,
 }: {
   testId: string;
   tone: string;
   borderColor: string;
   expanded?: boolean;
+  /**
+   * Retention/fidelity of the focused run, read off the run summary
+   * (`AgentRunSummary.retention_mode`). When provided, a small fidelity
+   * badge is rendered in the shell so the operator always knows whether
+   * prompt/response/tool bodies are present. Optional so call sites that
+   * don't yet thread the run summary render unchanged.
+   */
+  retentionMode?: RetentionMode;
   children: ReactNode;
 }) {
   return (
@@ -267,6 +339,14 @@ export function CapsuleShell({
         transition: "border-radius 180ms ease",
       }}
     >
+      {retentionMode ? (
+        <div
+          className="flex items-center justify-end gap-2 px-3 pt-1.5"
+          style={{ pointerEvents: "none" }}
+        >
+          <FidelityBadge retentionMode={retentionMode} />
+        </div>
+      ) : null}
       {children}
     </div>
   );

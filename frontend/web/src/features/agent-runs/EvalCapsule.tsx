@@ -14,6 +14,7 @@
 // unchanged — the EvalCapsule + StripDockSlot tests are the regression gate.
 
 import { useEffect, useRef, useState } from "react";
+import type { RetentionMode } from "../../api/types-agent-runs";
 import {
   CapsuleRow,
   CapsuleShell,
@@ -53,6 +54,12 @@ export type EvalCapsuleProps = {
    * compatibility with existing selectors that targeted the legacy strip.
    */
   testId?: string;
+  /**
+   * Focused run's retention/fidelity (`AgentRunSummary.retention_mode`).
+   * Forwarded to `CapsuleShell` so the operator sees whether bodies are
+   * present. Optional — omitted on legacy call sites.
+   */
+  retentionMode?: RetentionMode;
 };
 
 export function EvalCapsule({
@@ -62,6 +69,7 @@ export function EvalCapsule({
   onExpandDock,
   onPopOut,
   testId = "run-status-strip",
+  retentionMode,
 }: EvalCapsuleProps) {
   // Errored siblings always promoted to the top of the stack.
   const errored = siblings.filter((s) => s.status === "error");
@@ -96,6 +104,7 @@ export function EvalCapsule({
       tone={focused.status}
       borderColor={borderColor}
       expanded={expanded}
+      retentionMode={retentionMode}
     >
       {/* Focused-eval row (always rendered). */}
       <div
