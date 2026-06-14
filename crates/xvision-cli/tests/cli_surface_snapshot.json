@@ -343,6 +343,7 @@
       "long_flags": [
         "--asset",
         "--help",
+        "--i-understand-real-money",
         "--venue"
       ],
       "mutates": true,
@@ -1296,6 +1297,7 @@
       "long_flags": [
         "--asset",
         "--help",
+        "--i-understand-real-money",
         "--side",
         "--size-bps",
         "--stop-loss-pct",

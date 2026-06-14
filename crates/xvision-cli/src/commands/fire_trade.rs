@@ -4,9 +4,21 @@
 //! the venue-specific executor. Used to validate executor wiring without
 //! standing up the full Risk → Trader pipeline.
 //!
+//! # Real-money guard (Phase 4)
+//! When `--venue byreal` and `BYREAL_NETWORK` resolves to mainnet (the default),
+//! this command requires `--i-understand-real-money`. Without that flag it
+//! exits with an error before touching the network.
+//!
+//! # FAST-FOLLOW (Phase 5)
+//! The current guard is a lightweight ack-flag check. The full gate should
+//! route through BrokerSurface / SafetyManager and persist the ack to the DB
+//! before submitting — this requires new CLI→DB plumbing and is deferred until
+//! the SafetyManager pause-gate lands.
+//!
 //! Venues:
 //! - `alpaca`  — reads APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL.
 //! - `orderly` — reads ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_BASE_URL.
+//! - `byreal`  — reads BYREAL_PRIVATE_KEY, BYREAL_NETWORK, BYREAL_ACCOUNT.
 //!
 //! Idempotent on retries: every executor uses `cycle_id` as the venue-side
 //! client order id so duplicate retries collapse to a single fill.
@@ -19,6 +31,7 @@ use xvision_execution::{
     AlpacaExecutor, ByrealPerpsExecutor, Executor, OrderlyExecutor, SubprocessByrealApi,
 };
 
+use crate::commands::live_guard::require_real_money_ack;
 use crate::commands::venue::Venue;
 
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +68,15 @@ pub async fn run(
     take_profit_pct: f32,
     summary: String,
     asset: AssetSymbol,
+    i_understand_real_money: bool,
 ) -> Result<()> {
+    // Real-money guard: refuse Byreal mainnet without the explicit ack flag.
+    require_real_money_ack(
+        venue,
+        std::env::var("BYREAL_NETWORK").ok().as_deref(),
+        i_understand_real_money,
+    )?;
+
     let (action, direction) = match side {
         Side::Buy => (Action::Buy, Direction::Long),
         Side::Sell => (Action::Sell, Direction::Short),

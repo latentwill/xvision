@@ -1,5 +1,16 @@
 //! Shared `--venue` parser plus the `xvn portfolio` / `xvn close-position`
 //! commands that read from / write to a live executor.
+//!
+//! # Real-money guard (`close-position`, Phase 4)
+//! When `--venue byreal` and `BYREAL_NETWORK` resolves to mainnet (the default),
+//! `close_position` requires `--i-understand-real-money`. Without that flag it
+//! exits with an error before touching the network.
+//!
+//! # FAST-FOLLOW (Phase 5)
+//! The current guard is a lightweight ack-flag check. The full gate should
+//! route through BrokerSurface / SafetyManager and persist the ack to the DB
+//! before submitting — this requires new CLI→DB plumbing and is deferred until
+//! the SafetyManager pause-gate lands.
 
 use std::str::FromStr;
 
@@ -9,6 +20,7 @@ use xvision_execution::{
 };
 
 use crate::commands::asset::parse_asset;
+use crate::commands::live_guard::require_real_money_ack;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Venue {
@@ -57,7 +69,18 @@ pub async fn portfolio(venue: Venue) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn close_position(venue: Venue, asset_str: String) -> anyhow::Result<()> {
+pub async fn close_position(
+    venue: Venue,
+    asset_str: String,
+    i_understand_real_money: bool,
+) -> anyhow::Result<()> {
+    // Real-money guard: refuse Byreal mainnet without the explicit ack flag.
+    require_real_money_ack(
+        venue,
+        std::env::var("BYREAL_NETWORK").ok().as_deref(),
+        i_understand_real_money,
+    )?;
+
     let asset: AssetSymbol = parse_asset(&asset_str).map_err(anyhow::Error::msg)?;
     let exec = executor_from_env(venue)?;
     let receipt = exec.close_position(asset).await?;
