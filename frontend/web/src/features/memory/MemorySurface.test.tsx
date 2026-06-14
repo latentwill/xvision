@@ -152,6 +152,17 @@ describe("FlywheelPanel — Stage Pattern button precondition (bead xvision-5jzr
     });
   });
 
+  it("shows an always-visible precondition hint (not just a hover tooltip) when observations < 2", async () => {
+    renderPanel(0);
+
+    // The QA "not clickable" finding was an inertly-disabled button whose only
+    // explanation was a hover-only `title`. A hint must be visible text so
+    // touch/keyboard users understand the precondition without hovering.
+    expect(
+      await screen.findByText(/2 observations \(0 so far\)/i),
+    ).toBeInTheDocument();
+  });
+
   it("does NOT disable Stage Pattern button when observations >= 2", async () => {
     renderPanel(2);
 

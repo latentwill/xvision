@@ -69,6 +69,12 @@ export type CycleProgressEvent = {
   bundle_hash?: string | null;
   parent_hash?: string | null;
   child_hash?: string | null;
+  /** WS-11b: on `mutation_gated`, the candidate's persisted eval `Run.id`.
+   *  The OPTI reducer nests a navigable `opti.eval-run` node carrying it under
+   *  the experiment so an operator can drill cycle → experiment → eval-run
+   *  trace. Absent for the regime/no-candidate paths and for runners that
+   *  don't surface a run id. */
+  eval_run_id?: string | null;
   display_label?: string | null;
   ts?: string;
   payload?: Record<string, unknown> | null;

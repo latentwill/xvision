@@ -10,6 +10,11 @@ import {
   openAgentRunStream,
 } from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
+import {
+  applyUnifiedToDetail,
+  freshLiveStreamState,
+  type LiveStreamState,
+} from "./live-stream-reducer";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { useCurrentTraceScope } from "./use-trace-scope";
@@ -285,8 +290,37 @@ export function TraceDock() {
   useEffect(() => {
     if (!activeRunId || !isLive) return;
     const key = agentRunKeys.run(activeRunId);
+    // WS-8 Part 2 B2: per-stream projection accumulator. Holds the folded
+    // `SpanProjection[]` across `unified` frames so the dock reconstructs span
+    // detail (model body/tokens/cost, broker fill, tool I/O, engine rows,
+    // error) WITHOUT a per-frame export refetch. Reset on every `snapshot`
+    // (the authoritative resync / reconnect seed).
+    let liveState: LiveStreamState = freshLiveStreamState();
     const close = openAgentRunStream(activeRunId, (ev) => {
       switch (ev.event) {
+        // ── WS-8 Part 2 B2: the converged LIVE tail ────────────────────────
+        // Every live frame is a `UnifiedEvent`. Fold it onto the cached detail
+        // via the shared fidelity-complete projection. The reducer asks for a
+        // refetch ONLY on a terminal frame (canonical run-level aggregates);
+        // span DETAIL never triggers a refetch — that's the whole point of B2.
+        case "unified": {
+          const prev = qc.getQueryData<AgentRunDetail>(key) ?? null;
+          const out = applyUnifiedToDetail(prev, liveState, ev.data);
+          liveState = out.state;
+          // Only write when we actually have a cached detail to mutate (the
+          // snapshot seeds it first; a frame that races ahead is a no-op until
+          // then). `applyUnifiedToDetail` is reference-stable on no-op.
+          if (out.detail && out.detail !== prev) {
+            qc.setQueryData<AgentRunDetail>(key, out.detail);
+          }
+          if (out.requestRefetch) {
+            // Single aggregate refetch on terminal — pulls canonical
+            // span_count / model_call_count / total_cost / retention the
+            // stream doesn't carry. NOT a per-detail-frame refetch.
+            qc.invalidateQueries({ queryKey: key });
+          }
+          return;
+        }
         // Legacy mock-branch arms — kept for test/dev MODE.
         case "summary":
           qc.setQueryData<AgentRunDetail>(key, (prev) =>
@@ -300,9 +334,19 @@ export function TraceDock() {
           return;
         // Real-wire arms.
         case "snapshot":
-          // Authoritative resync — replaces the cached detail wholesale.
+          // Authoritative resync — replaces the cached detail wholesale AND
+          // resets the per-stream live projection so the next `unified` frames
+          // fold onto the fresh seed (reconnect must not double-count).
+          liveState = freshLiveStreamState();
           qc.setQueryData<AgentRunDetail>(key, ev.data);
           return;
+        // ── Legacy raw-`RunEvent`-name arms (back-compat only) ─────────────
+        // The current backend emits ONLY `snapshot` + `unified` (+ `lagged`),
+        // so these never fire against it. Retained so a stale backend or the
+        // integration shim that still emits raw frames keeps rendering rather
+        // than going dark. They DO still refetch on terminal/detail frames —
+        // that's acceptable for the legacy path; the converged path above does
+        // not.
         case "span_started": {
           const partial: RunSpan = {
             span_id: ev.data.span_id,

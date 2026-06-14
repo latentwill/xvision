@@ -497,7 +497,7 @@ function DefinitionTab({ s }: { s: Scenario }) {
                   id="scenario-chart-granularity"
                   value={chartGranularity}
                   onChange={(event) => setChartGranularity(event.target.value)}
-                  className="bg-surface border border-border rounded px-2 py-1 text-[12px] text-text"
+                  className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text focus:outline-none focus:border-gold/40"
                 >
                   {CHART_GRANULARITY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>

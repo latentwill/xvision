@@ -165,6 +165,10 @@ describe("optiSpanLabel — WS-11a operator-surface OPTI labels", () => {
     expect(optiSpanLabel(optiSpan("opti.flywheel"))).toBe("Flywheel compiled");
   });
 
+  test("opti.eval-run (WS-11b) gets the 'Eval run' operator label", () => {
+    expect(optiSpanLabel(optiSpan("opti.eval-run"))).toBe("Eval run");
+  });
+
   test("gate rows resolve the three-way outcome label (Active / Suspect / Rejected)", () => {
     expect(optiSpanLabel(optiSpan("opti.gate", { outcome: "kept" }))).toBe("Active");
     expect(optiSpanLabel(optiSpan("opti.gate", { outcome: "suspect" }))).toBe("Suspect");

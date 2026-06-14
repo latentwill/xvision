@@ -646,19 +646,28 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
               !statusQuery.isPending && obsCount < MIN_OBSERVATIONS;
             const isDisabled = autooptimizerMutation.isPending || tooFewObs;
             return (
-              <button
-                type="button"
-                onClick={() => autooptimizerMutation.mutate()}
-                disabled={isDisabled}
-                title={
-                  tooFewObs
-                    ? `Needs at least ${MIN_OBSERVATIONS} observations to stage a pattern (currently ${obsCount})`
-                    : undefined
-                }
-                className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
-              >
-                {autooptimizerMutation.isPending ? "Staging..." : "Stage Pattern"}
-              </button>
+              <div className="flex flex-col items-stretch gap-1">
+                <button
+                  type="button"
+                  onClick={() => autooptimizerMutation.mutate()}
+                  disabled={isDisabled}
+                  title={
+                    tooFewObs
+                      ? `Needs at least ${MIN_OBSERVATIONS} observations to stage a pattern (currently ${obsCount})`
+                      : undefined
+                  }
+                  className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
+                >
+                  {autooptimizerMutation.isPending ? "Staging..." : "Stage Pattern"}
+                </button>
+                {tooFewObs ? (
+                  // Always-visible precondition hint — a hover-only `title` left
+                  // the button looking inertly disabled (QA: "not clickable").
+                  <p className="m-0 text-[11px] text-text-3 leading-snug text-center">
+                    Needs ≥ {MIN_OBSERVATIONS} observations ({obsCount} so far)
+                  </p>
+                ) : null}
+              </div>
             );
           })()}
         </div>

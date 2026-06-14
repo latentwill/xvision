@@ -725,6 +725,12 @@ function openMockStream(
  */
 export const REAL_SSE_EVENTS = [
   "snapshot",
+  // WS-8 Part 2 B2: the single stable name carrying the projected
+  // `UnifiedEvent` LIVE tail. The per-`RunEvent`-name entries below are kept
+  // so a stale backend (or the integration shim) that still emits raw frames
+  // keeps working, but the current backend emits ONLY `snapshot` + `unified`
+  // (+ `lagged`).
+  "unified",
   "run_started",
   "run_finished",
   "run_interrupted",
@@ -797,10 +803,14 @@ function openRealStream(
       // on the next snapshot refetch.
       return;
     }
-    // The Rust side encodes the variant tag as `kind` inside the JSON
-    // payload (see `#[serde(tag = "kind", rename_all = "snake_case")]`).
-    // We trust the `event:` name and use the inner payload as-is. The
-    // remaining typing is intentionally loose — see types-agent-runs.ts.
+    // WS-8 Part 2 B2: the real wire carries the LIVE tail on `event: unified`
+    // whose data is a full `UnifiedEvent` envelope (`{ event_id, seq, ts,
+    // payload: { kind, data }, … }`). We trust the `event:` name and pass the
+    // parsed envelope straight through; the dock folds it via the shared
+    // fidelity-complete projection (`live-stream-reducer`). The legacy
+    // per-`RunEvent`-name arms keep the same loose-passthrough behavior for the
+    // mock/back-compat path. Typing stays intentionally loose — see
+    // types-agent-runs.ts.
     const data = parsed as Record<string, unknown>;
     const out = { event: eventName, data: data as never } as AgentRunStreamEvent;
     dispatchToStore(out);

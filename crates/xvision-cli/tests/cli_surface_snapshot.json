@@ -2477,6 +2477,17 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -4545,12 +4556,38 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--format",
+        "--help",
+        "--path"
+      ],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "optimize",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "export"
       ]
     },
     {
@@ -4761,6 +4798,7 @@
         "--day-start",
         "--db",
         "--experiments-per-cycle",
+        "--export",
         "--help",
         "--ipc-socket",
         "--max-consecutive-errors",

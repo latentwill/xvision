@@ -30,6 +30,7 @@ vi.mock("@/api/strategies", async () => {
     addStrategyAgent: vi.fn(),
     renameStrategyAgentRole: vi.fn(),
     removeStrategyAgent: vi.fn(),
+    cloneStrategy: vi.fn(),
   };
 });
 
@@ -137,6 +138,7 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
+  vi.mocked(strategyApi.cloneStrategy).mockReset();
   vi.mocked(chartApi.getStrategyChart).mockReset();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
       default_model: null,
@@ -158,6 +160,47 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe("AuthoringRoute — clone strategy", () => {
+  it("renders a Clone strategy button between Delete and Run eval", async () => {
+    renderRoute();
+    const clone = await screen.findByTestId("inspector-clone");
+    expect(clone).toHaveTextContent("Clone strategy");
+
+    const del = screen.getByRole("button", { name: /delete strategy/i });
+    const runEval = screen.getByRole("link", { name: /run eval/i });
+
+    // DOM order is Delete → Clone → Run eval.
+    expect(
+      del.compareDocumentPosition(clone) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      clone.compareDocumentPosition(runEval) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("clones via the engine endpoint with a (clone) name", async () => {
+    vi.mocked(strategyApi.cloneStrategy).mockResolvedValue({
+      ...baseStrategy,
+      manifest: {
+        ...baseStrategy.manifest,
+        id: "01CLONE",
+        display_name: "Agent Stack (clone)",
+      },
+    });
+
+    renderRoute();
+    const clone = await screen.findByTestId("inspector-clone");
+    fireEvent.click(clone);
+
+    await waitFor(() =>
+      expect(vi.mocked(strategyApi.cloneStrategy)).toHaveBeenCalledWith(
+        "01TEST",
+        { display_name: "Agent Stack (clone)" },
+      ),
+    );
+  });
 });
 
 describe("AuthoringRoute attached-agent row collapse + inline detail", () => {

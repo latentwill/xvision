@@ -466,11 +466,6 @@ export function LineageRoute() {
     enabled: !!name,
   });
 
-  const { data: viewer } = useQuery({
-    queryKey: ["marketplace", "viewer"],
-    queryFn: () => mp.getViewer(),
-  });
-
   // Verified manifest enrichment — real (numeric) on-chain listings only.
   // Fixture listings never fetch; on any error this is null and the page
   // renders exactly as before.
@@ -502,9 +497,6 @@ export function LineageRoute() {
   });
 
   const isOpenTier = !!detail && detail.tier === "open";
-  const canClone =
-    !!detail &&
-    (isOpenTier || (viewer?.ownedListingIds.includes(detail.id) ?? false));
 
   const receiptsOpen = sp.get("receipts") === "open";
   const toggleReceipts = () => {
@@ -703,8 +695,19 @@ export function LineageRoute() {
           )}
 
           {/* Metric strip — every value FITS: tabular-nums + whitespace-nowrap,
-              "—" for absent values (never 0). */}
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2 pt-1">
+              "—" for absent values (never 0).
+              Provenance: these figures come from XVN backtest/eval (indicative).
+              Live Degen Arena (on-chain) PnL is shown in the PerformanceSection
+              provenance banner below when available. */}
+          <div className="flex items-center gap-2 pt-1 pb-0.5">
+            <span
+              data-testid="metric-strip-provenance"
+              className="font-mono text-[9px] tracking-[0.12em] uppercase text-text-3 whitespace-nowrap"
+            >
+              Indicative · XVN backtest
+            </span>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
             <MetricCell
               label="30D Return"
               value={
@@ -839,15 +842,6 @@ export function LineageRoute() {
             <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
               Mantle Sepolia testnet — pays with test USDC.
             </div>
-
-            {/* Clone to edit — the editor handoff (kept). The Share button is removed (QA3). */}
-            <button
-              onClick={() => cloneMutation.mutate()}
-              disabled={!canClone || cloneMutation.isPending}
-              className="mt-2 w-full py-2 rounded border border-border text-[12px] font-medium text-text-2 hover:text-text hover:border-border-strong transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Clone to edit
-            </button>
           </div>
         </div>
       </section>
@@ -933,7 +927,18 @@ export function LineageRoute() {
       {/* ===== BELOW THE FOLD — single full-width column ===== */}
       <div className="p-6 space-y-6">
         {/* PERFORMANCE — first-class citizen, full-width, on-chain markers */}
-        <PerformanceSection curve={detail.equityCurve} trades={detail.onChain.trades} />
+        <PerformanceSection
+          curve={detail.equityCurve}
+          trades={detail.onChain.trades}
+          // Live Degen Arena PnL is authoritative once there's real on-chain
+          // trading; hidden (null) until the indexer reports trades, so an
+          // un-traded listing doesn't show a misleading $0.00 live figure.
+          liveDegenPnlUsd={
+            detail.onChain.tradesMeta.totalOnChain > 0
+              ? detail.onChain.tradesMeta.netPnlUsd
+              : null
+          }
+        />
 
         {/* EVAL ATTESTATIONS (inline, only for attested on-chain listings) */}
         {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
