@@ -14,6 +14,7 @@ import { LineageRoute } from "./LineageRoute";
 
 const faucetUsdcMock = vi.fn(async () => "0xfaucet-tx");
 vi.mock("@/features/marketplace/lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   faucetUsdc: (...args: unknown[]) =>
     (faucetUsdcMock as (...a: unknown[]) => Promise<string>)(...args),
 }));

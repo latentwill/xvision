@@ -28,6 +28,16 @@
 #   - ssh access to the target host (--push only)
 #
 # The target host needs nothing besides docker.
+#
+# Environment (marketplace build-time config, baked into the SPA):
+#   VITE_MARKETPLACE_NETWORK=mainnet   # chain for the buy path (default: sepolia)
+#   VITE_MARKETPLACE_SUBGRAPH_URL=...  # Goldsky subgraph that Browse reads.
+#                                      # Forwarded to the build when set (even to
+#                                      # an empty string). On a mainnet build it
+#                                      # defaults to "" so Browse reads the
+#                                      # backend indexer instead of the baked
+#                                      # testnet subgraph (which would otherwise
+#                                      # show Sepolia listings on a mainnet site).
 
 set -euo pipefail
 
@@ -112,7 +122,26 @@ if [[ "${XVN_DEPLOY_QUIET:-0}" != "1" ]] && command -v git >/dev/null 2>&1; then
   fi
 fi
 
-echo "==> Building $TAG (WITH_IDENTITY=$WITH_IDENTITY, platform=$PLATFORM)"
+# --- Marketplace build-time config passthrough --------------------------------
+# The Dockerfile bakes the testnet Goldsky subgraph URL as its ARG default, and
+# the data-source selector uses the subgraph whenever that URL is non-empty. So
+# a mainnet image built without overriding the URL queries the Sepolia subgraph
+# and shows testnet listings in Browse. Forward an explicit
+# VITE_MARKETPLACE_SUBGRAPH_URL when the operator sets one (honoring an explicit
+# empty value, which routes Browse to the backend indexer), and default it to
+# empty on a mainnet build so the testnet subgraph is never shipped to mainnet.
+MARKETPLACE_NETWORK="${VITE_MARKETPLACE_NETWORK:-sepolia}"
+MARKETPLACE_BUILD_ARGS=()
+if [[ -z "${VITE_MARKETPLACE_SUBGRAPH_URL+set}" && "$MARKETPLACE_NETWORK" == "mainnet" ]]; then
+  VITE_MARKETPLACE_SUBGRAPH_URL=""
+  echo "==> mainnet build: defaulting VITE_MARKETPLACE_SUBGRAPH_URL='' (Browse uses the backend indexer, not the baked testnet subgraph)"
+fi
+if [[ -n "${VITE_MARKETPLACE_SUBGRAPH_URL+set}" ]]; then
+  MARKETPLACE_BUILD_ARGS+=(--build-arg "VITE_MARKETPLACE_SUBGRAPH_URL=${VITE_MARKETPLACE_SUBGRAPH_URL}")
+  echo "==> Marketplace subgraph: VITE_MARKETPLACE_SUBGRAPH_URL='${VITE_MARKETPLACE_SUBGRAPH_URL:-<empty>}'"
+fi
+
+echo "==> Building $TAG (WITH_IDENTITY=$WITH_IDENTITY, platform=$PLATFORM, network=$MARKETPLACE_NETWORK)"
 echo "==> Provenance: GIT_SHA=$FULL_SHA  BUILD_TIME=$BUILD_TIME"
 # `--load` so the image lands in the local daemon (default for single-platform
 # builds, but explicit is better when buildx is the active builder).
@@ -122,7 +151,8 @@ DOCKER_BUILDKIT=1 docker buildx build \
   --build-arg "WITH_IDENTITY=${WITH_IDENTITY}" \
   --build-arg "GIT_SHA=${FULL_SHA}" \
   --build-arg "BUILD_TIME=${BUILD_TIME}" \
-  --build-arg "VITE_MARKETPLACE_NETWORK=${VITE_MARKETPLACE_NETWORK:-sepolia}" \
+  --build-arg "VITE_MARKETPLACE_NETWORK=${MARKETPLACE_NETWORK}" \
+  ${MARKETPLACE_BUILD_ARGS[@]+"${MARKETPLACE_BUILD_ARGS[@]}"} \
   --load \
   -t "$TAG" \
   -t "xvision:deploy-latest" \

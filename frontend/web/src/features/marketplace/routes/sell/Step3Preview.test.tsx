@@ -214,6 +214,32 @@ describe("Step3Preview", () => {
     expect(screen.getByText("BTC")).toBeInTheDocument();
   });
 
+  // The preview must reflect the LIVE draft (what the seller edited in step 2),
+  // not the snapshot captured when the draft was created — otherwise the card
+  // shows a stale name / the default 49 USDC.
+  it("preview card reflects the live edited price, not the snapshot default", () => {
+    render(
+      <Step3Preview
+        draft={{ ...happyDraft, priceUsdc: 125 }}
+        onMint={vi.fn()}
+        minting={false}
+      />,
+    );
+    expect(screen.getByText("125")).toBeInTheDocument();
+    expect(screen.queryByText("49")).not.toBeInTheDocument();
+  });
+
+  it("preview card reflects the live edited listing name", () => {
+    render(
+      <Step3Preview
+        draft={{ ...happyDraft, name: "Renamed Listing" }}
+        onMint={vi.fn()}
+        minting={false}
+      />,
+    );
+    expect(screen.getByText("Renamed Listing")).toBeInTheDocument();
+  });
+
   it("preview card shows 'No assets configured' for empty assets", () => {
     render(<Step3Preview draft={failingDraft} onMint={vi.fn()} minting={false} />);
     expect(screen.getByText(/No assets configured/)).toBeInTheDocument();

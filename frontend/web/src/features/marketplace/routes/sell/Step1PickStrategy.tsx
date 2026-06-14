@@ -1,5 +1,6 @@
 // src/features/marketplace/routes/sell/Step1PickStrategy.tsx
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import type { ListableStrategy } from "@/features/marketplace/data/types";
@@ -45,11 +46,11 @@ export function Step1PickStrategy({
   return (
     <ul data-testid="sell-step-1-body" className="flex flex-col gap-2">
       {strategies.map((s) => (
-        <li key={s.id}>
+        <li key={s.id} className="flex items-stretch gap-2">
           <button
             onClick={() => onSelect(s)}
             aria-label={s.name}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-md bg-surface-elev border border-border hover:border-gold/40 text-left transition-colors"
+            className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 rounded-md bg-surface-elev border border-border hover:border-gold/40 text-left transition-colors"
           >
             <div className="flex-1 min-w-0">
               <p className="text-[13px] font-medium truncate">{s.name}</p>
@@ -75,6 +76,16 @@ export function Step1PickStrategy({
               <path d="M5 3l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          {/* Inspect the strategy without losing wizard progress (new tab). */}
+          <Link
+            to={`/strategies/${s.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`View ${s.name} in a new tab`}
+            className="shrink-0 flex items-center px-3 rounded-md border border-border text-[11px] text-text-3 hover:text-text-2 hover:border-gold/40 transition-colors"
+          >
+            View ↗
+          </Link>
         </li>
       ))}
     </ul>

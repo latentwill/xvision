@@ -30,6 +30,7 @@ import type {
   SgSaleLite,
   SgStatsResponse,
 } from "./client";
+import { activeNetworkSlug } from "../../lib/chain";
 
 // --- manifest seam --------------------------------------------------------
 
@@ -145,7 +146,7 @@ export function txHashFromId(id: string): string {
 }
 
 const LICENSE_CONTRACT_FALLBACK = "marketplace";
-const NETWORK = "mantle-sepolia";
+const NETWORK = activeNetworkSlug;
 
 // --- row ------------------------------------------------------------------
 
