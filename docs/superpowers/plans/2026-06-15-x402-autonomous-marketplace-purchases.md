@@ -89,12 +89,13 @@ sol! {
     }
 }
 
-/// Build the USDC EIP-712 domain. For Mantle mainnet USDC.e (FiatTokenV2):
-/// name="USD Coin", version="2", chainId=5000, verifyingContract=<usdc>.
-pub fn usdc_domain(name: &str, version: &str, chain_id: u64, usdc: Address) -> Eip712Domain {
+/// Build the USDC EIP-712 domain. name/version are invariant for Circle
+/// FiatTokenV2 ("USD Coin"/"2"); only chain_id (5000 mainnet / 5003 testnet)
+/// and the USDC verifyingContract vary.
+pub fn usdc_domain(chain_id: u64, usdc: Address) -> Eip712Domain {
     eip712_domain! {
-        name: name.to_string(),
-        version: version.to_string(),
+        name: "USD Coin",
+        version: "2",
         chain_id: chain_id,
         verifying_contract: usdc,
     }
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn domain_separator_matches_mantle_mainnet() {
         let usdc = Address::from_str(MANTLE_USDC).unwrap();
-        let domain = usdc_domain("USD Coin", "2", 5000, usdc);
+        let domain = usdc_domain(5000, usdc);
         let sep = domain.separator();
         assert_eq!(format!("0x{:x}", sep), MANTLE_USDC_DOMAIN_SEP);
     }
@@ -172,7 +173,7 @@ Append to `x402.rs` tests module:
         let signer = PrivateKeySigner::random();
         let from = signer.address();
         let usdc = Address::from_str(MANTLE_USDC).unwrap();
-        let domain = usdc_domain("USD Coin", "2", 5000, usdc);
+        let domain = usdc_domain(5000, usdc);
 
         let auth = Authorization {
             from,
@@ -192,7 +193,7 @@ Append to `x402.rs` tests module:
     fn recover_rejects_tampered_value() {
         let signer = PrivateKeySigner::random();
         let usdc = Address::from_str(MANTLE_USDC).unwrap();
-        let domain = usdc_domain("USD Coin", "2", 5000, usdc);
+        let domain = usdc_domain(5000, usdc);
         let mut auth = Authorization {
             from: signer.address(),
             to: Address::ZERO,
@@ -744,7 +745,7 @@ pub async fn post_verify(
 }
 ```
 
-Implement `recover_payer(state, decoded)`: read `marketplace_addresses.usdc` + `chain.chain_id`, build the domain via `xvision_marketplace::x402::usdc_domain("USD Coin","2", chain_id, usdc)`, build `x402::Authorization` from `decoded.authorization`, parse `r/s` to `B256`, call `x402::recover_authorizer`.
+Implement `recover_payer(state, decoded)`: read `marketplace_addresses.usdc` + `chain.chain_id`, build the domain via `xvision_marketplace::x402::usdc_domain(chain_id, usdc)`, build `x402::Authorization` from `decoded.authorization`, parse `r/s` to `B256`, call `x402::recover_authorizer`.
 
 For the spent-nonce precheck, FIRST define an `IERC3009` binding — it does NOT exist anywhere in the codebase (`xvision-identity/contracts.rs` has only `IListingRegistry`/`ILicenseToken`/`IMarketplace`/`IEvalAttestationRegistry`/`IValidationRegistry`). Add it to `adapter.rs` (it targets the USDC token, not an identity contract):
 ```rust
@@ -1158,7 +1159,7 @@ pub async fn buy(listing_id: u64) -> Result<serde_json::Value, String> {
 
     // 2. sign locally (key never leaves this process)
     let auth = build_authorization(signer.address(), pay_to, value, 600);
-    let domain = x402::usdc_domain("USD Coin", "2", chain_id, usdc);
+    let domain = x402::usdc_domain(chain_id, usdc);
     let parts = x402::sign_authorization(&signer, &auth, &domain).map_err(|e| e.to_string())?;
 
     // 3. assemble X-PAYMENT and settle
