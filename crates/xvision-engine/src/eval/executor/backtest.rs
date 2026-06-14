@@ -482,6 +482,17 @@ impl Executor {
         self
     }
 
+    /// Returns `true` when the executor has a live `ClineDispatchCtx`, meaning
+    /// the trader slot will be dispatched via `execute_slot_cline` rather than
+    /// falling back to `LlmDispatch`.
+    ///
+    /// **Test-only accessor.** Production code must not branch on this;
+    /// use `should_use_cline` inside the pipeline dispatch path instead.
+    /// `pub` (not `#[cfg(test)]`) so integration tests in `tests/` can reach it.
+    pub fn cline_is_wired(&self) -> bool {
+        self.cline.is_some()
+    }
+
     fn emit(&self, event: ProgressEvent) {
         if let Some(tx) = self.progress.as_ref() {
             send_event(tx, event);

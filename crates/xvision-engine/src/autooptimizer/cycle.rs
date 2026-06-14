@@ -81,6 +81,12 @@ pub struct CycleConfig {
     ///
     /// Set by `xvn optimizer run-cycle --max-output-tokens N`.
     pub max_output_tokens: Option<u32>,
+    /// Circuit-breaker limit: how many consecutive candidate eval failures halt
+    /// the session with a loud error (systemic misconfiguration). `0` disables
+    /// the breaker (never halts). Default: 3.
+    ///
+    /// WU-13 will wire --max-consecutive-errors from the CLI args.
+    pub max_consecutive_errors: u32,
 }
 
 pub struct CycleResult {
@@ -100,6 +106,11 @@ pub struct CycleResult {
     /// distinguish a genuinely empty cycle from one that gated a real candidate
     /// (F14, QA 2026-06-04).
     pub no_candidate_count: usize,
+    /// Number of candidate eval errors that were caught and skipped (non-fatal)
+    /// this cycle. Distinct from `no_candidate_count` (which tracks writer
+    /// failures) — this tracks eval/backtest failures. Aggregated from
+    /// `process_parent_mutations`. 2026-06-13 trader-failure resilience.
+    pub errored_count: usize,
 }
 
 struct MutationOutcome {
@@ -138,6 +149,66 @@ struct GateScores {
     pub edge_over_random: Option<f64>,
     pub parent_edge: Option<f64>,
     pub edge_delta: Option<f64>,
+}
+
+/// Circuit-breaker tracking consecutive candidate eval failures.
+///
+/// Each `gate_and_classify` failure calls `record_failure()` which returns
+/// `true` when the trip threshold is reached. A successful eval resets the
+/// consecutive counter via `record_success()`. `max == 0` disables the breaker
+/// (never trips). 2026-06-13 trader-failure resilience.
+struct ConsecutiveErrors {
+    count: u32,
+    max: u32,
+}
+
+impl ConsecutiveErrors {
+    fn new(max: u32) -> Self {
+        Self { count: 0, max }
+    }
+
+    /// Increment the consecutive-failure counter.
+    /// Returns `true` when the circuit trips (`count >= max` and `max > 0`).
+    fn record_failure(&mut self) -> bool {
+        self.count += 1;
+        self.max > 0 && self.count >= self.max
+    }
+
+    /// Reset the consecutive-failure counter (a success breaks the streak).
+    fn record_success(&mut self) {
+        self.count = 0;
+    }
+}
+
+#[cfg(test)]
+mod consecutive_errors_tests {
+    use super::ConsecutiveErrors;
+
+    #[test]
+    fn trips_at_max_consecutive() {
+        let mut b = ConsecutiveErrors::new(3);
+        assert!(!b.record_failure(), "1st failure must not trip");
+        assert!(!b.record_failure(), "2nd failure must not trip");
+        assert!(b.record_failure(), "3rd consecutive failure must trip");
+    }
+
+    #[test]
+    fn success_resets_the_streak() {
+        let mut b = ConsecutiveErrors::new(3);
+        assert!(!b.record_failure());
+        assert!(!b.record_failure()); // streak = 2
+        b.record_success(); // reset
+        assert!(!b.record_failure());
+        assert!(!b.record_failure()); // streak = 2 again; 4 total failures, never 3 in a row
+    }
+
+    #[test]
+    fn zero_max_disables_the_breaker() {
+        let mut b = ConsecutiveErrors::new(0);
+        for _ in 0..10 {
+            assert!(!b.record_failure(), "max=0 must never trip");
+        }
+    }
 }
 
 /// Per-cycle memoization of the random-baseline objective score, keyed by
@@ -244,6 +315,7 @@ pub async fn run_cycle(
     let mut rejected_nodes: Vec<LineageNode> = Vec::new();
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
     let mut no_candidate_count: usize = 0;
+    let mut errored_count: usize = 0;
 
     let is_cancelled = || {
         cancel
@@ -282,7 +354,7 @@ pub async fn run_cycle(
                 cycle_id: cycle_id.clone(),
                 parent_hash: ph,
             });
-            let (active, suspect, rejected, nc) = process_parent_mutations(
+            let (active, suspect, rejected, nc, ec) = process_parent_mutations(
                 pool,
                 strategy_blob_store,
                 parent_node,
@@ -308,6 +380,7 @@ pub async fn run_cycle(
             suspect_nodes.extend(suspect);
             rejected_nodes.extend(rejected);
             no_candidate_count += nc;
+            errored_count += ec;
         }
     }
 
@@ -376,6 +449,7 @@ pub async fn run_cycle(
         diversity_score,
         findings_by_node,
         no_candidate_count,
+        errored_count,
     })
 }
 
@@ -512,7 +586,7 @@ async fn process_parent_mutations<F>(
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pause: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<(Vec<LineageNode>, Vec<LineageNode>, Vec<LineageNode>, usize)>
+) -> Result<(Vec<LineageNode>, Vec<LineageNode>, Vec<LineageNode>, usize, usize)>
 where
     F: Fn(CycleProgressEvent),
 {
@@ -524,6 +598,8 @@ where
     let mut suspect: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
     let mut no_candidate_count: usize = 0;
+    let mut errored_count: usize = 0;
+    let mut breaker = ConsecutiveErrors::new(cycle_config.max_consecutive_errors);
 
     // B19: when the scenario_pool is active, the parent must be re-evaluated on
     // EACH sampled pair (a child is compared only against its parent on the SAME
@@ -926,7 +1002,7 @@ where
             );
         }
         let gate_t0 = Instant::now();
-        let outcome = gate_and_classify(
+        let gate_result = gate_and_classify(
             parent_strategy,
             diff,
             cycle_config,
@@ -943,14 +1019,46 @@ where
             cycle_id,
             &ph_str,
         )
-        .await?;
-        progress(CycleProgressEvent::PhaseFinished {
-            session_id: String::new(),
-            cycle_id: cycle_id.to_string(),
-            parent_hash: Some(ph_str.clone()),
-            phase: Phase::GateEvaluating,
-            duration_ms: gate_t0.elapsed().as_millis() as u64,
-        });
+        .await;
+        let outcome = match gate_result {
+            Ok(o) => {
+                breaker.record_success();
+                progress(CycleProgressEvent::PhaseFinished {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(ph_str.clone()),
+                    phase: Phase::GateEvaluating,
+                    duration_ms: gate_t0.elapsed().as_millis() as u64,
+                });
+                o
+            }
+            Err(e) => {
+                errored_count += 1;
+                let tripped = breaker.record_failure();
+                progress(CycleProgressEvent::PhaseFinished {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(ph_str.clone()),
+                    phase: Phase::GateEvaluating,
+                    duration_ms: gate_t0.elapsed().as_millis() as u64,
+                });
+                progress(CycleProgressEvent::CandidateError {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: ph_str.clone(),
+                    reason: format!("candidate eval failed: {e}"),
+                });
+                if tripped {
+                    return Err(anyhow::anyhow!(
+                        "optimizer halted: {} consecutive candidate eval failures \
+                         (--max-consecutive-errors={}); last: {e}",
+                        cycle_config.max_consecutive_errors,
+                        cycle_config.max_consecutive_errors,
+                    ));
+                }
+                continue;
+            }
+        };
         // Fix 1+2: build_and_insert_node now atomically writes node + regime rows
         // and returns the *resolved* status (which may be Active when the
         // collision-guard preserves an existing active node).  Emit the SSE event
@@ -1146,7 +1254,7 @@ where
             }
         }
     }
-    Ok((active, suspect, rejected, no_candidate_count))
+    Ok((active, suspect, rejected, no_candidate_count, errored_count))
 }
 
 async fn gate_and_classify<F>(

@@ -4802,6 +4802,36 @@ pub async fn attach_run_to_batch(ctx: &ApiContext, run_id: &str, batch_id: &str)
         .map_err(|e| ApiError::Internal(format!("attach_run_to_batch: {e}")))
 }
 
+/// Public wrapper that resolves the agent runtime and, when Cline, spawns ONE
+/// [`crate::agent::dispatch_capability::ClineDispatchCtx`] without trajectory
+/// recording. Returns `Ok(None)` when the runtime resolves to `LlmDispatch`
+/// (no sidecar available / not configured). Used by the optimizer cycle so it
+/// can reuse the same Cline dispatch path as the eval runner without reaching
+/// into the private helpers.
+pub async fn spawn_optimizer_cline_ctx(
+    ctx: &ApiContext,
+    provider_name: &str,
+    tools: Arc<ToolRegistry>,
+) -> ApiResult<Option<crate::agent::dispatch_capability::ClineDispatchCtx>> {
+    let (runtime, _reason) = resolve_agent_runtime(ctx).await;
+    if !matches!(runtime, AgentRuntime::Cline) {
+        return Ok(None);
+    }
+    let cfg_path = runtime_config_path(ctx);
+    let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, provider_name, None)
+        .await
+        .map_err(|u| {
+            ApiError::Validation(format!(
+                "agent_runtime = cline: provider `{}` not launchable (reason={}): {}",
+                u.provider,
+                u.reason.as_str(),
+                u.hint
+            ))
+        })?;
+    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None).await?;
+    Ok(Some(cctx))
+}
+
 mod tests {
     use super::*;
     use crate::strategies::{
@@ -5359,6 +5389,31 @@ mod tests {
         assert!(
             (btc_close - eth_close).abs() > 1_000.0,
             "per-asset bars must diverge across assets; btc={btc_close} eth={eth_close}"
+        );
+    }
+
+    // --- spawn_optimizer_cline_ctx (optimizer parity, Task 1.1) ---------------
+
+    /// With XVN_AGENTD_BIN unset and no cline config, resolve_agent_runtime
+    /// returns LlmDispatch, so spawn_optimizer_cline_ctx returns Ok(None).
+    #[tokio::test]
+    async fn optimizer_cline_ctx_is_none_without_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+
+        // Ensure XVN_AGENTD_BIN is NOT set so the sidecar is unavailable.
+        // With no runtime config and no sidecar, resolve_agent_runtime falls
+        // back to LlmDispatch → wrapper must return Ok(None).
+        std::env::remove_var("XVN_AGENTD_BIN");
+
+        let tools = Arc::new(crate::tools::ToolRegistry::empty());
+        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools).await;
+        assert!(result.is_ok(), "expected Ok but got an error");
+        assert!(
+            result.unwrap().is_none(),
+            "expected None (LlmDispatch path), but got Some(_)"
         );
     }
 }

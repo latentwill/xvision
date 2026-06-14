@@ -44,6 +44,16 @@ export interface BuildProviderModelOptions {
   apiKey?: string
   /** Custom base URL — used for openai-compatible and self-hosted endpoints. */
   baseUrl?: string
+  /**
+   * Reasoning options forwarded to the gateway as `GatewayModelHandleOptions.reasoning`.
+   * Supports CoT models (e.g. deepseek-r1 via Ollama) where setting effort to "medium"
+   * prevents reasoning tokens from starving the JSON answer.
+   */
+  reasoning?: {
+    enabled?: boolean
+    effort?: "low" | "medium" | "high"
+    budgetTokens?: number
+  }
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -145,9 +155,15 @@ export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel 
 
   // Build the AgentModel. The gateway returns a handle object with a stream()
   // method — structurally compatible with our AgentModel interface.
+  // The optional second arg forwards reasoning options (effort, budgetTokens)
+  // to the gateway for CoT models that support native reasoning_effort (e.g.
+  // deepseek-r1 via Ollama).
   let model: AgentModel
   try {
-    model = gateway.createAgentModel({ providerId, modelId }) as AgentModel
+    model = gateway.createAgentModel(
+      { providerId, modelId },
+      opts.reasoning ? { reasoning: opts.reasoning } : undefined,
+    ) as AgentModel
   } catch (err) {
     throw new Error(
       `Failed to construct AgentModel for provider "${providerId}" model "${modelId}": ${

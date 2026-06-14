@@ -62,6 +62,26 @@ pub fn looks_like_cot_model(model_id: &str) -> bool {
     COT_PREFIXES.iter().any(|p| stem.starts_with(p))
 }
 
+/// Default `reasoning_effort` value forwarded to the gateway for CoT
+/// reasoning models (deepseek-r1, qwq, etc.) via the Cline sidecar's
+/// `StartRunParams`. CoT models require an explicit effort hint so the
+/// gateway allocates reasoning tokens before the visible JSON answer;
+/// without it the reasoning-token budget defaults to zero on some
+/// providers and the model emits nothing.
+///
+/// Returns `Some("medium".to_string())` when `looks_like_cot_model(model_id)`,
+/// else `None`. Callers forward the value to the sidecar as
+/// `StartRunParams::reasoning_effort`; the sidecar passes it to the
+/// provider gateway. Non-CoT models receive `None` (field omitted on the
+/// wire via `skip_serializing_if = "Option::is_none"`).
+pub fn default_reasoning_effort(model_id: &str) -> Option<String> {
+    if looks_like_cot_model(model_id) {
+        Some("medium".to_string())
+    } else {
+        None
+    }
+}
+
 /// Generic conservative cap for unknown providers / unannounced models
 /// when `provider_default_max_tokens` can't find a canonical metadata
 /// entry. Big enough to fit a typical trader decision JSON + reasoning;
@@ -568,6 +588,20 @@ mod tests {
         // opt into delta-briefing per slot.
         assert_eq!(a.slots[0].delta_briefing, None);
         assert!(!a.slots[0].resolve_delta_briefing());
+    }
+
+    #[test]
+    fn cot_models_get_default_reasoning_effort() {
+        // CoT models (deepseek-r1 family, qwq, gemma) get "medium".
+        assert_eq!(
+            default_reasoning_effort("deepseek-r1:8b"),
+            Some("medium".to_string())
+        );
+        // Plain chat model gets None (field omitted on the wire).
+        assert_eq!(default_reasoning_effort("gpt-4o"), None);
+        // Sanity-check a few more to confirm both code paths fire.
+        assert_eq!(default_reasoning_effort("qwq:32b"), Some("medium".to_string()));
+        assert_eq!(default_reasoning_effort("claude-sonnet-4-6"), None);
     }
 
     #[test]

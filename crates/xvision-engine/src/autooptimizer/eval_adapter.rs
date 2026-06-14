@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use xvision_core::market::Ohlcv;
 use xvision_core::trading::AssetSymbol;
 
+use crate::agent::dispatch_capability::ClineDispatchCtx;
 use crate::agent::llm::LlmDispatch;
 use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
@@ -21,6 +22,7 @@ use crate::eval::scenario_store;
 use crate::eval::store::RunStore;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
+use xvision_core::config::AgentRuntime;
 
 #[async_trait]
 pub trait PaperTestRunner: Send + Sync {
@@ -206,6 +208,12 @@ pub struct CachedBacktestPaperTester {
     /// cycle's progress callback (see `cycle.rs`). `None` keeps the legacy
     /// silent behavior for callers that don't want progress.
     progress_bus: Option<Arc<crate::eval::progress::ProgressBus>>,
+    /// Phase 1 parity: the shared Cline runtime + sidecar ctx for the trader,
+    /// so the optimizer evaluates the SAME path as live. `None` (or
+    /// `LlmDispatch`) keeps the legacy raw-dispatch trader. Cloned into each
+    /// executor build (the client is an Arc, so one sidecar serves all runs).
+    agent_runtime: AgentRuntime,
+    cline_ctx: Option<ClineDispatchCtx>,
 }
 
 impl CachedBacktestPaperTester {
@@ -227,7 +235,18 @@ impl CachedBacktestPaperTester {
             dispatch,
             tools,
             progress_bus: None,
+            agent_runtime: AgentRuntime::default(),
+            cline_ctx: None,
         }
+    }
+
+    /// Phase 1: attach the shared Cline runtime + sidecar ctx (spawned once by
+    /// the optimizer via `spawn_optimizer_cline_ctx`). When set, every
+    /// paper-test trader decision routes through `execute_slot_cline`.
+    pub fn with_cline_runtime(mut self, runtime: AgentRuntime, cline_ctx: Option<ClineDispatchCtx>) -> Self {
+        self.agent_runtime = runtime;
+        self.cline_ctx = cline_ctx;
+        self
     }
 
     /// U5: attach a shared progress bus so the backtest executor emits
@@ -273,6 +292,8 @@ impl CachedBacktestPaperTester {
             scenario,
             canary,
             self.progress_bus.as_deref(),
+            self.agent_runtime,
+            self.cline_ctx.clone(),
         )
         .await?;
         let store = RunStore::new(self.ctx.db.clone());
@@ -490,6 +511,8 @@ async fn build_cached_backtest_executor(
     scenario: &Scenario,
     canary: Option<&str>,
     progress_bus: Option<&crate::eval::progress::ProgressBus>,
+    agent_runtime: AgentRuntime,
+    cline_ctx: Option<ClineDispatchCtx>,
 ) -> Result<Executor> {
     let active = active_assets(&strategy.manifest.asset_universe, None)?;
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
@@ -513,9 +536,9 @@ async fn build_cached_backtest_executor(
     .with_warmup(warmup)
     .with_event_bus(ctx.event_bus.clone());
 
-    if let Some(recorder) = ctx.memory_recorder.clone() {
-        executor = executor.with_memory_recorder(recorder);
-    }
+    // Parity (2026-06-13): trader runs on Cline, which does NOT do execute_slot-layer per-decision
+    // memory recall/write (matching live). No with_memory_recorder here — adding it back would
+    // re-invert the optimizer vs production.
     // F9: tag honesty-check (canary) runs so the executor relabels the
     // by-design broker-rule rejections as expected honesty-check noise.
     if let Some(variant) = canary {
@@ -527,6 +550,10 @@ async fn build_cached_backtest_executor(
     if let Some(bus) = progress_bus {
         executor = executor.with_progress_tx(bus.sender());
     }
+    // Phase 1 parity: route the trader through the SAME Cline runtime as
+    // live/eval. With `cline_ctx = Some`, `should_use_cline` is true and the
+    // shared pipeline dispatches via `execute_slot_cline`.
+    executor = executor.with_cline_runtime(agent_runtime, cline_ctx);
 
     Ok(executor)
 }

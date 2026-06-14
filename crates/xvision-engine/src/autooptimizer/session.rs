@@ -33,6 +33,7 @@ pub struct OptimizerSession {
     pub kept_count: i64,
     pub suspect_count: i64,
     pub dropped_count: i64,
+    pub errored_count: i64,
     pub error: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
@@ -90,6 +91,7 @@ pub async fn ensure_session_schema(pool: &SqlitePool) -> Result<()> {
           kept_count        INTEGER NOT NULL DEFAULT 0,
           suspect_count     INTEGER NOT NULL DEFAULT 0,
           dropped_count     INTEGER NOT NULL DEFAULT 0,
+          errored_count     INTEGER NOT NULL DEFAULT 0,
           error             TEXT,
           created_at        TEXT NOT NULL,
           started_at        TEXT,
@@ -98,6 +100,23 @@ pub async fn ensure_session_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // Upgrade guard: add `errored_count` to existing DBs that predate this column.
+    // SQLite has no ADD COLUMN IF NOT EXISTS, so we probe PRAGMA table_info first.
+    let col_exists: bool = {
+        let rows: Vec<(i64, String, String, i64, Option<String>, i64)> =
+            sqlx::query_as("PRAGMA table_info(autooptimizer_session_state)")
+                .fetch_all(pool)
+                .await?;
+        rows.iter().any(|(_, name, _, _, _, _)| name == "errored_count")
+    };
+    if !col_exists {
+        sqlx::query(
+            "ALTER TABLE autooptimizer_session_state \
+             ADD COLUMN errored_count INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await?;
+    }
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_aoss_state ON autooptimizer_session_state(state)")
         .execute(pool)
         .await?;
@@ -249,6 +268,7 @@ pub async fn increment_cycle_completed(pool: &SqlitePool, session_id: &str, outc
     let col = match outcome {
         "kept" => "kept_count",
         "suspect" => "suspect_count",
+        "errored" => "errored_count",
         _ => "dropped_count",
     };
     sqlx::query(&format!(
@@ -410,6 +430,12 @@ mod tests {
         for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
             sqlx::query(stmt).execute(&pool).await.unwrap();
         }
+        // Mirror the production CLI flow: the base 057 DDL is created, then
+        // `ensure_session_schema`'s guarded ALTERs upgrade it with any newer
+        // additive columns (e.g. `errored_count`). This keeps the test pool in
+        // sync with what `open_and_migrate_db` produces, without editing the
+        // committed 057 migration (which would break the sqlx::migrate! checksum).
+        ensure_session_schema(&pool).await.unwrap();
         pool
     }
 
@@ -1039,6 +1065,112 @@ mod tests {
         // Exhausted at 3 (> 2).
         assert!(loosening_floor_reached(&thresholds, 3));
         assert!(loosening_floor_reached(&thresholds, 10));
+    }
+
+    // -----------------------------------------------------------------------
+    // test_errored_bucket — Task 3.1 (WU-10)
+    // -----------------------------------------------------------------------
+    /// `increment_cycle_completed` with outcome="errored" must bump
+    /// `errored_count` and leave `dropped_count` untouched.
+    #[tokio::test]
+    async fn test_errored_bucket() {
+        let pool = test_pool().await;
+        let sid = "sid-errored";
+        create_session_with_id(&pool, sid, "strat-err", "{}", "once", None)
+            .await
+            .unwrap();
+
+        increment_cycle_completed(&pool, sid, "errored").await.unwrap();
+
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(row.cycles_completed, 1, "cycles_completed must be 1");
+        assert_eq!(row.errored_count, 1, "errored_count must be 1");
+        assert_eq!(row.dropped_count, 0, "dropped_count must remain 0");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_errored_count_upgrade — ensure_session_schema upgrades existing DBs
+    // -----------------------------------------------------------------------
+    /// Simulate a pre-existing DB that lacks `errored_count`. Calling
+    /// `ensure_session_schema` must add the column via the guarded ALTER.
+    #[tokio::test]
+    async fn test_errored_count_upgrade() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+
+        // Create the table from a PRE-change schema (no errored_count).
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS autooptimizer_session_state (
+              session_id        TEXT PRIMARY KEY,
+              strategy_id       TEXT NOT NULL,
+              config_json       TEXT NOT NULL,
+              state             TEXT NOT NULL,
+              mode              TEXT NOT NULL,
+              cycles_planned    INTEGER,
+              cycles_completed  INTEGER NOT NULL DEFAULT 0,
+              kept_count        INTEGER NOT NULL DEFAULT 0,
+              suspect_count     INTEGER NOT NULL DEFAULT 0,
+              dropped_count     INTEGER NOT NULL DEFAULT 0,
+              error             TEXT,
+              created_at        TEXT NOT NULL,
+              started_at        TEXT,
+              finished_at       TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Confirm errored_count is absent before the upgrade.
+        let pre_check: Vec<(i64, String, String, i64, Option<String>, i64)> =
+            sqlx::query_as("PRAGMA table_info(autooptimizer_session_state)")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let has_before = pre_check
+            .iter()
+            .any(|(_, name, _, _, _, _)| name == "errored_count");
+        assert!(!has_before, "errored_count must not exist before upgrade");
+
+        // Run the schema function — it should add the column via the guarded ALTER.
+        ensure_session_schema(&pool).await.unwrap();
+
+        // Confirm the column now exists.
+        let post_check: Vec<(i64, String, String, i64, Option<String>, i64)> =
+            sqlx::query_as("PRAGMA table_info(autooptimizer_session_state)")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let has_after = post_check
+            .iter()
+            .any(|(_, name, _, _, _, _)| name == "errored_count");
+        assert!(
+            has_after,
+            "errored_count must exist after ensure_session_schema upgrade"
+        );
+
+        // Confirm the column is queryable and defaults to 0.
+        sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sid-up','strat-up','{}','running','once','2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let errored_count: i64 = sqlx::query_scalar(
+            "SELECT errored_count FROM autooptimizer_session_state WHERE session_id = 'sid-up'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(errored_count, 0, "errored_count default must be 0");
     }
 
     // -----------------------------------------------------------------------
