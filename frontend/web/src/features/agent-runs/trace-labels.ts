@@ -81,6 +81,8 @@ export function optiSpanLabel(span: RunSpan): string | null {
       return "Parent selected";
     case "opti.experiment":
       return "Experiment proposed";
+    case "opti.eval-run":
+      return "Eval run";
     case "opti.honesty":
       return "Honesty check";
     case "opti.judge":

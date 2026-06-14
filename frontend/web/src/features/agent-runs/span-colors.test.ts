@@ -64,6 +64,7 @@ const ALL_SPAN_KINDS: SpanKind[] = [
   "opti.honesty",
   "opti.judge",
   "opti.flywheel",
+  "opti.eval-run",
   "engine.event",
 ];
 
@@ -172,6 +173,7 @@ describe("categoryOf — WS-17 decision span taxonomy", () => {
       "opti_kept",
       "opti_suspect",
       "opti_rejected",
+      "opti_eval_run",
       "unknown",
     ] as const) {
       expect(CATEGORY_STYLES[cat]).toBeDefined();
@@ -190,6 +192,12 @@ describe("categoryOf — WS-11a OPTI span taxonomy", () => {
     expect(categoryOf("opti.experiment")).toBe("opti_phase");
     expect(categoryOf("opti.honesty")).toBe("opti_phase");
     expect(categoryOf("opti.flywheel")).toBe("opti_phase");
+  });
+
+  test("opti.eval-run (WS-11b) maps to its own teal eval-run category", () => {
+    expect(categoryOf("opti.eval-run")).toBe("opti_eval_run");
+    // Distinct swatch from the generic phase tint so the drill-link node stands out.
+    expect(spanColor("opti.eval-run").hex).not.toBe(spanColor("opti.experiment").hex);
   });
 
   test("opti.gate resolves a three-way tone by outcome (Active/Suspect/Rejected)", () => {

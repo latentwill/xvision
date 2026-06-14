@@ -131,6 +131,14 @@ struct MutationOutcome {
     /// both windows, plus the epsilon threshold and drawdown ratio.  `None` for
     /// regime-matrix paths where no single day/holdout pair is definitive.
     gate_scores: Option<GateScores>,
+    /// WS-11b: the persisted eval `Run.id` for this candidate's PRIMARY
+    /// day-window evaluation (the `paper_tester.run_with_run_id` call on the
+    /// legacy / scenario-pool path). `None` on the regime-matrix path (which
+    /// runs several evals and has no single definitive run) and for any
+    /// `PaperTestRunner` that doesn't surface a run id (test stubs). Threaded
+    /// onto `CycleProgressEvent::MutationGated` so the frontend can nest a
+    /// navigable eval-run node under the experiment row.
+    eval_run_id: Option<String>,
 }
 
 /// Numeric gate inputs captured at gate-verdict time so they can be persisted
@@ -1077,6 +1085,9 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
             delta_day: outcome.gate_scores.as_ref().map(|gs| gs.delta_day),
+            // WS-11b: the candidate's primary day-window eval run id, so the
+            // dashboard can nest a navigable eval-run node under the experiment.
+            eval_run_id: outcome.eval_run_id.clone(),
         });
         // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
         // a DB error must never abort the cycle.
@@ -1441,6 +1452,9 @@ where
             regime_rows,
             // Regime-matrix path: no single day/holdout pair is the gate gate.
             gate_scores: None,
+            // Regime-matrix path runs several evals across windows — no single
+            // definitive eval run to nest under the experiment (WS-11b).
+            eval_run_id: None,
         });
     }
 
@@ -1458,7 +1472,11 @@ where
         detail: "Day-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_day = paper_tester.run(&child, sampled_day).await?;
+    // WS-11b: the candidate's PRIMARY day-window eval. Use `run_with_run_id` so
+    // the persisted eval `Run.id` flows onto `MutationGated` for the frontend
+    // experiment → eval-run nesting. `None` when the runner doesn't surface a
+    // run id (test stubs) — the experiment row then renders without the node.
+    let (child_day, eval_run_id) = paper_tester.run_with_run_id(&child, sampled_day).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1601,6 +1619,7 @@ where
         child_untouched,
         regime_rows: vec![],
         gate_scores,
+        eval_run_id,
     })
 }
 

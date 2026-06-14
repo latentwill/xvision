@@ -90,6 +90,12 @@ pub struct AgentRunSummary {
     /// Per-run pause flag from the parent eval run (`eval_runs.paused`,
     /// migration 062). `None` without a parent.
     pub paused: Option<bool>,
+    /// Execution venue from the parent eval run's live_config
+    /// (`broker_creds_ref`, e.g. `"degen_arena"` / `"orderly_testnet"` /
+    /// `"byreal"` / `"alpaca"`). `None` for backtests / runs without a
+    /// live_config. The dashboard uses this for venue-specific surfaces (e.g.
+    /// the Degen Arena standing indicator).
+    pub venue: Option<String>,
     /// THE live-money discriminator: `true` iff the child agent run is
     /// non-terminal AND the parent eval run's `venue_label = 'live'` (real
     /// money) AND that eval run is non-terminal (queued/running).
@@ -183,7 +189,8 @@ pub async fn list_agent_runs(
     let mut sql = String::from(
         "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
              ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
-             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id \
+             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id, \
+             json_extract(er.live_config_json, '$.broker_creds_ref') \
              FROM agent_runs ar \
              LEFT JOIN eval_runs er ON er.id = ar.eval_run_id",
     );
@@ -209,6 +216,7 @@ pub async fn list_agent_runs(
             Option<String>,
             Option<String>,
             Option<bool>,
+            Option<String>,
             Option<String>,
         ),
     >(&sql);
@@ -239,6 +247,7 @@ pub async fn list_agent_runs(
         eval_run_status,
         paused,
         eval_agent_id,
+        venue,
     ) in rows
     {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
@@ -276,6 +285,7 @@ pub async fn list_agent_runs(
             eval_mode,
             eval_run_status,
             paused,
+            venue,
             is_live_money,
         });
     }
@@ -834,6 +844,11 @@ mod tests {
         assert!(run.get("eval_mode").is_some(), "missing eval_mode");
         assert!(run.get("eval_run_status").is_some(), "missing eval_run_status");
         assert!(run.get("paused").is_some(), "missing paused");
+        assert!(run.get("venue").is_some(), "missing venue");
+        assert!(
+            run["venue"].is_null(),
+            "venue should be null without a parent live_config"
+        );
         assert_eq!(run["is_live_money"].as_bool(), Some(false));
     }
 
@@ -866,6 +881,37 @@ mod tests {
             Some("bundle-hash"),
             "parent eval_runs.agent_id must be surfaced on the agent-run summary"
         );
+    }
+
+    #[tokio::test]
+    async fn list_surfaces_execution_venue_from_parent_live_config() {
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-arena", "live", "testnet", "running").await;
+        sqlx::query(
+            "UPDATE eval_runs \
+             SET live_config_json = ? \
+             WHERE id = 'ev-arena'",
+        )
+        .bind(r#"{"broker_creds_ref":"degen_arena"}"#)
+        .execute(&state.pool)
+        .await
+        .expect("seed live_config_json");
+        seed_child_run(
+            &state.pool,
+            "ar-arena",
+            "ev-arena",
+            "running",
+            "2026-06-01T00:00:00Z",
+        )
+        .await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let run = &v["runs"][0];
+        assert_eq!(run["venue"].as_str(), Some("degen_arena"));
+        // Venue identity is distinct from the real-money discriminator:
+        // Degen Arena is still a forward-test/testnet run here.
+        assert_eq!(run["is_live_money"].as_bool(), Some(false));
     }
 
     #[tokio::test]
