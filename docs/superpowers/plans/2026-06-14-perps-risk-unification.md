@@ -73,19 +73,25 @@ async fn perp_surface_reports_perp_venue() {
 ```
 
 Also add a test that a **real** perps adapter reports `true`, reusing the
-existing Orderly mock-API test harness (an `OrderlyLiveSurface::with_api(mock)`
-constructor is already used by tests at ~L1215). Place it near those tests:
+existing Orderly mock-API test harness. The surrounding Orderly tests build a
+`MockApi { .. }` struct literal (defined at ~L1095) and pass it to
+`OrderlyLiveSurface::with_api(api)` (~L1210-1215). Mirror that exact pattern:
 
 ```rust
 #[test]
 fn orderly_live_surface_is_perp_venue() {
-    // Build via the same mock-API path the other Orderly tests use.
-    let surface = OrderlyLiveSurface::with_api(MockOrderlyApi::default());
+    // Build the surface exactly as the existing Orderly tests at ~L1210 do:
+    // construct a `MockApi { .. }` and pass it to `with_api`.
+    let api = MockApi { /* copy the field initializers from the L1210 test */ };
+    let surface = OrderlyLiveSurface::with_api(api);
     assert!(surface.is_perp_venue(), "Orderly is a directional-perps venue");
 }
 ```
 
-> Match the exact `with_api(...)` mock constructor the surrounding Orderly tests use (copy from the test at ~L1215). If a spot Alpaca surface is trivially constructible in tests, also assert `!alpaca.is_perp_venue()`; otherwise the `DefaultsBroker` default-false test already covers the spot path. Mirror `DefaultsBroker`'s method signatures in `PerpTestSurface` (check L1406).
+> `MockApi` (broker_surface.rs:1095) is the in-scope Orderly mock — copy its
+> field initializers verbatim from the test at ~L1210. The `DefaultsBroker`
+> default-false test already covers the spot path. Mirror `DefaultsBroker`'s
+> method signatures in `PerpTestSurface` (check L1406).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -152,6 +158,7 @@ git commit -m "feat(risk): add BrokerSurface::is_perp_venue() gate (true on Orde
 **Files:**
 - Create: `crates/xvision-engine/src/strategies/risk/perps.rs`
 - Modify: `crates/xvision-engine/src/strategies/risk.rs` (add fields L8-16, presets L29-53, `pub mod perps;`)
+- Modify (struct-literal fix, Step 2b): `crates/xvision-engine/tests/{parity_pipeline_seed_byte_identical.rs,eval_causal_input_sanitization.rs,pine_import_map.rs,eval_exit_enforcement.rs}`
 
 - [ ] **Step 1: Add config fields** (`risk.rs`, inside `pub struct RiskConfig`, after `max_position_pct_nav`)
 
@@ -192,6 +199,22 @@ git commit -m "feat(risk): add BrokerSurface::is_perp_venue() gate (true on Orde
 ```
 
 > **Spec §4 open decision:** if the parity test in Task 6 shows any preset backtest changed, set that preset's `max_total_exposure_pct` to `0.0` (disabled) instead. Spot exposure ≤ NAV so 100–250% should never bind; the test confirms it.
+
+- [ ] **Step 2b: Fix the exhaustive `RiskConfig` struct literals.** `RiskConfig` does **not** derive `Default`, so adding three fields breaks every exhaustive `RiskConfig { .. }` literal — the workspace won't compile until each is updated. There are exactly **4** such sites (all in tests; the `autooptimizer_*` tests build `RiskConfig` via `serde_json` and are covered by `#[serde(default)]`, so they need no change). Append these three lines (`= 0.0`, i.e. disabled → zero behavior change) to each literal:
+
+```rust
+        max_funding_pay_8h: 0.0,
+        min_liq_distance_pct: 0.0,
+        max_total_exposure_pct: 0.0,
+```
+
+Sites:
+- `crates/xvision-engine/tests/parity_pipeline_seed_byte_identical.rs:39` (the parity gate itself — must compile)
+- `crates/xvision-engine/tests/eval_causal_input_sanitization.rs:188`
+- `crates/xvision-engine/tests/pine_import_map.rs:469`
+- `crates/xvision-engine/tests/eval_exit_enforcement.rs:369`
+
+Verify the list is complete before building: `grep -rn "RiskConfig {" crates/xvision-engine --include='*.rs' | grep -v 'strategies/risk.rs'` should show only these 4 (plus the `fn distinctive_risk()` wrappers). Build the engine tests to confirm: `scripts/cargo test -p xvision-engine --no-run`.
 
 - [ ] **Step 3: Declare the module** (`risk.rs`, top, after `use serde...`)
 
@@ -639,5 +662,6 @@ Review the full diff for out-of-scope/unreported changes (scan for `D ` deletion
 
 - **Spec coverage:** venue gate incl. `→ true` overrides on the three real perps adapters — Orderly/byreal/Bybit (T1.3b), helper+config+presets (T2), both-block wiring (T3), MaxTotalExposure general veto with disabled-by-default (T4), full retirement incl. Cargo/default-members/test fix/dead obs methods + stale-doc cleanup (T5), build/test verification incl. parity gate (T4.6, T6). `max_leverage` correctly out of scope. ✓
 - **Gate iteration 1 fixes applied:** (1) added `is_perp_venue()=true` overrides on `OrderlyLiveSurface`/`ByrealLiveSurface`/`BybitPaperSurface` so the gate is not permanently inert (T1.3b + test T1.1); (2) helper signature `is_new_open: bool, direction: Direction` now matches the spec (spec §2 updated); (3) folded stale-doc cleanup for `xvision-core/config.rs RiskPerpsGuards` + `docs/cli-non-surfaced.md` into T5.4b + broadened T5.6 re-grep to `docs/`; (4) corrected the live-loop bindings to the verified `runtime.fill_sink` / named `perps_ctx` (T3.1, T3.3).
+- **Gate iteration 2 fix applied:** `RiskConfig` has no `Default` derive, so adding 3 fields breaks 4 exhaustive `RiskConfig { .. }` test literals (incl. the parity gate). T2.2b now updates all 4 sites with the new fields `= 0.0` (disabled → zero behavior change); the `autooptimizer_*` JSON-built configs are unaffected via `#[serde(default)]`. Also corrected the Orderly test mock to the in-scope `MockApi { .. }` pattern (T1.1).
 - **Placeholders:** none — every code step shows code; the "confirm the binding name" notes (T3.1/T3.3) are verified-name guidance with explicit fallbacks.
 - **Type consistency:** `perps_entry_veto` / `exceeds_total_exposure` signatures, `VetoReason::{PunitiveFunding,NearLiquidation}`, `Direction::{Long,Short,Flat}`, `book.open_legs()` 4-tuple, `is_perp_venue()` — all consistent across tasks and with the spec.
