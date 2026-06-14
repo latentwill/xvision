@@ -199,7 +199,97 @@ pub struct PipelineOutputs {
     pub total_output_tokens: u32,
 }
 
+/// Build the `agent.plan` topology JSON for a resolved pipeline: an
+/// ordered list of stages, one `{ role, model?, capability? }` object
+/// per stage. Two shapes feed in:
+///
+/// * Agent path (modern multi-stage) — one entry per
+///   [`ResolvedAgentSlot`], carrying the slot role, the slot's bound
+///   `model` (when set), and the `activates` capability resolved off the
+///   parallel `Strategy.agents` entry (defaulting to `Trader`, matching
+///   `run_agent_pipeline`).
+/// * Legacy path — the `regime_slot` / `trader_slot` that are `Some`, in
+///   that order, with their `model` binding. No capability field (the
+///   legacy slots have no `Capability`).
+///
+/// Returned as `{ "topology": [ ... ] }` so the emitter merges it under
+/// the `topology` key of the span's attribute bag. Pure / cheap — only
+/// reads the resolved strategy + slots.
+fn build_pipeline_topology(strategy: &Strategy, agent_slots: &[ResolvedAgentSlot]) -> serde_json::Value {
+    let mut stages: Vec<serde_json::Value> = Vec::new();
+    if !agent_slots.is_empty() {
+        for (i, resolved) in agent_slots.iter().enumerate() {
+            // Capability resolved exactly as run_agent_pipeline does:
+            // `Strategy.agents[i].activates`, defaulting to Trader.
+            let capability = strategy
+                .agents
+                .get(i)
+                .and_then(|a| a.activates)
+                .unwrap_or(Capability::Trader);
+            let mut entry = serde_json::Map::new();
+            entry.insert(
+                "role".to_string(),
+                serde_json::Value::String(resolved.role.clone()),
+            );
+            if let Some(model) = resolved.slot.model.as_ref() {
+                entry.insert("model".to_string(), serde_json::Value::String(model.clone()));
+            }
+            entry.insert(
+                "capability".to_string(),
+                serde_json::Value::String(format!("{capability:?}")),
+            );
+            stages.push(serde_json::Value::Object(entry));
+        }
+    } else {
+        for slot in [strategy.regime_slot.as_ref(), strategy.trader_slot.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let mut entry = serde_json::Map::new();
+            entry.insert("role".to_string(), serde_json::Value::String(slot.role.clone()));
+            if let Some(model) = slot.model.as_ref() {
+                entry.insert("model".to_string(), serde_json::Value::String(model.clone()));
+            }
+            stages.push(serde_json::Value::Object(entry));
+        }
+    }
+    serde_json::json!({ "topology": stages })
+}
+
 pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
+    // WS-12 (`trace-obs-ws12`): open ONE `agent.plan` topology span at
+    // pipeline entry, before the first stage runs, carrying the resolved
+    // pipeline topology. No-op when `obs` is `None`. We open it here in
+    // `run_pipeline` (the common entry for BOTH the legacy and the agent
+    // path) and close it after the inner body returns — including the
+    // error path — so the span is always paired. The span is purely
+    // emit-side; it does not change any pipeline logic, slot execution,
+    // or outputs.
+    let plan_span_id = input
+        .obs
+        .as_ref()
+        .map(|_| crate::agent::observability::fresh_span_id());
+    if let (Some(obs), Some(span_id)) = (input.obs.as_ref(), plan_span_id.as_ref()) {
+        let topology = build_pipeline_topology(input.strategy, input.agent_slots);
+        obs.emit_agent_plan_started(span_id, None, topology).await;
+    }
+
+    // Snapshot the emitter before `input` is moved into the inner body
+    // so we can close the span on either return arm.
+    let obs_for_close = input.obs.clone();
+    let result = run_pipeline_inner(input).await;
+
+    if let (Some(obs), Some(span_id)) = (obs_for_close.as_ref(), plan_span_id.as_ref()) {
+        match &result {
+            Ok(_) => obs.emit_span_finished_ok(span_id).await,
+            Err(e) => obs.emit_span_finished_error(span_id, &e.to_string()).await,
+        }
+    }
+
+    result
+}
+
+async fn run_pipeline_inner<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
     if !input.agent_slots.is_empty() {
         return run_agent_pipeline(input).await;
     }
