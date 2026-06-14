@@ -284,25 +284,6 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
 
   return (
     <div className="py-1">
-      {/* Step 1 — XVN detected */}
-      <Step
-        n={next()}
-        state={install.xvnDetected ? "done" : "active"}
-        title="XVN install detected"
-        description={
-          install.xvnDetected ? (
-            <>
-              Connected to your XVN at{" "}
-              <span className="font-mono text-gold">{install.xvnEndpoint}</span>
-            </>
-          ) : (
-            <span className="text-warn">
-              XVN not detected — install XVN locally and reopen this receipt.
-            </span>
-          )
-        }
-      />
-
       {/* Bundle step — only for OPEN-tier listings with an IPFS-pinned
           manifest. Sealed listings carry encrypted ciphertext (not a
           human-openable manifest), so the decrypt step below replaces it. */}

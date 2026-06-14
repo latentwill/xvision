@@ -217,11 +217,7 @@ export function ReceiptRoute() {
         <div className="flex flex-col gap-3.5">
           <Panel
             title="Install in your XVN"
-            sub={
-              receipt.install.xvnDetected
-                ? `detected at ${receipt.install.xvnEndpoint} · 4 steps · sealed bundle auto-decrypts`
-                : "XVN not detected · install XVN first"
-            }
+            sub="license-gated import · sealed bundles decrypt with your wallet"
             right={
               <button className="font-mono text-[12px] bg-gold text-black px-3 py-1.5 rounded hover:opacity-90 font-semibold motion-safe:active:scale-[0.96]">
                 Install all
