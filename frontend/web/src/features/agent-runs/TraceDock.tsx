@@ -25,6 +25,7 @@ import {
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
 import { SpanTree } from "./SpanTree";
+import { emptyTreeReason, TraceEmptyState } from "./trace-empty-state";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
@@ -285,6 +286,17 @@ export function TraceDock() {
 
   const summary = q.data?.summary;
   const isLive = summary?.status === "running";
+
+  // Why is the tree empty? Name the real reason instead of always blaming the
+  // filter. `null` means there ARE rows to render.
+  const emptyReason = emptyTreeReason({
+    sourceCount: sourceSpans.length,
+    filteredCount: filter.filtered.length,
+    displayCount: displaySpans.length,
+    filterActive: filter.active,
+    isLive,
+    advancedView: advanced_view,
+  });
 
   const qc = useQueryClient();
   useEffect(() => {
@@ -676,7 +688,14 @@ export function TraceDock() {
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
-            structuredView === "tree" ? (
+            emptyReason ? (
+              <TraceEmptyState
+                reason={emptyReason}
+                hiddenCount={simpleHiddenCount}
+                onClearFilters={filter.reset}
+                onShowAdvanced={() => setAdvancedView(true)}
+              />
+            ) : structuredView === "tree" ? (
               <SpanTree
                 spans={displaySpans}
                 selectedSpanId={selectedSpan?.span_id ?? null}
