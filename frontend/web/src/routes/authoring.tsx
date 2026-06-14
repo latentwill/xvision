@@ -3,11 +3,13 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
+import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
 import { toVenuePair } from "@/lib/assets";
 import { useAlpacaAssets } from "@/api/assets";
 import {
   addStrategyAgent,
+  cloneStrategy,
   deleteStrategy,
   getStrategy,
   patchStrategyMetadata,
@@ -1621,6 +1623,21 @@ function InspectorActions({
     },
   });
 
+  // Clone the strategy via the shared `POST /api/strategy/:id/clone` endpoint,
+  // then jump to the new draft's inspector. Clone lives here on the Strategies
+  // page only — the marketplace surface deliberately has no clone, because
+  // sealed listings are encrypted and cannot be duplicated.
+  const cloneMut = useMutation({
+    mutationFn: () =>
+      cloneStrategy(strategyId, {
+        display_name: `${strategy?.manifest.display_name ?? "Strategy"} (clone)`,
+      }),
+    onSuccess: async (created) => {
+      await qc.invalidateQueries({ queryKey: strategyKeys.all });
+      navigate(`/strategies/${encodeURIComponent(created.manifest.id)}`);
+    },
+  });
+
   function onDelete() {
     const label = strategy?.manifest.display_name || strategyId;
     if (!window.confirm(`Delete strategy "${label}"? This cannot be undone.`)) {
@@ -1640,6 +1657,26 @@ function InspectorActions({
       {deleteMut.isPending ? "Deleting..." : "Delete"}
     </button>
   );
+
+  const cloneButton = (
+    <button
+      type="button"
+      data-testid="inspector-clone"
+      onClick={() => cloneMut.mutate()}
+      disabled={cloneMut.isPending}
+      aria-label={`Clone strategy ${strategyId}`}
+      className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text transition-colors hover:border-text-3 active:border-text-2 focus:outline-none focus-visible:ring-1 focus-visible:ring-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <Icon name="copy" size={13} />
+      {cloneMut.isPending ? "Cloning…" : "Clone strategy"}
+    </button>
+  );
+
+  const cloneError = cloneMut.isError ? (
+    <span className="text-[12px] text-danger">
+      {errorMessage(cloneMut.error)}
+    </span>
+  ) : null;
 
   if (!strategy) {
     return (
@@ -1670,6 +1707,8 @@ function InspectorActions({
           Go to agents
         </a>
         {deleteButton}
+        {cloneError}
+        {cloneButton}
       </div>
     );
   }
@@ -1682,6 +1721,8 @@ function InspectorActions({
         </span>
       ) : null}
       {deleteButton}
+      {cloneError}
+      {cloneButton}
       <Link
         to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors motion-safe:active:scale-[0.96]"
