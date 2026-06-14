@@ -45,7 +45,6 @@ fn sample_strategy() -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({"rsi_oversold": 30, "rsi_overbought": 70}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -215,8 +214,7 @@ fn strategy_with_extra_capital_field_in_json_still_deserializes() {
             "daily_loss_kill_pct": 0.05
         },
         "capital": { "initial": 100000.0, "currency": "USD" },
-        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 },
-        "mechanical_params": {}
+        "risk_caps": { "max_concurrent_positions": 1, "max_leverage": 1.0, "daily_loss_kill_switch_pct": 0.05 }
     });
     // Should parse without error; extra fields are ignored.
     let parsed: Strategy = serde_json::from_value(pre_merge_json).unwrap();

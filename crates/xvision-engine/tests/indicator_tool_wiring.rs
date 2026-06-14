@@ -194,7 +194,6 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,

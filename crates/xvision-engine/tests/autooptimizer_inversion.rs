@@ -34,8 +34,7 @@ fn fixture_strategy() -> Strategy {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": { "rsi_period": 14, "ema_fast": 12 }
+        }
     }))
     .expect("fixture strategy deserializes")
 }

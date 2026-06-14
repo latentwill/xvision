@@ -26,10 +26,10 @@ pub struct PublicManifest {
     pub risk_preset_or_config: String, // "conservative" | "balanced" | "aggressive" | "custom"
     pub published_at: Option<DateTime<Utc>>,
     /// Minimum context bars this strategy needs before bar 1 of the
-    /// decision window. `None` means "derive from `mechanical_params`"
-    /// (see [`super::Strategy::min_warmup_bars`]). Set explicitly when the
-    /// derivation is wrong or when the strategy relies on indicators not
-    /// reflected in `mechanical_params`.
+    /// decision window. `None` falls back to
+    /// [`super::FALLBACK_MIN_WARMUP_BARS`] (see
+    /// [`super::Strategy::min_warmup_bars`]). Set explicitly when the
+    /// strategy relies on indicators that need prior-bar history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_warmup_bars: Option<u32>,
     /// Optional per-strategy display color (hex, e.g. `"#D4A547"`).

@@ -430,10 +430,6 @@ enum StrategyAction {
     /// `(provider, model)` (`key_missing`, `model_disabled`, etc.)
     /// refuses the clone with the same structured reason `xvn eval run`
     /// uses.
-    ///
-    /// Records `cloned_from: "<source-id>"` in
-    /// `mechanical_params.metadata` so audit tooling can chain clones
-    /// back to the original.
     Clone {
         /// Source strategy id to clone.
         strategy_id: String,
@@ -1340,7 +1336,6 @@ async fn new_atomic(
         regime_slot: None,
         trader_slot: None,
         risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_engine::strategies::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: no_filter_warning,
@@ -2559,10 +2554,6 @@ async fn edit_strategy(
 /// no half-cloned state lands on disk. (Best-effort agent cleanup on
 /// partial failure is a follow-up — the agent rows exist but no
 /// strategy points at them.)
-///
-/// Stashes `cloned_from: "<source-id>"` in
-/// `mechanical_params.metadata.cloned_from` so audit tooling can chain
-/// clones back to the original.
 async fn clone(
     source_strategy_id: &str,
     new_name: &str,
@@ -3736,7 +3727,6 @@ pub mod atomic_create {
             regime_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
@@ -3811,7 +3801,6 @@ pub mod atomic_create {
             regime_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             hypothesis: None,
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,

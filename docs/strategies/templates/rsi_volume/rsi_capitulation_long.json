@@ -2,50 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "RSI Capitulation Long",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "14",
-      "name": "rsi_period",
-      "range": "7 / 14 / 21"
-    },
-    {
-      "default": "20",
-      "name": "rsi_oversold",
-      "range": "15 \u2013 30"
-    },
-    {
-      "default": "60",
-      "name": "volume_lookback",
-      "range": "30 \u2013 180"
-    },
-    {
-      "default": "95",
-      "name": "volume_pct_min",
-      "range": "85 \u2013 99"
-    },
-    {
-      "default": "1",
-      "name": "confirmation_bars",
-      "range": "1 \u2013 3"
-    },
-    {
-      "default": "50",
-      "name": "target_rsi",
-      "range": "40 \u2013 70"
-    },
-    {
-      "default": "10",
-      "name": "time_stop_bars",
-      "range": "5 \u2013 30"
-    },
-    {
-      "default": "3.0",
-      "name": "stop_atr_multiple",
-      "range": "2.0 \u2013 5.0"
-    }
-  ],
   "name": "rsi_capitulation_long",
-  "plain_summary": "When RSI prints an extreme oversold reading (\u2264 20) simultaneously with volume at the 95th percentile of its trailing distribution, the market is in capitulation: forced selling, panic exits, and stop-runs all firing at once. The two-source verification is what distinguishes capitulation from a slow grind down \u2014 RSI alone in a downtrend is chronic-oversold and gives no edge; volume alone without RSI confirmation could be ordinary distribution.",
+  "plain_summary": "When RSI prints an extreme oversold reading (≤ 20) simultaneously with volume at the 95th percentile of its trailing distribution, the market is in capitulation: forced selling, panic exits, and stop-runs all firing at once. The two-source verification is what distinguishes capitulation from a slow grind down — RSI alone in a downtrend is chronic-oversold and gives no edge; volume alone without RSI confirmation could be ordinary distribution.",
   "regime_fit": [
     "trending_bear",
     "chop",
@@ -60,13 +18,13 @@
     "data_dependencies": "None beyond price and volume.",
     "decision_rule": "```\ncapitulation_event = rsi_14 <= rsi_oversold\n                     AND volume_pct >= volume_pct_min\n                     AND <event holds for confirmation_bars>\n\nif capitulation_event and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = exit when rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```",
     "expected_regime": "Sharp downtrends, capitulation flushes, news-driven panic. Underperforms\nin slow grinding declines (no volume spike) and in choppy oversold\noscillations (no extreme volume). The volume gate excludes both failure\nmodes.",
-    "inputs": "- `IndicatorPanel.rsi_14` \u2014 RSI of close.\n- `PriceFrame.volume`.\n- Computed: `volume_pct = pct_rank(volume, lookback=lookback)`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.",
-    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_period`              | 14      | 7 / 14 / 21      |\n| `rsi_oversold`            | 20      | 15 \u2013 30          |\n| `volume_lookback`         | 60      | 30 \u2013 180         |\n| `volume_pct_min`          | 95      | 85 \u2013 99          |\n| `confirmation_bars`       | 1       | 1 \u2013 3            |\n| `target_rsi`              | 50      | 40 \u2013 70          |\n| `time_stop_bars`          | 10      | 5 \u2013 30           |\n| `stop_atr_multiple`       | 3.0     | 2.0 \u2013 5.0        |\n\n`stop_atr_multiple = 3.0` is wide because capitulation can extend several\nbars before reverting; loose stops are necessary to avoid being shaken\nout before the actual low.",
-    "references": "- Compendium README \u00a7Map, CAPITULATION CANYON.\n- Pair: [`rsi_euphoria_short`](rsi_euphoria_short.md).\n- Equity analog: VIX > p95 + SPX RSI < 20 has been a high-conviction\n  long-entry signal historically.",
+    "inputs": "- `IndicatorPanel.rsi_14` — RSI of close.\n- `PriceFrame.volume`.\n- Computed: `volume_pct = pct_rank(volume, lookback=lookback)`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.",
+    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_period`              | 14      | 7 / 14 / 21      |\n| `rsi_oversold`            | 20      | 15 – 30          |\n| `volume_lookback`         | 60      | 30 – 180         |\n| `volume_pct_min`          | 95      | 85 – 99          |\n| `confirmation_bars`       | 1       | 1 – 3            |\n| `target_rsi`              | 50      | 40 – 70          |\n| `time_stop_bars`          | 10      | 5 – 30           |\n| `stop_atr_multiple`       | 3.0     | 2.0 – 5.0        |\n\n`stop_atr_multiple = 3.0` is wide because capitulation can extend several\nbars before reverting; loose stops are necessary to avoid being shaken\nout before the actual low.",
+    "references": "- Compendium README §Map, CAPITULATION CANYON.\n- Pair: [`rsi_euphoria_short`](rsi_euphoria_short.md).\n- Equity analog: VIX > p95 + SPX RSI < 20 has been a high-conviction\n  long-entry signal historically.",
     "status": "`queued`. Highest-conviction RSI/volume strategy; cleanest expression of\nthe medical-consensus template. Pair with `rsi_euphoria_short` for\nsymmetric coverage of the climax-canyon / climax-coast diagonal.",
-    "thesis": "When RSI prints an extreme oversold reading (\u2264 20) *simultaneously* with\nvolume at the 95th percentile of its trailing distribution, the market\nis in capitulation: forced selling, panic exits, and stop-runs all\nfiring at once. The two-source verification is what distinguishes\ncapitulation from a slow grind down \u2014 RSI alone in a downtrend is\nchronic-oversold and gives no edge; volume alone without RSI confirmation\ncould be ordinary distribution.\n\nThe combination \u2014 both signals in extreme-agreement \u2014 has historically\nmarked local lows in equities, futures, and crypto. The trade is a long\nfade entered into the panic and exited at the mean (RSI \u2265 50 or a\nvolume-normalization bar)."
+    "thesis": "When RSI prints an extreme oversold reading (≤ 20) *simultaneously* with\nvolume at the 95th percentile of its trailing distribution, the market\nis in capitulation: forced selling, panic exits, and stop-runs all\nfiring at once. The two-source verification is what distinguishes\ncapitulation from a slow grind down — RSI alone in a downtrend is\nchronic-oversold and gives no edge; volume alone without RSI confirmation\ncould be ordinary distribution.\n\nThe combination — both signals in extreme-agreement — has historically\nmarked local lows in equities, futures, and crypto. The trade is a long\nfade entered into the panic and exited at the mean (RSI ≥ 50 or a\nvolume-normalization bar)."
   },
   "source_doc": "strategies/rsi_volume/rsi_capitulation_long.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `RSI Capitulation Long` strategy.\n\nThesis:\nWhen RSI prints an extreme oversold reading (\u2264 20) simultaneously with volume at the 95th percentile of its trailing distribution, the market is in capitulation: forced selling, panic exits, and stop-runs all firing at once. The two-source verification is what distinguishes capitulation from a slow grind down \u2014 RSI alone in a downtrend is chronic-oversold and gives no edge; volume alone without RSI confirmation could be ordinary distribution.\n\nInputs:\n- `IndicatorPanel.rsi_14` \u2014 RSI of close.\n- `PriceFrame.volume`.\n- Computed: `volume_pct = pct_rank(volume, lookback=lookback)`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n\nDecision rule:\n```\ncapitulation_event = rsi_14 <= rsi_oversold\n                     AND volume_pct >= volume_pct_min\n                     AND <event holds for confirmation_bars>\n\nif capitulation_event and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = exit when rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nSharp downtrends, capitulation flushes, news-driven panic. Underperforms in slow grinding declines (no volume spike) and in choppy oversold oscillations (no extreme volume). The volume gate excludes both failure modes.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `RSI Capitulation Long` strategy.\n\nThesis:\nWhen RSI prints an extreme oversold reading (≤ 20) simultaneously with volume at the 95th percentile of its trailing distribution, the market is in capitulation: forced selling, panic exits, and stop-runs all firing at once. The two-source verification is what distinguishes capitulation from a slow grind down — RSI alone in a downtrend is chronic-oversold and gives no edge; volume alone without RSI confirmation could be ordinary distribution.\n\nInputs:\n- `IndicatorPanel.rsi_14` — RSI of close.\n- `PriceFrame.volume`.\n- Computed: `volume_pct = pct_rank(volume, lookback=lookback)`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n\nDecision rule:\n```\ncapitulation_event = rsi_14 <= rsi_oversold\n                     AND volume_pct >= volume_pct_min\n                     AND <event holds for confirmation_bars>\n\nif capitulation_event and is_flat:\n    enter long\n    stop = entry - stop_atr_multiple * atr_14\n    target = exit when rsi_14 >= target_rsi\n    time_stop = time_stop_bars\n```\n\nExpected regime:\nSharp downtrends, capitulation flushes, news-driven panic. Underperforms in slow grinding declines (no volume spike) and in choppy oversold oscillations (no extreme volume). The volume gate excludes both failure modes.\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

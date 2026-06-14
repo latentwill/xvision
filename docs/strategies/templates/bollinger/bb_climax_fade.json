@@ -2,55 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "BB Climax Fade",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "95",
-      "name": "min_bandwidth_percentile",
-      "range": "90 \u2013 99"
-    },
-    {
-      "default": "0.0",
-      "name": "entry_pct_b_low",
-      "range": "-0.05 \u2013 0.10"
-    },
-    {
-      "default": "1.0",
-      "name": "entry_pct_b_high",
-      "range": "0.90 \u2013 1.05"
-    },
-    {
-      "default": "1.0",
-      "name": "min_volume_z",
-      "range": "0.0 \u2013 2.0"
-    },
-    {
-      "default": "5",
-      "name": "time_stop_long",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "10",
-      "name": "time_stop_short",
-      "range": "5 \u2013 20"
-    },
-    {
-      "default": "bb_middle",
-      "name": "target (exit)",
-      "range": "bb_middle / 50% retrace"
-    },
-    {
-      "default": "3.0",
-      "name": "stop_atr_multiple",
-      "range": "2.0 \u2013 5.0"
-    },
-    {
-      "default": "0.5",
-      "name": "max_position_size_factor",
-      "range": "0.3 \u2013 1.0"
-    }
-  ],
   "name": "bb_climax_fade",
-  "plain_summary": "When bandwidth is at an extreme (B4) and price is at the band's outside edge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself mean-reverts \u2014 extreme bandwidth doesn't sustain \u2014 and the extreme touch typically marks the climax of the move. Fade it.",
+  "plain_summary": "When bandwidth is at an extreme (B4) and price is at the band's outside edge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself mean-reverts — extreme bandwidth doesn't sustain — and the extreme touch typically marks the climax of the move. Fade it.",
   "regime_fit": [
     "any"
   ],
@@ -61,15 +14,15 @@
   "schema_version": "xvision.strategy_template.v1",
   "sections": {
     "data_dependencies": "Volume in addition to price.",
-    "decision_rule": "```\nin_crisis_vol = bandwidth_percentile >= min_bandwidth_percentile\n\nvol_confirm = (volume - rolling_mean(volume, 20)) / rolling_std(volume, 20)\n              >= min_volume_z\n\n# Capitulation fade (long-side):\nif in_crisis_vol and pct_b <= entry_pct_b_low and vol_confirm and is_flat:\n    enter long with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_long bars\n    stop = entry - stop_atr_multiple * atr_14\n\n# Euphoria fade (short-side):\nif in_crisis_vol and pct_b >= entry_pct_b_high and vol_confirm and is_flat:\n    enter short with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_short bars   # wider \u2014 euphoria persists longer\n    stop = entry + stop_atr_multiple * atr_14\n```",
+    "decision_rule": "```\nin_crisis_vol = bandwidth_percentile >= min_bandwidth_percentile\n\nvol_confirm = (volume - rolling_mean(volume, 20)) / rolling_std(volume, 20)\n              >= min_volume_z\n\n# Capitulation fade (long-side):\nif in_crisis_vol and pct_b <= entry_pct_b_low and vol_confirm and is_flat:\n    enter long with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_long bars\n    stop = entry - stop_atr_multiple * atr_14\n\n# Euphoria fade (short-side):\nif in_crisis_vol and pct_b >= entry_pct_b_high and vol_confirm and is_flat:\n    enter short with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_short bars   # wider — euphoria persists longer\n    stop = entry + stop_atr_multiple * atr_14\n```",
     "expected_regime": "B4 only. Few firings per year on any single instrument; the strategy is a\n*specialist* not a workhorse. Best evaluated on multi-instrument runs to\nget enough sample.",
-    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.volume` \u2014 high volume at the extreme increases conviction.",
-    "parameters": "| Param                              | Default | Range            |\n| ---------------------------------- | ------- | ---------------- |\n| `min_bandwidth_percentile`         | 95      | 90 \u2013 99          |\n| `entry_pct_b_low`                  | 0.0     | -0.05 \u2013 0.10     |\n| `entry_pct_b_high`                 | 1.0     | 0.90 \u2013 1.05      |\n| `min_volume_z`                     | 1.0     | 0.0 \u2013 2.0        |\n| `time_stop_long`                   | 5       | 3 \u2013 10           |\n| `time_stop_short`                  | 10      | 5 \u2013 20           |\n| `target` (exit)                    | `bb_middle` | bb_middle / 50% retrace |\n| `stop_atr_multiple`                | 3.0     | 2.0 \u2013 5.0        |\n| `max_position_size_factor`         | 0.5     | 0.3 \u2013 1.0        |\n\n`time_stop_long < time_stop_short` is the asymmetric rule \u2014 encoded as a\nparameter constraint, not as one number applied to both sides.\n\n`max_position_size_factor` reduces the position relative to the strategy\nmanager's normal size; tail-risk respect.",
-    "references": "- Compendium README \u00a7Symmetry-breaking \u2014 the operational rules above are this section.\n- Equity analog: VIX > 95th-pct + SPX 2-\u03c3 below mean = high-conviction long entry historically.",
+    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.volume` — high volume at the extreme increases conviction.",
+    "parameters": "| Param                              | Default | Range            |\n| ---------------------------------- | ------- | ---------------- |\n| `min_bandwidth_percentile`         | 95      | 90 – 99          |\n| `entry_pct_b_low`                  | 0.0     | -0.05 – 0.10     |\n| `entry_pct_b_high`                 | 1.0     | 0.90 – 1.05      |\n| `min_volume_z`                     | 1.0     | 0.0 – 2.0        |\n| `time_stop_long`                   | 5       | 3 – 10           |\n| `time_stop_short`                  | 10      | 5 – 20           |\n| `target` (exit)                    | `bb_middle` | bb_middle / 50% retrace |\n| `stop_atr_multiple`                | 3.0     | 2.0 – 5.0        |\n| `max_position_size_factor`         | 0.5     | 0.3 – 1.0        |\n\n`time_stop_long < time_stop_short` is the asymmetric rule — encoded as a\nparameter constraint, not as one number applied to both sides.\n\n`max_position_size_factor` reduces the position relative to the strategy\nmanager's normal size; tail-risk respect.",
+    "references": "- Compendium README §Symmetry-breaking — the operational rules above are this section.\n- Equity analog: VIX > 95th-pct + SPX 2-σ below mean = high-conviction long entry historically.",
     "status": "`queued`. Encodes the symmetry-breaking pivot directly; even if it\nunderperforms in evaluation, the post-mortem is informative because it\ntests whether the asymmetry-as-edge thesis is real on the venue.",
-    "thesis": "When bandwidth is at an extreme (B4) and price is at the band's outside\nedge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself\nmean-reverts \u2014 extreme bandwidth doesn't sustain \u2014 and the extreme touch\ntypically marks the climax of the move. Fade it.\n\nThe strategy explicitly encodes the symmetry-breaking insight: capitulation\n(S0/S1 + B4) resolves *faster* than euphoria (S5/S6 + B4). Long-side\ntrades use tighter time-stops than short-side trades. This is the cleanest\noperational expression of the pivot dimension in the compendium.\n\nTail-risk-aware. The \"climax\" can extend for several bars before reverting,\nso position size must be modest and stops must be loose \u2014 but final\nrealized R can be large because the reversion is often violent."
+    "thesis": "When bandwidth is at an extreme (B4) and price is at the band's outside\nedge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself\nmean-reverts — extreme bandwidth doesn't sustain — and the extreme touch\ntypically marks the climax of the move. Fade it.\n\nThe strategy explicitly encodes the symmetry-breaking insight: capitulation\n(S0/S1 + B4) resolves *faster* than euphoria (S5/S6 + B4). Long-side\ntrades use tighter time-stops than short-side trades. This is the cleanest\noperational expression of the pivot dimension in the compendium.\n\nTail-risk-aware. The \"climax\" can extend for several bars before reverting,\nso position size must be modest and stops must be loose — but final\nrealized R can be large because the reversion is often violent."
   },
   "source_doc": "strategies/bollinger/bb_climax_fade.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Climax Fade` strategy.\n\nThesis:\nWhen bandwidth is at an extreme (B4) and price is at the band's outside edge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself mean-reverts \u2014 extreme bandwidth doesn't sustain \u2014 and the extreme touch typically marks the climax of the move. Fade it.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.volume` \u2014 high volume at the extreme increases conviction.\n\nDecision rule:\n```\nin_crisis_vol = bandwidth_percentile >= min_bandwidth_percentile\n\nvol_confirm = (volume - rolling_mean(volume, 20)) / rolling_std(volume, 20)\n              >= min_volume_z\n\n# Capitulation fade (long-side):\nif in_crisis_vol and pct_b <= entry_pct_b_low and vol_confirm and is_flat:\n    enter long with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_long bars\n    stop = entry - stop_atr_multiple * atr_14\n\n# Euphoria fade (short-side):\nif in_crisis_vol and pct_b >= entry_pct_b_high and vol_confirm and is_flat:\n    enter short with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_short bars   # wider \u2014 euphoria persists longer\n    stop = entry + stop_atr_multiple * atr_14\n```\n\nExpected regime:\nB4 only. Few firings per year on any single instrument; the strategy is a specialist not a workhorse. Best evaluated on multi-instrument runs to get enough sample.\n\nData dependencies:\nVolume in addition to price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Climax Fade` strategy.\n\nThesis:\nWhen bandwidth is at an extreme (B4) and price is at the band's outside edge (S0/S1 or S5/S6), the move has likely overshot. Volatility itself mean-reverts — extreme bandwidth doesn't sustain — and the extreme touch typically marks the climax of the move. Fade it.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2`, `bb_middle_20`.\n- Computed: `pct_b`, `bandwidth_percentile`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.volume` — high volume at the extreme increases conviction.\n\nDecision rule:\n```\nin_crisis_vol = bandwidth_percentile >= min_bandwidth_percentile\n\nvol_confirm = (volume - rolling_mean(volume, 20)) / rolling_std(volume, 20)\n              >= min_volume_z\n\n# Capitulation fade (long-side):\nif in_crisis_vol and pct_b <= entry_pct_b_low and vol_confirm and is_flat:\n    enter long with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_long bars\n    stop = entry - stop_atr_multiple * atr_14\n\n# Euphoria fade (short-side):\nif in_crisis_vol and pct_b >= entry_pct_b_high and vol_confirm and is_flat:\n    enter short with size = base_size * max_position_size_factor\n    target = bb_middle\n    time_stop = time_stop_short bars   # wider — euphoria persists longer\n    stop = entry + stop_atr_multiple * atr_14\n```\n\nExpected regime:\nB4 only. Few firings per year on any single instrument; the strategy is a specialist not a workhorse. Best evaluated on multi-instrument runs to get enough sample.\n\nData dependencies:\nVolume in addition to price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

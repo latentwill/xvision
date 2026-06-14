@@ -153,7 +153,7 @@ impl AgentProfile {
                  new — do NOT default to picking an existing library entry unless the user \
                  explicitly asks you to reuse one. \
                  `create_strategy` always starts a blank draft — fill it in via \
-                 `create_strategy_agent` / `update_slot` / `set_mechanical_param` / `set_filter`. \
+                 `create_strategy_agent` / `update_slot` / `set_filter`. \
                  ## Completion contract\n\
                  Before you tell the user the strategy is ready (or surface the Open Strategy \
                  card), you MUST: (1) attach a trader agent with an explicit provider/model via \
@@ -2057,11 +2057,6 @@ impl WizardLoop {
                 let out = api_strategy::update_manifest(&self.api_context, req).await?;
                 Ok(serde_json::to_value(out)?)
             }
-            "set_mechanical_param" => {
-                let req: authoring::SetMechanicalParamReq = serde_json::from_value(input)?;
-                let out = api_strategy::set_mechanical_param(&self.api_context, req).await?;
-                Ok(serde_json::to_value(out)?)
-            }
             "set_risk_config" => {
                 let req: authoring::SetRiskConfigReq = serde_json::from_value(input)?;
                 let out = api_strategy::set_risk_config(&self.api_context, req).await?;
@@ -3422,7 +3417,6 @@ fn expects_id(tool: &str) -> bool {
         "get_strategy"
             | "update_slot"
             | "update_manifest"
-            | "set_mechanical_param"
             | "set_risk_config"
             | "set_filter"
             | "clear_filter"
@@ -3547,7 +3541,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             name: "create_strategy".into(),
             description: "Instantiate a blank strategy draft. Fill it in with \
                           `create_strategy_agent` (attach an agent) and \
-                          `update_slot` / `set_mechanical_param` / `update_manifest`. \
+                          `update_slot` / `update_manifest`. \
                           Returns { id }."
                 .into(),
             input_schema: serde_json::json!({
@@ -3657,19 +3651,6 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["id"]
-            }),
-        },
-        ToolDefinition {
-            name: "set_mechanical_param".into(),
-            description: "Set a key inside Strategy.mechanical_params (template-specific).".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "key": {"type": "string"},
-                    "value": {}
-                },
-                "required": ["id", "key", "value"]
             }),
         },
         ToolDefinition {
@@ -5761,7 +5742,6 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             "create_scenario",
             "update_slot",
             "update_manifest",
-            "set_mechanical_param",
             "set_risk_config",
             "set_filter",
             "clear_filter",

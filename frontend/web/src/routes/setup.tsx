@@ -380,8 +380,6 @@ function summarizeArgs(tool: string, args: unknown): string {
       }
       return bits.join("; ");
     }
-    case "set_mechanical_param":
-      return `${a["key"]} = ${JSON.stringify(a["value"])}`;
     case "set_risk_config":
       return a["preset"] ? `preset=${a["preset"]}` : "explicit";
     case "get_strategy":
@@ -555,16 +553,6 @@ function toolLogLine(
       return {
         ok: t.resultSummary ? t.resultSummary === "ok" : true,
         content: `Validation ${t.resultSummary === "ok" ? "passed" : "completed"}`,
-      };
-    case "set_mechanical_param":
-      return {
-        ok: true,
-        content: (
-          <>
-            Set <code className="font-mono text-text">{String(args["key"] ?? "?")}</code>{" "}
-            = <code className="font-mono text-text">{String(args["value"] ?? "")}</code>
-          </>
-        ),
       };
     case "set_risk_config":
       return { ok: true, content: `Risk config updated (${t.resultSummary ?? "ok"})` };

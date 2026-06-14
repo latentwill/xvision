@@ -2,45 +2,8 @@
   "base_template": "breakout",
   "display_name": "BB Squeeze Breakout",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    },
-    {
-      "default": "50",
-      "name": "bandwidth_lookback",
-      "range": "20 \u2013 200"
-    },
-    {
-      "default": "20",
-      "name": "bandwidth_percentile_max",
-      "range": "5 \u2013 30"
-    },
-    {
-      "default": "1.0",
-      "name": "breakout_atr_multiple",
-      "range": "0.5 \u2013 2.0"
-    },
-    {
-      "default": "20",
-      "name": "time_stop_bars",
-      "range": "10 \u2013 50"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "bb_squeeze_breakout",
-  "plain_summary": "When bandwidth contracts to a low percentile of its trailing distribution the market is in a low-volatility regime that, by mean-reversion of volatility itself, almost always resolves into expansion. Direction is the open question. This strategy doesn't try to predict it \u2014 it waits for the first directional break out of the contracted bands and takes that break. The squeeze is the regime gate; the break is the entry.",
+  "plain_summary": "When bandwidth contracts to a low percentile of its trailing distribution the market is in a low-volatility regime that, by mean-reversion of volatility itself, almost always resolves into expansion. Direction is the open question. This strategy doesn't try to predict it — it waits for the first directional break out of the contracted bands and takes that break. The squeeze is the regime gate; the break is the entry.",
   "regime_fit": [
     "high_volatility"
   ],
@@ -52,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nbandwidth = (bb_upper - bb_lower) / bb_middle\nin_squeeze = bandwidth_percentile <= bandwidth_percentile_max\n\n# detect first directional break out of the squeeze:\nbreak_up   = close > bb_upper + breakout_atr_multiple * atr_14\nbreak_down = close < bb_lower - breakout_atr_multiple * atr_14\n\nif was_in_squeeze[t-1] and break_up and is_flat:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif was_in_squeeze[t-1] and break_down and is_flat:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on:\n  - opposite break, or\n  - time_stop_bars elapsed without target hit, or\n  - stop / take-profit hit.\n```",
-    "expected_regime": "B0 \u2192 B3 transition. Dies in B2 (no squeeze to detect) and B4 (already\nexpanded; nothing left to break out of).",
+    "expected_regime": "B0 → B3 transition. Dies in B2 (no squeeze to detect) and B4 (already\nexpanded; nothing left to break out of).",
     "inputs": "- `IndicatorPanel.bb_upper_20_2`, `IndicatorPanel.bb_lower_20_2`,\n  `IndicatorPanel.bb_middle_20`.\n- Computed: `bandwidth = (upper - lower) / middle`.\n- Computed: `bandwidth_percentile = pct_rank(bandwidth, lookback=lookback)`.\n- `IndicatorPanel.atr_14` for stops.\n- `PriceFrame.close`, `high`, `low`.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 \u2013 2.5        |\n| `bandwidth_lookback`           | 50      | 20 \u2013 200         |\n| `bandwidth_percentile_max`     | 20      | 5 \u2013 30           |\n| `breakout_atr_multiple`        | 1.0     | 0.5 \u2013 2.0        |\n| `time_stop_bars`               | 20      | 10 \u2013 50          |\n| `stop_atr_multiple`            | 2.0     | 1.0 \u2013 3.0        |\n\n`bandwidth_percentile_max = 20` defines a squeeze as bandwidth below the\n20th percentile of the last 50 bars. `time_stop_bars` is critical \u2014\nsqueezes that don't break within 20 bars often fail to expand and the\nstrategy bleeds.",
-    "references": "- Compendium README \u00a7Combination, B0 column.\n- Sibling: [`bb_squeeze_failure_fade`](bb_squeeze_failure_fade.md) \u2014 fades the *first* break expecting it to fail.\n- `crates/xvision-eval/src/baselines/` \u2014 target implementation crate.",
-    "status": "`queued`. Canonical BB strategy; ship first. Direct comparison candidate\nto [`../EMA/ema_squeeze_breakout`](../EMA/ema_squeeze_breakout.md) \u2014 same\nregime, different detection mechanism (BB-bandwidth vs EMA-stack std-dev).",
-    "thesis": "When bandwidth contracts to a low percentile of its trailing distribution\nthe market is in a low-volatility regime that, by mean-reversion of\nvolatility itself, almost always resolves into expansion. Direction is\nthe open question. This strategy doesn't try to predict it \u2014 it waits\nfor the first directional break out of the contracted bands and takes\nthat break. The squeeze is the regime gate; the break is the entry.\n\nThe trade has built-in regime context: by definition we're not entering\nin B2 / B3 / B4. The squeeze itself is the filter, which is why it pairs\nwell with strategies that fail in normal vol (squeezes are rare enough\nthat they don't dominate trade count)."
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 – 2.5        |\n| `bandwidth_lookback`           | 50      | 20 – 200         |\n| `bandwidth_percentile_max`     | 20      | 5 – 30           |\n| `breakout_atr_multiple`        | 1.0     | 0.5 – 2.0        |\n| `time_stop_bars`               | 20      | 10 – 50          |\n| `stop_atr_multiple`            | 2.0     | 1.0 – 3.0        |\n\n`bandwidth_percentile_max = 20` defines a squeeze as bandwidth below the\n20th percentile of the last 50 bars. `time_stop_bars` is critical —\nsqueezes that don't break within 20 bars often fail to expand and the\nstrategy bleeds.",
+    "references": "- Compendium README §Combination, B0 column.\n- Sibling: [`bb_squeeze_failure_fade`](bb_squeeze_failure_fade.md) — fades the *first* break expecting it to fail.\n- `crates/xvision-eval/src/baselines/` — target implementation crate.",
+    "status": "`queued`. Canonical BB strategy; ship first. Direct comparison candidate\nto [`../EMA/ema_squeeze_breakout`](../EMA/ema_squeeze_breakout.md) — same\nregime, different detection mechanism (BB-bandwidth vs EMA-stack std-dev).",
+    "thesis": "When bandwidth contracts to a low percentile of its trailing distribution\nthe market is in a low-volatility regime that, by mean-reversion of\nvolatility itself, almost always resolves into expansion. Direction is\nthe open question. This strategy doesn't try to predict it — it waits\nfor the first directional break out of the contracted bands and takes\nthat break. The squeeze is the regime gate; the break is the entry.\n\nThe trade has built-in regime context: by definition we're not entering\nin B2 / B3 / B4. The squeeze itself is the filter, which is why it pairs\nwell with strategies that fail in normal vol (squeezes are rare enough\nthat they don't dominate trade count)."
   },
   "source_doc": "strategies/bollinger/bb_squeeze_breakout.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Squeeze Breakout` strategy.\n\nThesis:\nWhen bandwidth contracts to a low percentile of its trailing distribution the market is in a low-volatility regime that, by mean-reversion of volatility itself, almost always resolves into expansion. Direction is the open question. This strategy doesn't try to predict it \u2014 it waits for the first directional break out of the contracted bands and takes that break. The squeeze is the regime gate; the break is the entry.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `IndicatorPanel.bb_lower_20_2`,\n  `IndicatorPanel.bb_middle_20`.\n- Computed: `bandwidth = (upper - lower) / middle`.\n- Computed: `bandwidth_percentile = pct_rank(bandwidth, lookback=lookback)`.\n- `IndicatorPanel.atr_14` for stops.\n- `PriceFrame.close`, `high`, `low`.\n\nDecision rule:\n```\nbandwidth = (bb_upper - bb_lower) / bb_middle\nin_squeeze = bandwidth_percentile <= bandwidth_percentile_max\n\n# detect first directional break out of the squeeze:\nbreak_up   = close > bb_upper + breakout_atr_multiple * atr_14\nbreak_down = close < bb_lower - breakout_atr_multiple * atr_14\n\nif was_in_squeeze[t-1] and break_up and is_flat:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif was_in_squeeze[t-1] and break_down and is_flat:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on:\n  - opposite break, or\n  - time_stop_bars elapsed without target hit, or\n  - stop / take-profit hit.\n```\n\nExpected regime:\nB0 \u2192 B3 transition. Dies in B2 (no squeeze to detect) and B4 (already expanded; nothing left to break out of).\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Squeeze Breakout` strategy.\n\nThesis:\nWhen bandwidth contracts to a low percentile of its trailing distribution the market is in a low-volatility regime that, by mean-reversion of volatility itself, almost always resolves into expansion. Direction is the open question. This strategy doesn't try to predict it — it waits for the first directional break out of the contracted bands and takes that break. The squeeze is the regime gate; the break is the entry.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `IndicatorPanel.bb_lower_20_2`,\n  `IndicatorPanel.bb_middle_20`.\n- Computed: `bandwidth = (upper - lower) / middle`.\n- Computed: `bandwidth_percentile = pct_rank(bandwidth, lookback=lookback)`.\n- `IndicatorPanel.atr_14` for stops.\n- `PriceFrame.close`, `high`, `low`.\n\nDecision rule:\n```\nbandwidth = (bb_upper - bb_lower) / bb_middle\nin_squeeze = bandwidth_percentile <= bandwidth_percentile_max\n\n# detect first directional break out of the squeeze:\nbreak_up   = close > bb_upper + breakout_atr_multiple * atr_14\nbreak_down = close < bb_lower - breakout_atr_multiple * atr_14\n\nif was_in_squeeze[t-1] and break_up and is_flat:\n    enter long, stop = entry - stop_atr_multiple * atr_14\nelif was_in_squeeze[t-1] and break_down and is_flat:\n    enter short, stop = entry + stop_atr_multiple * atr_14\n\nexit on:\n  - opposite break, or\n  - time_stop_bars elapsed without target hit, or\n  - stop / take-profit hit.\n```\n\nExpected regime:\nB0 → B3 transition. Dies in B2 (no squeeze to detect) and B4 (already expanded; nothing left to break out of).\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

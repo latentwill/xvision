@@ -189,9 +189,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {
-        lookback: 20,
-      },
     });
 
     renderRoute();
@@ -232,7 +229,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.setMechanisticConfig).mockResolvedValue({
       manifest: {
@@ -260,7 +256,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
 
     renderRoute();
@@ -315,7 +310,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -357,7 +351,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -397,7 +390,6 @@ describe("AuthoringRoute risk editor", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -460,7 +452,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -534,7 +525,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.addStrategyAgent).mockResolvedValue({
       strategy_id: "01TEST",
@@ -610,7 +600,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
 
     renderRoute();
@@ -656,7 +645,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -706,7 +694,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",
@@ -796,7 +783,6 @@ describe("AuthoringRoute agent composition", () => {
         stop_loss_atr_multiple: 2,
         daily_loss_kill_pct: 0.05,
       },
-      mechanical_params: {},
     });
     vi.mocked(strategyApi.validateDraft).mockResolvedValue({
       id: "01TEST",

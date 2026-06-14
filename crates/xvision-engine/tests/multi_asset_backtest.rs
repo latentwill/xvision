@@ -143,7 +143,6 @@ fn build_strategy(agent_id: &str, execution_mode: ExecutionMode) -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,

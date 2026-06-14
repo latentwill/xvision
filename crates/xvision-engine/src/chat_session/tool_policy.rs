@@ -128,7 +128,6 @@ pub fn classify(tool_name: &str) -> ToolClass {
         | "create_strategy_agent"
         | "update_slot"
         | "update_manifest"
-        | "set_mechanical_param"
         | "set_risk_config"
         | "set_filter"
         | "clear_filter"
@@ -312,7 +311,6 @@ mod tests {
             "create_strategy_agent",
             "update_slot",
             "update_manifest",
-            "set_mechanical_param",
             "set_risk_config",
             "set_filter",
             "clear_filter",

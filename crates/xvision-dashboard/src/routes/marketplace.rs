@@ -686,8 +686,7 @@ pub async fn post_import(
     // d. Fetch + hash-verify the bundle (404/409/503 per the shared fn).
     let manifest = crate::routes::marketplace_read::fetch_verified_manifest(&state, &listing).await?;
 
-    // e. Install as a NEW local strategy (fresh ULID; provenance stashed in
-    //    mechanical_params.metadata.imported_from).
+    // e. Install as a NEW local strategy (fresh ULID).
     let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
 
     Ok((
