@@ -39,6 +39,11 @@ pub struct RunStore {
 #[derive(Debug, Default, Clone)]
 pub struct ListFilter {
     pub agent_id: Option<String>,
+    /// W25 (PR6): filter by the long-lived workspace agent ULID stored in
+    /// `eval_runs.agents_agent_id` (migration 022). Legacy runs created before
+    /// migration 022 have `agents_agent_id = NULL` and are NOT matched by this
+    /// filter; use `agent_id` (strategy-hop path) for those.
+    pub agents_agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
     /// CT5: optional run mode filter. When set, only rows WHERE `mode = ?`
@@ -905,6 +910,12 @@ impl RunStore {
         if filter.agent_id.is_some() {
             conditions.push("agent_id = ?");
         }
+        // W25 (PR6): filter by the workspace agent ULID in `agents_agent_id`.
+        // NULL rows (pre-migration-022 legacy runs) are excluded by this
+        // condition; the strategy-hop path (agent_id filter) covers those.
+        if filter.agents_agent_id.is_some() {
+            conditions.push("agents_agent_id = ?");
+        }
         if filter.scenario_id.is_some() {
             conditions.push("scenario_id = ?");
         }
@@ -948,6 +959,9 @@ impl RunStore {
 
         let mut q = sqlx::query(&sql);
         if let Some(ref h) = filter.agent_id {
+            q = q.bind(h);
+        }
+        if let Some(ref h) = filter.agents_agent_id {
             q = q.bind(h);
         }
         if let Some(ref s) = filter.scenario_id {

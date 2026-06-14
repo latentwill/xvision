@@ -396,6 +396,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     store
         .list(filter)
@@ -439,6 +440,7 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     // Compute total BEFORE slicing so the pager renders an honest
     // "of N" even when the active page is the last and partial.
