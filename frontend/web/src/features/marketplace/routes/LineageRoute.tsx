@@ -466,11 +466,6 @@ export function LineageRoute() {
     enabled: !!name,
   });
 
-  const { data: viewer } = useQuery({
-    queryKey: ["marketplace", "viewer"],
-    queryFn: () => mp.getViewer(),
-  });
-
   // Verified manifest enrichment — real (numeric) on-chain listings only.
   // Fixture listings never fetch; on any error this is null and the page
   // renders exactly as before.
@@ -502,9 +497,6 @@ export function LineageRoute() {
   });
 
   const isOpenTier = !!detail && detail.tier === "open";
-  const canClone =
-    !!detail &&
-    (isOpenTier || (viewer?.ownedListingIds.includes(detail.id) ?? false));
 
   const receiptsOpen = sp.get("receipts") === "open";
   const toggleReceipts = () => {
@@ -850,15 +842,6 @@ export function LineageRoute() {
             <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
               Mantle Sepolia testnet — pays with test USDC.
             </div>
-
-            {/* Clone to edit — the editor handoff (kept). The Share button is removed (QA3). */}
-            <button
-              onClick={() => cloneMutation.mutate()}
-              disabled={!canClone || cloneMutation.isPending}
-              className="mt-2 w-full py-2 rounded border border-border text-[12px] font-medium text-text-2 hover:text-text hover:border-border-strong transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Clone to edit
-            </button>
           </div>
         </div>
       </section>
