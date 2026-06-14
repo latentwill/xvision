@@ -25,11 +25,11 @@ Resolved P1 blockers from iteration 3:
 - UI/operator surface wiring is now in scope. The implementation must update `frontend/web/src/api/agent-runs.ts` to accept `xvn.agent_run.v2`, add/extend `frontend/web/src/api/agent-runs.test.ts`, and surface reconciled v2 accounting through the normalized run detail summary so the UI path no longer rejects v2 exports.
 - `finished_at` reconciliation is now explicitly verified. The stale-sidecar, stdout JSON, direct-eval, failed/cancelled override, and non-downgrade tests must assert the expected top-level `finished_at`.
 
-Implementation work happens in `.worktrees/qa-pf01-run-inspect-accounting-20260613` on branch `qa/pf01-run-inspect-accounting-20260613`.
+Implementation work was replayed onto current `main` in `.worktrees/pr-964-rebuild-pf01-impl` on branch `codex/pf01-run-inspect-accounting-main-20260614`, superseding the stale draft stack at PRs #959/#964.
 
 ## Implementation Closeout
 
-PF-01 was implemented on branch `qa/pf01-run-inspect-accounting-20260613` under Beads task `xvision-xth7`.
+PF-01 was implemented under Beads task `xvision-xth7` and later replayed onto current `main` as branch `codex/pf01-run-inspect-accounting-main-20260614`.
 
 Evidence:
 
