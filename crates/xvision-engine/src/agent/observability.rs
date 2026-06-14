@@ -613,6 +613,59 @@ impl ObsEmitter {
             .await;
     }
 
+    /// Open an `agent.plan` span (`SpanKind::AgentPlan`) at pipeline
+    /// entry. Caller pairs this with exactly one `emit_span_finished_ok`
+    /// (or `_error`) using the same `span_id`. The span is the single
+    /// per-decision-cycle record of the resolved pipeline topology — the
+    /// ordered list of stages (`{ role, model?, capability? }`) that are
+    /// about to run — so the trace dock can answer "which slots / roles /
+    /// models drove this decision" without inferring it from the child
+    /// `model.call` spans.
+    ///
+    /// `topology` is a caller-built JSON value (typically an object with
+    /// a `topology` array). It is merged into the typed `SpanAttributes`
+    /// bag under whatever keys the value carries — mirroring
+    /// `emit_decision_span_started`'s `merge_into_object` structure — so
+    /// the resolved plan lands in `attributes_json` and rides into the
+    /// run export automatically.
+    ///
+    /// WS-12 (`trace-obs-ws12`): wires the previously producer-less
+    /// `SpanKind::AgentPlan`. Per-stage spans, inter-stage handoff
+    /// events, and parse-failure events are a separate follow-up — this
+    /// helper emits ONLY the plan span.
+    pub async fn emit_agent_plan_started(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        topology: serde_json::Value,
+    ) {
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        };
+        let attributes_json = match topology {
+            serde_json::Value::Object(map) => attrs.merge_into_object(map),
+            other => {
+                let mut map = serde_json::Map::new();
+                map.insert("topology".to_string(), other);
+                attrs.merge_into_object(map)
+            }
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::AgentPlan,
+                name: "plan".to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(attributes_json),
+            }))
+            .await;
+    }
+
     /// Emit a `tool.call` span + matching `tool_calls` row around one
     /// tool invocation. Caller pairs with exactly one
     /// `emit_tool_call_finished` or `emit_tool_call_failed` using the
