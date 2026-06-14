@@ -129,6 +129,13 @@ export type ModelCallFinishedEvent = {
   cost_usd: number | null;
   prompt_hash: string;
   response_hash: string | null;
+  /** Full plaintext prompt body (Rust `prompt_text`). `null` under
+   * hash-only retention; the trace inspector renders it as the PROMPT
+   * pull-quote when present. */
+  prompt_text: string | null;
+  /** Full plaintext assistant/model response body (Rust `response_text`).
+   * `null` under hash-only retention. */
+  response_text: string | null;
   prompt_payload_ref: string | null;
   response_payload_ref: string | null;
   tool_calls_requested: string | null;
@@ -151,6 +158,10 @@ export type ToolCallStartedEvent = {
   is_run_terminator: boolean;
   input_hash: string;
   input_payload_ref: string | null;
+  /** Full plaintext tool input (args JSON) BEFORE blob persistence
+   * (Rust `input_text`, `#[serde(default)]`). Absent/`null` under
+   * hash-only retention; the inspector renders it as TOOL ARGS. */
+  input_text?: string | null;
 };
 
 /** Mirrors `ToolCallFinishedEvent`. */
@@ -159,6 +170,10 @@ export type ToolCallFinishedEvent = {
   output_hash: string | null;
   output_payload_ref: string | null;
   exit_code: number | null;
+  /** Full plaintext tool output BEFORE blob persistence (Rust
+   * `output_text`, `#[serde(default)]`). Absent/`null` under hash-only
+   * retention; the inspector renders it as TOOL RESULT. */
+  output_text?: string | null;
 };
 
 /** Mirrors `ToolCallFailedEvent`. */
@@ -220,9 +235,22 @@ export type MemoryRecallItem = {
 };
 export type MemoryRecallEvent = {
   run_id: string;
+  /** `<run_id>:<decision_id>` flywheel correlation key — optional on older
+   * persisted payloads (Rust `skip_serializing_if = "Option::is_none"`). */
+  flywheel_cycle_id?: string | null;
   decision_id: number;
   namespace: string;
   items: MemoryRecallItem[];
+};
+
+/** Mirrors `MemoryWriteEvent`. */
+export type MemoryWriteEvent = {
+  run_id: string;
+  flywheel_cycle_id?: string | null;
+  decision_id: number;
+  namespace: string;
+  memory_item_id: string;
+  text_preview: string;
 };
 
 /** Mirrors `ArtifactWrittenEvent`. */
@@ -415,6 +443,7 @@ export type UnifiedPayload =
 
   // ── Provenance / supervision (reused) ──
   | { kind: "memory_recall"; data: MemoryRecallEvent }
+  | { kind: "memory_write"; data: MemoryWriteEvent }
   | { kind: "artifact_written"; data: ArtifactWrittenEvent }
   | { kind: "supervisor_note"; data: SupervisorNoteEvent }
   | { kind: "engine_event"; data: EngineEvent }

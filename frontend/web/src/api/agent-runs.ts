@@ -215,6 +215,110 @@ function flattenExportSpans(spans: unknown, out: RunSpan[] = []): RunSpan[] {
   return out;
 }
 
+/**
+ * Engine-event kinds that are payload CARRIERS for a span (their body is
+ * folded onto the matching model/tool span elsewhere), not standalone
+ * lifecycle signals. Projecting them as `engine.event` rows would duplicate
+ * the model/tool span — so they're skipped. WS-8.
+ */
+const ENGINE_EVENT_CARRIER_KINDS: ReadonlySet<string> = new Set([
+  "model_call_payload",
+  "tool_call_payload",
+]);
+
+/**
+ * Project the v3 export's `events[]` array (every `EngineEvent` for the run)
+ * onto `engine.event` `RunSpan` rows so they render in the trace dock through
+ * the existing tree / inspector / filter machinery. Before WS-8 these were
+ * dropped entirely (the trace rendered only `spans`).
+ *
+ * Each lifecycle event becomes a synthetic span:
+ *   - `kind: "engine.event"` (the family/label/color resolve off
+ *     `attributes.engine_event_kind` via `span-colors.ts`),
+ *   - `parent_span_id` = the event's scoping `span_id` (so it nests under the
+ *     decision/model it fired against; run-scoped events become top-level),
+ *   - the raw kind + parsed payload preserved in `attributes` for the inspector.
+ *
+ * Carrier events (`model_call_payload`, `tool_call_payload`) are skipped — they
+ * are folded onto the model/tool spans, not rendered as their own rows.
+ */
+function projectEngineEvents(events: unknown, byId: Map<string, RunSpan>): RunSpan[] {
+  if (!Array.isArray(events)) return [];
+  const out: RunSpan[] = [];
+  let synthCounter = 0;
+  for (const raw of events) {
+    if (!isObject(raw)) continue;
+    const kind = asString(raw.kind);
+    if (!kind || ENGINE_EVENT_CARRIER_KINDS.has(kind)) continue;
+    const createdAt = asString(raw.created_at);
+    // Scope to the event's span when it names one AND that span exists in the
+    // tree; otherwise the row is a top-level lifecycle signal (never dropped).
+    const scopeId = asNullableString(raw.span_id);
+    const parentSpanId = scopeId && byId.has(scopeId) ? scopeId : null;
+    const spanId = `engine_event:${kind}:${synthCounter++}:${createdAt}`;
+    const attrs: Record<string, unknown> = { engine_event_kind: kind };
+    if (raw.payload_json !== undefined && raw.payload_json !== null) {
+      attrs.engine_event_payload = raw.payload_json;
+    }
+    out.push({
+      span_id: spanId,
+      parent_span_id: parentSpanId,
+      name: kind,
+      kind: "engine.event",
+      started_at: createdAt,
+      // Engine events are point-in-time signals, not bracketed intervals; the
+      // tree renders them as zero-duration rows.
+      finished_at: createdAt || null,
+      status: "ok",
+      attributes: attrs,
+    });
+  }
+  return out;
+}
+
+/**
+ * Convert a LIVE `engine_event` SSE frame (`StreamEngineEventData`) into an
+ * `engine.event` `RunSpan` so the dock can append it to the cached detail in
+ * real time. Mirrors {@link projectEngineEvents} (the post-hoc v3-export path)
+ * so live and replayed runs render identical engine-event rows. WS-8.
+ *
+ * `payload_json` arrives as a JSON STRING on the wire (vs. a parsed Value in
+ * the export) — it's parsed here when valid, else kept as the raw string so
+ * nothing is lost. Returns `null` for carrier kinds (folded onto model/tool
+ * spans) and for kindless frames.
+ */
+export function engineEventFrameToSpan(data: {
+  span_id?: string | null;
+  kind: string;
+  payload_json?: string | null;
+  created_at: string;
+}): RunSpan | null {
+  const kind = asString(data.kind);
+  if (!kind || ENGINE_EVENT_CARRIER_KINDS.has(kind)) return null;
+  const createdAt = asString(data.created_at);
+  const attrs: Record<string, unknown> = { engine_event_kind: kind };
+  if (typeof data.payload_json === "string" && data.payload_json.length > 0) {
+    try {
+      attrs.engine_event_payload = JSON.parse(data.payload_json);
+    } catch {
+      attrs.engine_event_payload = data.payload_json;
+    }
+  }
+  // The dock links this under its scoping span if present; an unknown/absent
+  // span_id becomes a top-level lifecycle row (never dropped).
+  const parentSpanId = asNullableString(data.span_id);
+  return {
+    span_id: `engine_event:${kind}:${createdAt}:${parentSpanId ?? "run"}`,
+    parent_span_id: parentSpanId,
+    name: kind,
+    kind: "engine.event",
+    started_at: createdAt,
+    finished_at: createdAt || null,
+    status: "ok",
+    attributes: attrs,
+  };
+}
+
 function extractBrokerCall(
   attrs: Record<string, unknown>,
 ): RunSpan["broker_call"] | undefined {
@@ -282,6 +386,13 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
   const modelCallsRaw = Array.isArray(payload.model_calls) ? payload.model_calls : [];
   const toolCallsRaw = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
   const bySpan = new Map(spans.map((s) => [s.span_id, s]));
+  // WS-8: project the v3 `events[]` lifecycle rows onto engine.event spans so
+  // they render in the trace instead of being silently dropped. Appended after
+  // the real spans so they nest under their scoping span (parent linkage uses
+  // the real-span id set). Carrier payload events are skipped (folded onto the
+  // model/tool spans below).
+  const engineEventSpans = projectEngineEvents(payload.events, bySpan);
+  for (const s of engineEventSpans) spans.push(s);
   // Project per-call provider/model/cost/hashes back onto the matching
   // `model.call` span so SpanInspector can render the model the slot
   // actually invoked (not just the strategy default) and so operators
@@ -327,7 +438,10 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
       started_at: startedAt,
       finished_at: finishedAt,
       status,
-      span_count: spans.length,
+      // Count real observability spans only — engine.event rows are projected
+      // lifecycle signals (WS-8), not spans, so they must not inflate the
+      // header's "N spans" tally.
+      span_count: spans.length - engineEventSpans.length,
       model_call_count: asNumber(totals.model_calls, modelCallsRaw.length),
       tool_call_count: asNumber(totals.tool_calls, toolCallsRaw.length),
       error_count: errorCount,

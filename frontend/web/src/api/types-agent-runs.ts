@@ -76,7 +76,15 @@ export type SpanKind =
   | "opti.gate"
   | "opti.honesty"
   | "opti.judge"
-  | "opti.flywheel";
+  | "opti.flywheel"
+  // WS-8 taxonomy convergence: a synthetic span kind for the bar-level engine
+  // lifecycle signals written to the `events` table (and streamed live as
+  // `engine_event` SSE frames). These were dropped from the trace before WS-8
+  // — projecting each `EngineEvent` onto a `RunSpan` with this kind lets them
+  // flow through the existing tree / inspector / filter machinery. The actual
+  // `EngineEvent.kind` (e.g. `risk_veto`, `order_signed`) is carried in
+  // `attributes.engine_event_kind`; the family/label/color resolve off that.
+  | "engine.event";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are
