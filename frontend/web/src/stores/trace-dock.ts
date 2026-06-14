@@ -120,6 +120,17 @@ type State = {
    * Advanced is the forensics view.
    */
   advanced_view: boolean;
+  /**
+   * Set of span ids whose subtree is COLLAPSED in the structured span-tree
+   * view (WS-16). A collapsed parent hides its entire descendant subtree
+   * and renders a one-line rollup; expanding restores the subtree. SHARED
+   * across scopes (it's a UI pref keyed by span id, and only one trace is
+   * inspected at a time), and persisted under
+   * `xvision.trace-dock.collapsed-spans` in localStorage so the operator's
+   * collapse choices survive a reload. Span ids not present in the run are
+   * simply inert — a stale persisted id costs nothing.
+   */
+  collapsedSpanIds: Set<string>;
 };
 
 type Actions = {
@@ -146,6 +157,14 @@ type Actions = {
   resetStreamingState: () => void;
   setAdvancedView: (v: boolean) => void;
   setCostOverrideUsd: (scope: TraceScope, v: number | null) => void;
+  /** Flip a single node's collapsed state in the span-tree view. */
+  toggleSpanCollapsed: (spanId: string) => void;
+  /** Collapse every supplied node id (typically all nodes with children). */
+  collapseAllSpans: (spanIds: string[]) => void;
+  /** Expand every node (clear the collapsed set). */
+  expandAllSpans: () => void;
+  /** Replace the collapsed set wholesale (used by tests / rehydration). */
+  setCollapsedSpanIds: (spanIds: string[]) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -178,6 +197,8 @@ function freshScopeState(): ScopeState {
 
 export const DOCK_HEIGHT_STORAGE_KEY = "xvision.trace-dock.height";
 export const DOCK_ADVANCED_VIEW_STORAGE_KEY = "xvision.trace-dock.advanced-view";
+export const DOCK_COLLAPSED_SPANS_STORAGE_KEY =
+  "xvision.trace-dock.collapsed-spans";
 export const DOCK_MIN_PX = 96;
 export const DEFAULT_DOCK_PX = 480;
 
@@ -237,6 +258,37 @@ function writePersistedAdvancedView(v: boolean): void {
   }
 }
 
+/**
+ * Read the persisted set of collapsed span ids (WS-16). Stored as a JSON
+ * array of span-id strings. Returns an empty set for any missing or
+ * malformed value so a corrupt entry can never crash the dock — the worst
+ * case is "everything renders expanded", the safe default.
+ */
+export function readPersistedCollapsedSpanIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writePersistedCollapsedSpanIds(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DOCK_COLLAPSED_SPANS_STORAGE_KEY,
+      JSON.stringify([...ids]),
+    );
+  } catch {
+    // Best effort only — Safari private-mode etc.
+  }
+}
+
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
   heightPx: readPersistedHeightPx(),
@@ -248,9 +300,35 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
   advanced_view: readPersistedAdvancedView(),
+  collapsedSpanIds: readPersistedCollapsedSpanIds(),
   setAdvancedView: (v) => {
     writePersistedAdvancedView(v);
     set({ advanced_view: v });
+  },
+  toggleSpanCollapsed: (spanId) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      if (next.has(spanId)) next.delete(spanId);
+      else next.add(spanId);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  collapseAllSpans: (spanIds) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      for (const id of spanIds) next.add(id);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  expandAllSpans: () => {
+    const next = new Set<string>();
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
+  },
+  setCollapsedSpanIds: (spanIds) => {
+    const next = new Set(spanIds);
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
   },
   setCostOverrideUsd: (scope, v) =>
     set((s) => ({
