@@ -56,7 +56,27 @@ export type SpanKind =
   | "skill.invoke"
   | "broker.call"
   | "recovery.attempt"
-  | "state.transition";
+  | "state.transition"
+  // WS-11a OPTI trace scope: the autooptimizer *cycle* projected onto the
+  // trace-dock surface. These rows are NOT agent-run spans — the OPTI scope
+  // reducer (`features/autooptimizer/opti-trace-reducer.ts`) synthesizes them
+  // from the existing `CycleProgressEvent` SSE stream so the optimizer cycle
+  // reads as a live trace (operator-labeled rows) in the dock. They share the
+  // `RunSpan` shape + `SpanTree` rendering, hence they live on `SpanKind`.
+  //   opti.cycle      — the cycle root (CycleStarted → CycleFinished)
+  //   opti.parent     — the selected parent strategy for the cycle
+  //   opti.experiment — one proposed candidate (MutationProposed)
+  //   opti.gate       — a candidate's gate verdict (kept/suspect/rejected)
+  //   opti.honesty    — the per-cycle honesty check (null-result canary)
+  //   opti.judge      — a reviewer finding on a candidate
+  //   opti.flywheel   — the DSPy flywheel compile step
+  | "opti.cycle"
+  | "opti.parent"
+  | "opti.experiment"
+  | "opti.gate"
+  | "opti.honesty"
+  | "opti.judge"
+  | "opti.flywheel";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are

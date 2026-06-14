@@ -101,10 +101,12 @@ export type EvalCapsuleRow = {
   /**
    * Capsule prefix label. `"live"` ⇒ the row is a live-money run: prefix
    * reads LIVE in the gold tint and the short tag routes to the live
-   * inspector (`/live/runs/:id`). Defaults to `"eval"` (prefix EVAL,
-   * routes to `/eval-runs/:id`) so existing call sites are unchanged.
+   * inspector (`/live/runs/:id`). `"opti"` ⇒ an autooptimizer cycle row
+   * (WS-11a): prefix reads OPTI and the short tag links to the cycle detail
+   * route. Defaults to `"eval"` (prefix EVAL, routes to `/eval-runs/:id`) so
+   * existing call sites are unchanged.
    */
-  kind?: "eval" | "live";
+  kind?: "eval" | "live" | "opti";
   /** Short `strategy·scenario` tag (e.g. `mr·flash`). Never the hex run-id. */
   short: string;
   status: EvalCapsuleStatus;
@@ -171,6 +173,17 @@ export function CapsuleRow({
   // Live-money rows get a LIVE prefix in the gold tint and route to the
   // live inspector; everything else keeps the EVAL prefix + eval inspector.
   const isLiveMoney = run.kind === "live";
+  // WS-11a: OPTI cycle rows get an OPTI prefix and link to the cycle detail
+  // route. The optimizer cycle is not an agent-run, so it never uses the
+  // eval / live inspector links.
+  const isOpti = run.kind === "opti";
+  const prefixLabel = isOpti ? "OPTI" : isLiveMoney ? "LIVE" : "EVAL";
+  const linkTo = isOpti
+    ? `/optimizer/cycle/${encodeURIComponent(run.id)}`
+    : isLiveMoney
+      ? `/live/runs/${encodeURIComponent(run.id)}`
+      : `/eval-runs/${encodeURIComponent(run.id)}`;
+  const prefixEmphasised = isLiveMoney || isOpti;
   return (
     <div
       className="relative h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
@@ -205,11 +218,17 @@ export function CapsuleRow({
 
       <span className="relative z-10 pointer-events-none flex items-center gap-2 shrink-0">
         <span
-          className={`text-[10px] font-mono tracking-[0.18em] ${isLiveMoney ? "font-semibold" : "text-text-3"}`}
-          style={isLiveMoney ? { color: "var(--gold)" } : undefined}
+          className={`text-[10px] font-mono tracking-[0.18em] ${prefixEmphasised ? "font-semibold" : "text-text-3"}`}
+          style={
+            isLiveMoney
+              ? { color: "var(--gold)" }
+              : isOpti
+                ? { color: "var(--info)" }
+                : undefined
+          }
           data-testid="capsule-kind-label"
         >
-          {isLiveMoney ? "LIVE" : "EVAL"}
+          {prefixLabel}
         </span>
         {/*
           F-6 (qa-round-7): the short `strategy·scenario` tag routes to the
@@ -219,15 +238,11 @@ export function CapsuleRow({
           middle-click / cmd-click keep native link behavior.
         */}
         <Link
-          to={
-            isLiveMoney
-              ? `/live/runs/${encodeURIComponent(run.id)}`
-              : `/eval-runs/${encodeURIComponent(run.id)}`
-          }
+          to={linkTo}
           onClick={(e) => e.stopPropagation()}
           className="relative z-20 pointer-events-auto text-[11px] font-mono hover:underline"
           style={{ color: tok.tint }}
-          aria-label={`Open eval run ${run.short}`}
+          aria-label={isOpti ? `Open optimizer cycle ${run.short}` : `Open eval run ${run.short}`}
         >
           {run.short}
         </Link>

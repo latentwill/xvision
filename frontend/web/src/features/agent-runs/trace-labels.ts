@@ -63,6 +63,42 @@ export function formatTraceLabel(input: TraceLabelInput): string {
   }
 }
 
+/**
+ * Operator-surface label for an OPTI scope row (WS-11a). The autooptimizer
+ * cycle trace projects developer-surface kinds (`opti.gate`, `opti.experiment`,
+ * …) but the dock must read in plain language per the terminology lock —
+ * "Experiment proposed", "Active" / "Suspect" / "Rejected" gate outcomes,
+ * "Honesty check", "Judge finding", "Flywheel compiled".
+ *
+ * Returns `null` for any non-OPTI span so existing call sites keep their
+ * payload-ref label path untouched.
+ */
+export function optiSpanLabel(span: RunSpan): string | null {
+  switch (span.kind) {
+    case "opti.cycle":
+      return "Optimizer cycle";
+    case "opti.parent":
+      return "Parent selected";
+    case "opti.experiment":
+      return "Experiment proposed";
+    case "opti.honesty":
+      return "Honesty check";
+    case "opti.judge":
+      return "Judge finding";
+    case "opti.flywheel":
+      return "Flywheel compiled";
+    case "opti.gate": {
+      const outcome = (span.attributes as { outcome?: unknown }).outcome;
+      if (outcome === "kept") return "Active";
+      if (outcome === "suspect") return "Suspect";
+      if (outcome === "rejected") return "Rejected";
+      return "Gate evaluated";
+    }
+    default:
+      return null;
+  }
+}
+
 function formatBrokerCallLabel(span: RunSpan): string {
   const bc = span.broker_call!;
   const side = bc.side.toUpperCase();
