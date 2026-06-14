@@ -286,6 +286,37 @@ function parseErrorJson(raw: string | null | undefined): string | undefined {
   return raw;
 }
 
+/**
+ * Parse a `span_started` `attributes_json` blob into the span's attribute bag.
+ *
+ * `SpanStartedEvent.attributes_json` (crates/xvision-observability/src/events.rs:137,
+ * TS mirror `api/unified-events.ts`) carries the `agent.decision` entry-state
+ * snapshot (asset / bar_ts / mark_price / position_pre / decision_input) that
+ * `SpanInspector::DecisionSpanDetailRows` renders off `span.attributes`. Before
+ * WS-8 B2 the dock's per-frame export refetch backfilled this bag; with that
+ * refetch dropped, the `span_started` event is the ONLY carrier for a decision
+ * span that opens after the connect-time snapshot — so we MUST fold it here.
+ *
+ * Lenient: returns the parsed object's own enumerable entries as a fresh bag.
+ * A null/empty blob, a non-object JSON value (string/number/array), or a parse
+ * failure all yield an empty `{}` so a malformed value never throws and never
+ * pollutes the bag with a non-object.
+ */
+function parseAttributesJson(
+  raw: string | null | undefined,
+): Record<string, unknown> {
+  if (typeof raw !== "string" || raw.length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { ...(parsed as Record<string, unknown>) };
+    }
+  } catch {
+    // Malformed JSON — fall through to the empty bag.
+  }
+  return {};
+}
+
 /** Coerce a `number | null | undefined` wire field to `number | undefined`. */
 function num(v: number | null | undefined): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -301,8 +332,15 @@ function str(v: string | null | undefined): string | undefined {
  * Fold one event onto the span projection. Span/run lifecycle events update
  * a per-span record; terminal events close the span. Returns a new array
  * only when something changed (reference-stable otherwise).
+ *
+ * Exported (WS-8 Part 2 B2) so the agent-run LIVE stream reducer
+ * (`features/agent-runs/live-stream-reducer.ts`) reuses the EXACT same
+ * fidelity-complete projection the chat-session path uses — one projector,
+ * two callers — instead of duplicating the model/tool/broker/engine
+ * reconstruction. This is the seam that lets the live dock drop its
+ * per-frame export refetch without losing inspector detail.
  */
-function projectSpan(
+export function projectSpan(
   spans: SpanProjection[],
   ev: UnifiedEvent,
 ): SpanProjection[] {
@@ -344,7 +382,16 @@ function projectSpan(
     }));
 
   switch (p.kind) {
-    case "span_started":
+    case "span_started": {
+      // Fold the span-open `attributes_json` snapshot onto the attribute bag —
+      // for an `agent.decision` span this carries the entry-state
+      // (asset / bar_ts / mark_price / position_pre / decision_input) the
+      // inspector's DecisionSpanDetailRows renders. With WS-8 B2 dropping the
+      // dock's per-frame export refetch, this event is the ONLY carrier for a
+      // decision span that opens after the connect-time snapshot — merge it onto
+      // any existing bag (existing keys win on re-delivery so a later
+      // null-attributes redelivery never blanks an already-folded snapshot).
+      const startedAttrs = parseAttributesJson(p.data.attributes_json);
       return upsert(
         p.data.span_id,
         (s) => ({
@@ -353,14 +400,17 @@ function projectSpan(
           kind: p.data.kind || s.kind,
           name: p.data.name || s.name,
           startedAt: p.data.started_at || s.startedAt,
+          attributes: { ...startedAttrs, ...s.attributes },
         }),
         {
           parentSpanId: p.data.parent_span_id ?? null,
           kind: p.data.kind,
           name: p.data.name,
           startedAt: p.data.started_at,
+          attributes: startedAttrs,
         },
       );
+    }
     case "span_finished": {
       // Carry a human-readable error message off the span's `error_json`
       // (qa-trace-error-surfacing parity) so a failed span shows WHY it failed

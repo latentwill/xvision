@@ -26,6 +26,7 @@ pub mod canary;
 pub mod config;
 pub mod content_hash;
 pub mod cycle;
+pub mod cycle_export;
 pub mod cycle_loosen;
 pub mod cycle_runs;
 pub mod diversity;
@@ -65,6 +66,11 @@ pub use config::{
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, select_scenario_pair, CycleConfig, CycleResult};
+pub use cycle_export::{
+    assemble_cycle_export, build_cycle_export, load_cycle_events, operator_label,
+    render_cycle_export_markdown, render_cycle_report_markdown, CycleExport, ExperimentSummary,
+    SCHEMA_VERSION as CYCLE_EXPORT_SCHEMA_VERSION,
+};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
