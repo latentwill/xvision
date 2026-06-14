@@ -9,14 +9,13 @@
 //! Lives in the dashboard crate (not `observability`) because `WizardEvent`
 //! is defined here and `observability` must not depend upward.
 
-use std::collections::{HashMap, VecDeque};
-
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use xvision_engine::chat_session::ContextScope;
 use xvision_observability::types::{RiskLevel, SideEffectLevel, ToolOrigin};
 use xvision_observability::{
-    Actor, EventScope, EventSource, ToolCallFinishedEvent, ToolCallStartedEvent, UnifiedEvent, UnifiedPayload,
+    Actor, EventScope, EventSource, ToolCallCancelledEvent, ToolCallFinishedEvent, ToolCallStartedEvent,
+    UnifiedEvent, UnifiedPayload,
 };
 #[cfg(test)]
 use xvision_observability::{ToolDenied, ToolPolicyChecked, ToolPolicyOutcome};
@@ -64,24 +63,32 @@ pub struct WizardEventProjector {
     session_id: String,
     scope: EventScope,
     seq: u64,
-    /// Tool name → FIFO queue of synthesized span ids, so each
-    /// `ToolResult` reuses the span id minted by its corresponding
-    /// `ToolCall`. Pre-2026-05-26 this was a `HashMap<String, String>`
-    /// (one entry per tool name), which silently overwrote when the
-    /// same tool was invoked twice in one turn — the second call's
-    /// span would clobber the first, and the first `ToolResult` would
-    /// then mis-correlate to the second call's span. The reducer
-    /// keys on `span_id`, so the first call's tool row stayed stuck
-    /// in `requested` forever. That latent bug was a strong candidate
-    /// for the QA hang on `list_strategies` / `list_scenarios` /
-    /// `list_strategy_ideas`, which the agent often invokes more than
-    /// once in a setup turn. FIFO ordering is sufficient because the
-    /// wizard runs tool calls sequentially today — Call N's Result
-    /// always lands before Call N+1's Result. If parallel/streaming
-    /// tool execution is added later, the wizard must thread a stable
-    /// `call_id` through both events so the projector can match by id
-    /// instead.
-    tool_spans: HashMap<String, VecDeque<String>>,
+    /// Tool spans opened by a `ToolRequested` that have not yet been closed
+    /// by a `ToolFinished`, in the order they were opened. Each entry is keyed
+    /// by the model's `tool_use` id, so a `ToolResult` closes EXACTLY the span
+    /// its matching `ToolCall` opened — robust to repeats and to
+    /// out-of-order/interleaved results.
+    ///
+    /// History: pre-2026-05-26 this was a `HashMap<tool_name, span_id>`, which
+    /// silently overwrote when the same tool was invoked twice in one turn;
+    /// the 2026-05-26 fix made it `HashMap<tool_name, VecDeque<span_id>>` (FIFO
+    /// by tool name), which is correct ONLY while results arrive in call order.
+    /// The reducer keys tool rows on `span_id`, so a mis-correlated
+    /// `ToolFinished` leaves the other call's row stuck at "requested" — a
+    /// spinner that never resolves. Keying on the `tool_use` id removes the
+    /// ordering assumption entirely. Insertion order is preserved (a `Vec`,
+    /// not a map) so [`terminalize_open_spans`](Self::terminalize_open_spans)
+    /// emits deterministic synthetic closes.
+    open_spans: Vec<OpenSpan>,
+}
+
+/// A tool span awaiting its `ToolFinished`. `tool_use_id` pairs the closing
+/// `ToolResult` to this exact span; `tool_name` lets policy events (which
+/// carry only the tool name) correlate to the span their `ToolCall` opened.
+struct OpenSpan {
+    tool_use_id: String,
+    span_id: String,
+    tool_name: String,
 }
 
 impl WizardEventProjector {
@@ -99,12 +106,29 @@ impl WizardEventProjector {
             session_id: session_id.into(),
             scope: scope_to_event_scope(scope),
             seq: start_seq,
-            tool_spans: HashMap::new(),
+            open_spans: Vec::new(),
         }
     }
 
     pub fn seq(&self) -> u64 {
         self.seq
+    }
+
+    /// The span id of the still-open tool span for `tool_name`, if any.
+    ///
+    /// Policy events (`ToolPolicyChecked` / `ToolDenied`) carry only the tool
+    /// name, not the `tool_use` id, and are projected immediately after their
+    /// tool's `ToolCall` (and before any later tool's call) — so at most one
+    /// open span matches the name at that point. We scan from the most recent
+    /// open span so that, in the pathological case of two concurrently-open
+    /// spans for the same tool, the policy update attaches to the latest call
+    /// (the one just projected) rather than an older still-open one.
+    fn open_span_for_tool(&self, tool_name: &str) -> Option<String> {
+        self.open_spans
+            .iter()
+            .rev()
+            .find(|s| s.tool_name == tool_name)
+            .map(|s| s.span_id.clone())
     }
 
     /// Project a ready-made [`UnifiedPayload`] into the session stream,
@@ -127,23 +151,13 @@ impl WizardEventProjector {
         // queued span instead of rendering them as a second "open" tool row.
         match &mut payload {
             UnifiedPayload::ToolPolicyChecked(ev) => {
-                if let Some(span) = self
-                    .tool_spans
-                    .get(&ev.tool_name)
-                    .and_then(|queue| queue.front())
-                    .cloned()
-                {
+                if let Some(span) = self.open_span_for_tool(&ev.tool_name) {
                     ev.span_id = span.clone();
                     span_id = Some(span);
                 }
             }
             UnifiedPayload::ToolDenied(ev) => {
-                if let Some(span) = self
-                    .tool_spans
-                    .get(&ev.tool_name)
-                    .and_then(|queue| queue.front())
-                    .cloned()
-                {
+                if let Some(span) = self.open_span_for_tool(&ev.tool_name) {
                     ev.span_id = span.clone();
                     span_id = Some(span);
                 }
@@ -193,12 +207,13 @@ impl WizardEventProjector {
             WizardEvent::Error { message } => {
                 (Actor::System, None, UnifiedPayload::SessionFailed { message })
             }
-            WizardEvent::ToolCall { tool, args } => {
+            WizardEvent::ToolCall { id, tool, args } => {
                 let span = span_minter();
-                self.tool_spans
-                    .entry(tool.clone())
-                    .or_default()
-                    .push_back(span.clone());
+                self.open_spans.push(OpenSpan {
+                    tool_use_id: id,
+                    span_id: span.clone(),
+                    tool_name: tool.clone(),
+                });
                 let input_hash = sha256_hex(args.to_string().as_bytes());
                 (
                     Actor::Agent,
@@ -219,21 +234,21 @@ impl WizardEventProjector {
                         is_run_terminator: false,
                         input_hash,
                         input_payload_ref: None,
+                        input_text: None,
                     }),
                 )
             }
-            WizardEvent::ToolResult { tool, result } => {
-                // FIFO: pop the oldest queued span for this tool so
-                // Result N pairs with Call N. If the queue is empty
-                // (a ToolResult arrived with no matching ToolCall —
-                // shouldn't happen in practice, but defensive), mint
-                // a fresh span so the unified stream is still well-
-                // formed.
-                let span = self
-                    .tool_spans
-                    .get_mut(&tool)
-                    .and_then(|q| q.pop_front())
-                    .unwrap_or_else(&mut span_minter);
+            WizardEvent::ToolResult { id, tool: _, result } => {
+                // Close EXACTLY the span the matching `ToolCall` (same
+                // `tool_use` id) opened — order-independent. If no open span
+                // carries this id (a `ToolResult` with no matching `ToolCall`,
+                // or one already closed — shouldn't happen in practice, but
+                // defensive), mint a fresh span so the unified stream is still
+                // well-formed.
+                let span = match self.open_spans.iter().position(|s| s.tool_use_id == id) {
+                    Some(pos) => self.open_spans.remove(pos).span_id,
+                    None => span_minter(),
+                };
                 let output_hash = sha256_hex(result.to_string().as_bytes());
                 (
                     Actor::Agent,
@@ -243,6 +258,7 @@ impl WizardEventProjector {
                         output_hash: Some(output_hash),
                         output_payload_ref: None,
                         exit_code: None,
+                        output_text: None,
                     }),
                 )
             }
@@ -264,6 +280,59 @@ impl WizardEventProjector {
         };
         self.seq += 1;
         out
+    }
+
+    /// Force-close every still-open tool span, returning a `ToolCancelled`
+    /// [`UnifiedEvent`] for each (in the order the spans were opened) and
+    /// clearing the open set.
+    ///
+    /// Call this right BEFORE projecting a terminal `WizardEvent`
+    /// (`Done` → `AssistantMessageDone`, `Error` → `SessionFailed`): once the
+    /// turn is over, any span that never received its `ToolResult` will never
+    /// get one, so without an explicit close its tool row spins forever in the
+    /// span-keyed reducer. Emitting a real, persisted `ToolCancelled` (rather
+    /// than relying on a client-side heuristic) guarantees the durable event
+    /// log itself shows the span closed, and works for every consumer of the
+    /// unified stream. `ToolCancelled` — not `ToolFinished` — because we have
+    /// no result: the honest status is "the turn ended before this tool
+    /// reported back", not "succeeded".
+    ///
+    /// Each event gets a fresh `event_id` (from `event_id_minter`) and the
+    /// next monotonic `seq`, and is attributed to [`Actor::System`] since the
+    /// close is the harness's doing, not the model's.
+    pub fn terminalize_open_spans(
+        &mut self,
+        mut event_id_minter: impl FnMut() -> String,
+        ts: DateTime<Utc>,
+    ) -> Vec<UnifiedEvent> {
+        let open = std::mem::take(&mut self.open_spans);
+        open.into_iter()
+            .map(|s| {
+                let out = UnifiedEvent {
+                    event_id: event_id_minter(),
+                    session_id: Some(self.session_id.clone()),
+                    run_id: None,
+                    span_id: Some(s.span_id.clone()),
+                    parent_event_id: None,
+                    seq: self.seq,
+                    ts,
+                    scope: self.scope.clone(),
+                    actor: Actor::System,
+                    source: EventSource::ChatRail,
+                    blob_hash: None,
+                    payload: UnifiedPayload::ToolCancelled(ToolCallCancelledEvent {
+                        span_id: s.span_id,
+                        reason: Some(
+                            "turn ended before the tool reported a result \
+                             (auto-closed to prevent a stuck tool row)"
+                                .to_string(),
+                        ),
+                    }),
+                };
+                self.seq += 1;
+                out
+            })
+            .collect()
     }
 }
 
@@ -327,6 +396,7 @@ mod tests {
         let call = p.project(
             "e0",
             WizardEvent::ToolCall {
+                id: "tu_0".into(),
                 tool: "create_strategy".into(),
                 args: json!({"name": "x"}),
             },
@@ -336,6 +406,7 @@ mod tests {
         let result = p.project(
             "e1",
             WizardEvent::ToolResult {
+                id: "tu_0".into(),
                 tool: "create_strategy".into(),
                 result: json!({"ok": true}),
             },
@@ -367,6 +438,7 @@ mod tests {
         let call = p.project(
             "call",
             WizardEvent::ToolCall {
+                id: "tu_policy".into(),
                 tool: "create_strategy".into(),
                 args: json!({"name": "x"}),
             },
@@ -400,6 +472,7 @@ mod tests {
         let result = p.project(
             "result",
             WizardEvent::ToolResult {
+                id: "tu_policy".into(),
                 tool: "create_strategy".into(),
                 result: json!({"error": "blocked"}),
             },
@@ -467,6 +540,7 @@ mod tests {
         let call1 = p.project(
             "ec1",
             WizardEvent::ToolCall {
+                id: "tu_a".into(),
                 tool: "list_strategies".into(),
                 args: json!({"page": 1}),
             },
@@ -476,6 +550,7 @@ mod tests {
         let call2 = p.project(
             "ec2",
             WizardEvent::ToolCall {
+                id: "tu_b".into(),
                 tool: "list_strategies".into(),
                 args: json!({"page": 2}),
             },
@@ -485,6 +560,7 @@ mod tests {
         let result1 = p.project(
             "er1",
             WizardEvent::ToolResult {
+                id: "tu_a".into(),
                 tool: "list_strategies".into(),
                 result: json!([]),
             },
@@ -494,6 +570,7 @@ mod tests {
         let result2 = p.project(
             "er2",
             WizardEvent::ToolResult {
+                id: "tu_b".into(),
                 tool: "list_strategies".into(),
                 result: json!([]),
             },
@@ -502,7 +579,7 @@ mod tests {
         );
 
         // Each call gets a distinct span and each result correlates
-        // to the matching call (FIFO).
+        // to the matching call.
         assert_ne!(
             call1.span_id, call2.span_id,
             "two distinct calls must mint distinct spans"
@@ -514,6 +591,75 @@ mod tests {
         assert_eq!(
             call2.span_id, result2.span_id,
             "second result must correlate to second call (NOT the first call's span overwritten by the second call)"
+        );
+    }
+
+    /// The core of the id-keying fix: when two calls to the SAME tool have
+    /// their results delivered OUT OF ORDER (Result B before Result A), each
+    /// `ToolFinished` must still correlate to the span its own `ToolCall`
+    /// opened — matched on the `tool_use` id, not the tool name. Under the
+    /// previous name-FIFO keying, Result B (arriving first) would pop the
+    /// FRONT of the name queue (call A's span), mis-correlating both results
+    /// and stranding call A's row at "requested" in the span-keyed reducer.
+    #[test]
+    fn interleaved_results_correlate_to_their_call_by_id() {
+        let mut p = WizardEventProjector::new("sess_interleave", &ContextScope::Workspace);
+        let mut minted: u32 = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+
+        let call_a = p.project(
+            "eca",
+            WizardEvent::ToolCall {
+                id: "tu_a".into(),
+                tool: "list_strategies".into(),
+                args: json!({"page": 1}),
+            },
+            ts(),
+            &mut mint,
+        );
+        let call_b = p.project(
+            "ecb",
+            WizardEvent::ToolCall {
+                id: "tu_b".into(),
+                tool: "list_strategies".into(),
+                args: json!({"page": 2}),
+            },
+            ts(),
+            &mut mint,
+        );
+        // Results arrive in REVERSE order: B's result before A's.
+        let result_b = p.project(
+            "erb",
+            WizardEvent::ToolResult {
+                id: "tu_b".into(),
+                tool: "list_strategies".into(),
+                result: json!(["b"]),
+            },
+            ts(),
+            &mut mint,
+        );
+        let result_a = p.project(
+            "era",
+            WizardEvent::ToolResult {
+                id: "tu_a".into(),
+                tool: "list_strategies".into(),
+                result: json!(["a"]),
+            },
+            ts(),
+            &mut mint,
+        );
+
+        assert_ne!(call_a.span_id, call_b.span_id);
+        assert_eq!(
+            call_b.span_id, result_b.span_id,
+            "B's result must correlate to B's call even though it arrived first"
+        );
+        assert_eq!(
+            call_a.span_id, result_a.span_id,
+            "A's result must correlate to A's call (NOT the front-of-queue span)"
         );
     }
 
@@ -533,6 +679,165 @@ mod tests {
         match ev.payload {
             UnifiedPayload::SessionFailed { message } => assert_eq!(message, "loop cap hit"),
             other => panic!("wrong payload: {other:?}"),
+        }
+    }
+
+    // ── terminalize_open_spans (turn-end anti-strand) ──
+
+    fn call(
+        p: &mut WizardEventProjector,
+        ev_id: &str,
+        id: &str,
+        tool: &str,
+        mint: &mut impl FnMut() -> String,
+    ) -> UnifiedEvent {
+        p.project(
+            ev_id,
+            WizardEvent::ToolCall {
+                id: id.into(),
+                tool: tool.into(),
+                args: json!({}),
+            },
+            ts(),
+            mint,
+        )
+    }
+
+    fn result(
+        p: &mut WizardEventProjector,
+        ev_id: &str,
+        id: &str,
+        tool: &str,
+        mint: &mut impl FnMut() -> String,
+    ) {
+        p.project(
+            ev_id,
+            WizardEvent::ToolResult {
+                id: id.into(),
+                tool: tool.into(),
+                result: json!({"ok": true}),
+            },
+            ts(),
+            mint,
+        );
+    }
+
+    /// A still-open span (its `ToolResult` never arrived) is force-closed with
+    /// a `ToolCancelled` carrying the call's span id and an explanatory reason.
+    /// A span that DID receive its result is not re-closed.
+    #[test]
+    fn terminalize_open_spans_closes_only_unfinished_spans() {
+        let mut p = WizardEventProjector::new("sess_term", &ContextScope::Workspace);
+        let mut minted = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+
+        let call_a = call(&mut p, "eca", "tu_a", "list_strategies", &mut mint);
+        let call_b = call(&mut p, "ecb", "tu_b", "list_scenarios", &mut mint);
+        // A finishes normally; B never does.
+        result(&mut p, "era", "tu_a", "list_strategies", &mut mint);
+
+        let synth = p.terminalize_open_spans(
+            {
+                let mut n = 0;
+                move || {
+                    n += 1;
+                    format!("synth_{n}")
+                }
+            },
+            ts(),
+        );
+
+        assert_eq!(synth.len(), 1, "only the unfinished span B should be closed");
+        let ev = &synth[0];
+        assert_eq!(ev.span_id.as_deref(), Some(call_b.span_id.as_deref().unwrap()));
+        match &ev.payload {
+            UnifiedPayload::ToolCancelled(c) => {
+                assert_eq!(c.span_id, call_b.span_id.clone().unwrap());
+                assert!(
+                    c.reason
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains("turn"),
+                    "reason should explain the turn ended without a result, got {:?}",
+                    c.reason
+                );
+            }
+            other => panic!("expected ToolCancelled, got {other:?}"),
+        }
+        // A's span must NOT appear among the synthetic closes.
+        assert!(
+            synth.iter().all(|e| e.span_id != call_a.span_id),
+            "the already-finished span must not be force-closed"
+        );
+
+        // Calling again is a no-op — the open set was cleared.
+        let again = p.terminalize_open_spans(|| "synth_x".into(), ts());
+        assert!(again.is_empty(), "open spans should be cleared after terminalize");
+    }
+
+    /// With no open spans, terminalize emits nothing (a clean turn must not
+    /// fabricate cancel events).
+    #[test]
+    fn terminalize_open_spans_is_empty_for_a_clean_turn() {
+        let mut p = WizardEventProjector::new("sess_clean", &ContextScope::Workspace);
+        let mut minted = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+        call(&mut p, "eca", "tu_a", "list_strategies", &mut mint);
+        result(&mut p, "era", "tu_a", "list_strategies", &mut mint);
+
+        let synth = p.terminalize_open_spans(|| "synth".into(), ts());
+        assert!(synth.is_empty());
+    }
+
+    /// Multiple open spans are closed in the order they were opened, each with
+    /// the next monotonic `seq` so the unified stream stays gap-free, and the
+    /// synthetic close is attributed to the system (not the agent).
+    #[test]
+    fn terminalize_open_spans_emits_in_open_order_with_monotonic_seq() {
+        let mut p = WizardEventProjector::new("sess_multi", &ContextScope::Workspace);
+        let mut minted = 0;
+        let mut mint = || {
+            minted += 1;
+            format!("sp_{minted}")
+        };
+        let a = call(&mut p, "eca", "tu_a", "t1", &mut mint);
+        let b = call(&mut p, "ecb", "tu_b", "t2", &mut mint);
+        let c = call(&mut p, "ecc", "tu_c", "t3", &mut mint);
+        let seq_before = p.seq();
+
+        let mut n = 0;
+        let synth = p.terminalize_open_spans(
+            move || {
+                n += 1;
+                format!("synth_{n}")
+            },
+            ts(),
+        );
+
+        let span_order: Vec<_> = synth.iter().map(|e| e.span_id.clone()).collect();
+        assert_eq!(
+            span_order,
+            vec![a.span_id.clone(), b.span_id.clone(), c.span_id.clone()],
+            "synthetic closes must follow open order"
+        );
+        let seqs: Vec<_> = synth.iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, vec![seq_before, seq_before + 1, seq_before + 2]);
+        assert_eq!(
+            p.seq(),
+            seq_before + 3,
+            "seq must advance past the synthetic closes"
+        );
+        for e in &synth {
+            assert_eq!(e.actor, Actor::System);
+            assert_eq!(e.session_id.as_deref(), Some("sess_multi"));
+            assert!(matches!(e.payload, UnifiedPayload::ToolCancelled(_)));
         }
     }
 }

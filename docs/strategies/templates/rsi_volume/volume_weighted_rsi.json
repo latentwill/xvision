@@ -2,38 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Volume Weighted RSI",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "14",
-      "name": "vw_rsi_period",
-      "range": "7 / 14 / 21"
-    },
-    {
-      "default": "25",
-      "name": "vw_rsi_oversold",
-      "range": "15 \u2013 30"
-    },
-    {
-      "default": "75",
-      "name": "vw_rsi_overbought",
-      "range": "70 \u2013 85"
-    },
-    {
-      "default": "1",
-      "name": "confirmation_bars",
-      "range": "1 \u2013 3"
-    },
-    {
-      "default": "50",
-      "name": "target_vw_rsi",
-      "range": "40 \u2013 60"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 3.5"
-    }
-  ],
   "name": "volume_weighted_rsi",
   "plain_summary": "A second indicator-level fusion path. Where MFI fuses volume by computing RSI on money-flow, volume-weighted RSI (VW-RSI) fuses volume by weighting each bar's contribution to the RSI calculation by its volume. Bars with higher volume contribute more to the smoothed gains/losses; bars with low volume contribute less.",
   "regime_fit": [
@@ -48,13 +16,13 @@
     "data_dependencies": "Volume in addition to price.",
     "decision_rule": "Identical in shape to `mfi_money_flow_index`, with `vw_rsi_14` substituted\nfor `mfi_14`.",
     "expected_regime": "Calm and normal-volatility regimes (same as MFI / RSI). Differentiator\nemerges at *the boundary between regimes*, where VW-RSI's bias toward\nhigh-volume bars gives it a different early-warning profile than MFI.",
-    "inputs": "- `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: `vw_rsi_14` \u2014\n  ```\n  for each bar:\n      change = close[t] - close[t-1]\n      gain   = max(change, 0)\n      loss   = max(-change, 0)\n      weight = volume[t]\n  vw_avg_gain = exp_moving_average(gain * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_avg_loss = exp_moving_average(loss * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_rs = vw_avg_gain / vw_avg_loss\n  vw_rsi = 100 - (100 / (1 + vw_rs))\n  ```\n- `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `vw_rsi_period`           | 14      | 7 / 14 / 21      |\n| `vw_rsi_oversold`         | 25      | 15 \u2013 30          |\n| `vw_rsi_overbought`       | 75      | 70 \u2013 85          |\n| `confirmation_bars`       | 1       | 1 \u2013 3            |\n| `target_vw_rsi`           | 50      | 40 \u2013 60          |\n| `stop_atr_multiple`       | 2.0     | 1.5 \u2013 3.5        |\n\nDefaults shifted slightly (25/75 instead of 20/80) because volume-weighted\ndistributions tend to compress: bars with extreme prices but low volume\ncontribute less, narrowing the realized range.",
-    "references": "- Compendium README \u00a7Tree-finding \u2014 sibling at the \"across\" branch.\n- Comparison: [`mfi_money_flow_index`](mfi_money_flow_index.md).\n- Conceptually related to VWAP (volume-weighted average price); same\n  re-weighting principle applied to a different signal.",
+    "inputs": "- `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: `vw_rsi_14` —\n  ```\n  for each bar:\n      change = close[t] - close[t-1]\n      gain   = max(change, 0)\n      loss   = max(-change, 0)\n      weight = volume[t]\n  vw_avg_gain = exp_moving_average(gain * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_avg_loss = exp_moving_average(loss * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_rs = vw_avg_gain / vw_avg_loss\n  vw_rsi = 100 - (100 / (1 + vw_rs))\n  ```\n- `IndicatorPanel.atr_14`.",
+    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `vw_rsi_period`           | 14      | 7 / 14 / 21      |\n| `vw_rsi_oversold`         | 25      | 15 – 30          |\n| `vw_rsi_overbought`       | 75      | 70 – 85          |\n| `confirmation_bars`       | 1       | 1 – 3            |\n| `target_vw_rsi`           | 50      | 40 – 60          |\n| `stop_atr_multiple`       | 2.0     | 1.5 – 3.5        |\n\nDefaults shifted slightly (25/75 instead of 20/80) because volume-weighted\ndistributions tend to compress: bars with extreme prices but low volume\ncontribute less, narrowing the realized range.",
+    "references": "- Compendium README §Tree-finding — sibling at the \"across\" branch.\n- Comparison: [`mfi_money_flow_index`](mfi_money_flow_index.md).\n- Conceptually related to VWAP (volume-weighted average price); same\n  re-weighting principle applied to a different signal.",
     "status": "`queued`. Pair head-to-head with `mfi_money_flow_index` and the\nstrategy-level-fused strategies. Three-way comparison: indicator fusion\nA (MFI), indicator fusion B (VW-RSI), strategy-level fusion (the rest of\nthe folder).",
-    "thesis": "A second indicator-level fusion path. Where MFI fuses volume by computing\nRSI on money-flow, volume-weighted RSI (VW-RSI) fuses volume by\n*weighting each bar's contribution to the RSI calculation by its volume*.\nBars with higher volume contribute more to the smoothed gains/losses;\nbars with low volume contribute less.\n\nThe two fusion approaches surface different properties:\n\n- **MFI** treats *typical-price \u00d7 volume* as the signal \u2014 it's \"RSI of dollar flow.\"\n- **VW-RSI** treats price change as the signal but *trusts high-volume bars more* \u2014 it's \"RSI of price, with volume as evidence weight.\"\n\nEmpirically these can differ on the same data: VW-RSI tracks price more closely (the price-change is still the signal), while MFI can decouple from price when dollar-flow diverges. The compendium includes both because the choice between them is itself a substitution-axis worth evaluating."
+    "thesis": "A second indicator-level fusion path. Where MFI fuses volume by computing\nRSI on money-flow, volume-weighted RSI (VW-RSI) fuses volume by\n*weighting each bar's contribution to the RSI calculation by its volume*.\nBars with higher volume contribute more to the smoothed gains/losses;\nbars with low volume contribute less.\n\nThe two fusion approaches surface different properties:\n\n- **MFI** treats *typical-price × volume* as the signal — it's \"RSI of dollar flow.\"\n- **VW-RSI** treats price change as the signal but *trusts high-volume bars more* — it's \"RSI of price, with volume as evidence weight.\"\n\nEmpirically these can differ on the same data: VW-RSI tracks price more closely (the price-change is still the signal), while MFI can decouple from price when dollar-flow diverges. The compendium includes both because the choice between them is itself a substitution-axis worth evaluating."
   },
   "source_doc": "strategies/rsi_volume/volume_weighted_rsi.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `Volume Weighted RSI` strategy.\n\nThesis:\nA second indicator-level fusion path. Where MFI fuses volume by computing RSI on money-flow, volume-weighted RSI (VW-RSI) fuses volume by weighting each bar's contribution to the RSI calculation by its volume. Bars with higher volume contribute more to the smoothed gains/losses; bars with low volume contribute less.\n\nInputs:\n- `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: `vw_rsi_14` \u2014\n  ```\n  for each bar:\n      change = close[t] - close[t-1]\n      gain   = max(change, 0)\n      loss   = max(-change, 0)\n      weight = volume[t]\n  vw_avg_gain = exp_moving_average(gain * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_avg_loss = exp_moving_average(loss * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_rs = vw_avg_gain / vw_avg_loss\n  vw_rsi = 100 - (100 / (1 + vw_rs))\n  ```\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\nIdentical in shape to `mfi_money_flow_index`, with `vw_rsi_14` substituted\nfor `mfi_14`.\n\nExpected regime:\nCalm and normal-volatility regimes (same as MFI / RSI). Differentiator emerges at the boundary between regimes, where VW-RSI's bias toward high-volume bars gives it a different early-warning profile than MFI.\n\nData dependencies:\nVolume in addition to price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `Volume Weighted RSI` strategy.\n\nThesis:\nA second indicator-level fusion path. Where MFI fuses volume by computing RSI on money-flow, volume-weighted RSI (VW-RSI) fuses volume by weighting each bar's contribution to the RSI calculation by its volume. Bars with higher volume contribute more to the smoothed gains/losses; bars with low volume contribute less.\n\nInputs:\n- `PriceFrame.close`, `PriceFrame.volume`.\n- Computed: `vw_rsi_14` —\n  ```\n  for each bar:\n      change = close[t] - close[t-1]\n      gain   = max(change, 0)\n      loss   = max(-change, 0)\n      weight = volume[t]\n  vw_avg_gain = exp_moving_average(gain * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_avg_loss = exp_moving_average(loss * weight, period=14) / exp_moving_average(weight, period=14)\n  vw_rs = vw_avg_gain / vw_avg_loss\n  vw_rsi = 100 - (100 / (1 + vw_rs))\n  ```\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\nIdentical in shape to `mfi_money_flow_index`, with `vw_rsi_14` substituted\nfor `mfi_14`.\n\nExpected regime:\nCalm and normal-volatility regimes (same as MFI / RSI). Differentiator emerges at the boundary between regimes, where VW-RSI's bias toward high-volume bars gives it a different early-warning profile than MFI.\n\nData dependencies:\nVolume in addition to price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

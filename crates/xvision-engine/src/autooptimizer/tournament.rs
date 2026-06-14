@@ -296,13 +296,11 @@ fn apply_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
         diff.params.len() <= MAX_PARAMS_APPLY,
         "params count exceeds bound"
     );
-    let mut s = base.clone();
-    if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
-        for change in &diff.params {
-            map.insert(change.key.clone(), change.after.clone());
-        }
-    }
-    s
+    // Delegate to the canonical applier so adversarial/synthesis candidates get
+    // the same risk.* / mechanistic.* / filter / prose routing as normal
+    // experiments. (Previously this inserted into the now-removed
+    // `mechanical_params` blob, bypassing that routing.)
+    diff.apply_to(base)
 }
 
 fn system_section(prompt_template: &str) -> String {
@@ -459,8 +457,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": {}
+            }
         });
         serde_json::from_value(v).expect("stub_strategy fixture must deserialise")
     }

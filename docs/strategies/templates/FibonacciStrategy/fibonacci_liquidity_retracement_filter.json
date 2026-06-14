@@ -2,7 +2,6 @@
   "base_template": "mean_reversion",
   "display_name": "Fibonacci Liquidity Retracement Filter",
   "family": "FibonacciStrategy",
-  "mechanical_params": [],
   "name": "fibonacci_liquidity_retracement_filter",
   "plain_summary": "Not every retracement is healthy. This strategy uses market liquidity context to decide whether a Fibonacci pullback is just a pause in a trend or the start of a liquidation cascade.",
   "regime_fit": [

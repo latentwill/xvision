@@ -2,45 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "RSI Dry Top Fade",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "80",
-      "name": "rsi_overbought",
-      "range": "70 \u2013 85"
-    },
-    {
-      "default": "20",
-      "name": "volume_pct_max",
-      "range": "10 \u2013 30"
-    },
-    {
-      "default": "5",
-      "name": "volume_decay_bars",
-      "range": "3 \u2013 10"
-    },
-    {
-      "default": "3",
-      "name": "confirmation_bars",
-      "range": "2 \u2013 6"
-    },
-    {
-      "default": "55",
-      "name": "target_rsi",
-      "range": "45 \u2013 65"
-    },
-    {
-      "default": "15",
-      "name": "time_stop_bars",
-      "range": "8 \u2013 30"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 3.5"
-    }
-  ],
   "name": "rsi_dry_top_fade",
-  "plain_summary": "When RSI is overbought but volume is dry, the rally is mechanical \u2014 price has drifted up without participation. This is a classic bull trap: the move looks bullish on price alone, but no one is actually buying. The absence of corroborating volume is the signal. The strategy shorts (or exits longs) on the principle that rallies without volume are unsustainable and snap back when participants notice.",
+  "plain_summary": "When RSI is overbought but volume is dry, the rally is mechanical — price has drifted up without participation. This is a classic bull trap: the move looks bullish on price alone, but no one is actually buying. The absence of corroborating volume is the signal. The strategy shorts (or exits longs) on the principle that rallies without volume are unsustainable and snap back when participants notice.",
   "regime_fit": [
     "any"
   ],
@@ -52,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price and volume.",
     "decision_rule": "```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\ndry_top = rsi_14 >= rsi_overbought\n          AND volume_decaying\n          AND <event holds for confirmation_bars>\n\nif dry_top and is_flat:\n    enter short\n    stop = entry + stop_atr_multiple * atr_14\n    target = rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n\nif in_long_position and dry_top:\n    exit long (regardless of short entry decision)\n```",
-    "expected_regime": "Late-stage drift-up rallies in low-volatility regimes. Best on assets\nprone to \"ghost rallies\" \u2014 illiquid alts, post-listing hype phases,\nholiday-period drift. Underperforms when RSI runs away in a real trend\n(rare under low-volume conditions, but possible).",
+    "expected_regime": "Late-stage drift-up rallies in low-volatility regimes. Best on assets\nprone to \"ghost rallies\" — illiquid alts, post-listing hype phases,\nholiday-period drift. Underperforms when RSI runs away in a real trend\n(rare under low-volume conditions, but possible).",
     "inputs": "- `IndicatorPanel.rsi_14`.\n- `PriceFrame.volume`.\n- Computed: `volume_pct`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.",
-    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_overbought`          | 80      | 70 \u2013 85          |\n| `volume_pct_max`          | 20      | 10 \u2013 30          |\n| `volume_decay_bars`       | 5       | 3 \u2013 10           |\n| `confirmation_bars`       | 3       | 2 \u2013 6            |\n| `target_rsi`              | 55      | 45 \u2013 65          |\n| `time_stop_bars`          | 15      | 8 \u2013 30           |\n| `stop_atr_multiple`       | 2.0     | 1.5 \u2013 3.5        |\n\n`volume_decay_bars` adds a stronger filter \u2014 require volume to have been\ndeclining over recent bars, not just one dry print. This separates \"true\ndry-top\" from \"post-event volume normalization.\"",
-    "references": "- Compendium README \u00a7Map, TRAP CITY (the dry-volume column).\n- Compendium README \u00a7Cross-domain, court template (\"missing evidence\").\n- Mirror: [`rsi_dry_bottom_long`](rsi_dry_bottom_long.md) \u2014 bear-trap exhaustion.",
-    "status": "`queued`. Distinct edge from `rsi_euphoria_short` \u2014 those two cover the\nopposite ends of the volume axis at the same RSI extreme.",
-    "thesis": "When RSI is overbought *but volume is dry*, the rally is mechanical \u2014\nprice has drifted up without participation. This is a classic bull trap:\nthe move looks bullish on price alone, but no one is actually buying.\nThe absence of corroborating volume *is* the signal. The strategy\nshorts (or exits longs) on the principle that rallies without volume\nare unsustainable and snap back when participants notice.\n\nThis is the cleanest expression of the *information value of an absent\nsignal*. RSI alone says \"overbought, fade.\" Volume agrees by being\nquiet. The agreement is \"yes, this is a fake move \u2014 fade it.\"\n\nThe opposite of `rsi_euphoria_short`: that one fires when both RSI and\nvolume are extreme; this one fires when RSI is extreme and volume is\n*absent*. Different setups, different sizing, different exits."
+    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `rsi_overbought`          | 80      | 70 – 85          |\n| `volume_pct_max`          | 20      | 10 – 30          |\n| `volume_decay_bars`       | 5       | 3 – 10           |\n| `confirmation_bars`       | 3       | 2 – 6            |\n| `target_rsi`              | 55      | 45 – 65          |\n| `time_stop_bars`          | 15      | 8 – 30           |\n| `stop_atr_multiple`       | 2.0     | 1.5 – 3.5        |\n\n`volume_decay_bars` adds a stronger filter — require volume to have been\ndeclining over recent bars, not just one dry print. This separates \"true\ndry-top\" from \"post-event volume normalization.\"",
+    "references": "- Compendium README §Map, TRAP CITY (the dry-volume column).\n- Compendium README §Cross-domain, court template (\"missing evidence\").\n- Mirror: [`rsi_dry_bottom_long`](rsi_dry_bottom_long.md) — bear-trap exhaustion.",
+    "status": "`queued`. Distinct edge from `rsi_euphoria_short` — those two cover the\nopposite ends of the volume axis at the same RSI extreme.",
+    "thesis": "When RSI is overbought *but volume is dry*, the rally is mechanical —\nprice has drifted up without participation. This is a classic bull trap:\nthe move looks bullish on price alone, but no one is actually buying.\nThe absence of corroborating volume *is* the signal. The strategy\nshorts (or exits longs) on the principle that rallies without volume\nare unsustainable and snap back when participants notice.\n\nThis is the cleanest expression of the *information value of an absent\nsignal*. RSI alone says \"overbought, fade.\" Volume agrees by being\nquiet. The agreement is \"yes, this is a fake move — fade it.\"\n\nThe opposite of `rsi_euphoria_short`: that one fires when both RSI and\nvolume are extreme; this one fires when RSI is extreme and volume is\n*absent*. Different setups, different sizing, different exits."
   },
   "source_doc": "strategies/rsi_volume/rsi_dry_top_fade.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `RSI Dry Top Fade` strategy.\n\nThesis:\nWhen RSI is overbought but volume is dry, the rally is mechanical \u2014 price has drifted up without participation. This is a classic bull trap: the move looks bullish on price alone, but no one is actually buying. The absence of corroborating volume is the signal. The strategy shorts (or exits longs) on the principle that rallies without volume are unsustainable and snap back when participants notice.\n\nInputs:\n- `IndicatorPanel.rsi_14`.\n- `PriceFrame.volume`.\n- Computed: `volume_pct`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\ndry_top = rsi_14 >= rsi_overbought\n          AND volume_decaying\n          AND <event holds for confirmation_bars>\n\nif dry_top and is_flat:\n    enter short\n    stop = entry + stop_atr_multiple * atr_14\n    target = rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n\nif in_long_position and dry_top:\n    exit long (regardless of short entry decision)\n```\n\nExpected regime:\nLate-stage drift-up rallies in low-volatility regimes. Best on assets prone to \"ghost rallies\" \u2014 illiquid alts, post-listing hype phases, holiday-period drift. Underperforms when RSI runs away in a real trend (rare under low-volume conditions, but possible).\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `RSI Dry Top Fade` strategy.\n\nThesis:\nWhen RSI is overbought but volume is dry, the rally is mechanical — price has drifted up without participation. This is a classic bull trap: the move looks bullish on price alone, but no one is actually buying. The absence of corroborating volume is the signal. The strategy shorts (or exits longs) on the principle that rallies without volume are unsustainable and snap back when participants notice.\n\nInputs:\n- `IndicatorPanel.rsi_14`.\n- `PriceFrame.volume`.\n- Computed: `volume_pct`.\n- `IndicatorPanel.atr_14`.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nvolume_decaying = volume_pct[t] <= volume_pct_max\n                  AND mean(volume_pct[t-volume_decay_bars : t]) <= volume_pct_max + 10\n\ndry_top = rsi_14 >= rsi_overbought\n          AND volume_decaying\n          AND <event holds for confirmation_bars>\n\nif dry_top and is_flat:\n    enter short\n    stop = entry + stop_atr_multiple * atr_14\n    target = rsi_14 <= target_rsi\n    time_stop = time_stop_bars\n\nif in_long_position and dry_top:\n    exit long (regardless of short entry decision)\n```\n\nExpected regime:\nLate-stage drift-up rallies in low-volatility regimes. Best on assets prone to \"ghost rallies\" — illiquid alts, post-listing hype phases, holiday-period drift. Underperforms when RSI runs away in a real trend (rare under low-volume conditions, but possible).\n\nData dependencies:\nNone beyond price and volume.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

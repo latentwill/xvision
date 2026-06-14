@@ -723,8 +723,140 @@ impl ObsEmitter {
                 is_run_terminator: false,
                 input_hash,
                 input_payload_ref: None,
+                input_text: None,
             }))
             .await;
+    }
+
+    /// Payload-aware companion to `emit_tool_call_started`. Gives tool
+    /// input the SAME plaintext path model-call prompts have: under the
+    /// run's retention (`Redacted` / `FullDebug` only — NEVER
+    /// `HashOnly`) the redacted-or-verbatim input is blob-written and
+    /// the resulting `BlobRef` is wired onto `input_payload_ref`, while
+    /// the plaintext is carried on `input_text` so the recorder writes
+    /// a `tool_call_payload` side-row.
+    ///
+    /// `input_raw` is the RAW tool args (e.g. the serialized
+    /// `tool_use.input` JSON). The redactor is applied INSIDE this
+    /// method under `Redacted` — mirroring
+    /// `emit_model_call_finished_with_payloads`, which takes the raw
+    /// `LlmRequest` and redacts internally. The `input_hash` is still
+    /// computed over the (pre-)redacted text so the hash contract
+    /// matches `emit_tool_call_started`.
+    ///
+    /// Blob-write failure under `Redacted`/`FullDebug` logs at `error!`
+    /// (supervisor channel) and drops the ref to `None` — the row still
+    /// records, the operator sees the failure surface.
+    pub async fn emit_tool_call_started_with_payload(
+        &self,
+        span_id: &str,
+        parent_span_id: Option<String>,
+        tool_name: &str,
+        input_raw: &str,
+    ) {
+        // Open the parent span row first so the tool_calls row has a FK
+        // target — identical to `emit_tool_call_started`.
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            tool_name: Some(tool_name.to_string()),
+            ..SpanAttributes::default()
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::ToolCall,
+                name: tool_name.to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: attrs.to_attributes_json(),
+            }))
+            .await;
+
+        // Retention-gated plaintext: redact under Redacted, verbatim
+        // under FullDebug, suppressed otherwise. The hash is taken over
+        // this same gated text so the row's `input_hash` matches the
+        // stored body.
+        let (input_text, input_payload_ref) = self
+            .persist_tool_payload(span_id, input_raw, self.retention.store_prompts)
+            .await;
+        let hash_input = input_text.as_deref().unwrap_or(input_raw);
+        let input_hash = format!("sha256:{}", hex::encode(Sha256::digest(hash_input.as_bytes())));
+
+        self.bus
+            .publish(RunEvent::ToolCallStarted(ToolCallStartedEvent {
+                span_id: span_id.to_string(),
+                tool_name: tool_name.to_string(),
+                origin: ToolOrigin::Native,
+                tool_version: None,
+                tool_hash: None,
+                side_effect_level: SideEffectLevel::ReadOnly,
+                risk_level: RiskLevel::SafeRead,
+                requires_approval: false,
+                is_run_terminator: false,
+                input_hash,
+                input_payload_ref,
+                input_text,
+            }))
+            .await;
+    }
+
+    /// Retention-gated blob persistence for a single tool payload
+    /// (input or output). Returns `(plaintext_for_side_row,
+    /// blob_payload_ref)`:
+    ///
+    /// - `HashOnly` (or any non-store mode) → `(None, None)`; no blob
+    ///   write, no side-row.
+    /// - `FullDebug` → verbatim bytes blob-written; `(Some(text),
+    ///   Some(ref))`.
+    /// - `Redacted` → `Redactor`-scrubbed bytes blob-written;
+    ///   `(Some(scrubbed), Some(ref))`.
+    ///
+    /// Mirrors the prompt/response branch in
+    /// `emit_model_call_finished_with_payloads`: applies
+    /// `max_payload_bytes` before the `BlobStore::write`, and on write
+    /// failure logs at `error!` and drops the ref to `None` while still
+    /// returning the plaintext so the side-row records.
+    async fn persist_tool_payload(
+        &self,
+        span_id: &str,
+        raw: &str,
+        store_flag: bool,
+    ) -> (Option<String>, Option<String>) {
+        let write = store_flag
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+        if !write {
+            return (None, None);
+        }
+        let text: String = match self.retention.mode {
+            RetentionMode::FullDebug => raw.to_string(),
+            RetentionMode::Redacted => Redactor::new().redact(raw).text,
+            // Unreachable — gated by `write` above; explicit for future
+            // modes.
+            _ => raw.to_string(),
+        };
+        let mut payload_ref: Option<String> = None;
+        if let Some(store) = self.blob_store.as_ref() {
+            let bytes = cap_blob_bytes(text.clone().into_bytes(), self.retention.max_payload_bytes);
+            match store.write(&bytes) {
+                Ok(blob_ref) => payload_ref = Some(blob_ref.as_str().to_string()),
+                Err(e) => {
+                    tracing::error!(
+                        run_id = %self.run_id,
+                        span_id = %span_id,
+                        error = %e,
+                        "BlobStore::write failed for tool payload — \
+                         ref will be None, hash still recorded",
+                    );
+                }
+            }
+        }
+        (Some(text), payload_ref)
     }
 
     /// Finish a tool call as success. Closes the matching `tool.call`
@@ -743,6 +875,44 @@ impl ObsEmitter {
                 output_hash: Some(output_hash),
                 output_payload_ref: None,
                 exit_code: Some(0),
+                output_text: None,
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status: SpanStatus::Ok,
+                error_json: None,
+            }))
+            .await;
+    }
+
+    /// Payload-aware companion to `emit_tool_call_finished`. Gives tool
+    /// output the SAME plaintext path model-call responses have: under
+    /// the run's retention (`Redacted` / `FullDebug` only — NEVER
+    /// `HashOnly`) the redacted-or-verbatim output is blob-written, the
+    /// ref is wired onto `output_payload_ref`, and the plaintext rides
+    /// on `output_text` for the recorder's `tool_call_payload`
+    /// side-row.
+    ///
+    /// `output_raw` is the RAW tool result; the redactor is applied
+    /// INSIDE this method under `Redacted` (same contract as
+    /// `emit_tool_call_started_with_payload`). The `output_hash` is
+    /// computed over the gated text so it matches the stored body.
+    pub async fn emit_tool_call_finished_with_payload(&self, span_id: &str, output_raw: &str) {
+        let (output_text, output_payload_ref) = self
+            .persist_tool_payload(span_id, output_raw, self.retention.store_responses)
+            .await;
+        let hash_input = output_text.as_deref().unwrap_or(output_raw);
+        let output_hash = format!("sha256:{}", hex::encode(Sha256::digest(hash_input.as_bytes())));
+        self.bus
+            .publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
+                span_id: span_id.to_string(),
+                output_hash: Some(output_hash),
+                output_payload_ref,
+                exit_code: Some(0),
+                output_text,
             }))
             .await;
         self.bus
@@ -1004,8 +1174,13 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Open a `ModelCall` span. Caller pairs this with exactly one
-    /// `emit_span_finished_*` call carrying the same `span_id`.
+    /// Open a `DecisionModel` span (`"decision.model"`) — the model
+    /// invocation that produces the trade decision. Caller pairs this with
+    /// exactly one `emit_span_finished_*` call carrying the same `span_id`.
+    /// The backtest executor opens this as a CHILD of the enclosing
+    /// `agent.decision` span (passing `decision_span_id` as
+    /// `parent_span_id`) so the decision model call nests under the
+    /// decision it produced.
     ///
     /// `stage` is the `LLMSlot.role` label ("regime" / "trader" or
     /// any free-form per-strategy name) so the trace dock
@@ -1013,6 +1188,10 @@ impl ObsEmitter {
     /// `SpanAttributes` bag with `run_id`, `provider`, `model`, and
     /// the stage so F-7's planned Simple/Advanced toggle has the
     /// fields to triage on — see harness audit F-2.
+    ///
+    /// (The emit-helper name keeps the `model_call` prefix — only the
+    /// `SpanKind` it sets was renamed from `ModelCall` to `DecisionModel`
+    /// — to limit churn across the cost/hash/blob test surface.)
     pub async fn emit_model_call_started(
         &self,
         span_id: &str,
@@ -1044,7 +1223,7 @@ impl ObsEmitter {
                 span_id: span_id.to_string(),
                 run_id: self.run_id.clone(),
                 parent_span_id,
-                kind: SpanKind::ModelCall,
+                kind: SpanKind::DecisionModel,
                 name: name_override
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| format!("{provider}/{model}")),
@@ -1284,6 +1463,108 @@ impl ObsEmitter {
             .await;
     }
 
+    /// Emit a `decision.reasoning` span carrying the inline chain-of-thought
+    /// captured from a model's `<think>…</think>` block (WS-17). The span
+    /// is opened and immediately closed (`Ok`) as a CHILD of the enclosing
+    /// `decision.model` span (`parent_span_id`) so the trace nests the
+    /// reasoning under the decision-model call that produced it. When no
+    /// `decision.model` span id is available the span is emitted top-level
+    /// (`parent_span_id = None`); the chain-of-thought still reaches the
+    /// trace.
+    ///
+    /// Retention (mirrors the model-call payload gate in
+    /// `emit_model_call_finished_with_payloads`):
+    /// - `reasoning_char_count` is ALWAYS recorded (cost legibility, no
+    ///   raw-body leak).
+    /// - `full_debug`/`redacted` + a `BlobStore` + `store_responses` →
+    ///   the reasoning body is written to a blob (redacted first under
+    ///   `redacted`), and `reasoning_blob_ref` points at it.
+    /// - `full_debug` + `store_responses` additionally inlines a bounded
+    ///   `reasoning_text` on the span attributes (same gate as
+    ///   `emit_assistant_text_delta` via `apply_to_body`).
+    /// - `hash_only` (or any non-debug mode) → NO blob write, NO inline
+    ///   body: only the char count survives.
+    pub async fn emit_model_reasoning(&self, parent_span_id: Option<String>, reasoning_text: &str) {
+        let span_id = fresh_span_id();
+        let char_count = reasoning_text.chars().count();
+
+        // Payload gate — identical predicate to the model-call response
+        // blob write: store the body only under FullDebug | Redacted with
+        // store_responses set, NEVER under HashOnly.
+        let write_body = self.retention.store_responses
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+
+        let mut reasoning_blob_ref: Option<String> = None;
+        if write_body {
+            if let Some(store) = self.blob_store.as_ref() {
+                let body: String = match self.retention.mode {
+                    RetentionMode::FullDebug => reasoning_text.to_string(),
+                    RetentionMode::Redacted => Redactor::new().redact(reasoning_text).text,
+                    // Already gated by `write_body`; explicit fall-through.
+                    _ => reasoning_text.to_string(),
+                };
+                let bytes = cap_blob_bytes(body.into_bytes(), self.retention.max_payload_bytes);
+                match store.write(&bytes) {
+                    Ok(blob_ref) => reasoning_blob_ref = Some(blob_ref.as_str().to_string()),
+                    Err(e) => {
+                        tracing::error!(
+                            run_id = %self.run_id,
+                            span_id = %span_id,
+                            error = %e,
+                            "BlobStore::write failed for reasoning payload — \
+                             ref will be None, char count still recorded",
+                        );
+                    }
+                }
+            }
+        }
+
+        // Inline body only under the same gate the assistant-text delta
+        // uses (FullDebug + store_responses). `apply_to_body` returns ""
+        // when emission is disallowed, so under hash_only/redacted no raw
+        // reasoning text rides on the span attributes.
+        let inline_body = self.retention.apply_to_body(reasoning_text);
+
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("reasoning_char_count".to_string(), serde_json::json!(char_count));
+        if let Some(blob_ref) = reasoning_blob_ref.as_ref() {
+            attrs.insert("reasoning_blob_ref".to_string(), serde_json::json!(blob_ref));
+        }
+        if !inline_body.is_empty() {
+            attrs.insert("reasoning_text".to_string(), serde_json::json!(inline_body));
+        }
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        }
+        .merge_into_object(attrs);
+
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.clone(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::DecisionReasoning,
+                name: "decision.reasoning".to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(attrs),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id,
+                ended_at: Utc::now(),
+                status: SpanStatus::Ok,
+                error_json: None,
+            }))
+            .await;
+    }
+
     /// Best-effort live-token chunk. The recorder discards by default;
     /// SSE subscribers receive it directly and the trace dock's
     /// `SpanInspector` accumulates the chunks into the live body. The
@@ -1439,6 +1720,88 @@ impl ObsEmitter {
                 order_type,
                 venue,
                 idempotency_key,
+            }))
+            .await;
+    }
+
+    /// Open a `risk.gate` span around one engine R3 risk-veto pass.
+    /// Pair with exactly one `emit_risk_gate_finished` using the same
+    /// `span_id`. `parent_span_id` should be the enclosing
+    /// `agent.decision` span when one exists.
+    pub async fn emit_risk_gate_started(&self, span_id: &str, parent_span_id: Option<String>) {
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        };
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.to_string(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::RiskGate,
+                name: "risk.gate".to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: attrs.to_attributes_json(),
+            }))
+            .await;
+    }
+
+    /// Close the `risk.gate` span opened by `emit_risk_gate_started`.
+    /// `verdict` is "approved" / "modified" / "vetoed". `veto_reason`
+    /// is the `VetoReason` debug string for vetoed decisions.
+    /// `modified_qty` is the size_bps of the modified decision as f64.
+    pub async fn emit_risk_gate_finished(
+        &self,
+        span_id: &str,
+        verdict: &str,
+        veto_reason: Option<&str>,
+        modified_qty: Option<f64>,
+    ) {
+        debug_assert!(
+            matches!(verdict, "approved" | "modified" | "vetoed"),
+            "unexpected risk gate verdict: {verdict}"
+        );
+        let status = if verdict == "vetoed" {
+            SpanStatus::Error
+        } else {
+            SpanStatus::Ok
+        };
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "verdict".to_string(),
+            serde_json::Value::String(verdict.to_string()),
+        );
+        if let Some(r) = veto_reason {
+            payload.insert(
+                "veto_reason".to_string(),
+                serde_json::Value::String(r.to_string()),
+            );
+        }
+        if let Some(qty) = modified_qty {
+            if let Some(n) = serde_json::Number::from_f64(qty) {
+                payload.insert("modified_qty".to_string(), serde_json::Value::Number(n));
+            }
+        }
+        // WS-13 (`trace-obs-risk-gate`): carry the verdict payload for any
+        // verdict that CHANGED the trader's action — `vetoed` (status
+        // error) AND `modified` (status ok). `approved` stays clean (no
+        // payload) so the persisted span row distinguishes "risk ran and
+        // touched nothing" from "risk ran and rewrote the action", while
+        // still matching the sibling `filter.eval` convention that a
+        // clean pass carries no error payload.
+        let error_json = if verdict == "approved" {
+            None
+        } else {
+            Some(serde_json::Value::Object(payload).to_string())
+        };
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id: span_id.to_string(),
+                ended_at: Utc::now(),
+                status,
+                error_json,
             }))
             .await;
     }

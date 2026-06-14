@@ -127,8 +127,10 @@ function pickStage(span: RunSpan): string | null {
   const stage = (attrs as Record<string, unknown>).stage;
   if (typeof stage === "string" && stage) return stage;
   // Fall back to the span name when the producer hasn't populated
-  // `attributes.stage` yet (pre-PR-#294 runs).
-  if (span.name && span.kind === "model.call") {
+  // `attributes.stage` yet (pre-PR-#294 runs). `decision.model` is the
+  // WS-17 rename of the model-call span; `model.call` is kept as a
+  // legacy alias for historical exports.
+  if (span.name && (span.kind === "decision.model" || span.kind === "model.call")) {
     const lower = span.name.toLowerCase();
     if (lower.includes("trader")) return "trader";
     if (lower.includes("risk")) return "risk";

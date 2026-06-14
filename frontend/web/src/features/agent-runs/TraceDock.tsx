@@ -1,5 +1,5 @@
 // frontend/web/src/features/agent-runs/TraceDock.tsx
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
@@ -14,6 +14,7 @@ import {
 } from "@/stores/session-events";
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
+import { SpanTree } from "./SpanTree";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
@@ -65,7 +66,12 @@ const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
 const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "agent.run",
   "agent.plan",
+  "agent.decision",
+  // WS-17 span taxonomy (+ `model.call`/`model.reasoning` legacy aliases).
+  "decision.model",
+  "decision.reasoning",
   "model.call",
+  "model.reasoning",
   "tool.call",
   "tool.validate_input",
   "tool.validate_output",
@@ -122,6 +128,12 @@ export function TraceDock() {
   const setSelectedSpan = (id: string | null) =>
     useTraceDock.getState().setSelectedSpan(scope, id);
   const navigate = useNavigate();
+
+  // Structured-view selector. The collapsible span tree (WS-16) is the new
+  // default — it lets a DECISION collapse to one line and expand to its full
+  // subtree. The FlameGraph remains available behind the toggle (timeline /
+  // overlap view); neither replaces the other.
+  const [structuredView, setStructuredView] = useState<"tree" | "flame">("tree");
 
   // Unified-session span projection — the chat-session path. When a chat
   // session is bound (and no standalone agent run is active), the dock
@@ -421,6 +433,49 @@ export function TraceDock() {
             ADVANCED
           </button>
         </div>
+        {/*
+          WS-16: structured-view selector. TREE is the collapsible nested
+          span tree (default); FLAME is the timeline/overlap flame graph.
+          Both read the same `displaySpans` so Simple/Advanced + filters
+          apply identically to either view.
+        */}
+        <div
+          role="group"
+          aria-label="Structured view"
+          data-testid="trace-dock-view-toggle"
+          className="ml-2 flex items-center gap-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={structuredView === "tree"}
+            onClick={() => setStructuredView("tree")}
+            title="Tree — collapsible nested spans"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "tree" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "tree" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "tree" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            TREE
+          </button>
+          <button
+            type="button"
+            aria-pressed={structuredView === "flame"}
+            onClick={() => setStructuredView("flame")}
+            title="Flame — timeline / overlap view"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "flame" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "flame" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "flame" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            FLAME
+          </button>
+        </div>
         <div className="ml-auto flex items-center gap-1">
           {/*
             F-7 (qa round 7): Trade quick-filter. Investigation: broker.call
@@ -523,11 +578,19 @@ export function TraceDock() {
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
-            <FlameGraph
-              spans={displaySpans}
-              selectedSpanId={selectedSpan?.span_id ?? null}
-              onSelect={setSelectedSpan}
-            />
+            structuredView === "tree" ? (
+              <SpanTree
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            ) : (
+              <FlameGraph
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            )
           ) : null}
         </div>
         {selectedSpan ? (

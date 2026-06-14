@@ -4,8 +4,8 @@
 //!
 //! The patch covers `display_name`, `plain_summary`, and
 //! `asset_universe`. Anything else (id, creator, template,
-//! published_at, agents, pipeline, risk, mechanical_params) is out of
-//! scope and has its own route or is immutable post-create.
+//! published_at, agents, pipeline, risk) is out of scope and has its
+//! own route or is immutable post-create.
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
@@ -224,10 +224,6 @@ async fn patch_metadata_rejects_out_of_scope_fields() {
         }),
         serde_json::json!({
             "display_name": "ShouldNotPersist",
-            "mechanical_params": { "ema_fast": 99 },
-        }),
-        serde_json::json!({
-            "display_name": "ShouldNotPersist",
             "unknown_patch_key": true,
         }),
     ];
@@ -243,49 +239,7 @@ async fn patch_metadata_rejects_out_of_scope_fields() {
             fetched["manifest"], before_body["manifest"],
             "out-of-scope payload must not mutate manifest fields: {payload}"
         );
-        assert_eq!(
-            fetched["mechanical_params"], before_body["mechanical_params"],
-            "PATCH /api/strategy must not mutate mechanical_params: {payload}"
-        );
     }
-}
-
-#[tokio::test]
-async fn put_mechanical_params_sets_one_key_and_preserves_metadata() {
-    let (server, _tmp) = boot().await;
-    let id = create_strategy(&server).await;
-
-    let response = server
-        .put(&format!("/api/strategy/{id}/mechanical_params"))
-        .json(&serde_json::json!({
-            "key": "ema_fast",
-            "value": 12
-        }))
-        .await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["ok"], true);
-
-    let response = server.get(&format!("/api/strategy/{id}")).await;
-    response.assert_status_ok();
-    let fetched: serde_json::Value = response.json();
-    assert_eq!(fetched["manifest"]["display_name"], "PatchMe");
-    assert_eq!(fetched["mechanical_params"]["ema_fast"], 12);
-}
-
-#[tokio::test]
-async fn put_mechanical_params_unknown_strategy_returns_404() {
-    let (server, _tmp) = boot().await;
-
-    let response = server
-        .put("/api/strategy/01JDOESNOTEXIST0000000000/mechanical_params")
-        .json(&serde_json::json!({
-            "key": "ema_fast",
-            "value": 12
-        }))
-        .await;
-
-    response.assert_status_not_found();
 }
 
 #[tokio::test]

@@ -7,7 +7,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { CapsuleRow, type EvalCapsuleRow } from "./CapsuleShell";
+import { CapsuleRow, CapsuleShell, FidelityBadge, type EvalCapsuleRow } from "./CapsuleShell";
+import type { RetentionMode } from "../../api/types-agent-runs";
 
 function row(overrides: Partial<EvalCapsuleRow> = {}): EvalCapsuleRow {
   return {
@@ -55,5 +56,48 @@ describe("CapsuleRow hover", () => {
     fireEvent.mouseEnter(el);
     fireEvent.mouseLeave(el);
     expect(el.style.background).toBe(before);
+  });
+});
+
+describe("FidelityBadge", () => {
+  const cases: Array<[RetentionMode, string]> = [
+    ["hash_only", "hash-only"],
+    ["redacted", "redacted"],
+    ["full_debug", "full"],
+  ];
+
+  test.each(cases)("renders %s as label %s", (mode, label) => {
+    const { getByTestId } = render(<FidelityBadge retentionMode={mode} />);
+    const badge = getByTestId("capsule-fidelity-badge");
+    expect(badge.textContent).toContain(label);
+    expect(badge.getAttribute("data-fidelity")).toBe(mode);
+  });
+
+  test("title describes whether bodies are present", () => {
+    const { getByTestId, rerender } = render(<FidelityBadge retentionMode="hash_only" />);
+    expect(getByTestId("capsule-fidelity-badge").getAttribute("title")).toMatch(/no.*bod/i);
+    rerender(<FidelityBadge retentionMode="full_debug" />);
+    expect(getByTestId("capsule-fidelity-badge").getAttribute("title")).toMatch(/bod/i);
+  });
+});
+
+describe("CapsuleShell fidelity", () => {
+  test("renders the fidelity badge when retentionMode is provided", () => {
+    const { getByTestId } = render(
+      <CapsuleShell testId="shell" tone="eval" borderColor="var(--gold)" retentionMode="redacted">
+        <div>body</div>
+      </CapsuleShell>,
+    );
+    const badge = getByTestId("capsule-fidelity-badge");
+    expect(badge.textContent).toContain("redacted");
+  });
+
+  test("omits the fidelity badge when retentionMode is absent", () => {
+    const { queryByTestId } = render(
+      <CapsuleShell testId="shell" tone="eval" borderColor="var(--gold)">
+        <div>body</div>
+      </CapsuleShell>,
+    );
+    expect(queryByTestId("capsule-fidelity-badge")).toBeNull();
   });
 });

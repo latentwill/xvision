@@ -48,7 +48,6 @@ pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
     ("create_strategy_agent", ToolClass::Write),
     ("update_slot", ToolClass::Write),
     ("update_manifest", ToolClass::Write),
-    ("set_mechanical_param", ToolClass::Write),
     ("set_risk_config", ToolClass::Write),
     ("set_filter", ToolClass::Write),
     ("clear_filter", ToolClass::Write),

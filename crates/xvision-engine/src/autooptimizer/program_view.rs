@@ -36,10 +36,6 @@ pub fn to_markdown_with_resolved_prompts(strategy: &Strategy, resolved: &HashMap
     let mut out = format!("# Strategy {}\n\n", strategy.manifest.display_name);
     out.push_str(&render_json_section("Manifest", &strategy.manifest));
     out.push_str(&render_agents_section_with_prompts(&strategy.agents, resolved));
-    out.push_str(&render_json_section(
-        "Mechanical params",
-        &strategy.mechanical_params,
-    ));
     out.push_str(&render_json_section("Risk config", &strategy.risk));
     // Render the filter so the experiment writer sees its current values in the
     // main program view (not only via the separate filter-paths list). This
@@ -119,12 +115,10 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         let body = sections.get("Agents").map(String::as_str).unwrap_or("");
         parse_agents_section(body)?
     };
-    let mechanical_params: serde_json::Value = parse_section(&sections, "Mechanical params")?;
     let risk: RiskConfig = parse_section(&sections, "Risk config")?;
     Ok(Strategy {
         manifest,
         agents,
-        mechanical_params,
         risk,
         hypothesis: base.hypothesis.clone(),
         pipeline: base.pipeline.clone(),
@@ -249,7 +243,6 @@ mod tests {
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
             },
-            "mechanical_params": {},
             "activation_mode": "filter_gated",
             "filter": {
                 "id": "01HZFILTER000000000000000P",

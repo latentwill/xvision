@@ -185,8 +185,9 @@ pub enum Command {
     ToolPolicy(commands::tool_policy::ToolPolicyCmd),
     /// SQLite-cached historical bars: fetch / ls / rm / gc.
     Bars(commands::bars::BarsCmd),
-    /// Apply pending migrations + seed, or report state with --dry-run.
-    Migrate(commands::migrate::MigrateCmd),
+    /// Initialize $XVN_HOME (schema + canonical seed); --dry-run reports pending state.
+    #[command(alias = "migrate")]
+    Init(commands::init::InitCmd),
     /// Inspect agent records from the workspace agent library.
     Agent(commands::agent::AgentCmd),
     /// Seed curated example scenarios and tutorial artifacts.
@@ -299,7 +300,7 @@ impl Cli {
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
             Command::ToolPolicy(cmd) => commands::tool_policy::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,
-            Command::Migrate(cmd) => commands::migrate::run(cmd).await,
+            Command::Init(cmd) => commands::init::run(cmd).await,
             Command::Agent(cmd) => commands::agent::run(cmd).await,
             Command::Example(cmd) => commands::example::run(cmd).await,
             Command::Obs(cmd) => commands::obs::run(cmd).await.map_err(Into::into),

@@ -754,7 +754,6 @@ fn pipeline_fixture_strategy() -> Strategy {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -858,6 +857,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");

@@ -1,5 +1,5 @@
 {
-  "schema_version": "xvn.agent_run.v2",
+  "schema_version": "xvn.agent_run.v3",
   "run_id": "run_export_fixture_01",
   "objective": "Improve BTC mean reversion strategy",
   "strategy_id": "strat_export_fixture",
@@ -51,8 +51,8 @@
           "parent_span_id": "span_run_root",
           "otel_trace_id": "trace_export_fixture",
           "otel_span_id": "span_model_otel",
-          "kind": "model.call",
-          "name": "model.call.plan",
+          "kind": "decision.model",
+          "name": "decision.model.plan",
           "status": "ok",
           "started_at": "2026-05-17T16:00:02Z",
           "ended_at": "2026-05-17T16:00:03Z",
@@ -107,6 +107,8 @@
       "tool_hash": "sha256:tool_fixture",
       "input_hash": "sha256:in_fixture",
       "output_hash": "sha256:out_fixture",
+      "input_text": null,
+      "output_text": null,
       "input_payload_ref": null,
       "output_payload_ref": null,
       "side_effect_level": "read_only",
@@ -127,6 +129,19 @@
       "content": "Sharpe drop on holdout suggests overfit.",
       "severity": "warn",
       "created_at": "2026-05-17T16:00:06Z"
+    }
+  ],
+  "events": [
+    {
+      "span_id": "span_model_0",
+      "kind": "model_call_payload",
+      "payload_json": {
+        "model": "claude-opus-4-7",
+        "prompt": "prompt fixture plaintext",
+        "provider": "anthropic",
+        "response": "response fixture plaintext"
+      },
+      "created_at": "2026-05-17T16:00:02Z"
     }
   ],
   "final_artifact": {

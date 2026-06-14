@@ -88,7 +88,6 @@ const baseStrategy = {
     stop_loss_atr_multiple: 2,
     daily_loss_kill_pct: 0.05,
   },
-  mechanical_params: {},
 };
 
 const baseAgent = {

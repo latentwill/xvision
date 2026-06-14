@@ -2,10 +2,12 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   DOCK_HEIGHT_STORAGE_KEY,
+  DOCK_COLLAPSED_SPANS_STORAGE_KEY,
   DOCK_MIN_PX,
   DEFAULT_DOCK_PX,
   clampDockPx,
   dockMaxPx,
+  readPersistedCollapsedSpanIds,
   useTraceDock,
 } from "./trace-dock";
 import type {
@@ -396,5 +398,59 @@ describe("trace-dock store — costOverrideUsd", () => {
     useTraceDock.getState().setCostOverrideUsd("eval", 1.23);
     useTraceDock.getState().setActiveRun("eval", "run_next", "post-hoc");
     expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBeNull();
+  });
+});
+
+describe("trace-dock store — collapsed span tree (WS-16)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    // Reset the shared collapse slice to a clean state.
+    useTraceDock.getState().setCollapsedSpanIds([]);
+  });
+
+  test("collapsedSpanIds defaults to empty", () => {
+    expect(useTraceDock.getState().collapsedSpanIds).toEqual(new Set());
+  });
+
+  test("toggleSpanCollapsed flips a single node and persists to localStorage", () => {
+    useTraceDock.getState().toggleSpanCollapsed("s1");
+    expect(useTraceDock.getState().collapsedSpanIds.has("s1")).toBe(true);
+    // Persisted as a JSON array under the collapsed-spans key.
+    const raw = localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY);
+    expect(JSON.parse(raw ?? "[]")).toEqual(["s1"]);
+
+    useTraceDock.getState().toggleSpanCollapsed("s1");
+    expect(useTraceDock.getState().collapsedSpanIds.has("s1")).toBe(false);
+    expect(JSON.parse(localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY) ?? "[]")).toEqual([]);
+  });
+
+  test("collapseAllSpans seeds the set with every supplied id", () => {
+    useTraceDock.getState().collapseAllSpans(["s1", "s2", "s3"]);
+    expect(useTraceDock.getState().collapsedSpanIds).toEqual(
+      new Set(["s1", "s2", "s3"]),
+    );
+    expect(
+      JSON.parse(localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY) ?? "[]").sort(),
+    ).toEqual(["s1", "s2", "s3"]);
+  });
+
+  test("expandAllSpans clears the set", () => {
+    useTraceDock.getState().collapseAllSpans(["s1", "s2"]);
+    useTraceDock.getState().expandAllSpans();
+    expect(useTraceDock.getState().collapsedSpanIds).toEqual(new Set());
+    expect(JSON.parse(localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY) ?? "[]")).toEqual([]);
+  });
+
+  test("readPersistedCollapsedSpanIds rehydrates a persisted set", () => {
+    localStorage.setItem(
+      DOCK_COLLAPSED_SPANS_STORAGE_KEY,
+      JSON.stringify(["s4", "s7"]),
+    );
+    expect(readPersistedCollapsedSpanIds()).toEqual(new Set(["s4", "s7"]));
+  });
+
+  test("readPersistedCollapsedSpanIds returns an empty set for malformed JSON", () => {
+    localStorage.setItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY, "{not json");
+    expect(readPersistedCollapsedSpanIds()).toEqual(new Set());
   });
 });

@@ -45,6 +45,11 @@ pub struct PublishReceipt {
     pub content_hash: String,
     /// When the publish completed (RFC 3339).
     pub published_at: String,
+    /// Creator-chosen listing name captured at publish time (defaults to the
+    /// strategy's display name). `None` for receipts written before the column
+    /// existed; the marketplace name-enrichment then falls back to the
+    /// strategy's display name.
+    pub name: Option<String>,
 }
 
 /// Look up the publish receipt for an `agent_id`. Returns `None` when the
@@ -62,7 +67,7 @@ pub async fn find_receipt(
 ) -> Result<Option<PublishReceipt>, DashboardError> {
     use sqlx::Row as _;
     let row = sqlx::query(
-        "SELECT agent_id, token_id, listing_id, content_hash, published_at
+        "SELECT agent_id, token_id, listing_id, content_hash, published_at, name
          FROM publish_receipts
          WHERE agent_id = ?1",
     )
@@ -82,6 +87,7 @@ pub async fn find_receipt(
         listing_id: r.get("listing_id"),
         content_hash: r.get("content_hash"),
         published_at: r.get("published_at"),
+        name: r.get("name"),
     }))
 }
 
@@ -97,16 +103,18 @@ pub async fn insert_receipt(
     listing_id: &str,
     content_hash: &str,
     published_at: &str,
+    name: Option<&str>,
 ) -> Result<(), DashboardError> {
     let result = sqlx::query(
-        "INSERT INTO publish_receipts (agent_id, token_id, listing_id, content_hash, published_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO publish_receipts (agent_id, token_id, listing_id, content_hash, published_at, name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )
     .bind(agent_id)
     .bind(token_id)
     .bind(listing_id)
     .bind(content_hash)
     .bind(published_at)
+    .bind(name)
     .execute(pool)
     .await;
 
@@ -171,6 +179,7 @@ mod tests {
             "56",
             &"cd".repeat(32),
             "2026-06-13T12:00:00Z",
+            Some("BTC Momentum"),
         )
         .await
         .unwrap();
@@ -182,6 +191,11 @@ mod tests {
         assert_eq!(r.listing_id, "56");
         assert_eq!(r.content_hash, "cd".repeat(32));
         assert_eq!(r.published_at, "2026-06-13T12:00:00Z");
+        assert_eq!(
+            r.name.as_deref(),
+            Some("BTC Momentum"),
+            "the creator-chosen listing name round-trips through the receipt store"
+        );
     }
 
     #[tokio::test]
@@ -195,12 +209,12 @@ mod tests {
     async fn duplicate_insert_is_conflict_and_leaves_one_row() {
         let (pool, _tmp) = migrated_pool().await;
         let agent_id = "01DUPDUPDUPDUPDUPDUPDUPDUP0";
-        insert_receipt(&pool, agent_id, "1", "1", "00", "2026-06-13T00:00:00Z")
+        insert_receipt(&pool, agent_id, "1", "1", "00", "2026-06-13T00:00:00Z", None)
             .await
             .expect("first insert succeeds");
 
         // A second insert for the same agent_id is the TOCTOU loser → Conflict.
-        let second = insert_receipt(&pool, agent_id, "2", "2", "11", "2026-06-13T00:01:00Z").await;
+        let second = insert_receipt(&pool, agent_id, "2", "2", "11", "2026-06-13T00:01:00Z", None).await;
         assert!(
             matches!(second, Err(DashboardError::Conflict(_))),
             "second insert must map the UNIQUE violation to Conflict, got {second:?}"

@@ -108,7 +108,11 @@ function isAgentRunExportPayload(payload: unknown): payload is Record<string, un
   return (
     isObject(payload) &&
     (payload.schema_version === "xvn.agent_run.v1" ||
-      payload.schema_version === "xvn.agent_run.v2")
+      payload.schema_version === "xvn.agent_run.v2" ||
+      // WS-7: the export bumped to v3 (added the full `events` array + inlined
+      // blob payloads). The detail page consumes the same payload, so it must
+      // accept v3 — otherwise GET /api/agent-runs/:id throws invalid_response.
+      payload.schema_version === "xvn.agent_run.v3")
   );
 }
 

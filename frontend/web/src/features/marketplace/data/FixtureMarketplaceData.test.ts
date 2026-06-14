@@ -1,8 +1,10 @@
 // src/features/marketplace/data/FixtureMarketplaceData.test.ts
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureMarketplaceData } from "./MarketplaceData";
 import { defaultFilterState } from "./filter";
 import { ED_CREATOR } from "./fixtures/creators";
+import { LISTABLE_STRATEGIES } from "./fixtures/seller";
+import { fetchListableStrategies, fetchPublishDraft } from "./listable";
 
 // submitListing now calls the real publish endpoint; mock it so this unit test
 // doesn't require a live server. The real publish path is tested in publish.test.ts.
@@ -10,7 +12,27 @@ vi.mock("./publish", () => ({
   publishListing: vi.fn().mockResolvedValue({ txHash: "0xmocked-listing-id", network: "mantle-sepolia" }),
 }));
 
+// The sell flow (list-your-strategy picker + draft) is operator-local and now
+// hits the real `/api/strategies` via ./listable. Mock that module so these
+// unit tests don't touch a backend; the DEFAULT behaviour rejects so the
+// documented offline fixture fallback is exercised deterministically. The
+// real-API delegation path is asserted in its own test below.
+vi.mock("./listable", () => ({
+  fetchListableStrategies: vi.fn(),
+  fetchPublishDraft: vi.fn(),
+}));
+
+const mockedFetchListable = vi.mocked(fetchListableStrategies);
+const mockedFetchDraft = vi.mocked(fetchPublishDraft);
+
 const mp = new FixtureMarketplaceData();
+
+beforeEach(() => {
+  // Default: backend unreachable → FixtureMarketplaceData falls back to the
+  // offline demo fixtures (the behaviour the rest of this suite asserts).
+  mockedFetchListable.mockRejectedValue(new Error("no backend in unit test"));
+  mockedFetchDraft.mockRejectedValue(new Error("no backend in unit test"));
+});
 
 describe("FixtureMarketplaceData", () => {
   it("lists with totals (curated collection only — no at-scale wall fixtures)", async () => {
@@ -69,6 +91,37 @@ describe("FixtureMarketplaceData", () => {
   it("publish draft uses the selected strategy as the listing preview identity art seed", async () => {
     const draft = await mp.createPublishDraft("local-btc-momentum");
     expect(draft.preview.genArtSeed).toBe("local-btc-momentum");
+  });
+
+  // QA fix: the "list your strategy" picker must show the operator's REAL
+  // strategy library — never the hardcoded placeholder fixtures — even when the
+  // on-chain marketplace indexer is inactive and FixtureMarketplaceData is the
+  // active client.
+  it("listListableStrategies serves the operator's real strategies (not placeholder fixtures)", async () => {
+    const real = [
+      { id: "orb-breakout-15m-ollama-fino1", name: "ORB Breakout 15m", version: "evaluated 2026-06-10", assets: ["BTC"] },
+      { id: "rsi-bb-meanrev-1h-ollama-qwen3", name: "RSI-BB MeanRev 1h", version: "evaluated 2026-06-11", assets: ["ETH"] },
+    ];
+    mockedFetchListable.mockResolvedValue(real);
+    const got = await mp.listListableStrategies();
+    expect(got).toEqual(real);
+    // Must NOT be the placeholder fixtures the QA flagged.
+    expect(got.map((s) => s.id)).not.toContain("local-btc-momentum");
+  });
+
+  it("createPublishDraft builds from the operator's real strategy when the backend is reachable", async () => {
+    const realDraft = { strategyId: "orb-breakout-15m-ollama-fino1", name: "ORB Breakout 15m" } as Awaited<
+      ReturnType<typeof fetchPublishDraft>
+    >;
+    mockedFetchDraft.mockResolvedValue(realDraft);
+    const draft = await mp.createPublishDraft("orb-breakout-15m-ollama-fino1");
+    expect(draft).toBe(realDraft);
+  });
+
+  it("listListableStrategies falls back to demo fixtures only when the strategies API is unreachable", async () => {
+    // beforeEach already makes the fetch reject (no backend).
+    const got = await mp.listListableStrategies();
+    expect(got).toEqual(LISTABLE_STRATEGIES);
   });
   it("purchaseIntent returns a TxRef with network (testnet label source)", async () => {
     const ref = await mp.purchaseIntent("btc-momentum-v3");

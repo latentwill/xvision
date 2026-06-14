@@ -68,10 +68,6 @@ fn make_strategy() -> Strategy {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": {
-            "ema_fast": 12,
-            "atr_period": 14
         }
     });
     serde_json::from_value(v).expect("fixture strategy deserializes")
@@ -81,15 +77,16 @@ fn make_strategy() -> Strategy {
 // identity (no-op) diffs and retries. A prose-only edit targets an agent prompt,
 // which a `Strategy` only references by `AgentRef` — so it doesn't change the
 // strategy artifact's content hash and is an identity no-op. A real candidate
-// must change a mechanical param (or tools); here we bump an existing param so
-// the apply actually moves the hash.
+// must change a tunable param (or tools); here we bump an existing `risk.*`
+// param so the apply actually moves the hash. The fixture's current
+// `stop_loss_atr_multiple` is 2.0, so we move it to 3.0.
 fn valid_diff_json() -> String {
     json!({
         "kind": "param",
         "prose": [],
-        "params": [{"key": "ema_fast", "before": 12, "after": 20}],
+        "params": [{"key": "risk.stop_loss_atr_multiple", "before": 2.0, "after": 3.0}],
         "tools": {"added": [], "removed": []},
-        "rationale": "faster EMA crossover"
+        "rationale": "wider stop to ride volatility"
     })
     .to_string()
 }

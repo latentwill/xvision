@@ -268,11 +268,10 @@ export function StripDockSlot() {
   );
 
   // Live-money discriminator for the capsule prefix + pop-out target.
-  // `is_live_money` is THE backend signal (parent eval run mode=live and
-  // non-terminal); `eval_mode === "live"` keeps the LIVE label on a
-  // just-finished live run whose capsule is still mounted.
-  const isLiveMoney =
-    summary.is_live_money === true || summary.eval_mode === "live";
+  // `is_live_money` is THE backend signal: parent eval run `venue_label=live`
+  // (real money) and non-terminal. Forward-test runs (mode=live, venue=paper/
+  // testnet) are NOT live money, so they never wear the LIVE prefix.
+  const isLiveMoney = summary.is_live_money === true;
 
   const focusedAgentId = summary.agent_id ?? summary.strategy_id ?? "agent";
   const focusedScenarioId = focusedEvalQ.data?.summary.scenario_id ?? "scenario";
@@ -360,6 +359,7 @@ export function StripDockSlot() {
       <LiveCapsule
         run={focused}
         brokerSpans={brokerCallSpans}
+        retentionMode={summary.retention_mode}
         onExpandDock={() => setHeight("working")}
         onPopOut={() => navigate(`/live/runs/${activeRunId}`)}
       />
@@ -370,6 +370,7 @@ export function StripDockSlot() {
     <EvalCapsule
       focused={focused}
       siblings={siblings}
+      retentionMode={summary.retention_mode}
       onSwitchFocus={(run) => navigate(`/eval-runs/${encodeURIComponent(run.id)}`)}
       onExpandDock={() => setHeight("working")}
       onPopOut={() =>

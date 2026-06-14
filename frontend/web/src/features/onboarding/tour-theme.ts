@@ -2,12 +2,14 @@ import type { Config, DriveStep, PopoverDOM } from "driver.js";
 
 const STEP_EYEBROWS = [
   "First run",
-  "Surface 01 - Build",
-  "Surface 02 - Define",
-  "Surface 03 - Evaluate",
-  "Surface 04 - Deploy",
-  "Surface 05 - Discover",
-  "Surface 06 - Improve",
+  "Step 01 - Connect",
+  "Step 02 - Build",
+  "Step 03 - Define",
+  "Step 04 - Evaluate",
+  "Next - Deploy",
+  "Next - Improve",
+  "Next - Discover",
+  "Ready",
 ];
 
 const BRAND_SVG = `
