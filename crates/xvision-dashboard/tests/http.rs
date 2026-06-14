@@ -169,6 +169,7 @@ async fn strategies_list_returns_seeded_strategy() {
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();
@@ -1321,6 +1322,7 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();

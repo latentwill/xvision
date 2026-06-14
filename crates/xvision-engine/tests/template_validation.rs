@@ -70,6 +70,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

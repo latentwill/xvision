@@ -683,6 +683,7 @@ mod tests {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

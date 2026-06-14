@@ -913,16 +913,34 @@ impl MutationDiff {
                 // WU3a: route mechanistic.* keys through the variant-aware setter.
                 // A mismatch or invalid value is a silent no-op here (the validator
                 // rejects those upstream; apply stays total).
+                // WU-B: clamp to TunableBound before writing, if a bound exists.
                 if let Some(ref mut mc) = s.mechanistic_config {
-                    let _ = set_mechanistic_value(mc, &change.key, &change.after);
+                    let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                        clamp_to_bound(&change.after, bound)
+                    } else {
+                        change.after.clone()
+                    };
+                    let _ = set_mechanistic_value(mc, &change.key, &value_to_write);
                 }
             } else if let Some(field) = risk_field_for_key(base, &change.key) {
+                // WU-B: risk params — clamp to TunableBound if present.
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                    clamp_to_bound(&change.after, bound)
+                } else {
+                    change.after.clone()
+                };
                 if let Some(obj) = risk_json.as_object_mut() {
-                    obj.insert(field, change.after.clone());
+                    obj.insert(field, value_to_write);
                     risk_touched = true;
                 }
             } else {
-                set_param_value(&mut s.mechanical_params, &change.key, change.after.clone());
+                // WU-B: mechanical_params — clamp to TunableBound if present.
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                    clamp_to_bound(&change.after, bound)
+                } else {
+                    change.after.clone()
+                };
+                set_param_value(&mut s.mechanical_params, &change.key, value_to_write);
             }
         }
         if risk_touched {
@@ -968,11 +986,17 @@ impl MutationDiff {
         // path or a wrong-type value is a silent no-op (validator rejects those
         // upstream; apply stays total). The filter field is cloned before mutation
         // so a partial-failure edit doesn't leave the filter half-changed.
+        // WU-B: clamp each filter edit's value to its TunableBound before writing.
         if let Some(ref mut f) = s.filter {
             for edit in &self.filter {
                 // Ignore the return value; validator already ensured the path
                 // resolves and the value has the right type.
-                set_filter_value(f, &edit.path, &edit.after);
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &edit.path) {
+                    clamp_to_bound(&edit.after, bound)
+                } else {
+                    edit.after.clone()
+                };
+                set_filter_value(f, &edit.path, &value_to_write);
             }
         }
         s
@@ -1004,6 +1028,81 @@ fn set_param_value(params: &mut serde_json::Value, key: &str, value: serde_json:
     if let Some(map) = cur.as_object_mut() {
         map.insert(last.to_string(), value);
     }
+}
+
+/// Clamp `value` to the `[min, max]` range declared by a `TunableBound`, then
+/// apply step alignment for `Int` kind.
+///
+/// Behaviour per kind:
+/// - **Int**: clamp to `[min, max]` (if present), then round to nearest
+///   integer (so step=1 is honoured; finer steps are rounded to integer
+///   because Pine `input.int` is always integer-valued).
+/// - **Float**: clamp to `[min, max]` (if present). Non-numeric values are
+///   returned unchanged (the write path below will handle or ignore them).
+/// - **Bool**: coerce the value to a JSON bool.  Any truthy non-zero number
+///   → `true`; zero / JSON `false` / `null` → `false`.  Non-numeric,
+///   non-bool values are returned unchanged.
+///
+/// Paths with no matching `TunableBound` call this function's caller with
+/// the original value — this function is never called for unbound paths.
+pub fn clamp_to_bound(value: &serde_json::Value, b: &crate::strategies::TunableBound) -> serde_json::Value {
+    use crate::strategies::pine_import::inputs::InputKind;
+
+    match b.kind {
+        InputKind::Bool => {
+            // Coerce to bool: numeric 0 / JSON false / null → false; anything
+            // else truthy → true.
+            let result = match value {
+                serde_json::Value::Bool(v) => *v,
+                serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+                serde_json::Value::Null => false,
+                _ => return value.clone(), // non-coercible; caller handles
+            };
+            serde_json::Value::Bool(result)
+        }
+        InputKind::Float => {
+            let Some(mut v) = value.as_f64() else {
+                return value.clone();
+            };
+            if let Some(min) = b.min {
+                if v < min {
+                    v = min;
+                }
+            }
+            if let Some(max) = b.max {
+                if v > max {
+                    v = max;
+                }
+            }
+            serde_json::json!(v)
+        }
+        InputKind::Int => {
+            let Some(mut v) = value.as_f64() else {
+                return value.clone();
+            };
+            if let Some(min) = b.min {
+                if v < min {
+                    v = min;
+                }
+            }
+            if let Some(max) = b.max {
+                if v > max {
+                    v = max;
+                }
+            }
+            // Round to nearest integer (Pine input.int is always integer-valued).
+            v = v.round();
+            serde_json::json!(v)
+        }
+    }
+}
+
+/// Look up the `TunableBound` for `path` in `bounds`, if any.
+fn find_bound<'a>(
+    bounds: &'a [crate::strategies::TunableBound],
+    path: &str,
+) -> Option<&'a crate::strategies::TunableBound> {
+    bounds.iter().find(|b| b.path == path)
 }
 
 pub struct Mutator {
@@ -2779,6 +2878,297 @@ mod tests {
         assert!(
             !path_map.keys().any(|k| k.starts_with("mechanistic.")),
             "filter_tunable_paths must not emit mechanistic.* keys"
+        );
+    }
+
+    // ── WU-B: tunable bounds clamp tests ─────────────────────────────────────
+
+    /// Build a Strategy whose `tunable_bounds` has two entries:
+    ///   - `conditions.0.rhs.numeric`  → Int [2, 50, step=1]
+    ///   - `mechanistic.close_policies.0.pct` → Float [0.5, 10.0, step=none]
+    /// The strategy also carries a filter (so filter edits resolve) and a
+    /// mechanistic config (so mechanistic writes apply).
+    fn fixture_bounded_strategy() -> Strategy {
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::{ClosePolicy, MechanisticConfig, TunableBound};
+
+        // Build from the filter fixture (which has conditions.0.rhs.numeric = 25.0)
+        // and layer in mechanistic_config + tunable_bounds.
+        let mut s = fixture_filter_strategy();
+        s.mechanistic_config = Some(MechanisticConfig {
+            entry_rules: vec![],
+            close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+        });
+        s.tunable_bounds = vec![
+            TunableBound {
+                path: "conditions.0.rhs.numeric".to_string(),
+                min: Some(2.0),
+                max: Some(50.0),
+                step: Some(1.0),
+                kind: InputKind::Int,
+            },
+            TunableBound {
+                path: "mechanistic.close_policies.0.pct".to_string(),
+                min: Some(0.5),
+                max: Some(10.0),
+                step: None,
+                kind: InputKind::Float,
+            },
+        ];
+        s
+    }
+
+    #[test]
+    fn clamp_to_bound_int_clamps_above_max() {
+        // A filter edit proposing 999 on a bound with max=50 must be clamped to 50.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(999),
+            }],
+            create_filter: None,
+            rationale: "out-of-range test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!(
+                    (v - 50.0).abs() < 1e-9,
+                    "Int bound: 999 clamped to max=50, got {v}"
+                );
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_int_clamps_below_min() {
+        // A filter edit proposing 0 on a bound with min=2 must be clamped to 2.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(0),
+            }],
+            create_filter: None,
+            rationale: "below-min test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!((v - 2.0).abs() < 1e-9, "Int bound: 0 clamped to min=2, got {v}");
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_int_step_alignment() {
+        // In-range value 7.3 with step=1 must be rounded to nearest integer (7).
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(7.3),
+            }],
+            create_filter: None,
+            rationale: "step-alignment test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!(
+                    (v - 7.0).abs() < 1e-9,
+                    "Int kind: 7.3 should round to 7.0, got {v}"
+                );
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_float_mechanistic_clamped() {
+        // A mechanistic param write proposing 50.0 on a bound max=10.0 clamps to 10.0.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Param,
+            prose: vec![],
+            params: vec![ParamChange {
+                key: "mechanistic.close_policies.0.pct".to_string(),
+                before: serde_json::json!(2.0),
+                after: serde_json::json!(50.0),
+            }],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![],
+            create_filter: None,
+            rationale: "mechanistic clamp test".into(),
+        };
+        let child = diff.apply_to(&base);
+        use crate::strategies::ClosePolicy;
+        let mc = child
+            .mechanistic_config
+            .as_ref()
+            .expect("must have mechanistic config");
+        match &mc.close_policies[0] {
+            ClosePolicy::StopLoss { pct } => {
+                assert!(
+                    (pct - 10.0).abs() < 1e-9,
+                    "Float bound: 50.0 clamped to max=10.0, got {pct}"
+                );
+            }
+            other => panic!("expected StopLoss, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_param_change_clamped() {
+        // A mechanical_params write on a path with a bound also gets clamped.
+        // Use a strategy with a tunable_bounds entry for a mechanical_params key.
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::TunableBound;
+
+        let mut base = fixture_strategy();
+        base.tunable_bounds = vec![TunableBound {
+            path: "ema_fast".to_string(),
+            min: Some(5.0),
+            max: Some(20.0),
+            step: None,
+            kind: InputKind::Int,
+        }];
+
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(),
+                before: serde_json::json!(12),
+                after: serde_json::json!(999),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        // 999 clamped to max=20, then rounded to integer → 20
+        assert_eq!(
+            child.mechanical_params["ema_fast"],
+            serde_json::json!(20.0),
+            "ema_fast: 999 must be clamped to max=20"
+        );
+    }
+
+    #[test]
+    fn clamp_to_bound_bool_coercion() {
+        // A Bool bound: any truthy numeric value (e.g. 1.0) stays true; 0.0 → false.
+        // Since filter paths don't commonly carry bool, we test via a mechanical_params
+        // bool-kind bound.
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::TunableBound;
+
+        let mut base = fixture_strategy();
+        // Add a bool-typed param
+        base.mechanical_params = serde_json::json!({ "use_ema_filter": true });
+        base.tunable_bounds = vec![TunableBound {
+            path: "use_ema_filter".to_string(),
+            min: None,
+            max: None,
+            step: None,
+            kind: InputKind::Bool,
+        }];
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "use_ema_filter".into(),
+                before: serde_json::json!(true),
+                after: serde_json::json!(0),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        assert_eq!(
+            child.mechanical_params["use_ema_filter"],
+            serde_json::json!(false),
+            "Bool bound: 0 must coerce to false"
+        );
+    }
+
+    #[test]
+    fn unbound_path_is_byte_identical_to_no_bounds() {
+        // A path NOT in tunable_bounds must be written exactly as before (no-op on logic).
+        // We compare child from a bounded strategy vs child from the same strategy
+        // with empty bounds — they must agree on the unbound path's written value.
+        let mut base_with_bounds = fixture_bounded_strategy();
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(), // not in tunable_bounds for bounded fixture
+                before: serde_json::json!(12),
+                after: serde_json::json!(99),
+            }],
+            vec![],
+            vec![],
+        );
+        // Apply with bounds present
+        let child_with_bounds = diff.apply_to(&base_with_bounds);
+
+        // Apply without any bounds
+        let mut base_no_bounds = base_with_bounds.clone();
+        base_no_bounds.tunable_bounds = vec![];
+        let child_no_bounds = diff.apply_to(&base_no_bounds);
+
+        assert_eq!(
+            child_with_bounds.mechanical_params["ema_fast"], child_no_bounds.mechanical_params["ema_fast"],
+            "unbound path must produce the same value with or without bounds present"
+        );
+        assert_eq!(
+            child_with_bounds.mechanical_params["ema_fast"],
+            serde_json::json!(99),
+            "unbound path must write the proposed value unchanged"
         );
     }
 }

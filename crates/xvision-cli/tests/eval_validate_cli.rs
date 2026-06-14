@@ -62,6 +62,7 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

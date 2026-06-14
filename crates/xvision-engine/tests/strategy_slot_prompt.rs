@@ -100,6 +100,7 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     validate_strategy(&strategy).expect("strategy with AgentRef and no slot prompt validates");
 }

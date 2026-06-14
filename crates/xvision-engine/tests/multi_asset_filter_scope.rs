@@ -270,6 +270,7 @@ fn two_filter_multi_asset_strategy() -> Strategy {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

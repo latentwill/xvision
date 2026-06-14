@@ -130,6 +130,7 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));

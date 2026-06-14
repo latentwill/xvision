@@ -1347,6 +1347,7 @@ async fn new_atomic(
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     // 3. Validate shape.
@@ -3740,6 +3741,7 @@ pub mod atomic_create {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);
@@ -3814,6 +3816,7 @@ pub mod atomic_create {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);

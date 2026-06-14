@@ -1005,6 +1005,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
         decision_mode,
         mechanistic_config,
         briefing_indicators,
+        tunable_bounds: Vec::new(),
     };
 
     // ── Validation safety net ──────────────────────────────────────────────
@@ -1043,6 +1044,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 decision_mode: DecisionMode::Agentic,
                 mechanistic_config: None,
                 briefing_indicators: Vec::new(),
+                tunable_bounds: Vec::new(),
             };
             // On fallback demote, input_bindings become meaningless (no mechanistic config).
             MapOutcome {
