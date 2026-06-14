@@ -17,63 +17,57 @@ use std::time::Duration;
 
 use async_stream::stream;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use chrono::Utc;
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio_stream::Stream;
+use ulid::Ulid;
 
+use xvision_observability::unified_event::{EventScope, RunEventProjector, UnifiedEvent};
 use xvision_observability::{AgentRunExport, RunEvent};
 
-/// Map a `RunEvent` variant to its SSE `event:` name. Matches the
-/// `serde(tag = "kind", rename_all = "snake_case")` discriminant on the
-/// enum, so the frontend can subscribe to the same names it would see
-/// inside the JSON payload.
-fn event_name(ev: &RunEvent) -> &'static str {
-    match ev {
-        RunEvent::RunStarted(_) => "run_started",
-        RunEvent::RunFinished(_) => "run_finished",
-        RunEvent::RunInterrupted(_) => "run_interrupted",
-        RunEvent::SpanStarted(_) => "span_started",
-        RunEvent::SpanFinished(_) => "span_finished",
-        RunEvent::ModelCallFinished(_) => "model_call_finished",
-        RunEvent::ToolCallStarted(_) => "tool_call_started",
-        RunEvent::ToolCallFinished(_) => "tool_call_finished",
-        RunEvent::ToolCallFailed(_) => "tool_call_failed",
-        RunEvent::ToolCallCancelled(_) => "tool_call_cancelled",
-        RunEvent::BrokerCallStarted(_) => "broker_call_started",
-        RunEvent::BrokerCallFinished(_) => "broker_call_finished",
-        RunEvent::CheckpointWritten(_) => "checkpoint_written",
-        RunEvent::AssistantTextDelta(_) => "assistant_text_delta",
-        RunEvent::SupervisorNote(_) => "supervisor_note",
-        RunEvent::ArtifactWritten(_) => "artifact_written",
-        RunEvent::SidecarError(_) => "sidecar_error",
-        RunEvent::BackpressureDropped(_) => "backpressure_dropped",
-        // memory-provenance-in-decisions-trace: new variant carrying
-        // per-decision recall provenance. Mechanical exhaustive-match
-        // registration only — the SSE forwarder treats it like any
-        // other run-scoped event.
-        RunEvent::MemoryRecall(_) => "memory_recall",
-        RunEvent::MemoryWrite(_) => "memory_write",
-        // Carryover build-fix (2026-05-22): `EngineEvent` was added to
-        // `xvision_observability::RunEvent` upstream and this match
-        // wasn't extended, breaking every `cargo build` against
-        // origin/main. The contract `cli-report-actions-and-tokens`
-        // needs the CLI crate to compile in order to verify, so the arm
-        // is added here as a minimal one-line carryover fix.
-        RunEvent::EngineEvent(_) => "engine_event",
-    }
-}
+/// The single stable SSE `event:` name carrying the projected `UnifiedEvent`
+/// LIVE tail (WS-8 Part 2 B2). The frontend subscribes to this one name and
+/// folds the envelope through the shared fidelity-complete projection, so it
+/// reconstructs span detail (model tokens/cost/body, broker fill, tool I/O,
+/// engine rows, error) WITHOUT a per-frame export refetch. Before B2 the tail
+/// was one raw `RunEvent` JSON per variant-named event; the frontend could not
+/// reconstruct detail from those and refetched the export on every terminal
+/// frame.
+pub const UNIFIED_EVENT_NAME: &str = "unified";
 
 /// Is this event a stream-closing lifecycle event?
 fn is_terminal(ev: &RunEvent) -> bool {
     matches!(ev, RunEvent::RunFinished(_) | RunEvent::RunInterrupted(_))
 }
 
+/// Build the one SSE `Event` for a projected `UnifiedEvent`. The data is the
+/// full envelope JSON (`{ event_id, seq, ts, span_id, payload: { kind, data },
+/// … }`) and the event name is the stable [`UNIFIED_EVENT_NAME`]. Serialization
+/// of a well-formed `UnifiedEvent` should be infallible; the `Err` arm exists
+/// only so the caller can skip a pathological frame instead of killing the
+/// stream.
+fn unified_frame(ev: &UnifiedEvent) -> Result<Event, serde_json::Error> {
+    let payload = serde_json::to_string(ev)?;
+    Ok(Event::default().event(UNIFIED_EVENT_NAME).data(payload))
+}
+
 /// Build the SSE response. The snapshot is emitted as the first event
-/// so the consumer always has full context before the live tail starts.
+/// so the consumer always has full context before the live tail starts;
+/// every subsequent live `RunEvent` is projected into a [`UnifiedEvent`]
+/// (one [`RunEventProjector`] per connection so `seq` is monotonic and
+/// gap-detectable) and emitted on the single [`UNIFIED_EVENT_NAME`] frame.
 pub fn agent_run_sse(
     snapshot: AgentRunExport,
     mut rx: broadcast::Receiver<RunEvent>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // One projector per connection. The run id comes off the snapshot so the
+    // envelope's `run_id` / scope are stamped consistently across the tail.
+    // No chat session is bound on the agent-run stream, so `session_id` is
+    // None; the scope is the run itself.
+    let run_id = snapshot.run_id.clone();
+    let mut projector = RunEventProjector::new(None, run_id.clone(), EventScope::new("run", Some(run_id)));
+
     let body = stream! {
         // Snapshot first — `serde_json::to_string` on a well-formed
         // `AgentRunExport` should never fail; if it does we still want
@@ -98,13 +92,16 @@ pub fn agent_run_sse(
             match rx.recv().await {
                 Ok(ev) => {
                     let terminate = is_terminal(&ev);
-                    let name = event_name(&ev);
-                    match serde_json::to_string(&ev) {
-                        Ok(payload) => {
-                            yield Ok(Event::default().event(name).data(payload));
+                    // Project the raw RunEvent into the unified envelope,
+                    // advancing the per-connection seq. The event id is a
+                    // fresh ULID (stable per delivered frame).
+                    let unified = projector.project(Ulid::new().to_string(), ev, Utc::now());
+                    match unified_frame(&unified) {
+                        Ok(event) => {
+                            yield Ok(event);
                         }
                         Err(_) => {
-                            // Serialization of a well-formed RunEvent
+                            // Serialization of a well-formed UnifiedEvent
                             // should be infallible; skip on the unexpected
                             // failure rather than killing the stream.
                             continue;
@@ -140,7 +137,9 @@ pub fn agent_run_sse(
 mod tests {
     use super::*;
     use chrono::Utc;
+    use xvision_observability::events::ModelCallFinishedEvent;
     use xvision_observability::types::RunStatus;
+    use xvision_observability::unified_event::UnifiedPayload;
     use xvision_observability::{RunEvent, RunFinishedEvent, RunStartedEvent};
 
     fn run_started(id: &str) -> RunEvent {
@@ -171,15 +170,169 @@ mod tests {
         })
     }
 
-    #[test]
-    fn event_name_maps_each_variant() {
-        assert_eq!(event_name(&run_started("a")), "run_started");
-        assert_eq!(event_name(&run_finished("a")), "run_finished");
+    fn model_call_finished(span: &str) -> RunEvent {
+        RunEvent::ModelCallFinished(ModelCallFinishedEvent {
+            span_id: span.into(),
+            provider: "anthropic".into(),
+            model: "claude".into(),
+            input_token_count: Some(10),
+            output_token_count: Some(5),
+            cost_usd: Some(0.001),
+            prompt_hash: "sha256:abc".into(),
+            response_hash: Some("sha256:def".into()),
+            prompt_text: Some("decide".into()),
+            response_text: Some("{\"action\":\"hold\"}".into()),
+            prompt_payload_ref: None,
+            response_payload_ref: None,
+            tool_calls_requested: None,
+            capability_path: None,
+        })
+    }
+
+    fn projector() -> RunEventProjector {
+        RunEventProjector::new(None, "run_x", EventScope::new("run", Some("run_x".into())))
+    }
+
+    fn sample_export(run_id: &str) -> AgentRunExport {
+        use xvision_observability::export::{ExportAccounting, ExportTotals};
+        AgentRunExport {
+            schema_version: "xvn.agent_run.v3",
+            run_id: run_id.into(),
+            objective: "test".into(),
+            strategy_id: None,
+            eval_run_id: None,
+            status: "running".into(),
+            retention_mode: "full_debug".into(),
+            started_at: Utc::now(),
+            finished_at: None,
+            otel_trace_id: None,
+            totals: ExportTotals::default(),
+            accounting: ExportAccounting::default(),
+            spans: vec![],
+            model_calls: vec![],
+            tool_calls: vec![],
+            approvals: vec![],
+            sandbox_results: vec![],
+            supervisor_notes: vec![],
+            events: vec![],
+            final_artifact: None,
+            sidecar_version: None,
+            cline_sdk_version: None,
+            protocol_version: None,
+            mcp_servers: None,
+            skills: None,
+        }
     }
 
     #[test]
     fn terminal_returns_true_only_for_lifecycle_close() {
         assert!(is_terminal(&run_finished("a")));
         assert!(!is_terminal(&run_started("a")));
+    }
+
+    // WS-8 Part 2 B2: the live tail is projected into the UnifiedEvent
+    // envelope and emitted on the single stable `unified` event name. The
+    // frontend mirror (`api/unified-events.ts`) consumes exactly this shape.
+    #[test]
+    fn projects_run_event_into_unified_envelope() {
+        let mut proj = projector();
+        let ts = Utc::now();
+        let unified = proj.project("ev0", run_started("run_x"), ts);
+        assert_eq!(unified.run_id.as_deref(), Some("run_x"));
+        assert_eq!(unified.seq, 0);
+        assert_eq!(unified.event_name(), "run_started");
+        assert!(matches!(unified.payload, UnifiedPayload::RunStarted(_)));
+    }
+
+    #[test]
+    fn model_call_payload_round_trips_through_the_unified_frame() {
+        // The model-call detail (provider/model/tokens/cost/body/hashes) must
+        // survive serialization into the `unified` SSE frame so the frontend
+        // reconstructs the inspector without a refetch.
+        let mut proj = projector();
+        let unified = proj.project("ev0", model_call_finished("span_m"), Utc::now());
+        assert_eq!(unified.span_id.as_deref(), Some("span_m"));
+        assert_eq!(unified.event_name(), "model_call_finished");
+
+        let frame = unified_frame(&unified).expect("frame serializes");
+        // Re-parse the envelope JSON the way the frontend would. The `Event`
+        // type doesn't expose its data, so we serialize the envelope directly
+        // (the frame carries the SAME JSON via `.data(payload)`).
+        let json: serde_json::Value = serde_json::to_value(&unified).unwrap();
+        assert_eq!(json["payload"]["kind"], "model_call_finished");
+        let data = &json["payload"]["data"];
+        assert_eq!(data["provider"], "anthropic");
+        assert_eq!(data["model"], "claude");
+        assert_eq!(data["input_token_count"], 10);
+        assert_eq!(data["output_token_count"], 5);
+        assert_eq!(data["prompt_text"], "decide");
+        assert_eq!(data["response_hash"], "sha256:def");
+        // The frame exists (no serialization error); its name is the stable one.
+        let _ = frame;
+    }
+
+    #[test]
+    fn projector_assigns_monotonic_seq_across_the_tail() {
+        let mut proj = projector();
+        let ts = Utc::now();
+        let e0 = proj.project("ev0", run_started("run_x"), ts);
+        let e1 = proj.project("ev1", model_call_finished("span_m"), ts);
+        let e2 = proj.project("ev2", run_finished("run_x"), ts);
+        assert_eq!((e0.seq, e1.seq, e2.seq), (0, 1, 2));
+        assert!(e2.is_terminal());
+    }
+
+    // Drive the full `agent_run_sse` stream end-to-end: push a snapshot + a
+    // representative tail through the broadcast channel and assert the response
+    // body carries `event: snapshot` first, then `event: unified` frames whose
+    // data is the projected envelope, and that the stream closes on the
+    // terminal run_finished.
+    #[tokio::test]
+    async fn stream_emits_snapshot_then_unified_frames_and_closes_on_terminal() {
+        use axum::body::to_bytes;
+        use axum::response::IntoResponse;
+
+        let snapshot = sample_export("run_stream");
+        let (tx, rx) = broadcast::channel::<RunEvent>(16);
+
+        // Pre-load the tail so the stream sees it immediately, ending on a
+        // terminal event that closes the loop (otherwise the body never ends).
+        tx.send(model_call_finished("span_m")).unwrap();
+        tx.send(run_finished("run_stream")).unwrap();
+        drop(tx);
+
+        let sse = agent_run_sse(snapshot, rx);
+        let resp = sse.into_response();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+
+        // Snapshot is the first event.
+        assert!(
+            body.contains("event: snapshot"),
+            "missing snapshot frame; body=\n{body}"
+        );
+        // The live tail is on the single `unified` name — NOT per-RunEvent names.
+        assert!(
+            body.contains("event: unified"),
+            "missing unified frame; body=\n{body}"
+        );
+        assert!(
+            !body.contains("event: model_call_finished"),
+            "raw RunEvent name leaked onto the wire; body=\n{body}"
+        );
+        // The model-call detail rode the unified frame (reconstructable, no refetch).
+        assert!(
+            body.contains("\"kind\":\"model_call_finished\""),
+            "unified payload missing model_call_finished kind; body=\n{body}"
+        );
+        assert!(
+            body.contains("\"provider\":\"anthropic\""),
+            "model provider not carried on the unified frame; body=\n{body}"
+        );
+        // Terminal run_finished closed the stream gracefully.
+        assert!(
+            body.contains("\"kind\":\"run_finished\""),
+            "terminal run_finished not emitted; body=\n{body}"
+        );
     }
 }

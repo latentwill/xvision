@@ -5,6 +5,8 @@
 // When the backend lands ts-rs derives, replace this file with the
 // generated bindings.
 
+import type { UnifiedEvent } from "./unified-events";
+
 export type RunStatus =
   | "queued"
   | "running"
@@ -82,7 +84,15 @@ export type SpanKind =
   | "opti.honesty"
   | "opti.judge"
   | "opti.flywheel"
-  | "opti.eval-run";
+  | "opti.eval-run"
+  // WS-8 taxonomy convergence: a synthetic span kind for the bar-level engine
+  // lifecycle signals written to the `events` table (and streamed live as
+  // `engine_event` SSE frames). These were dropped from the trace before WS-8
+  // — projecting each `EngineEvent` onto a `RunSpan` with this kind lets them
+  // flow through the existing tree / inspector / filter machinery. The actual
+  // `EngineEvent.kind` (e.g. `risk_veto`, `order_signed`) is carried in
+  // `attributes.engine_event_kind`; the family/label/color resolve off that.
+  | "engine.event";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are
@@ -552,6 +562,13 @@ export type AgentRunStreamEvent =
   | { event: "summary"; data: AgentRunSummary }
   // Real-branch arms (SSE wire protocol).
   | { event: "snapshot"; data: AgentRunDetail }
+  // WS-8 Part 2 B2: the LIVE tail now arrives as `UnifiedEvent` frames on a
+  // single stable `event: unified` name (the backend projects each `RunEvent`
+  // via `RunEventProjector`). The dock folds these through the shared
+  // fidelity-complete projection so span detail reconstructs without a refetch.
+  // The per-`RunEvent`-name arms below are retained ONLY for the legacy mock
+  // path + back-compat; the real wire no longer emits them.
+  | { event: "unified"; data: UnifiedEvent }
   | { event: "run_started"; data: { run_id: string; objective: string; started_at: string } }
   | { event: "run_finished"; data: { run_id: string; finished_at: string; status: RunStatus } }
   | { event: "run_interrupted"; data: { run_id: string; finished_at: string; reason: string } }

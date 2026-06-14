@@ -5,6 +5,7 @@
 // (KIND_DEF) and flame.jsx (KIND_COLORS).
 
 import type { RunSpan, SpanKind } from "@/api/types-agent-runs";
+import { engineEventStyle } from "./engine-event-kinds";
 
 export type SpanCategory =
   | "agent"
@@ -27,7 +28,12 @@ export type SpanCategory =
   // WS-11b: the candidate's nested eval-run drill-link node. A distinct teal
   // so it reads as a "go look at the actual run" affordance under the
   // experiment, separate from the phase rows.
-  | "opti_eval_run";
+  | "opti_eval_run"
+  // WS-8 typed fallback: a span kind we don't recognise lands here instead of
+  // being silently bucketed into `supervisor` (which read as a confident
+  // "SUPER" badge). An `unknown`-category row still renders — it just shows the
+  // raw kind — so a new/unforeseen kind is never dropped.
+  | "unknown";
 
 type CategoryStyle = {
   hex: string;     // canonical color used everywhere (bar, dot, badge)
@@ -66,7 +72,27 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   // WS-11b: the candidate's eval-run drill-link. Teal, distinct from the
   // cyan phase tint, so the "open the actual run" node stands out.
   opti_eval_run: { hex: "#2dd4bf", label: "EVRUN" },
+  // WS-8 typed fallback. Neutral slate, distinct from every confident family
+  // swatch — a fallback row reads as "uncategorised", not as a known kind.
+  unknown:    { hex: "#64748b", label: "EVENT" },
 };
+
+/**
+ * Span kinds that fall under the `supervisor` category. Enumerated explicitly
+ * (rather than via a catch-all `else`) so a genuinely-unknown kind resolves to
+ * the `unknown` typed fallback instead of being mislabeled as "SUPER". WS-8.
+ */
+const SUPERVISOR_KINDS: ReadonlySet<string> = new Set([
+  "approval.request",
+  "approval.response",
+  "sandbox.exec",
+  "supervisor.review",
+  "financial.eval",
+  "ipc.notification",
+  "skill.invoke",
+  "recovery.attempt",
+  "state.transition",
+]);
 
 export function categoryOf(kind: SpanKind): SpanCategory {
   if (kind === "agent.run" || kind === "agent.plan") return "agent";
@@ -111,9 +137,11 @@ export function categoryOf(kind: SpanKind): SpanCategory {
   // F-4 observability infrastructure spans (state.transition,
   // recovery.attempt) plus the pre-existing approval / sandbox /
   // supervisor / financial.eval kinds all fall under supervisor.
-  // approval.*, sandbox.exec, supervisor.review, financial.eval,
-  // state.transition, recovery.attempt, skill.invoke, ipc.notification
-  return "supervisor";
+  if (SUPERVISOR_KINDS.has(kind)) return "supervisor";
+  // WS-8: anything left — including `engine.event` (resolved per-span by
+  // `categoryOfSpan`) and any future/unforeseen kind — lands in the typed
+  // `unknown` fallback rather than masquerading as "SUPER".
+  return "unknown";
 }
 
 export function spanColor(kind: SpanKind): CategoryStyle {
@@ -134,21 +162,69 @@ export function optiGateColor(
 }
 
 /**
- * Resolve a span's swatch, preferring outcome-aware tints where the kind alone
- * is ambiguous. An `opti.gate` row tints by `attributes.outcome` (kept /
- * suspect / rejected); every other span falls back to the kind-based color.
- *
- * SpanTree uses this so the OPTI gate rows render in their Active/Suspect/
- * Rejected tone rather than a single flat gate colour.
+ * Whether `kind` is a recognised SpanKind (vs. a typed fallback). Used by the
+ * WS-8 parity test and by renderers that want to flag uncategorised rows.
+ * `engine.event` is recognised (it resolves per-span) even though a bare
+ * `categoryOf` lookup buckets it as `unknown`.
  */
-export function spanColorForSpan(span: RunSpan): CategoryStyle {
+export function isKnownSpanKind(kind: SpanKind | string): boolean {
+  if (kind === "engine.event") return true;
+  return categoryOf(kind as SpanKind) !== "unknown";
+}
+
+/**
+ * Span-aware category. Identical to {@link categoryOf} for ordinary spans, but
+ * for `engine.event` rows it derives the visual family from the carried
+ * `attributes.engine_event_kind` (risk / order / regime / memory / …) so the
+ * engine-event timeline reads as its true family instead of a flat blob.
+ *
+ * Engine-event families don't map 1:1 onto SpanCategory (e.g. `risk`, `order`,
+ * `memory` have no span equivalent), so engine-event color/label come from the
+ * engine-event palette via {@link spanColorForSpan}. This function returns a
+ * coarse `SpanCategory` only for the filter machinery; `unknown` here just
+ * means "not one of the span categories" (the row still renders).
+ */
+export function categoryOfSpan(span: Pick<RunSpan, "kind" | "attributes">): SpanCategory {
+  if (span.kind === "engine.event") {
+    // Engine events live in their own family taxonomy; for the SpanCategory
+    // filter they all read as `decision`-adjacent lifecycle, but the precise
+    // color comes from `spanColorForSpan`. Keep them out of `unknown` so the
+    // filter machinery treats a known engine event as categorised.
+    const ek = engineEventKindOf(span);
+    return ek ? "decision" : "unknown";
+  }
+  return categoryOf(span.kind);
+}
+
+/**
+ * Span-aware color + label. For `engine.event` rows the swatch comes from the
+ * engine-event family palette (`engine-event-kinds.ts`); for everything else
+ * it's the span palette. Unknown kinds (span or engine) render the neutral
+ * fallback swatch — never blank.
+ */
+export function spanColorForSpan(
+  span: Pick<RunSpan, "kind" | "attributes">,
+): CategoryStyle {
   if (span.kind === "opti.gate") {
     const outcome = (span.attributes as { outcome?: unknown }).outcome;
     if (outcome === "kept" || outcome === "suspect" || outcome === "rejected") {
       return optiGateColor(outcome);
     }
   }
+  if (span.kind === "engine.event") {
+    const ek = engineEventKindOf(span);
+    if (ek) return engineEventStyle(ek);
+    return CATEGORY_STYLES.unknown;
+  }
   return spanColor(span.kind);
+}
+
+/** Read the carried `EngineEvent.kind` off an `engine.event` span. */
+export function engineEventKindOf(
+  span: Pick<RunSpan, "attributes">,
+): string | null {
+  const v = (span.attributes ?? {})["engine_event_kind"];
+  return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 /** rgba helper for opacity-tinted backgrounds — matches the prototype's hexA(). */
