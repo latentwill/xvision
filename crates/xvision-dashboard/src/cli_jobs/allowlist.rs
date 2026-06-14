@@ -167,7 +167,7 @@ const DENYLIST_SUBCOMMANDS: &[&str] = &[
     "mcp",            // starts an MCP server/session
     "fire-trade",     // explicit live order smoke test
     "close-position", // explicit live position mutation
-    "migrate",        // applies migrations/seeds to the dashboard host
+    "init",           // initializes/migrates the dashboard host DB (alias: migrate)
 ];
 
 /// Top-level commands that are supported through the remote CLI job API.
@@ -192,7 +192,7 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "gate",
     "indicator",
     "metrics",
-    // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
+    // "init" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
     "optimize", // bounded via STRICT_TEMPLATES (optimize run only)
@@ -407,7 +407,7 @@ pub fn devmode_enabled() -> bool {
 ///
 /// With dev mode **on** it is a FULL bypass — every non-empty argv is allowed,
 /// including the live-trade (`fire-trade`, `close-position`) and host-admin
-/// (`migrate`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
+/// (`init`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
 /// explicit per-node opt-in (set [`DEVMODE_ENV`] only on a trusted dev node
 /// with no live broker credentials); it does NOT replace the (pending) auth
 /// gate.
@@ -716,8 +716,8 @@ mod tests {
     }
 
     #[test]
-    fn top_level_migrate_is_rejected() {
-        assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
+    fn top_level_init_is_rejected() {
+        assert_reject(&["init", "--dry-run"], "not allowed over remote cli");
     }
 
     // ── write-path gaps we still want blocked remotely ───────────────────
