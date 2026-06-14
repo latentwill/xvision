@@ -593,6 +593,7 @@ mod tests {
             is_run_terminator: false,
             input_hash: "h".into(),
             input_payload_ref: None,
+            input_text: None,
         });
         let finished = RunEvent::RunFinished(RunFinishedEvent {
             run_id: "run_9".into(),

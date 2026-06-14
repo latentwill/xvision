@@ -7,6 +7,7 @@ import type { PublishDraft } from "@/features/marketplace/data/types";
 
 const happyDraft: PublishDraft = {
   strategyId: "local-btc-momentum",
+  name: "BTC Momentum",
   listable: [
     { ok: true, label: "Strategy exists in your XVN" },
     { ok: true, label: "Declares an asset universe" },
@@ -103,5 +104,31 @@ describe("Step2Configure", () => {
     expect(onUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ acceptedPayers: { humans: true, agents: false } }),
     );
+  });
+
+  // QA fix: the listing name is editable at mint and pre-filled with the
+  // strategy's display name so listings never render "Strategy #N".
+  it("listing name input shows the draft name (defaulted to the strategy name)", () => {
+    render(<Step2Configure draft={happyDraft} onUpdate={vi.fn()} onNext={vi.fn()} />);
+    expect(screen.getByTestId("listing-name-input")).toHaveValue("BTC Momentum");
+  });
+
+  it("editing the listing name calls onUpdate with the new name", () => {
+    const onUpdate = vi.fn();
+    render(<Step2Configure draft={happyDraft} onUpdate={onUpdate} onNext={vi.fn()} />);
+    fireEvent.change(screen.getByTestId("listing-name-input"), {
+      target: { value: "My Renamed Listing" },
+    });
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "My Renamed Listing" }),
+    );
+  });
+
+  it("Continue is disabled when the listing name is blank even if all checks pass", () => {
+    render(
+      <Step2Configure draft={{ ...happyDraft, name: "   " }} onUpdate={vi.fn()} onNext={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    expect(screen.getByText(/Give your listing a name/)).toBeInTheDocument();
   });
 });

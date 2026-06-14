@@ -107,8 +107,8 @@ async fn seed_run(pool: &SqlitePool) {
         span_id: model_span.clone(),
         run_id: RUN_ID.into(),
         parent_span_id: Some(root_span.clone()),
-        kind: SpanKind::ModelCall,
-        name: "model.call.plan".into(),
+        kind: SpanKind::DecisionModel,
+        name: "decision.model.plan".into(),
         started_at: fixed_ts(2),
         otel_trace_id: Some("trace_export_fixture".into()),
         otel_span_id: Some("span_model_otel".into()),
@@ -166,6 +166,7 @@ async fn seed_run(pool: &SqlitePool) {
         is_run_terminator: false,
         input_hash: "sha256:in_fixture".into(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await;
     bus.publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
@@ -173,6 +174,7 @@ async fn seed_run(pool: &SqlitePool) {
         output_hash: Some("sha256:out_fixture".into()),
         output_payload_ref: None,
         exit_code: Some(0),
+        output_text: None,
     }))
     .await;
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {

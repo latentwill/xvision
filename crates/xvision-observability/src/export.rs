@@ -1088,6 +1088,16 @@ fn parse_model_call_payload(payload_json: Option<&str>) -> (Option<String>, Opti
     (prompt, response)
 }
 
+/// Extract a single string field (`input` / `output`) from a
+/// `tool_call_payload` side-row's `payload_json`. Mirrors
+/// `parse_model_call_payload`, but tool input and output arrive on
+/// separate events so each is reconstructed independently.
+fn parse_tool_call_payload_field(payload_json: Option<&str>, field: &str) -> Option<String> {
+    let raw = payload_json?;
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    json_field_to_text(value.get(field))
+}
+
 async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCallRow>, ExportError> {
     // The `tool_call_payload` correlated subquery mirrors the
     // `model_call_payload` reconstruction on `load_model_calls`: WS-5
@@ -1102,8 +1112,15 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
                 (SELECT e.payload_json \
                    FROM events e \
                   WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.input') IS NOT NULL \
                   ORDER BY e.created_at DESC, e.id DESC \
-                  LIMIT 1) AS tool_call_payload_json \
+                  LIMIT 1) AS tool_input_payload_json, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.output') IS NOT NULL \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS tool_output_payload_json \
          FROM tool_calls tc \
          JOIN spans s ON s.id = tc.span_id \
          WHERE s.run_id = ? \
@@ -1117,8 +1134,10 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
         .map(|r| {
             let requires_approval: i64 = r.try_get("requires_approval")?;
             let is_run_terminator: i64 = r.try_get("is_run_terminator")?;
-            let payload_json: Option<String> = r.try_get("tool_call_payload_json")?;
-            let (input_text, output_text) = parse_tool_call_payload(payload_json.as_deref());
+            let input_payload_json: Option<String> = r.try_get("tool_input_payload_json")?;
+            let output_payload_json: Option<String> = r.try_get("tool_output_payload_json")?;
+            let input_text = parse_tool_call_payload_field(input_payload_json.as_deref(), "input");
+            let output_text = parse_tool_call_payload_field(output_payload_json.as_deref(), "output");
             Ok(ToolCallRow {
                 span_id: r.try_get("span_id")?,
                 tool_name: r.try_get("tool_name")?,
@@ -1140,23 +1159,6 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
             })
         })
         .collect()
-}
-
-/// Reconstruct `(input, output)` text from a `tool_call_payload` event.
-/// Mirrors [`parse_model_call_payload`]: a string field is taken verbatim;
-/// a structured (object/array) field is re-serialized so the export still
-/// carries the body. Returns `(None, None)` on absent / invalid JSON.
-fn parse_tool_call_payload(payload_json: Option<&str>) -> (Option<String>, Option<String>) {
-    let Some(raw) = payload_json else {
-        return (None, None);
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return (None, None);
-    };
-    (
-        json_field_to_text(value.get("input")),
-        json_field_to_text(value.get("output")),
-    )
 }
 
 /// Coerce a JSON field into display text: strings pass through; other
@@ -1502,7 +1504,7 @@ mod blob_owner_tests {
     async fn seed_span(pool: &SqlitePool, span_id: &str, run_id: &str) {
         sqlx::query(
             "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
-             VALUES (?1, ?2, 'model.call', 'm', 'ok', '2026-05-17T16:00:01Z')",
+             VALUES (?1, ?2, 'decision.model', 'm', 'ok', '2026-05-17T16:00:01Z')",
         )
         .bind(span_id)
         .bind(run_id)
