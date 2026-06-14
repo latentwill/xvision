@@ -45,8 +45,8 @@ pub use events::{
     ToolCallFinishedEvent, ToolCallStartedEvent,
 };
 pub use export::{
-    build_export, build_report, find_blob_owner, render_report, AgentRunExport, AgentRunReport, ExportError,
-    ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
+    build_export, build_export_with_blobs, build_report, find_blob_owner, render_report, AgentRunExport,
+    AgentRunReport, ExportError, ExportEvent, ExportTotals, FinalArtifact, SpanNode, SCHEMA_VERSION,
 };
 pub use harness_recorder::HarnessRecorder;
 pub use janitor::{

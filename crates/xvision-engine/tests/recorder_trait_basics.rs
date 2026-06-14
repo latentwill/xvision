@@ -25,6 +25,8 @@ fn sample_tool_call() -> ToolCallRow {
         tool_hash: None,
         input_hash: "sha256:0".into(),
         output_hash: None,
+        input_text: None,
+        output_text: None,
         input_payload_ref: None,
         output_payload_ref: None,
         side_effect_level: "pure".into(),

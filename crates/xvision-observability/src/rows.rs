@@ -88,6 +88,13 @@ pub struct ToolCallRow {
     pub tool_hash: Option<String>,
     pub input_hash: String,
     pub output_hash: Option<String>,
+    /// Inlined tool input body. Populated by the export when a blob store
+    /// is supplied and `input_payload_ref` resolves; otherwise `None`.
+    #[serde(default)]
+    pub input_text: Option<String>,
+    /// Inlined tool output body. Same population rule as `input_text`.
+    #[serde(default)]
+    pub output_text: Option<String>,
     pub input_payload_ref: Option<String>,
     pub output_payload_ref: Option<String>,
     pub side_effect_level: String,
