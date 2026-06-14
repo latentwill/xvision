@@ -3495,6 +3495,11 @@ async fn build_backtest_executor(
 enum LiveVenue {
     AlpacaPaper,
     OrderlyTestnet,
+    /// Orderly Network mainnet (real-money) perps execution while Alpaca
+    /// supplies the live market-data stream. Gated by `broker_creds_ref =
+    /// "orderly_mainnet"`; the default `ORDERLY_BASE_URL` (api-evm.orderly.org)
+    /// is mainnet, so a testnet URL on this venue is rejected fail-closed.
+    OrderlyMainnet,
     /// Byreal perps (executes on Hyperliquid via the perps CLI) while Alpaca
     /// supplies the live market-data stream. Mainnet is gated by `venue_label`,
     /// network consistency, real-money acknowledgement, and the `SafetyGate`.
@@ -3543,6 +3548,26 @@ fn resolve_live_venue(
                 )));
             }
             Ok(LiveVenue::OrderlyTestnet)
+        }
+        "orderly_mainnet" => {
+            // Real-money mainnet. ORDERLY_BASE_URL is OPTIONAL here: when unset
+            // or blank, OrderlyLiveSurface::from_env() defaults to the
+            // production gateway (https://api-evm.orderly.org). Fail-closed
+            // mirror of the testnet guard — if a URL *is* provided it must NOT
+            // be a testnet gateway, so a stale testnet env can never silently
+            // masquerade as mainnet. We echo the offending URL (a non-secret
+            // gateway hostname) to make the misconfig obvious.
+            if let Some(url) = orderly_base_url.map(str::trim).filter(|s| !s.is_empty()) {
+                if url.to_ascii_lowercase().contains("testnet") {
+                    return Err(ApiError::Validation(format!(
+                        "live_config.broker_creds_ref 'orderly_mainnet' is real-money mainnet, but \
+                         ORDERLY_BASE_URL points at a testnet gateway containing 'testnet' \
+                         (got '{url}'). Unset ORDERLY_BASE_URL to use the mainnet default \
+                         (https://api-evm.orderly.org), or point it at the mainnet gateway."
+                    )));
+                }
+            }
+            Ok(LiveVenue::OrderlyMainnet)
         }
         "byreal" => {
             // Byreal perps execute on Hyperliquid via the perps CLI; the live
@@ -3611,9 +3636,10 @@ fn resolve_live_venue(
             Ok(LiveVenue::Hyperliquid)
         }
         other => Err(ApiError::Validation(format!(
-            "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
+            "live_config.broker_creds_ref '{other}' is not supported. \
              Supported venues: \"alpaca\" (Alpaca paper trading), \"orderly_testnet\" \
-             (Orderly Network testnet execution with Alpaca market data), \"byreal\" \
+             (Orderly Network testnet execution with Alpaca market data), \"orderly_mainnet\" \
+             (Orderly Network mainnet / real-money execution with Alpaca market data), \"byreal\" \
              (Byreal perps on Hyperliquid via the perps CLI with Alpaca market data; \
              network from BYREAL_NETWORK, mainnet gated by venue_label=Live), \
              \"degen_arena\" (Degen Arena / Hyperliquid perps with Alpaca market data; \
@@ -3632,15 +3658,26 @@ fn resolve_live_venue(
 /// Live) but pointed the network env at another (e.g. testnet), which would
 /// produce a silently-wrong execution. Rejecting at build-time gives a clearer
 /// error than a runtime gate denial and catches both directions: Live-label +
-/// testnet-network and Testnet-label + mainnet-network. Fixed-label venues
-/// (Alpaca = Paper, Orderly = Testnet) are a no-op.
+/// testnet-network and Testnet-label + mainnet-network. Fixed paper/testnet
+/// venues are a no-op; fixed mainnet venues must use `venue_label=Live`.
 fn check_venue_label_network(venue: LiveVenue, run: VenueLabel, broker: VenueLabel) -> ApiResult<()> {
+    if venue == LiveVenue::OrderlyMainnet {
+        if run != VenueLabel::Live || broker != VenueLabel::Live {
+            return Err(ApiError::Validation(format!(
+                "OrderlyMainnet run venue_label ({run:?}) must be Live; \
+                 broker label resolved to {broker:?}."
+            )));
+        }
+        return Ok(());
+    }
+
     // Only the network-derived real-money venues carry a testnet/mainnet split;
-    // Alpaca (Paper) and Orderly (Testnet) have a fixed label and are a no-op.
+    // Alpaca (Paper) and Orderly testnet have a fixed non-mainnet label and are a no-op.
     let env_var = match venue {
         LiveVenue::ByrealLive => "BYREAL_NETWORK",
         LiveVenue::Hyperliquid => "HL_NETWORK",
         LiveVenue::DegenArena => "DEGEN_HL_NETWORK",
+        LiveVenue::OrderlyMainnet => return Ok(()),
         LiveVenue::AlpacaPaper | LiveVenue::OrderlyTestnet => return Ok(()),
     };
     if run != broker {
@@ -3661,6 +3698,7 @@ fn check_venue_label_network(venue: LiveVenue, run: VenueLabel, broker: VenueLab
 /// Rules:
 /// - `AlpacaPaper` → `Paper` (Alpaca paper trading, no real money).
 /// - `OrderlyTestnet` → `Testnet` (Orderly testnet, on-chain but no real funds).
+/// - `OrderlyMainnet` → `Live` (real-money Orderly perps).
 /// - `ByrealLive` → from `byreal_network`: "testnet" (case-insensitive) →
 ///   `Testnet`; anything else (unset, empty, "mainnet", …) → `Live`. Unset/empty
 ///   is the production-mainnet default for the perps CLI, so we fail safe to the
@@ -3692,6 +3730,7 @@ fn broker_label_for(
     match venue {
         LiveVenue::AlpacaPaper => VenueLabel::Paper,
         LiveVenue::OrderlyTestnet => VenueLabel::Testnet,
+        LiveVenue::OrderlyMainnet => VenueLabel::Live,
         LiveVenue::ByrealLive => label_from_network(byreal_network),
         LiveVenue::DegenArena => label_from_network(degen_network),
         LiveVenue::Hyperliquid => label_from_network(hl_network),
@@ -3745,6 +3784,12 @@ async fn build_live_executor(
         }
         LiveVenue::OrderlyTestnet => {
             "no Alpaca credentials configured for Live run: Orderly testnet runs still need Alpaca \
+             credentials because Alpaca supplies the live market-data stream while Orderly executes \
+             the orders. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
+                .to_string()
+        }
+        LiveVenue::OrderlyMainnet => {
+            "no Alpaca credentials configured for Live run: Orderly mainnet runs still need Alpaca \
              credentials because Alpaca supplies the live market-data stream while Orderly executes \
              the orders. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
                 .to_string()
@@ -3815,6 +3860,10 @@ async fn build_live_executor(
             LiveVenue::OrderlyTestnet => Arc::new(
                 OrderlyLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
+            ),
+            LiveVenue::OrderlyMainnet => Arc::new(
+                OrderlyLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Orderly mainnet broker: {e}")))?,
             ),
             LiveVenue::ByrealLive => Arc::new(
                 ByrealLiveSurface::from_env()
@@ -5056,6 +5105,42 @@ mod tests {
         );
     }
 
+    // --- resolve_live_venue (Orderly mainnet live venue, 2026-06-14) --------
+
+    #[test]
+    fn live_venue_orderly_mainnet_accepts_default_and_mainnet_base_url() {
+        // Unset / empty ORDERLY_BASE_URL falls back to the mainnet default
+        // (api-evm.orderly.org); an explicit mainnet URL is also accepted.
+        for url in [None, Some(""), Some("   "), Some("https://api-evm.orderly.org")] {
+            assert_eq!(
+                resolve_live_venue("orderly_mainnet", url, None, None, None).unwrap(),
+                LiveVenue::OrderlyMainnet,
+                "url {url:?} should resolve to OrderlyMainnet",
+            );
+        }
+    }
+
+    #[test]
+    fn live_venue_orderly_mainnet_rejects_testnet_base_url() {
+        // Mirror-image of the testnet guard: a real-money "mainnet" venue must
+        // never run against a testnet gateway via a stale-env mistake
+        // (fail-closed), case-insensitively.
+        for url in [
+            "https://testnet-api-evm.orderly.org",
+            "https://TESTNET-api-evm.orderly.org",
+        ] {
+            let err = resolve_live_venue("orderly_mainnet", Some(url), None, None, None)
+                .expect_err("orderly_mainnet with a testnet ORDERLY_BASE_URL must be rejected");
+            let msg = err.to_string();
+            assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+            assert!(
+                msg.contains("testnet"),
+                "must explain the testnet/mainnet mismatch: {msg}"
+            );
+            assert!(msg.contains("ORDERLY_BASE_URL"), "must name the env var: {msg}");
+        }
+    }
+
     #[test]
     fn live_venue_byreal_requires_testnet_network() {
         // After the mainnet parity lift, byreal resolves to ByrealLive for ALL
@@ -5115,6 +5200,10 @@ mod tests {
         assert!(
             msg.contains("\"orderly_testnet\""),
             "must name orderly_testnet: {msg}"
+        );
+        assert!(
+            msg.contains("\"orderly_mainnet\""),
+            "must name orderly_mainnet: {msg}"
         );
         assert!(msg.contains("\"byreal\""), "must name byreal: {msg}");
         assert!(msg.contains("\"degen_arena\""), "must name degen_arena: {msg}");
@@ -5875,13 +5964,27 @@ mod check_venue_label_network_tests {
 
     #[test]
     fn fixed_label_venues_are_noop_even_on_mismatch() {
-        // Alpaca/Orderly have a fixed label and no network split — never error.
+        // Alpaca/Orderly testnet have a fixed non-mainnet label and no network split — never error.
         for venue in [LiveVenue::AlpacaPaper, LiveVenue::OrderlyTestnet] {
             assert!(
                 check_venue_label_network(venue, VenueLabel::Paper, VenueLabel::Live).is_ok(),
                 "{venue:?}: fixed-label venue must be a no-op"
             );
         }
+    }
+
+    #[test]
+    fn orderly_mainnet_requires_live_run_label() {
+        assert!(
+            check_venue_label_network(LiveVenue::OrderlyMainnet, VenueLabel::Live, VenueLabel::Live).is_ok(),
+            "OrderlyMainnet Live + Live must be Ok"
+        );
+        let err = check_venue_label_network(LiveVenue::OrderlyMainnet, VenueLabel::Testnet, VenueLabel::Live)
+            .expect_err("OrderlyMainnet must require venue_label=Live");
+        assert!(
+            err.to_string().contains("OrderlyMainnet"),
+            "error must name OrderlyMainnet: {err}"
+        );
     }
 }
 
@@ -5909,6 +6012,15 @@ mod broker_label_for_tests {
             broker_label_for(LiveVenue::OrderlyTestnet, None, None, None),
             VenueLabel::Testnet,
             "OrderlyTestnet → Testnet"
+        );
+    }
+
+    #[test]
+    fn orderly_mainnet_maps_to_live() {
+        assert_eq!(
+            broker_label_for(LiveVenue::OrderlyMainnet, None, None, None),
+            VenueLabel::Live,
+            "OrderlyMainnet → Live"
         );
     }
 
