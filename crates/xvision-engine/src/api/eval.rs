@@ -3788,10 +3788,10 @@ async fn build_live_executor(
     };
     if venue == LiveVenue::AlpacaPaper && !trade_base_url.contains("paper-api.alpaca.markets") {
         return Err(ApiError::Validation(format!(
-            "current live mode is Alpaca paper trading only; \
+            "Alpaca live execution is paper-only; \
              APCA_API_BASE_URL must point at https://paper-api.alpaca.markets \
              (got '{trade_base_url}'). \
-             Real-money and other venues are out of scope for the current live scope."
+             For real-money trading use a perps venue (byreal, hyperliquid, degen_arena)."
         )));
     }
 

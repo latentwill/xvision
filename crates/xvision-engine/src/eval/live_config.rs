@@ -92,11 +92,12 @@ impl StopPolicy {
 /// Launch envelope for a Live run. Persisted as
 /// `eval_runs.live_config_json` (Phase B migration).
 ///
-/// **Current live scope: Alpaca paper trading only.** Live mode sends
-/// orders to `https://paper-api.alpaca.markets` — real market data,
-/// paper (simulated) money. Real-money venues (`VenueLabel::Live`) are
-/// rejected at validation until the per-strategy verdict + kill-switch
-/// hardening lands.
+/// **Live scope:** Alpaca = paper (`https://paper-api.alpaca.markets`,
+/// real market data + simulated money), Orderly = testnet, and the
+/// real-money perps venues (Byreal, Hyperliquid, Degen Arena) when
+/// `venue_label = Live`. Every live submit passes the `SafetyGate`
+/// (a non-Live run can never reach a Live broker); `venue_label = Live`
+/// is rejected here for non-real-money creds (Alpaca/Orderly).
 ///
 /// `strategy_id` references the strategy artifact that drives the run.
 /// `assets` is a non-empty list of whitelisted assets; each is fanned out
@@ -351,10 +352,10 @@ impl std::fmt::Display for LiveConfigValidationError {
                 "stop_policy.time_limit_secs {secs} exceeds the {max}-second hard cap"
             ),
             Self::VenueLabelLiveRejected => f.write_str(
-                "real-money live (venue_label = Live) is not yet supported; \
-                 current live mode is Alpaca paper trading only \
-                 (https://paper-api.alpaca.markets). \
-                 Set venue_label = Paper (or omit it) to use the current live scope.",
+                "venue_label = Live (real money) is only allowed for real-money perps \
+                 venues (broker_creds_ref one of: byreal, hyperliquid, degen_arena). \
+                 Alpaca is paper and Orderly is testnet — set venue_label = Paper / \
+                 Testnet (or omit it) for those.",
             ),
             Self::CapitalNotPositive { initial } => {
                 write!(f, "capital.initial must be > 0 (got {initial})")
@@ -615,6 +616,22 @@ mod tests {
             cfg.validate().is_ok(),
             "byreal + VenueLabel::Live must pass validation after the mainnet parity lift"
         );
+    }
+
+    #[test]
+    fn live_label_allowed_for_real_money_perps_venues() {
+        // Every real-money venue in REAL_MONEY_CREDS must accept venue_label=Live
+        // (native Hyperliquid + Degen Arena, alongside byreal). The SafetyGate
+        // still gates the actual submit.
+        for creds in ["hyperliquid", "degen_arena"] {
+            let mut cfg = valid_config();
+            cfg.broker_creds_ref = creds.into();
+            cfg.venue_label = VenueLabel::Live;
+            assert!(
+                cfg.validate().is_ok(),
+                "{creds} + VenueLabel::Live must pass validation (real-money venue)"
+            );
+        }
     }
 
     #[test]
