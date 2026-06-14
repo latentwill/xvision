@@ -22,6 +22,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    getStrategyRequirements: vi.fn(),
     patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     deleteStrategy: vi.fn(),
@@ -156,6 +157,10 @@ beforeEach(() => {
       default_model: null,
   });
   vi.mocked(strategyApi.deleteStrategy).mockResolvedValue(undefined);
+  vi.mocked(strategyApi.getStrategyRequirements).mockResolvedValue({
+    requirements: [],
+    all_models_satisfied: true,
+  });
 });
 
 afterEach(() => {

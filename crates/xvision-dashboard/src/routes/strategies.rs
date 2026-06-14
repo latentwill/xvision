@@ -15,7 +15,7 @@ use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
     set_mechanistic_config, set_pipeline, set_risk_config, update_inspector, update_metadata, update_slot,
     validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq,
-    SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    SetPipelineReq, StrategyAgentsOut, StrategyRequirements, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -118,6 +118,17 @@ pub async fn get(
 ) -> Result<Json<Strategy>, DashboardError> {
     let strategy = strategy::get(&state.api_context(), &id).await?;
     Ok(Json(strategy))
+}
+
+/// `GET /api/strategy/:id/requirements` — per-strategy model/skill/tool
+/// readiness for the buyer's machine. The Strategy detail page renders these
+/// and gates the eval/go-live action when `all_models_satisfied` is false.
+pub async fn requirements(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<StrategyRequirements>, DashboardError> {
+    let req = strategy::strategy_requirements(&state.api_context(), &id).await?;
+    Ok(Json(req))
 }
 
 /// `POST /api/strategy/:id/clone` — duplicate a strategy draft for editing.

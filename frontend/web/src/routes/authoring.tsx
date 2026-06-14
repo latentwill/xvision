@@ -10,6 +10,7 @@ import {
   addStrategyAgent,
   deleteStrategy,
   getStrategy,
+  getStrategyRequirements,
   patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
@@ -26,12 +27,13 @@ import {
   type PipelineKind,
   type RiskConfig,
   type Strategy,
+  type StrategyRequirements,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
 // `FiringSection` is still exported from `@/components/strategy` for the
 // deferred per-agent filter composer; re-add it to this import when
 // un-deferring (see authoring.tsx FilterCard wiring below).
-import { FilterCard } from "@/components/strategy";
+import { FilterCard, StrategyRequirementChip } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
@@ -240,6 +242,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
       <ManifestCard strategy={strategy} />
+      <RequirementsCard strategyId={strategy.manifest.id} />
       <FilterCard strategy={strategy} />
       {isMechanistic ? (
         <MechanisticConfigCard strategy={strategy} />
@@ -249,6 +252,105 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
       <RiskCard strategy={strategy} />
       <ValidationCard strategy={strategy} />
     </>
+  );
+}
+
+// QA #4 + Q1: a purchased strategy may reference models/skills the buyer
+// hasn't configured locally. This full-width inline card (no right sidebar —
+// chat-rail rule) lists each requirement as satisfied (✓) or missing (⚠) with
+// a Configure CTA. Missing MODEL requirements gate the eval/go-live action in
+// `InspectorActions`; skills warn and tools are informational.
+function configureTargetFor(kind: string): string {
+  // Models live under Settings → Providers; everything else (skills, tools)
+  // routes to the Settings root.
+  return kind === "model" ? "/settings/providers" : "/settings";
+}
+
+function RequirementsCard({ strategyId }: { strategyId: string }) {
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+
+  if (requirementsQ.isPending) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Checking the models and skills this strategy needs on your machine..."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-text-3">Loading…</div>
+      </Card>
+    );
+  }
+  if (requirementsQ.isError) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Could not load this strategy's requirements."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-danger">
+          {errorMessage(requirementsQ.error)}
+        </div>
+      </Card>
+    );
+  }
+
+  const data = requirementsQ.data;
+  const requirements = data.requirements ?? [];
+  if (requirements.length === 0) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="This strategy declares no model, skill, or tool requirements."
+        />
+      </Card>
+    );
+  }
+
+  const missing = requirements.filter((r) => !r.satisfied);
+  const hint = data.all_models_satisfied
+    ? "All required models are configured on this machine."
+    : "Some required models are not configured — configure them before running eval.";
+
+  return (
+    <Card>
+      <SectionHeader label="Requirements" hint={hint} />
+      <div className="px-5 pt-4 pb-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {requirements.map((requirement) => (
+            <StrategyRequirementChip
+              key={`${requirement.kind}:${requirement.name}`}
+              requirement={requirement}
+            />
+          ))}
+        </div>
+        {missing.length > 0 ? (
+          <ul className="space-y-1.5">
+            {missing.map((requirement) => (
+              <li
+                key={`missing:${requirement.kind}:${requirement.name}`}
+                className="flex flex-wrap items-center gap-2 text-[12px] text-text-2"
+              >
+                <span className="font-mono text-text">{requirement.name}</span>
+                {requirement.hint ? (
+                  <span className="text-text-3">— {requirement.hint}</span>
+                ) : null}
+                <Link
+                  to={configureTargetFor(requirement.kind)}
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[12px] font-medium text-text hover:border-text-3"
+                >
+                  Configure
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </Card>
   );
 }
 
@@ -1620,6 +1722,18 @@ function InspectorActions({
       navigate("/strategies");
     },
   });
+  // QA #4 + Q1: gate the eval/go-live action when a required MODEL is
+  // unsatisfied. Inspect/edit stays allowed. While this query is still
+  // loading we keep the action enabled (don't flash a gate) — the gate only
+  // engages once we KNOW a model is unconfigured.
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+  const requirements: StrategyRequirements | undefined = requirementsQ.data;
+  const modelsBlocked =
+    requirements !== undefined && requirements.all_models_satisfied === false;
 
   function onDelete() {
     const label = strategy?.manifest.display_name || strategyId;
@@ -1670,6 +1784,37 @@ function InspectorActions({
           Go to agents
         </a>
         {deleteButton}
+      </div>
+    );
+  }
+
+  if (modelsBlocked) {
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-5">
+        {deleteMut.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(deleteMut.error)}
+          </span>
+        ) : null}
+        <span className="text-[12px] text-amber-700 dark:text-amber-300">
+          Configure the required model(s) before running.
+        </span>
+        <Link
+          to="/settings/providers"
+          className="inline-flex items-center gap-1 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text hover:border-text-3"
+        >
+          Configure
+        </Link>
+        {deleteButton}
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          title="Configure the required model(s) before running"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold/40 text-bg cursor-not-allowed"
+        >
+          Run eval →
+        </button>
       </div>
     );
   }

@@ -22,6 +22,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    getStrategyRequirements: vi.fn(),
     patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     setRiskConfig: vi.fn(),
@@ -144,6 +145,10 @@ beforeEach(() => {
 
   vi.mocked(agentApi.listAgents).mockResolvedValue([baseAgent]);
   vi.mocked(strategyApi.getStrategy).mockResolvedValue(baseStrategy);
+  vi.mocked(strategyApi.getStrategyRequirements).mockResolvedValue({
+    requirements: [],
+    all_models_satisfied: true,
+  });
   vi.mocked(chartApi.getStrategyChart).mockResolvedValue({
     strategy_id: "01TEST",
     run_series: [],

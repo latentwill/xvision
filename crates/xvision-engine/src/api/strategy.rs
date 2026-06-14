@@ -142,6 +142,51 @@ pub struct ProviderModelPair {
     pub model: String,
 }
 
+/// One requirement a strategy places on the buyer's machine — a model the
+/// agents need, a skill they reference, or a tool they may invoke.
+///
+/// QA #4 + Q1: a purchased strategy opens fully, but its models/skills may
+/// not be configured locally. The Strategy detail page renders these so the
+/// operator sees each gap (and whether it blocks eval). Only `model`
+/// requirements gate eval/go-live; skills surface as warnings and tools are
+/// purely informational (the engine has no installed-MCP inventory).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Requirement {
+    /// Display label: `"provider/model"` for a model, the skill name (or its
+    /// id when unresolvable) for a skill, the tool name for a tool.
+    pub name: String,
+    /// One of `"model"`, `"skill"`, `"tool"`.
+    pub kind: String,
+    pub satisfied: bool,
+    /// Why an unsatisfied requirement fails — the `ProviderUnavailable`
+    /// reason discriminant for models, a short note for missing skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Human-readable next step (e.g. the provider hint pointing at Settings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// Requirements report for a single strategy. `all_models_satisfied` is the
+/// gate the dashboard reads to enable/disable the eval + go-live action.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyRequirements {
+    pub requirements: Vec<Requirement>,
+    /// True iff every `kind == "model"` requirement is satisfied. Skills and
+    /// tools never affect this — they don't gate eval.
+    pub all_models_satisfied: bool,
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -659,6 +704,150 @@ fn push_unique_provider_model(inventory: &mut ProviderModelInventory, provider: 
             .provider_models
             .push(ProviderModelPair { provider, model });
     }
+}
+
+/// Resolve every model/skill/tool a strategy requires against the buyer's
+/// local config, returning each as satisfied or missing.
+///
+/// Audit-emitting public entrypoint; the dashboard route calls this. Walks
+/// `strategy.agents` exactly like `provider_model_inventory`: each AgentRef
+/// → its `Agent` → each slot's `(provider, model)` (gated through
+/// `resolve_provider`), `skill_ids` (checked against the skill registry),
+/// and `allowed_tools` (informational, always satisfied). De-dups identical
+/// `(kind, name)` entries so multi-agent model/skill reuse shows once.
+pub async fn strategy_requirements(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyRequirements> {
+    let started = Instant::now();
+    let result = strategy_requirements_inner(ctx, strategy_id).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "requirements",
+        Some(strategy_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn strategy_requirements_inner(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyRequirements> {
+    use crate::api::settings::providers::resolve_provider;
+
+    let strategy = get_inner(ctx, strategy_id).await?;
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let cfg_path = runtime_config_path(ctx);
+
+    let mut requirements: Vec<Requirement> = Vec::new();
+    // De-dup key: (kind, name). Multi-agent strategies reuse the same model
+    // / skill across slots; the panel shows each requirement once.
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+
+    let mut push = |req: Requirement, seen: &mut BTreeSet<(String, String)>| {
+        if seen.insert((req.kind.clone(), req.name.clone())) {
+            requirements.push(req);
+        }
+    };
+
+    for agent_ref in &strategy.agents {
+        let agent = match agent_store.get(&agent_ref.agent_id).await {
+            Ok(Some(agent)) => agent,
+            Ok(None) => {
+                tracing::warn!(
+                    agent_id = %agent_ref.agent_id,
+                    strategy_id = %strategy.manifest.id,
+                    "strategy_requirements skipped missing AgentRef"
+                );
+                continue;
+            }
+            Err(e) => return Err(ApiError::Internal(e.to_string())),
+        };
+
+        for slot in &agent.slots {
+            // Model requirement — gated through the same resolver eval uses.
+            let provider = slot.provider.trim();
+            let model = slot.model.trim();
+            if !provider.is_empty() && !model.is_empty() {
+                let name = format!("{provider}/{model}");
+                let requirement = match resolve_provider(ctx, &cfg_path, provider, Some(model)).await {
+                    Ok(_) => Requirement {
+                        name,
+                        kind: "model".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    Err(unavailable) => Requirement {
+                        name,
+                        kind: "model".into(),
+                        satisfied: false,
+                        reason: Some(unavailable.reason.as_str().to_string()),
+                        hint: Some(unavailable.hint),
+                    },
+                };
+                push(requirement, &mut seen);
+            }
+
+            // Skill requirements — existence check against the registry.
+            for skill_id in &slot.skill_ids {
+                let skill_id = skill_id.trim();
+                if skill_id.is_empty() {
+                    continue;
+                }
+                let requirement = match crate::api::skills::get(ctx, skill_id).await {
+                    Ok(skill) => Requirement {
+                        name: skill.name,
+                        kind: "skill".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    Err(ApiError::NotFound(_)) => Requirement {
+                        name: skill_id.to_string(),
+                        kind: "skill".into(),
+                        satisfied: false,
+                        reason: Some("skill_not_found".into()),
+                        hint: Some(format!("skill `{skill_id}` is not in this workspace's registry")),
+                    },
+                    Err(e) => return Err(e),
+                };
+                push(requirement, &mut seen);
+            }
+
+            // Tool requirements — informational only. There is no installed
+            // -MCP inventory in the engine, so these never gate eval.
+            for tool in &slot.allowed_tools {
+                let tool = tool.trim();
+                if tool.is_empty() {
+                    continue;
+                }
+                push(
+                    Requirement {
+                        name: tool.to_string(),
+                        kind: "tool".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    &mut seen,
+                );
+            }
+        }
+    }
+
+    let all_models_satisfied = requirements
+        .iter()
+        .filter(|r| r.kind == "model")
+        .all(|r| r.satisfied);
+
+    Ok(StrategyRequirements {
+        requirements,
+        all_models_satisfied,
+    })
 }
 
 fn strategy_capabilities(strategy: &Strategy) -> Vec<String> {

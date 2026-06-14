@@ -151,6 +151,9 @@ type PublicManifest = {
 export type { Filter } from "./types.gen/Filter";
 import type { Filter } from "./types.gen/Filter";
 import type { ActivationMode } from "./types.gen/ActivationMode";
+export type { StrategyRequirements } from "./types.gen/StrategyRequirements";
+export type { Requirement } from "./types.gen/Requirement";
+import type { StrategyRequirements } from "./types.gen/StrategyRequirements";
 
 /// One input knob declared in a Pine Script (or manually added) that the
 /// optimizer is allowed to tune. Mirrors `TunableBound` in the Rust engine
@@ -307,6 +310,8 @@ export const strategyKeys = {
     ] as const,
   detail: (id: string) => [...strategyKeys.all, "detail", id] as const,
   validate: (id: string) => [...strategyKeys.all, "validate", id] as const,
+  requirements: (id: string) =>
+    [...strategyKeys.all, "requirements", id] as const,
   templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
@@ -342,6 +347,18 @@ export function listStrategiesPaged(
 
 export function getStrategy(id: string): Promise<Strategy> {
   return apiFetch<Strategy>(`/api/strategy/${encodeURIComponent(id)}`);
+}
+
+/// Per-strategy model/skill/tool readiness for the buyer's machine. The
+/// Strategy detail page highlights gaps and gates the eval/go-live action
+/// when `all_models_satisfied` is false. Models gate; skills warn; tools
+/// are informational.
+export function getStrategyRequirements(
+  id: string,
+): Promise<StrategyRequirements> {
+  return apiFetch<StrategyRequirements>(
+    `/api/strategy/${encodeURIComponent(id)}/requirements`,
+  );
 }
 
 export function patchStrategyMetadata(
