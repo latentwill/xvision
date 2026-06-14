@@ -122,6 +122,7 @@ DOCKER_BUILDKIT=1 docker buildx build \
   --build-arg "WITH_IDENTITY=${WITH_IDENTITY}" \
   --build-arg "GIT_SHA=${FULL_SHA}" \
   --build-arg "BUILD_TIME=${BUILD_TIME}" \
+  --build-arg "VITE_MARKETPLACE_NETWORK=${VITE_MARKETPLACE_NETWORK:-sepolia}" \
   --load \
   -t "$TAG" \
   -t "xvision:deploy-latest" \

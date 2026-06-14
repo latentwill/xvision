@@ -35,6 +35,11 @@ COPY frontend/web/ frontend/web/
 # repoints to the latest deployed version.
 ARG VITE_MARKETPLACE_SUBGRAPH_URL=https://api.goldsky.com/api/public/project_cmq8zp6etzmv101xwaeih73lr/subgraphs/xvision-marketplace/live/gn
 ENV VITE_MARKETPLACE_SUBGRAPH_URL=$VITE_MARKETPLACE_SUBGRAPH_URL
+# Marketplace chain network for the browser buy path: "sepolia" (default, Mantle
+# Sepolia 5003) or "mainnet" (Mantle 5000). Selects the chain id, wallet-switch
+# target, and the EIP-3009 USDC EIP-712 domain in features/marketplace/lib/chain.ts.
+ARG VITE_MARKETPLACE_NETWORK=sepolia
+ENV VITE_MARKETPLACE_NETWORK=$VITE_MARKETPLACE_NETWORK
 # Vite's `outDir` in vite.config.ts is `../../crates/xvision-dashboard/static`
 # (relative to frontend/web), so the static dir lands at the workspace path
 # rust-embed expects.

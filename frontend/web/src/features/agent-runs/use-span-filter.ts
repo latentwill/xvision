@@ -132,6 +132,12 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
   const setDecisionFilter = (d: string) =>
     setState((prev) => ({ ...stateForRun(prev, runId), d }));
 
+  // Reset every filter dimension to its default in one setState. The empty
+  // trace state offers this as a one-click recovery when an active (often
+  // sticky URL/localStorage) filter is hiding every span.
+  const reset = () =>
+    setState((prev) => ({ ...stateForRun(prev, runId), q: "", k: [], s: "all", d: "all" }));
+
   const filtered = useMemo(() => {
     const q = activeState.q.trim().toLowerCase();
     return spans.filter((s) => {
@@ -172,6 +178,12 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
     kinds, toggleKind, setKinds,
     status: activeState.s, setStatus,
     decisionFilter: activeState.d, setDecisionFilter,
+    reset,
+    active:
+      activeState.q.trim() !== "" ||
+      activeState.k.length > 0 ||
+      activeState.s !== "all" ||
+      activeState.d !== "all",
     filtered,
     summary: { total: spans.length, filtered: filtered.length },
   };
