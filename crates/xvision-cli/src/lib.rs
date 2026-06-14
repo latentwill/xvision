@@ -119,6 +119,7 @@ pub enum Command {
     /// via the venue executor (idempotent on `cycle_id`).
     ///
     /// Real-money mainnet Byreal runs require `--i-understand-real-money`.
+    /// The global safety kill-switch is also checked before submitting.
     FireTrade {
         /// Execution venue: `alpaca`, `orderly`, or `byreal`.
         #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
@@ -146,6 +147,10 @@ pub enum Command {
         /// Alpaca and Orderly do not require this flag.
         #[arg(long)]
         i_understand_real_money: bool,
+        /// Override the xvn home directory (default: $XVN_HOME or ~/.xvn).
+        /// Used to locate xvn.db for the safety kill-switch check.
+        #[arg(long)]
+        xvn_home: Option<PathBuf>,
     },
     /// Read live portfolio state from a venue.
     Portfolio {
@@ -156,6 +161,7 @@ pub enum Command {
     /// Close any open position in `--asset` at the given venue.
     ///
     /// Real-money mainnet Byreal runs require `--i-understand-real-money`.
+    /// The global safety kill-switch is also checked before submitting.
     ClosePosition {
         /// Execution venue: `alpaca`, `orderly`, or `byreal`.
         #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
@@ -168,6 +174,10 @@ pub enum Command {
         /// Alpaca and Orderly do not require this flag.
         #[arg(long)]
         i_understand_real_money: bool,
+        /// Override the xvn home directory (default: $XVN_HOME or ~/.xvn).
+        /// Used to locate xvn.db for the safety kill-switch check.
+        #[arg(long)]
+        xvn_home: Option<PathBuf>,
     },
     // AbCompare removed — use `xvn eval run` instead.
     /// Strategy authoring (create / validate / ls / show / templates / run).
@@ -300,26 +310,35 @@ impl Cli {
                 summary,
                 asset,
                 i_understand_real_money,
-            } => commands::fire_trade::run(
-                venue,
-                side,
-                size_bps,
-                stop_loss_pct,
-                take_profit_pct,
-                summary,
-                asset,
-                i_understand_real_money,
-            )
-            .await
-            .map_err(Into::into),
+                xvn_home,
+            } => {
+                let home = commands::home::resolve_xvn_home(xvn_home).map_err(crate::exit::CliError::from)?;
+                commands::fire_trade::run(
+                    venue,
+                    side,
+                    size_bps,
+                    stop_loss_pct,
+                    take_profit_pct,
+                    summary,
+                    asset,
+                    i_understand_real_money,
+                    home,
+                )
+                .await
+                .map_err(Into::into)
+            }
             Command::Portfolio { venue } => commands::venue::portfolio(venue).await.map_err(Into::into),
             Command::ClosePosition {
                 venue,
                 asset,
                 i_understand_real_money,
-            } => commands::venue::close_position(venue, asset, i_understand_real_money)
-                .await
-                .map_err(Into::into),
+                xvn_home,
+            } => {
+                let home = commands::home::resolve_xvn_home(xvn_home).map_err(crate::exit::CliError::from)?;
+                commands::venue::close_position(venue, asset, i_understand_real_money, home)
+                    .await
+                    .map_err(Into::into)
+            }
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
             Command::Strategies(cmd) => commands::strategies::run(cmd).await,
             Command::Store(cmd) => commands::store_cmd::run(cmd).await.map_err(Into::into),

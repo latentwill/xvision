@@ -284,10 +284,6 @@ const UNDOCUMENTED_VERBS: &[&str] = &[
     "run",
     // Strategy library management (init/import) — developer workflow.
     "strategies",
-    // Guarded real-money / testnet live-run launch verb — Phase 3 of the
-    // Byreal mainnet parity plan. Deliberately excluded from the reference
-    // until Phase 5 (testnet smoke + operator docs) lands.
-    "live",
     // Synthetic clap-generated help subcommand — not a real xvn verb.
     "help",
 ];

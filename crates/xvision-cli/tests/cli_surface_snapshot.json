@@ -344,7 +344,8 @@
         "--asset",
         "--help",
         "--i-understand-real-money",
-        "--venue"
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -1303,7 +1304,8 @@
         "--stop-loss-pct",
         "--summary",
         "--take-profit-pct",
-        "--venue"
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [

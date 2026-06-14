@@ -4,16 +4,14 @@
 //! the venue-specific executor. Used to validate executor wiring without
 //! standing up the full Risk → Trader pipeline.
 //!
-//! # Real-money guard (Phase 4)
+//! # Real-money guard (Phase 4 + Phase 5)
 //! When `--venue byreal` and `BYREAL_NETWORK` resolves to mainnet (the default),
 //! this command requires `--i-understand-real-money`. Without that flag it
 //! exits with an error before touching the network.
 //!
-//! # FAST-FOLLOW (Phase 5)
-//! The current guard is a lightweight ack-flag check. The full gate should
-//! route through BrokerSurface / SafetyManager and persist the ack to the DB
-//! before submitting — this requires new CLI→DB plumbing and is deferred until
-//! the SafetyManager pause-gate lands.
+//! Additionally (Phase 5), the global SafetyManager pause-gate is checked: if
+//! the operator has paused trading via the dashboard or the CLI kill-switch,
+//! this command refuses to proceed even with `--i-understand-real-money`.
 //!
 //! Venues:
 //! - `alpaca`  — reads APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL.
@@ -23,6 +21,8 @@
 //! Idempotent on retries: every executor uses `cycle_id` as the venue-side
 //! client order id so duplicate retries collapse to a single fill.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use uuid::Uuid;
 
@@ -31,7 +31,7 @@ use xvision_execution::{
     AlpacaExecutor, ByrealPerpsExecutor, Executor, OrderlyExecutor, SubprocessByrealApi,
 };
 
-use crate::commands::live_guard::require_real_money_ack;
+use crate::commands::live_guard::{check_not_paused, require_real_money_ack};
 use crate::commands::venue::Venue;
 
 #[derive(Debug, Clone, Copy)]
@@ -69,13 +69,23 @@ pub async fn run(
     summary: String,
     asset: AssetSymbol,
     i_understand_real_money: bool,
+    xvn_home: PathBuf,
 ) -> Result<()> {
-    // Real-money guard: refuse Byreal mainnet without the explicit ack flag.
-    require_real_money_ack(
-        venue,
-        std::env::var("BYREAL_NETWORK").ok().as_deref(),
-        i_understand_real_money,
-    )?;
+    let byreal_network = std::env::var("BYREAL_NETWORK").ok();
+    // Real-money mainnet applies to byreal perps only; Alpaca (paper) and Orderly
+    // (testnet) are never real money, so the kill-switch fail-closed-on-missing-DB
+    // must not gate them (the pause check still runs when a DB is present).
+    let network_is_mainnet = matches!(venue, Venue::Byreal)
+        && !byreal_network
+            .as_deref()
+            .map(|n| n.to_ascii_lowercase().contains("testnet"))
+            .unwrap_or(false);
+
+    // Phase 4 guard: refuse Byreal mainnet without the explicit ack flag.
+    require_real_money_ack(venue, byreal_network.as_deref(), i_understand_real_money)?;
+
+    // Phase 5 guard: refuse if the global safety kill-switch is active.
+    check_not_paused(&xvn_home, network_is_mainnet).await?;
 
     let (action, direction) = match side {
         Side::Buy => (Action::Buy, Direction::Long),
