@@ -8,7 +8,7 @@
 //! dispatcher. The dashboard's Inspector route calls these; the MCP tool
 //! layer (PR #31) goes through `engine::authoring::*` directly.
 
-use crate::agents::{AgentStore, Capability};
+use crate::agents::{Agent, AgentStore, Capability, NewAgent};
 use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
@@ -977,36 +977,122 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
     result
 }
 
-/// Install a marketplace-delivered strategy manifest as a NEW local
-/// strategy.
+/// A self-contained, transportable strategy bundle: the [`Strategy`]
+/// artifact plus the FULL [`Agent`] definitions every one of its
+/// `AgentRef`s points at.
+///
+/// The bare `Strategy` only carries `AgentRef { agent_id, role }`
+/// *pointers* into a local agent library. When a strategy is published to
+/// the marketplace, the buyer's machine does not have those agent rows, so
+/// importing the bare `Strategy` yields a strategy that can't run. The
+/// publish path serializes a `StrategyExport` instead, and the import path
+/// materializes the bundled `agents` into the buyer's library (with fresh
+/// ULIDs) and remaps the strategy's `AgentRef`s onto the new ids.
+///
+/// Named `StrategyExport` deliberately — the terminology lock forbids
+/// `StrategyBundle` / `bundle` for this concept.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyExport {
+    /// The strategy artifact. Its `agents` Vec holds `AgentRef` pointers
+    /// whose `agent_id`s match the `agent_id` of an entry in `agents`
+    /// below (when the referenced agent was resolvable at export time).
+    pub strategy: Strategy,
+    /// Full definitions of every agent the strategy references, in no
+    /// particular order. The import path keys off each entry's
+    /// `agent_id`.
+    pub agents: Vec<Agent>,
+}
+
+/// Build a self-contained [`StrategyExport`] for `strategy_id`: load the
+/// strategy, then resolve and bundle the full [`Agent`] definition behind
+/// every `AgentRef`.
+///
+/// Used by the dashboard's `POST /api/marketplace/publish` route so the
+/// content that gets hashed / pinned / sealed is the buyer-runnable bundle
+/// rather than the bare `Strategy`. An `AgentRef` whose agent can't be
+/// resolved locally is skipped (logged) rather than failing the export —
+/// the strategy may legitimately reference an agent the publisher already
+/// deleted; the import side leaves such dangling refs untouched.
+pub async fn export_strategy(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyExport> {
+    let started = Instant::now();
+    let result = export_strategy_inner(ctx, strategy_id).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "export",
+        Some(strategy_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    result
+}
+
+async fn export_strategy_inner(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyExport> {
+    let strategy = get_inner(ctx, strategy_id).await?;
+
+    let mut agents: Vec<Agent> = Vec::with_capacity(strategy.agents.len());
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for agent_ref in &strategy.agents {
+        // De-dup: two AgentRefs may point at the same library agent (a
+        // multi-role reuse). Bundle each agent definition once.
+        if !seen.insert(agent_ref.agent_id.clone()) {
+            continue;
+        }
+        match crate::api::agents::get(ctx, &agent_ref.agent_id).await {
+            Ok(agent) => agents.push(agent),
+            Err(ApiError::NotFound(_)) => {
+                tracing::warn!(
+                    agent_id = agent_ref.agent_id.as_str(),
+                    strategy_id = strategy_id,
+                    "export_strategy: referenced agent not found locally; \
+                     publishing without it (dangling AgentRef)",
+                );
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(StrategyExport { strategy, agents })
+}
+
+/// Install a marketplace-delivered strategy as a NEW local strategy.
 ///
 /// Used by the dashboard's license-gated
-/// `POST /api/marketplace/listings/:id/import` route. Mirrors the shallow
-/// clone path: the manifest is deserialized into a full [`Strategy`], a
-/// fresh ULID is minted (the seller's id is NEVER reused — the buyer's copy
-/// is an independent local draft), and `published_at` is cleared. Persists
-/// via the same [`FilesystemStore`] the clone path uses and returns the
-/// stored strategy.
+/// `POST /api/marketplace/listings/:id/import` (and `…/import-sealed`)
+/// routes. The on-disk `manifest` is one of two shapes:
 ///
-/// A manifest that does not deserialize as a `Strategy` is a `Validation`
-/// error — the caller has already verified the bytes against the on-chain
-/// content hash, so a shape failure means the listing was published from an
-/// incompatible engine version, not transport corruption.
+/// - **`StrategyExport` envelope** (current publish path): a top-level
+///   `{ "strategy": {…}, "agents": [{…}] }`. The bundled agents are
+///   materialized into the buyer's library with FRESH ULIDs, and the
+///   strategy's `AgentRef`s are remapped onto those new ids so the
+///   imported strategy is runnable.
+/// - **Bare `Strategy`** (legacy / open-tier `xvn://` published before
+///   the envelope landed): no `agents` to materialize — the strategy is
+///   saved verbatim (its `AgentRef` pointers are preserved unchanged).
+///
+/// In both shapes a fresh strategy ULID is minted (the seller's id is
+/// NEVER reused — the buyer's copy is an independent local draft) and
+/// `published_at` is cleared. Persists via the same [`FilesystemStore`]
+/// the clone path uses and returns the stored, remapped strategy.
+///
+/// A manifest that is neither an envelope nor a bare `Strategy` is a
+/// `Validation` error — the caller has already verified the bytes against
+/// the on-chain content hash, so a shape failure means the listing was
+/// published from an incompatible engine version, not transport
+/// corruption. Failures during agent materialization roll back every
+/// agent row created so far (mirroring the clone path) so a partial import
+/// leaves no orphan agents.
 pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
     let started = Instant::now();
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = async {
-        let mut strategy: Strategy = serde_json::from_value(manifest)
-            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
-        strategy.manifest.id = Ulid::new().to_string();
-        strategy.manifest.published_at = None;
-        store
-            .save(&strategy)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        Ok::<_, ApiError>(strategy)
-    }
-    .await;
+    let result = import_strategy_inner(ctx, manifest).await;
 
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
@@ -1025,10 +1111,116 @@ pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> A
     .await;
 
     if let Ok(strategy) = &result {
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
         index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
     }
 
     result
+}
+
+async fn import_strategy_inner(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
+    // Detect the envelope by a top-level `strategy` key. A bare `Strategy`
+    // has a top-level `manifest`/`risk` instead, never `strategy`. (Note
+    // `Strategy`'s deserializer ignores unknown fields, so we must branch
+    // on the JSON shape explicitly rather than rely on a failed parse.)
+    let is_envelope = manifest.get("strategy").is_some();
+
+    let (mut strategy, bundled_agents): (Strategy, Vec<Agent>) = if is_envelope {
+        let export: StrategyExport = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid StrategyExport: {e}")))?;
+        (export.strategy, export.agents)
+    } else {
+        let strategy: Strategy = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
+        (strategy, Vec::new())
+    };
+
+    // Materialize the bundled agents into the buyer's library with fresh
+    // ULIDs, building a source-id → new-id remap as we go. Roll back every
+    // created agent on any failure (mirrors `clone_strategy_full_inner`).
+    let store = AgentStore::new(ctx.db.clone());
+    let mut id_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut created_agent_ids: Vec<String> = Vec::with_capacity(bundled_agents.len());
+    for agent in &bundled_agents {
+        let new_id = match store
+            .create(NewAgent {
+                name: import_agent_name(&agent.name),
+                description: agent.description.clone(),
+                tags: agent.tags.clone(),
+                slots: agent.slots.clone(),
+                // Imported agents land in the buyer's workspace library,
+                // not scoped to the seller's (now-defunct) strategy id.
+                scope_strategy_id: None,
+            })
+            .await
+        {
+            Ok(id) => id,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                let msg = err.to_string();
+                // `create` surfaces content-quality rejections as
+                // "save validation failed:"; map those to Validation so
+                // the caller sees an actionable message.
+                return Err(
+                    if let Some(detail) = msg.strip_prefix("save validation failed: ") {
+                        ApiError::Validation(detail.to_string())
+                    } else {
+                        ApiError::Internal(msg)
+                    },
+                );
+            }
+        };
+        created_agent_ids.push(new_id.clone());
+        id_remap.insert(agent.agent_id.clone(), new_id);
+    }
+
+    // Remap the strategy's AgentRefs onto the freshly-minted local ids.
+    // A ref whose id isn't in the map (dangling — e.g. a bare-Strategy
+    // import, or an envelope whose agent failed to resolve at export) is
+    // left untouched with a warning.
+    for agent_ref in &mut strategy.agents {
+        match id_remap.get(&agent_ref.agent_id) {
+            Some(new_id) => agent_ref.agent_id = new_id.clone(),
+            None => {
+                if is_envelope {
+                    tracing::warn!(
+                        agent_id = agent_ref.agent_id.as_str(),
+                        "import_strategy: AgentRef has no bundled agent definition; \
+                         leaving the pointer unremapped (strategy may not run until \
+                         the buyer wires a local agent into this role)",
+                    );
+                }
+            }
+        }
+    }
+
+    strategy.manifest.id = Ulid::new().to_string();
+    strategy.manifest.published_at = None;
+
+    let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    if let Err(e) = strategy_store.save(&strategy).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Internal(e.to_string()));
+    }
+
+    Ok(strategy)
+}
+
+/// Name an imported agent. Agent names are globally unique in the buyer's
+/// library, so a verbatim copy of the seller's name would collide if the
+/// buyer happens to own a same-named agent. Suffix a short random token to
+/// keep imports idempotent across repeated buys.
+fn import_agent_name(source_name: &str) -> String {
+    let suffix: String = Ulid::new()
+        .to_string()
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{source_name} (imported {suffix})")
 }
 
 /// Atomic strategy + paired-Agent clone with optional `(provider, model)`

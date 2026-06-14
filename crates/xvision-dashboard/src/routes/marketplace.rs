@@ -182,9 +182,16 @@ pub async fn post_publish(
     // a. Load the strategy (404s via ApiError::NotFound when absent).
     let strategy = strategy::get(&state.api_context(), &body.strategy_id).await?;
 
-    // b. Canonical JSON → manifest hash.
-    let value = serde_json::to_value(&strategy)
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy: {e}")))?;
+    // b. Build the self-contained export bundle (the Strategy PLUS the full
+    //    Agent definitions every AgentRef points at) and serialize THAT for
+    //    the content hash / pin / seal. The bare Strategy only carries
+    //    `AgentRef` pointers; a buyer who imported it would have no agent rows
+    //    and the strategy couldn't run. The on-chain content_hash now covers
+    //    strategy + agents — acceptable pre-mainnet. Import (open + sealed)
+    //    accepts both the envelope and a legacy bare Strategy.
+    let export = strategy::export_strategy(&state.api_context(), &body.strategy_id).await?;
+    let value = serde_json::to_value(&export)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy export: {e}")))?;
     let canonical = canonical_json(&value);
     let manifest_hash = manifest_hash_hex(&canonical);
 
