@@ -103,6 +103,13 @@ impl SafetyGate {
         }
     }
 
+    /// Returns `true` when this gate is backed by a real `SafetyManager`
+    /// (i.e. constructed via `SafetyGate::new`). Returns `false` for the
+    /// no-op `allow_all` gate used in tests and CLI paths.
+    pub fn is_enforcing(&self) -> bool {
+        self.manager.is_some()
+    }
+
     /// Check whether a broker submit is allowed.
     ///
     /// Checks (in order):
