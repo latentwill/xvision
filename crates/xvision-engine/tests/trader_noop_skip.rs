@@ -181,6 +181,7 @@ async fn noop_skip_fires_when_seed_allows_only_hold() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -254,6 +255,7 @@ async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -302,6 +304,7 @@ async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
@@ -350,6 +353,7 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");

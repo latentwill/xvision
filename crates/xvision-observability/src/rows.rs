@@ -88,6 +88,13 @@ pub struct ToolCallRow {
     pub tool_hash: Option<String>,
     pub input_hash: String,
     pub output_hash: Option<String>,
+    /// Reconstructed plaintext tool input from the `tool_call_payload`
+    /// side-row (mirrors `ModelCallRow::prompt_text`). `None` when no
+    /// side-row exists (hash-only runs, or pre-payload tool calls).
+    pub input_text: Option<String>,
+    /// Reconstructed plaintext tool output from the `tool_call_payload`
+    /// side-row (mirrors `ModelCallRow::response_text`).
+    pub output_text: Option<String>,
     pub input_payload_ref: Option<String>,
     pub output_payload_ref: Option<String>,
     pub side_effect_level: String,

@@ -63,6 +63,13 @@ pub struct AgentRunSummary {
     pub run_id: String,
     pub objective: String,
     pub strategy_id: Option<String>,
+    /// Strategy agent id of the parent eval run (`eval_runs.agent_id`), joined
+    /// in so the live/run list can resolve the real strategy display name via
+    /// the strategies library — mirroring how the eval-runs list does it.
+    /// `None` when the agent run has no parent eval run. Distinct from
+    /// `strategy_id` (the agent_runs row's own column, often NULL for
+    /// engine-created live runs).
+    pub agent_id: Option<String>,
     pub eval_run_id: Option<String>,
     pub status: String,
     pub retention_mode: String,
@@ -176,7 +183,7 @@ pub async fn list_agent_runs(
     let mut sql = String::from(
         "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
              ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
-             ar.error, er.mode, er.venue_label, er.status, er.paused \
+             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id \
              FROM agent_runs ar \
              LEFT JOIN eval_runs er ON er.id = ar.eval_run_id",
     );
@@ -202,6 +209,7 @@ pub async fn list_agent_runs(
             Option<String>,
             Option<String>,
             Option<bool>,
+            Option<String>,
         ),
     >(&sql);
     if let Some(since) = since {
@@ -230,6 +238,7 @@ pub async fn list_agent_runs(
         venue_label_raw,
         eval_run_status,
         paused,
+        eval_agent_id,
     ) in rows
     {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
@@ -256,6 +265,7 @@ pub async fn list_agent_runs(
             run_id: id,
             objective,
             strategy_id,
+            agent_id: eval_agent_id,
             eval_run_id,
             status,
             retention_mode,
@@ -829,6 +839,14 @@ mod tests {
         assert_eq!(run["eval_mode"].as_str(), Some("live"));
         assert_eq!(run["eval_run_status"].as_str(), Some("running"));
         assert_eq!(run["is_live_money"].as_bool(), Some(true));
+        // The parent eval run's strategy agent_id is joined into the summary so
+        // the live run list can resolve the real strategy display name (QA: rows
+        // must show the strategy name, not the "eval run" objective).
+        assert_eq!(
+            run["agent_id"].as_str(),
+            Some("bundle-hash"),
+            "parent eval_runs.agent_id must be surfaced on the agent-run summary"
+        );
     }
 
     #[tokio::test]

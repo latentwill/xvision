@@ -35,6 +35,7 @@ use alloy::sol_types::SolEvent;
 use anyhow::Context;
 use sqlx::SqlitePool;
 
+use crate::routes::publish_receipts::find_receipt;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_identity::client::IIdentityRegistry;
 use xvision_identity::contracts::{IEvalAttestationRegistry, IListingRegistry, IMarketplace};
@@ -469,22 +470,39 @@ pub(crate) async fn apply_perf(snapshot: &mut MarketplaceSnapshot, pool: &Sqlite
 // Part C: resolve real display names for local listings
 // ---------------------------------------------------------------------------
 
-/// For listings whose `content_uri` starts with `xvn://strategy/<ulid>`,
-/// reads the strategy manifest from the local store and sets
-/// `listing.name = manifest.display_name` when the display name is non-empty.
+/// Resolves a real, human display name for each listing, keyed on the listing's
+/// `agent_id` (always present from the on-chain token metadata) rather than the
+/// `content_uri` scheme — so it covers BOTH open (`xvn://strategy/<ulid>`) and
+/// sealed (`ipfs://CID`) listings, which previously kept their generic gen-art
+/// name and rendered as "Strategy #N".
 ///
-/// `ipfs://` listings are BLOCKED on gateway config — left as-is (with a
-/// comment referencing bead xvision-ctkm.9). No-op for any other scheme.
-/// Missing/unreadable strategies degrade to keeping the existing name.
-pub(crate) async fn enrich_local_names(snapshot: &mut MarketplaceSnapshot, xvn_home: &PathBuf) {
+/// Precedence per listing:
+///   1. the creator-chosen name on the local publish receipt (when non-empty);
+///   2. else the local strategy manifest's `display_name` (when non-empty);
+///   3. else leave the existing gen-art name (foreign / unknown strategies).
+pub(crate) async fn enrich_local_names(
+    snapshot: &mut MarketplaceSnapshot,
+    xvn_home: &PathBuf,
+    pool: &SqlitePool,
+) {
     let store = FilesystemStore::new(strategy_store_dir(xvn_home));
     for listing in &mut snapshot.listings {
-        let Some(agent_id) = listing.content_uri.strip_prefix("xvn://strategy/") else {
-            // ipfs:// listings are BLOCKED (bead xvision-ctkm.9: no gateway config yet).
-            // Any other scheme: leave name as-is.
+        let agent_id = listing.agent_id.trim().to_string();
+        if agent_id.is_empty() {
             continue;
-        };
-        match store.load(agent_id).await {
+        }
+
+        // 1. Creator-chosen listing name from the publish receipt wins. A DB
+        //    error or missing receipt simply falls through to the manifest.
+        if let Ok(Some(receipt)) = find_receipt(pool, &agent_id).await {
+            if let Some(name) = receipt.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                listing.name = name.to_owned();
+                continue;
+            }
+        }
+
+        // 2. Otherwise default to the strategy's own display name.
+        match store.load(&agent_id).await {
             Ok(strategy) => {
                 let display_name = strategy.manifest.display_name.trim().to_string();
                 if !display_name.is_empty() {
@@ -494,7 +512,7 @@ pub(crate) async fn enrich_local_names(snapshot: &mut MarketplaceSnapshot, xvn_h
             Err(e) => {
                 tracing::debug!(
                     listing_id = listing.listing_id,
-                    agent_id,
+                    agent_id = %agent_id,
                     error = %e,
                     "enrich_local_names: strategy load failed; keeping gen-art name"
                 );
@@ -725,10 +743,11 @@ pub fn spawn_indexer(
                         // local eval_runs. Degrades per-listing to None on DB
                         // failure; never blocks the snapshot swap.
                         apply_perf(&mut fresh, &pool).await;
-                        // Part C: resolve real display names for local listings
-                        // (xvn://strategy/<ulid> → manifest.display_name).
-                        // ipfs:// listings are BLOCKED (bead xvision-ctkm.9).
-                        enrich_local_names(&mut fresh, &xvn_home).await;
+                        // Part C: resolve real display names for local listings,
+                        // keyed on agent_id so both xvn:// and sealed ipfs://
+                        // listings inherit the creator-chosen name (publish
+                        // receipt) or the strategy's display_name.
+                        enrich_local_names(&mut fresh, &xvn_home, &pool).await;
                         *snapshot.write().await = fresh;
                     }
                     Err(e) => {

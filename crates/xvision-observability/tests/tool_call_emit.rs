@@ -85,6 +85,7 @@ async fn tool_call_started_and_finished_land_a_row() {
         is_run_terminator: false,
         input_hash: "sha256:abc".into(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await
     .unwrap();
@@ -93,6 +94,7 @@ async fn tool_call_started_and_finished_land_a_row() {
         output_hash: Some("sha256:def".into()),
         output_payload_ref: None,
         exit_code: Some(0),
+        output_text: None,
     }))
     .await
     .unwrap();
@@ -153,6 +155,7 @@ async fn tool_call_failed_marks_span_error_but_row_stays() {
         is_run_terminator: false,
         input_hash: "sha256:input".into(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await
     .unwrap();
@@ -238,6 +241,7 @@ async fn tool_call_origin_round_trips_through_db() {
             is_run_terminator: false,
             input_hash: "sha256:x".into(),
             input_payload_ref: None,
+            input_text: None,
         }))
         .await
         .unwrap();
