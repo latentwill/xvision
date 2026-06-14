@@ -409,6 +409,8 @@ export function EvalRunDetailRoute() {
             <DecisionsCard
               rows={detail.decisions}
               filterSummaries={detail.filter_summaries ?? []}
+              status={detail.summary.status}
+              errorMsg={detail.summary.error}
             />
 
             {/*
@@ -872,23 +874,62 @@ function Stat({
 function DecisionsCard({
   rows,
   filterSummaries,
+  status,
+  errorMsg,
 }: {
   rows: DecisionRowDto[];
   filterSummaries: FilterSummary[];
+  status: string;
+  errorMsg: string | null | undefined;
 }) {
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const decisions = useMemo(() => toTimelineDecisions(rows), [rows]);
 
   if (rows.length === 0) {
+    if (!isTerminalStatus(status)) {
+      return (
+        <div className="bg-surface-card border border-border rounded-card px-6 py-12 text-center text-text-2">
+          <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
+            No decisions
+          </div>
+          <p className="m-0 text-[13px]">
+            This run hasn't recorded any decisions yet — likely still queued or
+            running.
+          </p>
+        </div>
+      );
+    }
+    // Terminal status with no decisions — show error message if present
     return (
       <div className="bg-surface-card border border-border rounded-card px-6 py-12 text-center text-text-2">
-        <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
-          No decisions
-        </div>
-        <p className="m-0 text-[13px]">
-          This run hasn't recorded any decisions yet — likely still queued or
-          running.
-        </p>
+        {status === "failed" && errorMsg ? (
+          <>
+            <div
+              className="font-sans text-[22px] mb-2 text-danger"
+              style={{ fontWeight: 600 }}
+            >
+              Run failed
+            </div>
+            <p className="m-0 mb-2 text-[13px]">
+              This run did not record any decisions.
+            </p>
+            <pre
+              role="alert"
+              className="mt-3 mx-auto max-w-lg rounded border border-danger/30 bg-danger/[0.06] px-4 py-3 text-left font-mono text-[11px] text-danger overflow-x-auto"
+            >
+              {errorMsg}
+            </pre>
+          </>
+        ) : (
+          <>
+            <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
+              No decisions
+            </div>
+            <p className="m-0 text-[13px]">
+              This run finished with no recorded decisions.
+            </p>
+          </>
+        )}
       </div>
     );
   }
