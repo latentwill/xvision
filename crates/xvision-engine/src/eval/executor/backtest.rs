@@ -1561,6 +1561,19 @@ impl Executor {
                 // tick without diffing decision rows.
                 let decision_span_id = crate::agent::observability::fresh_span_id();
                 if let Some(obs) = self.obs_emitter.as_ref() {
+                    // WS-10 (`trace-obs-decision-input`): capture the
+                    // structured market context the trader saw this bar
+                    // (indicator panel, current-bar OHLCV, regime,
+                    // briefing mode, bounded bar_history summary) from
+                    // the seed (briefing) already assembled above, and
+                    // attach it to the `agent.decision` span attributes
+                    // so it's queryable and lands in the export. The
+                    // backtest dispatch path sends the FULL briefing
+                    // (delta-briefing is a per-slot dispatch opt-in not
+                    // threaded through this executor), so `prev`/opt-in
+                    // are `None`/`false` here — the recorded mode is
+                    // truthfully "full".
+                    let decision_input = build_decision_input(&seed, None, false);
                     obs.emit_decision_span_started(
                         &decision_span_id,
                         None,
@@ -1569,6 +1582,7 @@ impl Executor {
                         Some(bar.timestamp),
                         Some(bar.close),
                         Some(book.position(asset_sym)),
+                        Some(decision_input),
                     )
                     .await;
                     let payload = serde_json::json!({
@@ -5723,6 +5737,174 @@ pub fn inject_briefing_indicators_into_seed(
             );
         }
     }
+}
+
+/// WS-10 (`trace-obs-decision-input`): build the structured snapshot of
+/// the market context the strategy agent saw this bar, from the trader
+/// `seed` (briefing) the executor already assembled. The result is
+/// attached to the `agent.decision` span attributes (under the
+/// `decision_input` key) so the indicator panel, current bar, regime,
+/// briefing mode, and a bounded `bar_history` summary are queryable and
+/// land in the run export — instead of surviving only inside the opaque
+/// model-call prompt.
+///
+/// Shape:
+///
+/// ```json
+/// {
+///   "indicators": { <indicator panel map> },
+///   "current_bar": { <OHLCV> },
+///   "regime": <label/value> | null,
+///   "briefing_mode": "full" | "delta",
+///   "changed_indicators": { ... },   // ONLY when "delta"
+///   "bar_history": { "count": N, "first_ts": <ts|null>, "last_ts": <ts|null> }
+/// }
+/// ```
+///
+/// Kept SMALL/structured: the full `bar_history` window is NEVER inlined
+/// — only a bounded `{count, first_ts, last_ts}` summary (full-window
+/// capture is a separate concern / a blob writer's job).
+///
+/// `briefing_mode` is `"delta"` only when delta was opted in AND a
+/// previous briefing was cached AND the indicator panel actually moved
+/// between the two bars; otherwise `"full"` (including the first bar of
+/// a run, where there's no prior briefing to diff against). When
+/// `"delta"`, `changed_indicators` carries the moved/new entries of the
+/// indicator panel (unchanged entries omitted; a key present last bar
+/// but gone this bar surfaces as `null`) — consistent with the
+/// `indicators` panel this snapshot reports. When `"full"`, no
+/// `changed_indicators` key is emitted.
+pub fn build_decision_input(
+    seed: &serde_json::Value,
+    prev_seed: Option<&serde_json::Value>,
+    delta_opt_in: bool,
+) -> serde_json::Value {
+    use serde_json::{Map, Value};
+
+    // ---- Indicator panel ------------------------------------------
+    // The executor injects indicators under `filter_context` (DSL filter
+    // trigger snapshot) and/or `briefing_indicators` (Pine import). Merge
+    // both into one panel; `briefing_indicators` wins on key collision
+    // (it's the strategy-authored set).
+    let indicator_panel = |s: &Value| -> Map<String, Value> {
+        let mut panel = Map::new();
+        if let Some(fc) = s.get("filter_context").and_then(Value::as_object) {
+            for (k, v) in fc {
+                panel.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(bi) = s.get("briefing_indicators").and_then(Value::as_object) {
+            for (k, v) in bi {
+                panel.insert(k.clone(), v.clone());
+            }
+        }
+        panel
+    };
+    let indicators = indicator_panel(seed);
+
+    // ---- Current bar OHLCV ----------------------------------------
+    let current_bar = seed
+        .get("market_data")
+        .and_then(|m| m.get("current_bar"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    // ---- Regime ---------------------------------------------------
+    // Prefer a top-level `regime` label; fall back to one carried inside
+    // the filter trigger context. `null` when neither is present.
+    let regime = seed
+        .get("regime")
+        .or_else(|| seed.get("filter_context").and_then(|fc| fc.get("regime")))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    // ---- Bounded bar_history summary ------------------------------
+    // NEVER inline the full window — only count + first/last ts.
+    let bar_history = bar_history_summary(seed);
+
+    // ---- Briefing mode (full vs delta) ----------------------------
+    // Honest about what the agent saw: "delta" only when delta was
+    // opted in, a prior briefing exists, AND the indicator panel
+    // actually moved between the two bars.
+    let mut out = Map::new();
+    out.insert("indicators".to_string(), Value::Object(indicators));
+    out.insert("current_bar".to_string(), current_bar);
+    out.insert("regime".to_string(), regime);
+    out.insert("bar_history".to_string(), Value::Object(bar_history));
+
+    let changed = if delta_opt_in {
+        prev_seed.and_then(|prev| {
+            let prev_panel = indicator_panel(prev);
+            let curr_panel = indicator_panel(seed);
+            let diff = diff_indicator_panel(&prev_panel, &curr_panel);
+            if diff.is_empty() {
+                None
+            } else {
+                Some(diff)
+            }
+        })
+    } else {
+        None
+    };
+
+    if let Some(diff) = changed {
+        out.insert("briefing_mode".to_string(), Value::String("delta".into()));
+        out.insert("changed_indicators".to_string(), Value::Object(diff));
+    } else {
+        out.insert("briefing_mode".to_string(), Value::String("full".into()));
+    }
+
+    Value::Object(out)
+}
+
+/// Indicator-panel diff: entries in `curr` that are new or changed vs
+/// `prev`, plus entries that disappeared (surfaced as `null`). Mirrors
+/// the dispatch-path indicator diff semantics
+/// ([`crate::agent::briefing`]) but over the eval seed's actual
+/// indicator panel (`filter_context` + `briefing_indicators`).
+fn diff_indicator_panel(
+    prev: &serde_json::Map<String, serde_json::Value>,
+    curr: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::{Map, Value};
+    let mut changed = Map::new();
+    for (k, v) in curr {
+        match prev.get(k) {
+            Some(prev_v) if prev_v == v => {}
+            _ => {
+                changed.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    for k in prev.keys() {
+        if !curr.contains_key(k) {
+            changed.insert(k.clone(), Value::Null);
+        }
+    }
+    changed
+}
+
+/// Bounded summary of the seed's `market_data.bar_history` window:
+/// `{ count, first_ts, last_ts }`. The full window is intentionally
+/// never inlined — this keeps the decision-span attribute small.
+fn bar_history_summary(seed: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::{Map, Value};
+    let bars = seed
+        .get("market_data")
+        .and_then(|m| m.get("bar_history"))
+        .and_then(Value::as_array);
+    let mut summary = Map::new();
+    let count = bars.map(|b| b.len()).unwrap_or(0);
+    summary.insert("count".to_string(), Value::from(count));
+    let ts_of = |entry: Option<&Value>| -> Value {
+        entry
+            .and_then(|e| e.get("timestamp"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    summary.insert("first_ts".to_string(), ts_of(bars.and_then(|b| b.first())));
+    summary.insert("last_ts".to_string(), ts_of(bars.and_then(|b| b.last())));
+    summary
 }
 
 /// Serialize an Ohlcv bar as the same JSON shape used for
