@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 
 use xvision_engine::autooptimizer::{
     cycle_runs::{
-        get_cycle_cost, get_cycle_run, list_cycle_runs, CycleCost, CycleRunDetail, CycleRunSummary,
+        get_cycle_cost, get_cycle_run, list_cycle_runs, list_cycle_runs_filtered, CycleCost, CycleRunDetail,
+        CycleRunSummary,
     },
     evidence::{load_findings, load_gate_record, FindingRow, GateRecordRow},
     lineage::{LineageNode, LineageStatus, LineageStore},
@@ -645,9 +646,15 @@ pub async fn list_cycles(
         None
     };
 
-    let runs = list_cycle_runs(&state.pool, q.limit, q.offset)
-        .await
-        .map_err(DashboardError::Internal)?;
+    let runs = if let Some(ref ids) = allowed_cycle_ids {
+        list_cycle_runs_filtered(&state.pool, ids, q.limit, q.offset)
+            .await
+            .map_err(DashboardError::Internal)?
+    } else {
+        list_cycle_runs(&state.pool, q.limit, q.offset)
+            .await
+            .map_err(DashboardError::Internal)?
+    };
 
     // Resolve each cycle's strategy via the events → session bridge. Skipped
     // entirely when the bridge tables are absent (fresh install), so the list
@@ -657,12 +664,6 @@ pub async fn list_cycles(
 
     let mut rows = Vec::with_capacity(runs.len());
     for summary in runs {
-        // When a session filter is active, skip cycles not in that session.
-        if let Some(ref ids) = allowed_cycle_ids {
-            if !ids.contains(&summary.cycle_id) {
-                continue;
-            }
-        }
         let strategy_id = if has_bridge {
             cycle_strategy_id(&state.pool, &summary.cycle_id).await?
         } else {
@@ -2545,7 +2546,6 @@ mod tests {
     /// two cycles from sess-1 and exclude cycle-2.
     #[tokio::test]
     async fn test_list_cycles_session_id_filter() {
-        use xvision_engine::autooptimizer::lineage::ensure_lineage_schema;
         let pool = open_stats_pool().await;
 
         // Seed sessions.
@@ -2586,6 +2586,9 @@ mod tests {
         }
 
         // Seed one lineage node per cycle so list_cycle_runs has rows.
+        // cycle-2 is newest overall; the scoped query below uses limit=1,
+        // so filtering after pagination would incorrectly return an empty
+        // page for sess-1.
         for (cid, ts) in [
             ("cycle-1a", "2026-06-01T00:05:00Z"),
             ("cycle-1b", "2026-06-01T01:05:00Z"),
@@ -2618,16 +2621,27 @@ mod tests {
             "bridge must return both sess-1 cycles"
         );
 
-        // Simulate the handler filtering: load all runs then keep only those in `ids`.
+        // Unfiltered list sees all cycles, newest first.
         let all_runs = list_cycle_runs(&pool, 50, 0).await.expect("list_cycle_runs");
         assert_eq!(all_runs.len(), 3, "unfiltered list must have all 3 cycles");
 
-        let filtered: Vec<_> = all_runs.iter().filter(|r| ids.contains(&r.cycle_id)).collect();
+        let filtered = list_cycle_runs_filtered(&pool, &ids, 50, 0)
+            .await
+            .expect("filtered list_cycle_runs");
         assert_eq!(filtered.len(), 2, "session filter must keep exactly 2 cycles");
         let cycle_ids: Vec<&str> = filtered.iter().map(|r| r.cycle_id.as_str()).collect();
         assert!(cycle_ids.contains(&"cycle-1a"), "cycle-1a must be in result");
         assert!(cycle_ids.contains(&"cycle-1b"), "cycle-1b must be in result");
         assert!(!cycle_ids.contains(&"cycle-2"), "cycle-2 must be excluded");
+
+        let first_page = list_cycle_runs_filtered(&pool, &ids, 1, 0)
+            .await
+            .expect("filtered first page");
+        assert_eq!(
+            first_page.iter().map(|r| r.cycle_id.as_str()).collect::<Vec<_>>(),
+            vec!["cycle-1b"],
+            "session filtering must happen before LIMIT/OFFSET"
+        );
 
         // No-session case: unknown session id returns empty bridge result.
         let empty_rows = sqlx::query(
