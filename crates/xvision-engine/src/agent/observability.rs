@@ -539,6 +539,19 @@ impl ObsEmitter {
     /// post-decision payload (action / fill / position_post) lives in
     /// the `decision_completed` engine event because the action isn't
     /// known until after the model + risk + executor run.
+    ///
+    /// WS-10 (`trace-obs-decision-input`): `decision_input` is the
+    /// structured snapshot of the market context the strategy agent
+    /// actually saw this bar — the indicator panel, current-bar OHLCV,
+    /// regime label, whether the briefing was FULL or a DELTA (and which
+    /// indicators changed), and a BOUNDED `bar_history` summary (count +
+    /// first/last ts — never the inlined window). It is merged into the
+    /// span attributes under the `decision_input` key so the rich
+    /// context is queryable and lands in the run export automatically
+    /// (the export selects `attributes_json` for every span). Build it
+    /// with [`crate::eval::executor::backtest::build_decision_input`]
+    /// from the trader seed. `None` preserves the pre-WS-10 attribute
+    /// shape.
     pub async fn emit_decision_span_started(
         &self,
         span_id: &str,
@@ -548,6 +561,7 @@ impl ObsEmitter {
         bar_ts: Option<chrono::DateTime<chrono::Utc>>,
         mark_price: Option<f64>,
         position_pre: Option<f64>,
+        decision_input: Option<serde_json::Value>,
     ) {
         let attrs = SpanAttributes {
             run_id: Some(self.run_id.clone()),
@@ -570,6 +584,10 @@ impl ObsEmitter {
             if let Some(n) = serde_json::Number::from_f64(p) {
                 base.insert("position_pre".to_string(), serde_json::Value::Number(n));
             }
+        }
+        // WS-10: the structured market-context snapshot the agent saw.
+        if let Some(di) = decision_input {
+            base.insert("decision_input".to_string(), di);
         }
         let merged = if base.is_empty() {
             attrs.to_attributes_json()
