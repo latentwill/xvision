@@ -10,7 +10,7 @@ import { useMemo } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
-import { spanColor, withAlpha } from "./span-colors";
+import { spanColorForSpan, withAlpha } from "./span-colors";
 
 function ts(iso: string): number {
   return new Date(iso).getTime();
@@ -204,7 +204,7 @@ function SpanTreeRow({
 }) {
   const { span, depth, durationMs, descendantCount, hasChildren, collapsed } =
     row;
-  const color = spanColor(span.kind);
+  const color = spanColorForSpan(span);
   const isError = span.status === "error";
   const isLive = span.status === "in_progress";
   const cost = costOf(span);

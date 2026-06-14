@@ -3,7 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
+import {
+  agentRunKeys,
+  engineEventFrameToSpan,
+  getAgentRun,
+  openAgentRunStream,
+} from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
@@ -335,6 +340,23 @@ export function TraceDock() {
           // aggregates honest.
           qc.invalidateQueries({ queryKey: key });
           return;
+        case "engine_event": {
+          // WS-8: project the live engine event onto an engine.event row and
+          // append it to the cached detail so the trace surfaces lifecycle
+          // signals (risk veto, regime transition, order state, …) in real
+          // time instead of dropping them. Carrier kinds + kindless frames
+          // project to null and are skipped.
+          const projected = engineEventFrameToSpan(ev.data);
+          if (!projected) return;
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            if (prev.spans.some((s) => s.span_id === projected.span_id)) {
+              return prev;
+            }
+            return { ...prev, spans: [...prev.spans, projected] };
+          });
+          return;
+        }
         // Lifecycle / informational arms — no cache side effect.
         case "run_started":
         case "tool_call_started":
@@ -345,6 +367,8 @@ export function TraceDock() {
         case "supervisor_note":
         case "artifact_written":
         case "backpressure_dropped":
+        case "memory_recall":
+        case "memory_write":
         case "lagged":
           return;
       }
