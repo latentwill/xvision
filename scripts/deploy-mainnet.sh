@@ -176,9 +176,12 @@ for key, val in [
     ('admin',               '$OPERATOR_EOA'),
 ]:
     content = sub_field(content, key, val)
-remaining = re.findall(r'"0x0{40}"', content)
+# Only count LIVE (non-comment) lines — the [marketplace] section has commented
+# V4 placeholders (# admin_multisig / # timelock) that legitimately stay zero.
+remaining = [l for l in content.splitlines()
+             if not l.lstrip().startswith('#') and re.search(r'"0x0{40}"', l)]
 if remaining:
-    raise SystemExit(f"ERROR: {len(remaining)} zero-address placeholder(s) remain in config")
+    raise SystemExit(f"ERROR: {len(remaining)} zero-address placeholder(s) remain: {remaining}")
 with open('$CONFIG', 'w') as f:
     f.write(content)
 print("    Config written.")
