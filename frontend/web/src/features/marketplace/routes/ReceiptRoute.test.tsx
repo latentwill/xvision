@@ -101,6 +101,13 @@ describe("ReceiptRoute", () => {
     expect(await screen.findByText(/Install in your XVN/i)).toBeInTheDocument();
   });
 
+  it("does not render XVN-detection language in the install panel (QA #10)", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    await screen.findByText(/Install in your XVN/i);
+    expect(screen.queryByText(/XVN not detected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/detected at/i)).not.toBeInTheDocument();
+  });
+
   it("renders 2-column layout (no 380px third column)", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
     await screen.findByText(/Acquired/);

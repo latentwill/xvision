@@ -4,11 +4,26 @@
 // Components consume these — never raw API joins — so the hero's "which run
 // do we show, and what do its numbers mean" logic stays unit-tested.
 
-import type { RunSummary } from "@/api/types.gen";
+import type { RunChartPayload, RunSummary } from "@/api/types.gen";
+import type { V2Marker } from "@/components/chart/v2/types";
 
 export interface SeriesPoint {
   time: number;
   value: number;
+}
+
+/** QA #1: buy/sell trade markers for the hero equity overlay. Maps the run
+ *  chart payload's trades to V2Markers (kind/time/price). The equity overlay
+ *  anchors to the curve, so the absolute fill price is informational only. */
+export function tradeMarkersFromPayload(
+  payload: RunChartPayload | undefined,
+): V2Marker[] {
+  const trades = payload?.markers?.trades ?? [];
+  return trades.map((t) => ({
+    kind: t.side === "Buy" ? "buy" : "sell",
+    time: t.time,
+    price: t.price,
+  }));
 }
 
 /** Aligned uPlot-ready columns for the hero chart: equity return % plus the

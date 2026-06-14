@@ -76,17 +76,15 @@ beforeEach(() => {
 describe("InstallSteps", () => {
   it("renders all step titles when the receipt carries a bundle CID", () => {
     wrap(<InstallSteps receipt={receipt} />);
-    expect(screen.getByText(/XVN install detected/i)).toBeInTheDocument();
     expect(screen.getByText(/Fetch strategy bundle/i)).toBeInTheDocument();
     expect(screen.getByText(/Install missing ingredients/i)).toBeInTheDocument();
     expect(screen.getByText(/Add to your Strategies/i)).toBeInTheDocument();
   });
 
-  it("step 1 renders as done (struck-through) when xvnDetected is true", () => {
+  it("does not render the 'XVN install detected' step (QA #10)", () => {
     wrap(<InstallSteps receipt={receipt} />);
-    const step1title = screen.getByText(/XVN install detected/i);
-    // done steps get line-through decoration
-    expect(step1title.className).toMatch(/line-through/);
+    expect(screen.queryByText(/XVN install detected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/XVN not detected/i)).not.toBeInTheDocument();
   });
 
   it("step 3 renders ingredient chips for all ingredients", () => {
@@ -111,20 +109,6 @@ describe("InstallSteps", () => {
         (el) => el.getAttribute("data-installed") === "false"
       )
     ).toHaveLength(missing.length);
-  });
-
-  it("shows xvnEndpoint in step 1 description when detected", () => {
-    wrap(<InstallSteps receipt={receipt} />);
-    expect(screen.getByText(/localhost:3000/)).toBeInTheDocument();
-  });
-
-  it("shows 'not detected' message in step 1 when xvnDetected is false", () => {
-    const noXvn = {
-      ...receipt,
-      install: { ...receipt.install, xvnDetected: false },
-    };
-    wrap(<InstallSteps receipt={noXvn} />);
-    expect(screen.getByText(/not detected/i)).toBeInTheDocument();
   });
 
   it("step 3 action chip shows count of missing ingredients", () => {

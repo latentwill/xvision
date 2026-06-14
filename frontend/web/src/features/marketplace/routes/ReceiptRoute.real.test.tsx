@@ -88,8 +88,9 @@ describe("ReceiptRoute with a real mapped receipt", () => {
     expect(screen.getByText("LICENSE 3")).toBeInTheDocument();
     expect(screen.getByText(ISO)).toBeInTheDocument();
 
-    // Install panel: honest "not detected" state for the real receipt
-    expect(screen.getAllByText(/XVN not detected/).length).toBeGreaterThan(0);
+    // Install panel renders without XVN-detection language (QA #10 removed it)
+    expect(screen.getByText(/Install in your XVN/i)).toBeInTheDocument();
+    expect(screen.queryByText(/XVN not detected/)).toBeNull();
 
     // Tx link points at the real hash via TxChip (QA16)
     // TxChip renders the hash as a link; label="View on explorer"
