@@ -1,7 +1,7 @@
 //! Perps entry vetoes for the engine R3 risk path. Pure; venue-gated.
 //!
-//! Funding-carry and liquidation-distance checks, lifted from the retired
-//! `xvision-risk` `FundingCarryGuard` / `LiquidationDistanceGuard` rules.
+//! Funding-carry and liquidation-distance checks, ported from the now-retired
+//! `FundingCarryGuard` / `LiquidationDistanceGuard` rules.
 //! Both fail-safe to no-op when the relevant datum is absent (spot/backtest)
 //! and never fire unless `is_perp_venue` is true.
 

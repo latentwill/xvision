@@ -22,7 +22,6 @@ pub mod obs;
 pub mod optimize;
 pub mod provider;
 pub mod report;
-pub mod risk;
 pub mod run;
 pub mod scenario;
 pub mod show_decision;

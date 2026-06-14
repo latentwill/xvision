@@ -20,7 +20,6 @@ xvision-execution     = { path = "../xvision-execution" }
 xvision-filters       = { path = "../xvision-filters" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-observability = { path = "../xvision-observability" }
-xvision-risk          = { path = "../xvision-risk" }
 xvision-identity      = { path = "../xvision-identity", optional = true }
 
 reqwest     = { workspace = true }

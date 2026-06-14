@@ -14,7 +14,6 @@ path = "src/lib.rs"
 [dependencies]
 xvision-core      = { path = "../xvision-core" }
 xvision-execution = { path = "../xvision-execution" }
-xvision-risk      = { path = "../xvision-risk" }
 xvision-observability = { path = "../xvision-observability" }
 rand              = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 

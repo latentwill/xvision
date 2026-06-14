@@ -339,7 +339,7 @@ fn diff_filter_values(a: &serde_json::Value, b: &serde_json::Value, path: &str, 
 /// keys. F14/F20 (QA 2026-06-04): the real strategies on the node all have an
 /// empty `mechanical_params`; their only tunable knobs live in `risk`, so
 /// without this the optimizer could never produce a valid param experiment for
-/// any real strategy. Keep in sync with `RiskConfig` (xvision-risk).
+/// any real strategy. Keep in sync with `RiskConfig` (xvision-engine strategies::risk).
 pub const RISK_PARAM_FIELDS: &[&str] = &[
     "risk_pct_per_trade",
     "max_concurrent_positions",
