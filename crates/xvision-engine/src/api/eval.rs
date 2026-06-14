@@ -3488,15 +3488,16 @@ async fn build_backtest_executor(
 }
 
 /// Live execution venue resolved from `live_config.broker_creds_ref`.
-/// `AlpacaPaper` is the original live scope; `OrderlyTestnet` executes on
-/// the Orderly Network testnet while Alpaca continues to supply the live
-/// market-data stream (bars). Real-money venues stay out of scope.
+/// `AlpacaPaper` is the original paper-trading scope; `OrderlyTestnet` executes
+/// on the Orderly Network testnet, and real-money perps venues are allowed only
+/// when their explicit mainnet gates and `venue_label` checks pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LiveVenue {
     AlpacaPaper,
     OrderlyTestnet,
     /// Byreal perps (executes on Hyperliquid via the perps CLI) while Alpaca
-    /// supplies the live market-data stream. Testnet-only in the current scope.
+    /// supplies the live market-data stream. Mainnet is gated by `venue_label`,
+    /// network consistency, real-money acknowledgement, and the `SafetyGate`.
     ByrealLive,
     /// Degen Arena — AI Pot / Hyperliquid perps via `DegenArenaSurface`. Alpaca
     /// supplies live market-data bars while Degen Arena executes on Hyperliquid.
