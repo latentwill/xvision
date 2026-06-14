@@ -361,6 +361,10 @@ impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A> {
     fn signing_scheme(&self) -> &str {
         "api-key"
     }
+
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

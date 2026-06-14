@@ -69,6 +69,13 @@ impl RealBrokerFills {
         self.obs = Some(obs);
         self
     }
+
+    /// Whether the wrapped live broker is a directional-perps venue.
+    /// Threaded into the engine's R3 veto so perps guards activate only
+    /// on perps venues. Spot brokers (Alpaca) return false.
+    pub fn is_perp_venue(&self) -> bool {
+        self.broker.is_perp_venue()
+    }
 }
 
 #[async_trait]
