@@ -366,15 +366,18 @@ export function EvalRunsRoute() {
         </button>
       </div>
       {startOpen ? (
-        <StartEvalPanel
-          initialAgentId={preselectedStrategy}
-          onClose={() => {
-            setStartOpen(false);
-            const next = new URLSearchParams(searchParams);
-            next.delete("start");
-            setSearchParams(next);
-          }}
-        />
+        <>
+          <StartEvalPanel
+            initialAgentId={preselectedStrategy}
+            onClose={() => {
+              setStartOpen(false);
+              const next = new URLSearchParams(searchParams);
+              next.delete("start");
+              setSearchParams(next);
+            }}
+          />
+          <hr className="border-border-soft" />
+        </>
       ) : null}
 
       <ResponsiveListCard<RunSummary>

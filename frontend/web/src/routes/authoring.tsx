@@ -86,7 +86,6 @@ function InspectorPage({ id }: { id: string }) {
       />
 
       <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
-      <BackLinkBar />
 
       <div className="space-y-5">
         <div className="space-y-5">
@@ -1590,16 +1589,6 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
     stop_loss_atr_multiple: String(risk.stop_loss_atr_multiple),
     daily_loss_kill_pct: (risk.daily_loss_kill_pct * 100).toFixed(2),
   };
-}
-
-function BackLinkBar() {
-  return (
-    <div className="mb-5 text-[13px] text-text-2">
-      <Link to="/strategies" className="text-text hover:underline">
-        ← Back to strategies
-      </Link>
-    </div>
-  );
 }
 
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {

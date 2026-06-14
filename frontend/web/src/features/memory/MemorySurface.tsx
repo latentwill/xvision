@@ -223,7 +223,7 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
   });
 
   const [patternText, setPatternText] = useState("");
-  const [embeddingJson, setEmbeddingJson] = useState("[1,0]");
+  const [embeddingJson, setEmbeddingJson] = useState("");
   const [childName, setChildName] = useState("");
   const [demoSource, setDemoSource] = useState("frozen-snapshot");
   const [holdoutSplit, setHoldoutSplit] = useState("70/15/15");
@@ -635,7 +635,8 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
               type="text"
               value={embeddingJson}
               onChange={(e) => setEmbeddingJson(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text font-mono focus:outline-none focus:border-gold/40"
+              placeholder="e.g. [0.12, -0.34, …]"
+              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text font-mono placeholder:text-text-4 focus:outline-none focus:border-gold/40"
             />
           </label>
           {(() => {

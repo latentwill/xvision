@@ -30,7 +30,13 @@ export function DocsRoute() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState("");
-  const [showOptions, setShowOptions] = useState(false);
+  const [showOptions, setShowOptions] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("xvn.docs.showOptions") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [copied, setCopied] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
   const { prefs, setDensity } = useDocsPrefs();
@@ -125,7 +131,7 @@ export function DocsRoute() {
               className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-text-3 border border-border-soft rounded-sm px-1 leading-none py-0.5 pointer-events-none select-none"
               aria-hidden="true"
             >
-              ⌘K
+              {typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC") ? "⌘K" : "Ctrl K"}
             </span>
           </div>
           <nav className="flex flex-col gap-0.5" data-testid="docs-index">
@@ -186,7 +192,11 @@ export function DocsRoute() {
           <div className="mt-6 pt-4 border-t border-border-soft">
             <button
               type="button"
-              onClick={() => setShowOptions((v) => !v)}
+              onClick={() => setShowOptions((v) => {
+                const next = !v;
+                try { localStorage.setItem("xvn.docs.showOptions", String(next)); } catch { /* ignore */ }
+                return next;
+              })}
               aria-expanded={showOptions}
               aria-controls="docs-display-options"
               data-testid="docs-display-options-toggle"

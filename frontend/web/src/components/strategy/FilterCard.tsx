@@ -6,6 +6,7 @@
 // `/CLAUDE.md`.
 
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
@@ -39,7 +40,10 @@ function initialSourceFor(
   if (filter == null) {
     return "";
   }
-  return JSON.stringify(filter, null, 2);
+  // Strip internal fields (e.g. "status") that are server-managed and
+  // should not round-trip into the operator's saved JSON blob.
+  const { status: _status, ...rest } = filter as Record<string, unknown>;
+  return JSON.stringify(rest, null, 2);
 }
 
 export function FilterCard({ strategy }: { strategy: Strategy }) {
@@ -121,7 +125,7 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
 
   const busy = saveMut.isPending || clearMut.isPending;
   const modeBusy = modeMut.isPending;
-  const canSave = source.trim().length > 0 && !busy;
+  const canSave = source.trim().length > 0 && source !== initial && !busy;
 
   return (
     <Card data-testid="strategy-filter-card">
@@ -251,7 +255,13 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
         ) : null}
 
         <div className="text-[11px] text-text-3">
-          DSL reference: see <span className="font-mono">docs/operator/filters.md</span>
+          DSL reference: see{" "}
+          <Link
+            to="/docs?slug=filter-dsl-catalog"
+            className="font-mono underline underline-offset-2 hover:text-text-2"
+          >
+            docs/operator/filters.md
+          </Link>
         </div>
       </div>
     </Card>

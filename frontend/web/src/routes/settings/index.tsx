@@ -51,16 +51,18 @@ export function SettingsLayout() {
         title="Settings"
         sub="Connect LLM providers and broker accounts xvn uses to run agents"
       />
-      <nav className="flex gap-1 mb-5 border-b border-border-soft">
+      <nav className="flex gap-1 mb-5 border-b border-border-soft overflow-x-auto">
         {TABS.map((t) => (
           <NavLink
             key={t.to}
             to={t.to}
             className={({ isActive }) =>
               [
-                "px-3 py-2 text-[13px] -mb-px border-b-2",
+                "shrink-0 px-3 py-2 text-[13px] -mb-px border-b-2",
                 isActive
-                  ? "text-gold border-gold"
+                  ? t.to === "danger"
+                    ? "text-danger border-danger"
+                    : "text-gold border-gold"
                   : "text-text-2 border-transparent hover:text-text",
               ].join(" ")
             }
@@ -747,11 +749,29 @@ function BrokerCard({ entry }: { entry: BrokerEntry }) {
   );
 }
 
+const FRIENDLY_NAMES: Record<string, string> = {
+  ORDERLY_KEY: "API Key",
+  ORDERLY_SECRET: "API Secret",
+  ALPACA_API_KEY: "API Key",
+  ALPACA_SECRET_KEY: "API Secret",
+  ALPACA_BASE_URL: "Base URL",
+  BYREAL_API_KEY: "API Key",
+  BYREAL_API_SECRET: "API Secret",
+};
+
 function CredentialRow({ cred }: { cred: CredentialRef }) {
+  const friendly = FRIENDLY_NAMES[cred.env_var];
   return (
     <tr className="border-t border-border-soft first:border-t-0">
       <td className="py-2">
-        <code className="font-mono text-[12px] text-text-2">{cred.env_var}</code>
+        {friendly ? (
+          <span className="flex flex-col gap-0.5">
+            <span className="text-[12px] text-text">{friendly}</span>
+            <code className="font-mono text-[10px] text-text-4">{cred.env_var}</code>
+          </span>
+        ) : (
+          <code className="font-mono text-[12px] text-text-2">{cred.env_var}</code>
+        )}
       </td>
       <td className="py-2 text-right">
         {cred.is_set ? (

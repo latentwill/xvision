@@ -363,6 +363,12 @@ describe("MemoryPage — Flywheel panel", () => {
       await screen.findByLabelText(/Candidate Pattern/i),
       "Reduce risk.",
     );
+    // Embedding JSON field now starts empty (placeholder only); fill it in.
+    // Use fireEvent.change because userEvent.type misinterprets "[" and "]" as
+    // keyboard modifier syntax.
+    fireEvent.change(screen.getByLabelText(/Embedding JSON/i), {
+      target: { value: "[1,0]" },
+    });
     await user.click(screen.getByRole("button", { name: /Stage Pattern/i }));
 
     await waitFor(() => {
