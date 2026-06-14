@@ -164,4 +164,47 @@ mod tests {
         // (4_000 + 1_500) / 10_000 * 100 = 55% > 50% ⇒ true
         assert!(exceeds_total_exposure(50.0, 10_000.0, 4_000.0, 1_500.0));
     }
+
+    #[test]
+    fn veto_short_paying_punitive_funding() {
+        // Negative funding ⇒ shorts pay. A short pays `-funding` = -(-0.05) =
+        // 0.05 > 0.01 threshold ⇒ veto. (The complement of
+        // `short_receives_funding_passes`; mirrors the original
+        // FundingCarryGuard's short-pays test.)
+        assert_eq!(
+            perps_entry_veto(&cfg(), true, true, Direction::Short, Some(-0.05), None),
+            Some(VetoReason::PunitiveFunding)
+        );
+    }
+
+    #[test]
+    fn funding_guard_disabled_at_zero_threshold() {
+        // max_funding_pay_8h = 0.0 disables the funding check even at a
+        // punitive rate.
+        let mut c = cfg();
+        c.max_funding_pay_8h = 0.0;
+        assert_eq!(
+            perps_entry_veto(&c, true, true, Direction::Long, Some(0.99), None),
+            None
+        );
+    }
+
+    #[test]
+    fn liq_guard_disabled_at_zero_threshold() {
+        // min_liq_distance_pct = 0.0 disables the liquidation check even when
+        // a position sits right on top of its liq price.
+        let mut c = cfg();
+        c.min_liq_distance_pct = 0.0;
+        assert_eq!(
+            perps_entry_veto(&c, true, true, Direction::Long, None, Some(0.1)),
+            None
+        );
+    }
+
+    #[test]
+    fn exposure_at_exact_cap_passes() {
+        // Exactly at the cap is NOT a breach (strict `>`), matching the unit
+        // boundary: (3_500 + 1_500) / 10_000 * 100 = 50.0, not > 50.0.
+        assert!(!exceeds_total_exposure(50.0, 10_000.0, 3_500.0, 1_500.0));
+    }
 }
