@@ -16,7 +16,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@cline/sdk": "0.0.41"
+    "@cline/sdk": "0.0.47"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
