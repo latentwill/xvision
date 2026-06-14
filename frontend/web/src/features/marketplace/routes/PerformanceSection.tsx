@@ -39,6 +39,88 @@ import type { EquityCurve, TradeRecord } from "@/features/marketplace/data/types
 interface Props {
   curve: EquityCurve;
   trades: TradeRecord[];
+  /**
+   * Live PnL (USD) from the Degen Arena on-chain runner, when available.
+   * When present: rendered as authoritative "Live · Degen Arena (on-chain)" figure.
+   * When null/undefined: the live row is hidden; only the "Indicative · backtest"
+   * caption is shown on the equity curve.
+   *
+   * TODO(degen provenance): wire live Degen Arena PnL source — the on-chain
+   * marketplace indexer is dormant/env-gated; connect this prop once
+   * `onChain.tradesMeta.netPnlUsd` is populated from the indexer.
+   */
+  liveDegenPnlUsd?: number | null;
+}
+
+// Inline provenance banner — full-width, no popup, dark-mode safe.
+// Shows "Live · Degen Arena (on-chain)" when live data exists, and always
+// shows the "Indicative · backtest" caption so users understand the equity
+// curve is not a real-money track record.
+function ProvenanceBanner({
+  liveDegenPnlUsd,
+}: {
+  liveDegenPnlUsd?: number | null;
+}): ReactElement {
+  const hasLive = liveDegenPnlUsd != null;
+  const pnlPositive = hasLive && liveDegenPnlUsd >= 0;
+
+  return (
+    <div
+      data-testid="provenance-banner"
+      className="flex flex-wrap gap-x-4 gap-y-1.5 items-center rounded-card border border-border bg-surface-card px-3 py-2"
+    >
+      {/* Live Degen Arena figure — only when data is available */}
+      {hasLive && (
+        <div
+          data-testid="provenance-live"
+          className="flex items-center gap-1.5 min-w-0"
+        >
+          {/* Pulsing live dot */}
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-emerald-500 whitespace-nowrap">
+            Live · Degen Arena (on-chain)
+          </span>
+          <span
+            className={[
+              "font-mono text-[12px] font-semibold tabular-nums whitespace-nowrap",
+              pnlPositive ? "text-emerald-400" : "text-danger",
+            ].join(" ")}
+          >
+            {pnlPositive ? "+" : ""}
+            {liveDegenPnlUsd!.toLocaleString("en-US", {
+              style: "currency",
+              currency: "USD",
+              maximumFractionDigits: 2,
+            })}
+          </span>
+          <span className="font-mono text-[9px] text-text-3 uppercase tracking-[0.1em] whitespace-nowrap">
+            authoritative
+          </span>
+        </div>
+      )}
+
+      {/* Divider between live and backtest when both present */}
+      {hasLive && (
+        <div className="h-3 w-px bg-border shrink-0 hidden sm:block" aria-hidden />
+      )}
+
+      {/* Indicative backtest caption — always shown */}
+      <div
+        data-testid="provenance-indicative"
+        className="flex items-center gap-1.5 min-w-0"
+      >
+        <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-text-3 whitespace-nowrap">
+          Indicative · backtest
+        </span>
+        <span className="font-mono text-[9px] text-text-3 uppercase tracking-[0.1em] whitespace-nowrap">
+          not a real-money track record
+        </span>
+      </div>
+    </div>
+  );
 }
 
 // Equity points → unix-second time axis aligned 1 point/day ending now.
@@ -127,7 +209,7 @@ function EquityMarkerPane({
   return <div ref={hostRef} style={{ width: "100%" }} />;
 }
 
-export function PerformanceSection({ curve, trades }: Props): ReactElement {
+export function PerformanceSection({ curve, trades, liveDegenPnlUsd }: Props): ReactElement {
   const [range, setRange] = useState<RangePreset>("All");
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
 
@@ -148,6 +230,8 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
         <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-text-3">
           Performance
         </div>
+        {/* Provenance banner — always inline, full-width, no popup. */}
+        <ProvenanceBanner liveDegenPnlUsd={liveDegenPnlUsd} />
         <div data-testid="performance-empty">
           <EmptyState
             title="No live performance record yet"
@@ -173,6 +257,8 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
       <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-text-3">
         Performance
       </div>
+      {/* Provenance banner — always inline, full-width, no popup. */}
+      <ProvenanceBanner liveDegenPnlUsd={liveDegenPnlUsd} />
       <ChartFrame title="Equity" range={range} onRange={setRange}>
         <div style={{ minHeight: 360 }}>
           <EquityMarkerPane
