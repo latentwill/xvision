@@ -9,7 +9,7 @@
 //! - `GET /api/agent-runs` — paginated list of all agent runs, newest-first.
 //!   Supports `?status=running,queued` (comma-separated filter) and
 //!   `?limit=N` (default 20, max 100).
-//! - `GET /api/agent-runs/:id` — returns the `xvn.agent_run.v1` JSON
+//! - `GET /api/agent-runs/:id` — returns the `xvn.agent_run.v2` JSON
 //!   payload as the response body.
 //! - `GET /api/agent-runs/:id/export.json` — same payload with a
 //!   `Content-Disposition: attachment; filename="xvn_run_<id>.json"`
@@ -289,7 +289,7 @@ pub async fn list_agent_runs(
 // pattern as `eval_runs::get` / `eval_runs::export` (no per-route
 // gate, behind the existing dashboard auth surface).
 
-/// `GET /api/agent-runs/:id` — return the `xvn.agent_run.v1` payload
+/// `GET /api/agent-runs/:id` — return the `xvn.agent_run.v2` payload
 /// for a single agent run as the response body.
 pub async fn get(
     State(state): State<AppState>,
@@ -344,7 +344,7 @@ pub async fn export_md(
 }
 
 /// `GET /api/agent-runs/:id/stream` — Server-Sent Events feed for a
-/// single agent run. The first event carries the `xvn.agent_run.v1`
+/// single agent run. The first event carries the `xvn.agent_run.v2`
 /// snapshot so the consumer has full context before live tail events
 /// start streaming. Subsequent events mirror the `RunEvent` vocabulary
 /// (one SSE event per emitted `RunEvent`) and the stream closes
@@ -455,7 +455,7 @@ pub struct MemoryEventDto {
 }
 
 /// Project all persisted memory flywheel events for `run_id`.
-/// The strict `xvn.agent_run.v1` export intentionally excludes generic
+/// The strict `xvn.agent_run.v2` export intentionally excludes generic
 /// events, so dashboard surfaces that need recall/write ribbons use this
 /// route instead.
 pub async fn list_memory_events(

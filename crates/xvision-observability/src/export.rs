@@ -5,7 +5,7 @@
 //! rows from an open SQLite pool, and shapes them into two stable
 //! deliverables:
 //!
-//! - [`AgentRunExport`] — serializes to the `xvn.agent_run.v1` JSON
+//! - [`AgentRunExport`] — serializes to the `xvn.agent_run.v2` JSON
 //!   schema. Schema-version discipline is load-bearing here: a future
 //!   shape change must bump `schema_version` rather than mutate v1 in
 //!   place (see plan risk #5).
@@ -41,10 +41,9 @@ use crate::rows::{
     AgentRunRow, ApprovalRow, ModelCallRow, SandboxResultRow, SpanRow, SupervisorNoteRow, ToolCallRow,
 };
 
-/// Schema-version tag stamped onto every export. **Do not** mutate v1
-/// in place — future shape changes get a new tag (`xvn.agent_run.v2`)
-/// and a new struct.
-pub const SCHEMA_VERSION: &str = "xvn.agent_run.v1";
+/// Schema-version tag stamped onto every export. v2 preserves the v1
+/// top-level fields and adds `accounting` provenance for eval-linked runs.
+pub const SCHEMA_VERSION: &str = "xvn.agent_run.v2";
 
 /// Errors raised when building an export from the ledger.
 #[derive(Debug, Error)]
@@ -79,6 +78,40 @@ pub struct ExportTotals {
     pub cost_usd: f64,
 }
 
+/// Token/accounting provenance for the top-level totals. Kept separate
+/// from `model_calls` so exports can explain eval-level accounting even
+/// when sidecar detail rows were not captured.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportAccounting {
+    pub source: String,
+    pub eval_run_id: Option<String>,
+    pub eval_mode: Option<String>,
+    pub eval_status: Option<String>,
+    pub eval_actual_input_tokens: Option<u64>,
+    pub eval_actual_output_tokens: Option<u64>,
+    pub eval_model_calls: u64,
+    pub eval_model_call_input_tokens: Option<u64>,
+    pub eval_model_call_output_tokens: Option<u64>,
+    pub eval_model_call_cost_usd: Option<f64>,
+}
+
+impl Default for ExportAccounting {
+    fn default() -> Self {
+        Self {
+            source: "none".to_string(),
+            eval_run_id: None,
+            eval_mode: None,
+            eval_status: None,
+            eval_actual_input_tokens: None,
+            eval_actual_output_tokens: None,
+            eval_model_calls: 0,
+            eval_model_call_input_tokens: None,
+            eval_model_call_output_tokens: None,
+            eval_model_call_cost_usd: None,
+        }
+    }
+}
+
 /// Recursive span tree node. Children are ordered by `started_at` then
 /// by `id` (lexicographic) for deterministic output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +138,7 @@ pub struct FinalArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-/// The `xvn.agent_run.v1` payload. Top-level field order follows the
+/// The `xvn.agent_run.v2` payload. Top-level field order follows the
 /// schema layout in the plan so the serialized JSON is human-scannable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunExport {
@@ -120,6 +153,7 @@ pub struct AgentRunExport {
     pub finished_at: Option<DateTime<Utc>>,
     pub otel_trace_id: Option<String>,
     pub totals: ExportTotals,
+    pub accounting: ExportAccounting,
     pub spans: Vec<SpanNode>,
     pub model_calls: Vec<ModelCallRow>,
     pub tool_calls: Vec<ToolCallRow>,
@@ -161,7 +195,7 @@ impl std::fmt::Display for AgentRunReport {
 /// call concurrently with the recorder (write-side). If the run is not
 /// found this returns [`ExportError::NotFound`].
 pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExport, ExportError> {
-    let run = load_agent_run(pool, run_id).await?;
+    let run = load_agent_run_or_eval_projection(pool, run_id).await?;
     let span_rows = load_spans(pool, run_id).await?;
     let model_calls = load_model_calls(pool, run_id).await?;
     let tool_calls = load_tool_calls(pool, run_id).await?;
@@ -174,7 +208,10 @@ pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExp
         None
     };
 
-    let totals = compute_totals(&model_calls, &tool_calls, &approvals);
+    let detail_totals = compute_totals(&model_calls, &tool_calls, &approvals);
+    let eval_accounting = load_eval_accounting(pool, &run.id, run.eval_run_id.as_deref()).await?;
+    let (status, finished_at) = reconcile_status(&run, eval_accounting.as_ref());
+    let (totals, accounting) = reconcile_totals(detail_totals, eval_accounting, &model_calls);
     let spans = into_tree(span_rows);
 
     let mcp_servers = parse_optional_json(run.mcp_servers_json.as_deref(), "mcp_servers_json")?;
@@ -186,12 +223,13 @@ pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExp
         objective: run.objective,
         strategy_id: run.strategy_id,
         eval_run_id: run.eval_run_id,
-        status: run.status,
+        status,
         retention_mode: run.retention_mode,
         started_at: run.started_at,
-        finished_at: run.finished_at,
+        finished_at,
         otel_trace_id: run.otel_trace_id,
         totals,
+        accounting,
         spans,
         model_calls,
         tool_calls,
@@ -240,6 +278,13 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     }
     if let Some(ref eid) = export.eval_run_id {
         let _ = writeln!(out, "- Eval run: {eid}");
+    }
+    let _ = writeln!(out, "- Accounting source: {}", export.accounting.source);
+    if let Some(ref mode) = export.accounting.eval_mode {
+        let _ = writeln!(out, "- Eval mode: {mode}");
+    }
+    if let Some(ref status) = export.accounting.eval_status {
+        let _ = writeln!(out, "- Eval status: {status}");
     }
     let _ = writeln!(
         out,
@@ -429,6 +474,256 @@ async fn load_agent_run(pool: &SqlitePool, run_id: &str) -> Result<AgentRunRow, 
         final_artifact_id: row.try_get("final_artifact_id")?,
         error: row.try_get("error")?,
     })
+}
+
+async fn load_agent_run_or_eval_projection(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<AgentRunRow, ExportError> {
+    match load_agent_run(pool, run_id).await {
+        Ok(run) => Ok(run),
+        Err(ExportError::NotFound(_)) => load_eval_run_projection(pool, run_id).await,
+        Err(e) => Err(e),
+    }
+}
+
+async fn load_eval_run_projection(pool: &SqlitePool, eval_run_id: &str) -> Result<AgentRunRow, ExportError> {
+    if !table_exists(pool, "eval_runs").await? {
+        return Err(ExportError::NotFound(eval_run_id.to_owned()));
+    }
+
+    let row: Option<SqliteRow> = sqlx::query(
+        "SELECT id, status, started_at, completed_at \
+         FROM eval_runs WHERE id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let row = row.ok_or_else(|| ExportError::NotFound(eval_run_id.to_owned()))?;
+    let started_at: String = row.try_get("started_at")?;
+    let finished_at: Option<String> = row.try_get("completed_at")?;
+    Ok(AgentRunRow {
+        id: row.try_get("id")?,
+        objective: format!("Eval run {eval_run_id}"),
+        strategy_id: None,
+        eval_run_id: Some(eval_run_id.to_owned()),
+        source_cli_job_id: None,
+        status: row.try_get("status")?,
+        started_at: parse_ts(&started_at)?,
+        finished_at: finished_at.as_deref().map(parse_ts).transpose()?,
+        retention_mode: "hash_only".to_string(),
+        sidecar_version: None,
+        cline_sdk_version: None,
+        protocol_version: None,
+        skills_json: None,
+        mcp_servers_json: None,
+        otel_trace_id: None,
+        final_artifact_id: None,
+        error: None,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct EvalAccountingRow {
+    eval_run_id: String,
+    mode: String,
+    status: String,
+    completed_at: Option<DateTime<Utc>>,
+    actual_input_tokens: Option<u64>,
+    actual_output_tokens: Option<u64>,
+    model_calls: u64,
+    model_call_input_tokens: Option<u64>,
+    model_call_output_tokens: Option<u64>,
+    model_call_cost_usd: Option<f64>,
+}
+
+async fn load_eval_accounting(
+    pool: &SqlitePool,
+    agent_run_id: &str,
+    linked_eval_run_id: Option<&str>,
+) -> Result<Option<EvalAccountingRow>, ExportError> {
+    if !table_exists(pool, "eval_runs").await? {
+        return Ok(None);
+    }
+
+    let eval_run_id = if let Some(id) = linked_eval_run_id {
+        Some(id.to_owned())
+    } else {
+        let direct: Option<String> = sqlx::query_scalar("SELECT id FROM eval_runs WHERE id = ?")
+            .bind(agent_run_id)
+            .fetch_optional(pool)
+            .await?;
+        direct
+    };
+    let Some(eval_run_id) = eval_run_id else {
+        return Ok(None);
+    };
+
+    let row: Option<SqliteRow> = sqlx::query(
+        "SELECT id, mode, status, completed_at, actual_input_tokens, actual_output_tokens \
+         FROM eval_runs WHERE id = ?",
+    )
+    .bind(&eval_run_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let completed_at_raw: Option<String> = row.try_get("completed_at")?;
+    let (model_calls, sum_in, sum_out, sum_cost) = load_eval_model_call_totals(pool, &eval_run_id).await?;
+
+    Ok(Some(EvalAccountingRow {
+        eval_run_id: row.try_get("id")?,
+        mode: row.try_get("mode")?,
+        status: row.try_get("status")?,
+        completed_at: completed_at_raw.as_deref().map(parse_ts).transpose()?,
+        actual_input_tokens: row
+            .try_get::<Option<i64>, _>("actual_input_tokens")?
+            .and_then(non_negative_u64),
+        actual_output_tokens: row
+            .try_get::<Option<i64>, _>("actual_output_tokens")?
+            .and_then(non_negative_u64),
+        model_calls,
+        model_call_input_tokens: sum_in.and_then(non_negative_u64),
+        model_call_output_tokens: sum_out.and_then(non_negative_u64),
+        model_call_cost_usd: sum_cost,
+    }))
+}
+
+async fn load_eval_model_call_totals(
+    pool: &SqlitePool,
+    eval_run_id: &str,
+) -> Result<(u64, Option<i64>, Option<i64>, Option<f64>), ExportError> {
+    if !table_exists(pool, "agent_runs").await?
+        || !table_exists(pool, "spans").await?
+        || !table_exists(pool, "model_calls").await?
+    {
+        return Ok((0, None, None, None));
+    }
+
+    let row: Option<SqliteRow> = sqlx::query(
+        "SELECT COUNT(*) AS rows, \
+                SUM(mc.input_token_count) AS sum_in, \
+                SUM(mc.output_token_count) AS sum_out, \
+                SUM(mc.cost_usd) AS sum_cost \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok((0, None, None, None));
+    };
+    let rows = row
+        .try_get::<i64, _>("rows")
+        .ok()
+        .and_then(non_negative_u64)
+        .unwrap_or(0);
+    Ok((
+        rows,
+        row.try_get::<Option<i64>, _>("sum_in")?,
+        row.try_get::<Option<i64>, _>("sum_out")?,
+        row.try_get::<Option<f64>, _>("sum_cost")?,
+    ))
+}
+
+fn reconcile_status(
+    run: &AgentRunRow,
+    accounting: Option<&EvalAccountingRow>,
+) -> (String, Option<DateTime<Utc>>) {
+    let Some(accounting) = accounting else {
+        return (run.status.clone(), run.finished_at);
+    };
+    if is_terminal_eval_status(&accounting.status) && is_nonterminal_agent_status(&run.status) {
+        return (
+            accounting.status.clone(),
+            accounting.completed_at.or(run.finished_at),
+        );
+    }
+    (run.status.clone(), run.finished_at)
+}
+
+fn reconcile_totals(
+    mut totals: ExportTotals,
+    eval_accounting: Option<EvalAccountingRow>,
+    model_calls: &[ModelCallRow],
+) -> (ExportTotals, ExportAccounting) {
+    let Some(eval) = eval_accounting else {
+        let source = if model_calls.is_empty() {
+            "none"
+        } else {
+            "agent_model_calls"
+        };
+        return (
+            totals,
+            ExportAccounting {
+                source: source.to_string(),
+                ..Default::default()
+            },
+        );
+    };
+
+    let mut accounting = ExportAccounting {
+        source: "none".to_string(),
+        eval_run_id: Some(eval.eval_run_id.clone()),
+        eval_mode: Some(eval.mode),
+        eval_status: Some(eval.status),
+        eval_actual_input_tokens: eval.actual_input_tokens,
+        eval_actual_output_tokens: eval.actual_output_tokens,
+        eval_model_calls: eval.model_calls,
+        eval_model_call_input_tokens: eval.model_call_input_tokens,
+        eval_model_call_output_tokens: eval.model_call_output_tokens,
+        eval_model_call_cost_usd: eval.model_call_cost_usd,
+    };
+
+    if eval.model_calls > 0 {
+        totals.model_calls = eval.model_calls;
+        totals.input_tokens = eval.model_call_input_tokens.unwrap_or_default();
+        totals.output_tokens = eval.model_call_output_tokens.unwrap_or_default();
+        totals.cost_usd = eval.model_call_cost_usd.unwrap_or_default();
+        accounting.source = "eval_model_calls".to_string();
+    } else if eval.actual_input_tokens.unwrap_or_default() > 0
+        || eval.actual_output_tokens.unwrap_or_default() > 0
+    {
+        totals.input_tokens = eval.actual_input_tokens.unwrap_or_default();
+        totals.output_tokens = eval.actual_output_tokens.unwrap_or_default();
+        accounting.source = "eval_actuals".to_string();
+    } else if !model_calls.is_empty() {
+        accounting.source = "agent_model_calls".to_string();
+    }
+
+    (totals, accounting)
+}
+
+async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, ExportError> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(table)
+            .fetch_one(pool)
+            .await?;
+    Ok(count > 0)
+}
+
+fn non_negative_u64(n: i64) -> Option<u64> {
+    if n >= 0 {
+        Some(n as u64)
+    } else {
+        None
+    }
+}
+
+fn is_terminal_eval_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled")
+}
+
+fn is_nonterminal_agent_status(status: &str) -> bool {
+    matches!(status, "queued" | "running")
 }
 
 async fn load_spans(pool: &SqlitePool, run_id: &str) -> Result<Vec<SpanRow>, ExportError> {
