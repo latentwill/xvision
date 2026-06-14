@@ -1394,6 +1394,8 @@ mod orderly_live_surface_tests {
 #[cfg(test)]
 mod venue_identity_tests {
     use super::*;
+    use crate::alpaca::{AlpacaAccount, AlpacaOrder, AlpacaPosition};
+    use crate::executor::ExecutorError;
 
     /// A bare `BrokerSurface` impl that overrides nothing must keep
     /// compiling and inherit the conservative defaults. This pins the
@@ -1413,6 +1415,31 @@ mod venue_identity_tests {
         }
     }
 
+    struct StubAlpacaApi;
+
+    #[async_trait]
+    impl AlpacaApi for StubAlpacaApi {
+        async fn create_order(&self, _req: ApacOrderRequest) -> Result<AlpacaOrder, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn get_order(&self, _order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn list_positions(&self) -> Result<Vec<AlpacaPosition>, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+    }
+
     #[test]
     fn trait_defaults_are_generic_broker() {
         let b = DefaultsBroker;
@@ -1422,14 +1449,9 @@ mod venue_identity_tests {
 
     #[test]
     fn alpaca_paper_overrides_venue_and_scheme() {
-        // AlpacaPaperSurface needs an AlpacaApi to construct; the
-        // venue()/signing_scheme() readers are pure, so a never-called
-        // mock is sufficient. We reuse the crate's MockBrokerSurface for
-        // the cross-impl smoke and assert the concrete Alpaca overrides
-        // via the trait object built from a stub api in the alpaca tests
-        // module. Here we assert the values are the locked WS-4 strings.
-        // (AlpacaPaperSurface::with_api requires an Arc<dyn AlpacaApi>;
-        // see alpaca.rs mocks — covered in the engine emit test instead.)
+        let surface = AlpacaPaperSurface::with_api(Arc::new(StubAlpacaApi));
+        assert_eq!(surface.venue(), "alpaca-paper");
+        assert_eq!(surface.signing_scheme(), "api-key");
     }
 
     #[test]
