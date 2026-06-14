@@ -406,24 +406,28 @@ pub async fn start_cycle(
     } else {
         None
     };
-    // WU-3b: spawn the shared Cline sidecar before moving api_ctx into the task.
-    // On error, fall back to LlmDispatch (soft fallback; WU-1.6 converts to hard
-    // error once the plumbing is verified end-to-end across both launch surfaces).
+    // WU-6: the Cline sidecar is mandatory for the trader (LlmDispatch retired).
+    // Fail the cycle launch with an actionable error if the sidecar cannot be
+    // spawned — never fall back silently.
     let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
         &api_ctx,
         &cfg.mutator.provider, // TODO: prefer the strategy's resolved trader provider (select_eval_provider parity)
         Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
-    .unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "dashboard cycle: sidecar spawn failed; trader falls back to LlmDispatch");
-        None
-    });
-    let agent_runtime = if cline_ctx.is_some() {
-        AgentRuntime::Cline
-    } else {
-        AgentRuntime::LlmDispatch
-    };
+    .map_err(|e| DashboardError::Validation {
+        field: "sidecar".to_string(),
+        msg: format!(
+            "optimizer requires the Cline sidecar (WU-6: LlmDispatch was retired): {e} \
+             — ensure XVN_AGENTD_BIN is set and the sidecar is provisioned"
+        ),
+    })?
+    .ok_or_else(|| DashboardError::Validation {
+        field: "sidecar".to_string(),
+        msg: "optimizer requires the Cline sidecar (WU-6): XVN_AGENTD_BIN must be set \
+              and the sidecar must be provisioned"
+            .to_string(),
+    })?;
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -433,7 +437,7 @@ pub async fn start_cycle(
             backtest_dispatch,
             Arc::new(ToolRegistry::default_with_builtins()),
         )
-        .with_cline_runtime(agent_runtime, cline_ctx);
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline_ctx));
         // F28: enforce the operator-set budget ceiling. Once the metered
         // paper-test cost reaches `budget_cap`, the cycle stops before launching
         // another backtest (no cap → f64::INFINITY). This is the guard against the

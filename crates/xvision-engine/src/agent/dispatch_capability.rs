@@ -32,7 +32,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use xvision_core::trading::AssetSymbol;
 
-use crate::agent::execute::{execute_slot, SlotInput};
+// SlotInput and execute_slot were removed in WU-6 (LlmDispatch trader retirement).
 use crate::agent::execute_cline::{execute_slot_cline, ClineSlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agent::memory_recorder::MemoryRecorder;
@@ -46,12 +46,11 @@ use xvision_core::config::{AgentRuntime, ProviderEntry};
 use xvision_core::providers::Catalog;
 use xvision_observability::Recorder;
 
-/// Everything the Cline branch of a capability dispatch needs that the
-/// `LlmDispatch` branch does not: the live sidecar client plus the
-/// provider identity + key required to start a Cline run. Threaded from
-/// `PipelineInputs` so the dispatcher stays oblivious to how the client
-/// was spawned. `None` (the default) keeps every dispatch on the
-/// `LlmDispatch` path regardless of the `runtime` flag.
+/// The Cline sidecar context for a capability dispatch: the live sidecar
+/// client plus the provider identity + key required to start a Cline run.
+/// Threaded from `PipelineInputs` so the dispatcher stays oblivious to how
+/// the client was spawned. `None` means no sidecar — which since WU-6 is
+/// a hard error for the trader (see `execute_slot_for_runtime`).
 #[derive(Clone)]
 pub struct ClineDispatchCtx {
     /// The shared, already-spawned sidecar client (one per run).
@@ -242,17 +241,12 @@ pub struct DispatchInput<'a> {
     /// without code changes. Phase D's pipeline + executor wiring sets
     /// this explicitly.
     pub recorder: Option<&'a dyn Recorder>,
-    /// Stage 1 (Cline runtime unification): which runtime drives the
-    /// Trader / Router LLM calls. `LlmDispatch` (the default) keeps the
-    /// raw-reqwest path; `Cline` routes the slot through the sidecar via
-    /// [`execute_slot_cline`] — but only when `cline` is `Some` (the eval
-    /// entry point spawned a client). When `runtime == Cline` and `cline`
-    /// is `None` the dispatcher falls back to `LlmDispatch` so tests and
-    /// non-eval callers that flip the flag without wiring a client keep
-    /// working.
+    /// Agent runtime selector. Always `AgentRuntime::Cline` since WU-6
+    /// retired `LlmDispatch`. Retained on the struct for call-site
+    /// compatibility; `should_use_cline` now only checks `cline.is_some()`.
     pub runtime: AgentRuntime,
-    /// The live sidecar context, present only when the eval entry point
-    /// spawned a Cline client for this run. See [`ClineDispatchCtx`].
+    /// The live sidecar context, spawned by the eval entry point for this run.
+    /// Since WU-6, the trader hard-errors if this is `None`. See [`ClineDispatchCtx`].
     pub cline: Option<ClineDispatchCtx>,
 }
 
@@ -398,13 +392,11 @@ impl DispatchInput<'_> {
     }
 }
 
-/// True when this dispatch should route through the Cline sidecar:
-/// the runtime flag selects `Cline` AND the entry point actually spawned
-/// a client. When the flag is `Cline` but no client is wired (tests,
-/// non-eval callers), this returns `false` and the caller stays on the
-/// `LlmDispatch` path — never a silent empty decision.
+/// True when this dispatch has a live Cline sidecar context wired.
+/// Since WU-6 retired `LlmDispatch`, the Cline path is mandatory for the
+/// trader; `cline` being `None` is now an error rather than a silent fallback.
 fn should_use_cline(input: &DispatchInput<'_>) -> bool {
-    matches!(input.runtime, AgentRuntime::Cline) && input.cline.is_some()
+    input.cline.is_some()
 }
 
 /// Build the Cline idempotency `run_id` (item 2) for a slot invocation:
@@ -419,10 +411,9 @@ fn cline_run_id(input: &DispatchInput<'_>) -> String {
     format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx)
 }
 
-/// Run the slot's LLM call through whichever runtime is selected. The
-/// Cline branch (item 4 of the Stage 1 design) builds a `ClineSlotInput`
-/// from the dispatch context and calls [`execute_slot_cline`]; otherwise
-/// it falls through to the unchanged [`execute_slot`] path.
+/// Run the slot's LLM call through the Cline sidecar. Since WU-6 retired
+/// `LlmDispatch`, the Cline path is the ONLY trader runtime. If no
+/// `ClineDispatchCtx` is wired, this is a hard error — never a silent fallback.
 async fn execute_slot_for_runtime(
     input: &DispatchInput<'_>,
     response_schema: ResponseSchema,
@@ -473,39 +464,20 @@ async fn execute_slot_for_runtime(
         .await;
     }
 
-    execute_slot(SlotInput {
-        slot: input.slot,
-        system_prompt: input.system_prompt.clone(),
-        upstream_inputs: input.upstream_inputs.clone(),
-        dispatch: input.dispatch.clone(),
-        tools: input.tools.clone(),
-        response_schema: Some(response_schema),
-        max_tokens: input.max_tokens,
-        temperature: input.temperature,
-        obs: input.obs.clone(),
-        memory: input.memory.clone(),
-        memory_mode: input.memory_mode,
-        agent_id: input.agent_id.clone(),
-        scenario_start: input.scenario_start,
-        source_window_start: input.source_window_start,
-        source_window_end: input.source_window_end,
-        run_id: input.run_id.clone(),
-        scenario_id: input.scenario_id.clone(),
-        cycle_idx: input.cycle_idx,
-        catalog: input.catalog.clone(),
-        delta_briefing: input.delta_briefing,
-        prev_briefing: input.prev_briefing.clone(),
-        trace_name: input.trace_name.clone(),
-        trace_attrs: input.trace_attrs.clone(),
-    })
-    .await
+    // WU-6: LlmDispatch was retired. A slot dispatched without a Cline
+    // context is a programmer error — the sidecar must be spawned before
+    // the pipeline is entered.
+    anyhow::bail!(
+        "trader requires the Cline sidecar (WU-6: LlmDispatch was retired); \
+         ensure XVN_AGENTD_BIN is set and spawn_cline_ctx was called before \
+         entering the pipeline (slot role: {})",
+        input.slot.role
+    )
 }
 
-/// Trader handler — byte-identical to the pre-Phase-B path on the
-/// `LlmDispatch` runtime. The surrounding pipeline still handles the
-/// `noop_skip` short-circuit before reaching this seam, so the LLM call
-/// below is unconditional. Stage 1: when `runtime == Cline` and a client
-/// is wired, the call routes through the sidecar instead.
+/// Trader handler. The surrounding pipeline handles the `noop_skip`
+/// short-circuit before reaching this seam, so the LLM call is unconditional.
+/// Since WU-6, the call always routes through the Cline sidecar.
 async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let resp = execute_slot_for_runtime(&input, ResponseSchema::trader_output()).await?;
 
