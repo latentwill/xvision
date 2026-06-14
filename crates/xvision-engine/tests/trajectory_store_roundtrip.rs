@@ -251,13 +251,13 @@ async fn frame_counts_aggregated() {
             ts_ms: fi as u64,
             text: "y".into(),
         };
-        store.append_frame(&rid, "intern", 0, fi, &f).await.unwrap();
+        store.append_frame(&rid, "regime", 0, fi, &f).await.unwrap();
     }
     store.complete_recording(&rid).await.unwrap();
 
     let counts = store.frame_counts(rid.as_str()).await.unwrap();
     let trader = counts.iter().find(|c| c.slot_role == "trader").unwrap();
-    let intern = counts.iter().find(|c| c.slot_role == "intern").unwrap();
+    let regime = counts.iter().find(|c| c.slot_role == "regime").unwrap();
     assert_eq!(trader.count, 4);
-    assert_eq!(intern.count, 2);
+    assert_eq!(regime.count, 2);
 }

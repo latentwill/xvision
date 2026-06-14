@@ -8,6 +8,13 @@ import {
   type MultiStrategyEquitySeries,
 } from "../primitives/MultiStrategyEquityPane";
 
+/**
+ * Only day-scale and coarser presets are meaningful for multi-day eval-run
+ * completion timestamps. Intraday windows (1h/4h/6h/12h) collapse the chart
+ * to a single diagonal line with repeated date labels, so we drop them here.
+ */
+const STRATEGY_HISTORY_PRESETS: RangePreset[] = ["1d", "1w", "All"];
+
 const SCENARIO_PALETTE = [
   "#22d3ee",
   "#a78bfa",
@@ -48,11 +55,7 @@ export function StrategyHistoryChartV2({
         title="Return %"
         range={range}
         onRange={setRange}
-        layersPanel={
-          <div className="text-text-3 text-[12px]">
-            Completed eval return % curves.
-          </div>
-        }
+        presets={STRATEGY_HISTORY_PRESETS}
       >
         <MultiStrategyEquityPane
           time={visibleChart.time}

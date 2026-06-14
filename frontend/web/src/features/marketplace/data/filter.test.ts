@@ -31,12 +31,31 @@ describe("applyFilter", () => {
     expect(out.rows.map((r) => r.id).sort()).toEqual(["a", "c"]);
   });
 
-  it("sorts by 30d return desc by default", () => {
+  it("sorts by 30d return desc by default (segment does not override sort)", () => {
+    // Segment is a pure filter — the user's sort choice is always authoritative.
+    // The Toolbar sets sort: "buyers" when clicking "trending", sort: "newest"
+    // when clicking "new" — but applyFilter itself never silently overrides f.sort.
     const out = applyFilter(rows, defaultFilterState());
     expect(out.rows.map((r) => r.id)).toEqual(["b", "a", "c"]);
   });
 
-  it("sorts by buyers (humans+agents) desc", () => {
+  it("trending segment does NOT override sort — respects the requested sort key", () => {
+    // With segment:"trending" + sort:"return30d", applyFilter sorts by return30d,
+    // not by buyers. The canonical sort is set by the Toolbar click handler, not
+    // forced inside applyFilter.
+    const out = applyFilter(rows, { ...defaultFilterState(), segment: "trending", sort: "return30d" });
+    expect(out.rows.map((r) => r.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("new segment does NOT override sort — respects the requested sort key", () => {
+    // Toolbar sets sort:"newest" when the user clicks "new", so by the time
+    // applyFilter is called, f.sort is already "newest". applyFilter trusts f.sort.
+    const out = applyFilter(rows, { ...defaultFilterState(), segment: "new", sort: "newest" });
+    // "newest" sort: id.localeCompare descending → "c" > "b" > "a"
+    expect(out.rows.map((r) => r.id)).toEqual(["c", "b", "a"]);
+  });
+
+  it("sorts by buyers (humans+agents) desc when sort:buyers", () => {
     const out = applyFilter(rows, { ...defaultFilterState(), sort: "buyers" });
     expect(out.rows[0].id).toBe("c");
   });

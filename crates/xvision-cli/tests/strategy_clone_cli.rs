@@ -170,7 +170,6 @@ fn seed(home: &std::path::Path) -> (String, String) {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
@@ -180,6 +179,7 @@ fn seed(home: &std::path::Path) -> (String, String) {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let store = FilesystemStore::new(strategy_store_dir(home));
         store.save(&strategy).await.unwrap();

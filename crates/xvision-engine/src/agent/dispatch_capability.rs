@@ -11,10 +11,6 @@
 //!   keep producing the same outputs.
 //! * `Filter`  → stub handler returning a placeholder [`FilterSignal`].
 //!   Phase C wires the real Filter LLM call + predicate-payload schema.
-//! * `Critic`  → stub handler returning a placeholder [`Critique`].
-//!   Phase D wires the real Critic semantics.
-//! * `Intern`  → stub handler returning a placeholder [`InternObservation`].
-//!   Phase D wires the real Intern semantics.
 //! * `Router`  → fully implemented in v1 per operator Decision 2. Runs
 //!   the slot's LLM with a JSON response schema enforcing the
 //!   `{ "target_agent_ref_index": <usize> }` shape, then validates the
@@ -152,34 +148,6 @@ pub enum FilterGranularity {
     Decision,
 }
 
-/// Critic verdict — Phase D wires the actual model call. Phase B stubs
-/// emit `Info` severity with placeholder text so downstream consumers
-/// don't crash on the stub.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CritiqueSeverity {
-    Info,
-    Warning,
-    Reject,
-}
-
-/// Phase B stub for a Critic's output. Phase D replaces the body with
-/// the real verdict (Approve / Reject / SuggestModification) plus a
-/// structured rationale.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Critique {
-    pub severity: CritiqueSeverity,
-    pub text: String,
-}
-
-/// Phase B stub for an Intern's structured observation. Phase D replaces
-/// the body with the real free-form JSON note merged into the trader's
-/// briefing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InternObservation {
-    pub text: String,
-}
-
 /// Router's typed output. Phase B ships this fully — the dispatcher
 /// validates `target_agent_ref_index > current_index` AND
 /// `target_agent_ref_index < agents.len()` at runtime. The strategy
@@ -193,15 +161,11 @@ pub struct RouteSelection {
     pub target_agent_ref_index: usize,
 }
 
-/// Typed sum of every capability-handler return value. Phase B wires
-/// all five variants; only Trader has its real shape — the other four
-/// are stub-shaped per the contract and gain semantics in Phases C–E.
+/// Typed sum of every capability-handler return value.
 #[derive(Debug, Clone)]
 pub enum AgentOutput {
     Trader(TraderDecision),
     Filter(FilterSignal),
-    Critic(Critique),
-    Intern(InternObservation),
     Router(RouteSelection),
 }
 
@@ -209,7 +173,7 @@ impl AgentOutput {
     /// Convenience: extract a reference to the inner `FilterSignal` for
     /// edge-predicate evaluation. Returns `None` for any non-Filter
     /// output (the predicate evaluator treats this as "predicate fails"
-    /// — a Critic / Trader output never satisfies a `FilterSignal`
+    /// — a Trader / Router output never satisfies a `FilterSignal`
     /// predicate).
     pub fn as_filter_signal(&self) -> Option<&FilterSignal> {
         match self {
@@ -294,20 +258,19 @@ pub struct DispatchInput<'a> {
 
 /// Result of `dispatch_capability`: the typed `AgentOutput` AND the
 /// accumulated input/output token counts from the underlying LLM call(s).
-/// Stub handlers report `(0, 0)`; Trader and Router report whatever the
-/// dispatcher returned.
+/// Filter stub handlers report `(0, 0)`; Trader and Router report whatever
+/// the dispatcher returned.
 #[derive(Debug)]
 pub struct DispatchOutcome {
     pub output: AgentOutput,
     pub input_tokens: u32,
     pub output_tokens: u32,
     /// The raw `LlmResponse` from `execute_slot`, when a real LLM call
-    /// happened. Trader and Router carry this; stub handlers (Filter /
-    /// Critic / Intern in Phase B) carry `None`.
+    /// happened. Trader and Router carry this; the Filter stub carries `None`.
     ///
     /// The pipeline reads this for two reasons: (1) eval executors still
     /// inspect the raw trader response, (2) the legacy
-    /// `PipelineOutputs { regime, intern, trader }` shape needs the
+    /// `PipelineOutputs { regime, trader }` shape needs the
     /// trader's `LlmResponse` until the post-v1 cleanup deletes those
     /// fields.
     pub raw_response: Option<LlmResponse>,
@@ -324,8 +287,6 @@ pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<Dis
     match input.capability_to_dispatch() {
         Capability::Trader => dispatch_trader(input).await,
         Capability::Filter => dispatch_filter(input).await,
-        Capability::Critic => Ok(dispatch_critic_stub()),
-        Capability::Intern => Ok(dispatch_intern_stub()),
         Capability::Router => dispatch_router(input).await,
     }
 }
@@ -555,31 +516,6 @@ async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
     })
 }
 
-/// Phase B Critic stub. Phase D wires the real verdict + rationale.
-fn dispatch_critic_stub() -> DispatchOutcome {
-    DispatchOutcome {
-        output: AgentOutput::Critic(Critique {
-            severity: CritiqueSeverity::Info,
-            text: "stub critique".to_string(),
-        }),
-        input_tokens: 0,
-        output_tokens: 0,
-        raw_response: None,
-    }
-}
-
-/// Phase B Intern stub. Phase D wires the real free-form note.
-fn dispatch_intern_stub() -> DispatchOutcome {
-    DispatchOutcome {
-        output: AgentOutput::Intern(InternObservation {
-            text: "stub intern".to_string(),
-        }),
-        input_tokens: 0,
-        output_tokens: 0,
-        raw_response: None,
-    }
-}
-
 /// Router handler. Runs the slot's LLM with a strict JSON response
 /// schema requiring `{ "target_agent_ref_index": <usize> }`, parses the
 /// output, and validates the index is strictly greater than the Router's
@@ -660,7 +596,7 @@ fn parse_router_response(
 ///
 /// * `Some(c)` → `c`.
 /// * `None` → first capability in the slot's `BTreeSet` iteration order
-///   (the enum declaration order: Trader, Filter, Critic, Intern, Router).
+///   (the enum declaration order: Trader, Filter, Router).
 ///   The default capability set is `{Trader}` so legacy/pre-033 slots
 ///   resolve to `Trader` and behave identically to the pre-Phase-B path.
 /// * Empty set (defensive) → `Trader`.
@@ -707,21 +643,21 @@ mod tests {
 
     #[test]
     fn resolve_activates_prefers_explicit_field() {
-        let caps: BTreeSet<Capability> = [Capability::Trader, Capability::Critic].into_iter().collect();
+        let caps: BTreeSet<Capability> = [Capability::Trader, Capability::Router].into_iter().collect();
         assert_eq!(
-            resolve_activates(Some(Capability::Critic), &caps),
-            Capability::Critic,
+            resolve_activates(Some(Capability::Router), &caps),
+            Capability::Router,
         );
     }
 
     #[test]
     fn resolve_activates_falls_back_to_first_capability_in_btreeset_order() {
-        // BTreeSet iteration is enum-declaration order: Trader < Filter < Critic < Intern < Router.
-        let caps: BTreeSet<Capability> = [Capability::Critic, Capability::Trader].into_iter().collect();
+        // BTreeSet iteration is enum-declaration order: Trader < Filter < Router.
+        let caps: BTreeSet<Capability> = [Capability::Router, Capability::Trader].into_iter().collect();
         assert_eq!(resolve_activates(None, &caps), Capability::Trader);
 
         // No Trader present — the first non-Trader wins.
-        let caps: BTreeSet<Capability> = [Capability::Critic, Capability::Filter].into_iter().collect();
+        let caps: BTreeSet<Capability> = [Capability::Router, Capability::Filter].into_iter().collect();
         assert_eq!(resolve_activates(None, &caps), Capability::Filter);
     }
 

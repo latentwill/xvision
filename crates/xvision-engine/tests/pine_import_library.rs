@@ -9,9 +9,9 @@
 ///  3. `import_library_entry(id)` for a known id → `Ok(ImportOutcome)`.
 ///  4. `import_library_entry(id)` for an unknown id → `Err(PineImportError)`.
 ///  5. Every LibraryEntry has a non-empty id, name, and description.
-
 use xvision_engine::strategies::pine_import::{
-    import_pine, library::{pine_library, import_library_entry},
+    import_pine,
+    library::{import_library_entry, pine_library},
     PineImportError,
 };
 use xvision_engine::strategies::validate::validate_strategy;
@@ -35,15 +35,9 @@ fn all_library_entries_import_to_valid_strategy() {
     let entries = pine_library();
     for entry in &entries {
         let outcome = import_pine(entry.source)
-            .unwrap_or_else(|e| panic!(
-                "import_pine failed for library entry '{}': {e}",
-                entry.id
-            ));
+            .unwrap_or_else(|e| panic!("import_pine failed for library entry '{}': {e}", entry.id));
         validate_strategy(&outcome.strategy)
-            .unwrap_or_else(|e| panic!(
-                "validate_strategy failed for library entry '{}': {e:?}",
-                entry.id
-            ));
+            .unwrap_or_else(|e| panic!("validate_strategy failed for library entry '{}': {e:?}", entry.id));
     }
 }
 

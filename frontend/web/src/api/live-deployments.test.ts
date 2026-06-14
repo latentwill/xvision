@@ -30,6 +30,8 @@ function makeSummary(
     unrealized_pnl_usd: 12.5,
     drawdown_pct: 1.2,
     daily_loss_limit_remaining_usd: 500,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
@@ -66,6 +68,25 @@ describe("buildDeploymentsListUrl", () => {
     expect(url).toContain("mode=live");
     expect(url).toContain("limit=5");
   });
+
+  // bead s78.2: the home passes the last-visit boundary as `?since` so the
+  // backend can count REAL risk vetoes since that boundary.
+  it("encodes the since boundary as an rfc3339 query param", () => {
+    const url = buildDeploymentsListUrl({ since: "2026-06-13T00:00:00.000Z" });
+    expect(url).toContain("since=2026-06-13T00%3A00%3A00.000Z");
+  });
+
+  it("omits since when absent (first visit ⇒ no boundary ⇒ field stays null)", () => {
+    expect(buildDeploymentsListUrl({ status: "running" })).toBe(
+      "/api/live/deployments?status=running",
+    );
+  });
+
+  it("omits an empty since string", () => {
+    expect(buildDeploymentsListUrl({ since: "" })).toBe(
+      "/api/live/deployments",
+    );
+  });
 });
 
 describe("deploymentKeys", () => {
@@ -82,6 +103,16 @@ describe("deploymentKeys", () => {
 
   it("absent params collapse onto the same key as empty params", () => {
     expect(deploymentKeys.list()).toEqual(deploymentKeys.list({}));
+  });
+
+  // bead s78.2: the since boundary is part of the cache key so changing the
+  // last-visit boundary refetches (and so the home's since-bearing key is
+  // distinct from a since-free one).
+  it("folds the since boundary into the cache key", () => {
+    const withSince = deploymentKeys.list({ since: "2026-06-13T00:00:00Z" });
+    const withoutSince = deploymentKeys.list({});
+    expect(withSince).not.toEqual(withoutSince);
+    expect(withSince).toContain("2026-06-13T00:00:00Z");
   });
 });
 
@@ -105,6 +136,18 @@ describe("listDeployments", () => {
     vi.spyOn(client, "apiFetch").mockResolvedValue({ items: [], total: 0 } as never);
     const result = await listDeployments();
     expect(result).toEqual([]);
+  });
+
+  it("forwards the since boundary to the fetched URL", async () => {
+    const spy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValue({ items: [], total: 0 } as never);
+
+    await listDeployments({ status: "running", since: "2026-06-13T00:00:00.000Z" });
+
+    expect(spy).toHaveBeenCalledWith(
+      "/api/live/deployments?status=running&since=2026-06-13T00%3A00%3A00.000Z",
+    );
   });
 
   it("preserves null capital fields verbatim (no fabricated 0)", async () => {

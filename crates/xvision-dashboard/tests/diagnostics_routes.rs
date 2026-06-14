@@ -92,7 +92,6 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
             }],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
@@ -102,6 +101,7 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();

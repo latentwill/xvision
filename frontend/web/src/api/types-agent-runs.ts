@@ -460,6 +460,23 @@ export type StreamLaggedData = { dropped: number };
 // Loose payloads for events we surface but don't yet render against.
 // Shapes match `crates/xvision-observability/src/events.rs` and may
 // gain typed fields as consumers need them.
+
+/**
+ * Mirrors `crates/xvision-observability/src/events.rs` `EngineEvent` struct
+ * (serde-serialized field names). The `kind` string carries the producer-
+ * defined event kind (e.g. `decision_started`, `guardrail_fired`); `payload_json`
+ * is an optional opaque JSON blob whose shape is per-kind. `span_id` is only
+ * present when the event is scoped to a specific span; `run_id` is always set.
+ * `created_at` is an ISO-8601 UTC timestamp string.
+ */
+export type StreamEngineEventData = {
+  run_id: string;
+  span_id?: string | null;
+  kind: string;
+  payload_json?: string | null;
+  created_at: string;
+};
+
 export type StreamCheckpointWrittenData = { run_id: string; path?: string | null };
 export type StreamSupervisorNoteData = { run_id: string; message: string };
 export type StreamArtifactWrittenData = { run_id: string; path?: string | null };
@@ -490,6 +507,7 @@ export type AgentRunStreamEvent =
   | { event: "tool_call_cancelled"; data: StreamToolCallCancelledData }
   | { event: "broker_call_started"; data: StreamBrokerCallStartedData }
   | { event: "broker_call_finished"; data: StreamBrokerCallFinishedData }
+  | { event: "engine_event"; data: StreamEngineEventData }
   | { event: "assistant_text_delta"; data: StreamAssistantTextDeltaData }
   | { event: "sidecar_error"; data: StreamSidecarErrorData }
   | { event: "checkpoint_written"; data: StreamCheckpointWrittenData }

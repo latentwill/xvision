@@ -82,7 +82,11 @@ fn import_pine_malformed_script_exits_nonzero() {
     let dir = tempdir().unwrap();
     let home = dir.path();
     let fixture = pine_fixture("malformed.pine");
-    assert!(fixture.exists(), "malformed fixture must exist: {}", fixture.display());
+    assert!(
+        fixture.exists(),
+        "malformed fixture must exist: {}",
+        fixture.display()
+    );
 
     let out = xvn(&["strategy", "import-pine", fixture.to_str().unwrap()], home);
 
@@ -150,10 +154,7 @@ fn import_pine_missing_file_exits_nonzero() {
     let dir = tempdir().unwrap();
     let home = dir.path();
 
-    let out = xvn(
-        &["strategy", "import-pine", "/tmp/does-not-exist.pine"],
-        home,
-    );
+    let out = xvn(&["strategy", "import-pine", "/tmp/does-not-exist.pine"], home);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);

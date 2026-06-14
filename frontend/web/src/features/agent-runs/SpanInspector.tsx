@@ -11,6 +11,7 @@ import { TrajectoryModePill } from "./TrajectoryModeBadge";
 import { agentRunKeys, fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
+import { useCurrentTraceScope } from "./use-trace-scope";
 import { spanColor, withAlpha } from "./span-colors";
 import { PullQuote } from "./PullQuote";
 import { formatTraceLabel } from "./trace-labels";
@@ -271,8 +272,11 @@ export function SpanInspector({
   const ms = durationMs(span);
   // The blob-fetch route is keyed by run id; the inspector itself
   // doesn't carry it as a prop (parent always sets activeRunId on the
-  // trace dock when navigating to the run detail page).
-  const activeRunId = useTraceDock((s) => s.activeRunId);
+  // trace dock when navigating to the run detail page). Read the
+  // current route's scope slice so the eval and live surfaces resolve
+  // the right run id.
+  const scope = useCurrentTraceScope();
+  const activeRunId = useTraceDock((s) => s.byScope[scope].activeRunId);
   // Read retention mode from the React Query cache so the placeholder
   // copy is accurate per-run without an extra network request.
   const queryClient = useQueryClient();

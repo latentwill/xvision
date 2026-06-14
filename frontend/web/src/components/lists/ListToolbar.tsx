@@ -264,8 +264,8 @@ const ListSearch = forwardRef<HTMLInputElement, ListSearchProps>(
 
     return (
       <div
-        className="flex items-center gap-2 px-2.5 h-8 bg-surface-elev border border-border rounded-sm transition-colors focus-within:border-gold-soft"
-        style={{ width: compact ? 200 : 280 }}
+        className="flex items-center gap-2 px-2.5 h-8 bg-surface-elev border border-border rounded-sm transition-colors focus-within:border-gold-soft flex-1 min-w-0"
+        style={{ maxWidth: compact ? 200 : 280 }}
       >
         <Icon name="search" size={13} className="text-text-3" />
         <input

@@ -27,6 +27,7 @@ use axum::{
     response::sse::{Event, Sse},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::live_deployments::{
@@ -56,6 +57,35 @@ pub struct ListParams {
     /// Filter by mode ("paper" | "live"). Defensive; the projection already
     /// carries the mode so this is a post-projection filter.
     pub mode: Option<String>,
+    /// bead s78.2: the operator's LAST-VISIT boundary (RFC-3339, e.g.
+    /// `2026-06-13T00:00:00Z`). When present, each row's
+    /// `risk_veto_count_since_last_visit` is a REAL `COUNT(*)` of
+    /// `role='risk'` supervisor notes at/after this instant (an honest `0`
+    /// when none landed). When absent/empty, the field stays `null` — counting
+    /// "since an unknown time" is not a knowable fact, so the UI renders "—".
+    /// Invalid RFC-3339 surfaces as a `400` (HONESTY: never silently ignored).
+    pub since: Option<String>,
+}
+
+/// bead s78.2: parse the optional `?since=` query value into an inclusive
+/// last-visit boundary. Mirrors the proven RFC-3339 validation ladder in
+/// `eval_runs.rs::parse_since` (parse → 400 on error → `.with_timezone`).
+///
+/// - `None` / `Some("")` => `Ok(None)` (no boundary; field stays `null`).
+/// - Invalid RFC-3339 => `DashboardError::Validation { field: "since", .. }`.
+fn parse_since(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, DashboardError> {
+    match raw {
+        Some(s) if !s.trim().is_empty() => {
+            let ts = DateTime::parse_from_rfc3339(s.trim())
+                .map_err(|e| DashboardError::Validation {
+                    field: "since".into(),
+                    msg: format!("invalid RFC-3339 timestamp: {e}"),
+                })?
+                .with_timezone(&Utc);
+            Ok(Some(ts))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Parsed deployment-status filter: the set of `RunStatus` values to pull from
@@ -177,6 +207,13 @@ pub async fn list_deployments(
         })
         .transpose()?;
 
+    // bead s78.2: parse the optional last-visit boundary. Empty string is
+    // treated as absent (no boundary ⇒ count field stays null). Invalid values
+    // surface as a 400 via the proven RFC-3339 ladder. The parsed
+    // `DateTime<Utc>` is threaded into the projection and bound as a SQL
+    // parameter inside `count_risk_vetoes_since` — never string-interpolated.
+    let since = parse_since(params.since.as_deref())?;
+
     let store = RunStore::new(state.pool.clone());
     let paused = global_safety_paused(&state).await;
     // Fetch ALL live deployments (no SQL-level status filter) and apply the
@@ -185,7 +222,7 @@ pub async fn list_deployments(
     // maps to multiple RunStatus values plus a pause overlay — so filtering on
     // the projected summary (which carries the derived status + pause flags) is
     // the faithful place to apply it.
-    let mut items = list_live_deployments(&store, None, paused)
+    let mut items = list_live_deployments(&store, None, paused, since)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_live_deployments: {e}")))?;
 
@@ -218,6 +255,20 @@ pub async fn list_deployments(
 
     let total = items.len();
     Ok(Json(ListDeploymentsResponse { items, total }))
+}
+
+/// `GET /api/live/deployments/:id` — single deployment snapshot.
+pub async fn get_one(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<LiveDeploymentSummary>, DashboardError> {
+    let store = RunStore::new(state.pool.clone());
+    let paused = global_safety_paused(&state).await;
+    let snapshot = get_live_deployment(&store, &id, paused, None)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("get_live_deployment: {e}")))?
+        .ok_or_else(|| DashboardError::NotFound(format!("live deployment '{id}' not found")))?;
+    Ok(Json(snapshot))
 }
 
 /// Recover the underlying `RunStatus` from a projected deployment so the
@@ -264,8 +315,7 @@ fn serde_mode(mode: &xvision_engine::api::live_deployments::DeploymentMode) -> S
 pub async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError>
-{
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError> {
     let store = RunStore::new(state.pool.clone());
     let paused = global_safety_paused(&state).await;
 
@@ -285,7 +335,10 @@ pub async fn stream(
     // harmless and keeps the single return type.
     let rx = state.event_bus.subscribe(&id).await;
 
-    let snapshot = get_live_deployment(&store, &id, paused)
+    // bead s78.2: the SSE snapshot frame passes `since = None` — risk-veto
+    // counts are read on the 5s poll (`GET /api/live/deployments?since=`),
+    // NOT over the stream (this module's doc header + the engine projection).
+    let snapshot = get_live_deployment(&store, &id, paused, None)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("get_live_deployment: {e}")))?
         .ok_or_else(|| DashboardError::NotFound(format!("live deployment '{id}' not found")))?;
@@ -307,8 +360,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
         (state, tmp)
@@ -386,7 +439,10 @@ mod tests {
             .expect("list ok");
         assert_eq!(resp.0.items.len(), 1);
         let d = &resp.0.items[0];
-        assert_eq!(d.last_decision_at, None, "no decision ⇒ last_decision_at null (not started_at)");
+        assert_eq!(
+            d.last_decision_at, None,
+            "no decision ⇒ last_decision_at null (not started_at)"
+        );
         assert_eq!(d.realized_pnl_usd, None, "no realized history ⇒ None, not 0");
         assert_eq!(d.deployed_capital_usd, None);
         assert_eq!(d.unrealized_pnl_usd, None);
@@ -431,11 +487,155 @@ mod tests {
             Query(ListParams {
                 status: Some("bogus".into()),
                 mode: None,
+                since: None,
             }),
         )
         .await
         .unwrap_err();
         assert!(matches!(err, DashboardError::Validation { .. }));
+    }
+
+    // ── bead s78.2: ?since=<rfc3339> → risk_veto_count_since_last_visit ──────
+
+    /// Seed the `agent_runs` parent (the dashboard pool enforces foreign keys,
+    /// and `supervisor_notes.run_id` FKs `agent_runs(id)`). The id matches the
+    /// deployment so the count keys off the same run, exactly as the live
+    /// executor records via `record_supervisor_note(&run.id, "risk", ...)`.
+    async fn seed_agent_run(pool: &sqlx::SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, objective, status, started_at, retention_mode) \
+             VALUES (?, 'obj', 'running', '2026-06-13T00:00:00Z', 'full_debug')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("seed agent_runs row");
+    }
+
+    /// Seed one `role='risk'` supervisor note with an explicit `created_at` so
+    /// the inclusive-boundary count is deterministic.
+    async fn seed_risk_note(pool: &sqlx::SqlitePool, run_id: &str, created_at: &str, content: &str) {
+        sqlx::query(
+            "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
+             VALUES (?, ?, 'risk', ?, 'warn', ?)",
+        )
+        .bind(format!("note-{content}"))
+        .bind(run_id)
+        .bind(content)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("seed supervisor_notes risk row");
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_is_null_without_since() {
+        // No `?since` ⇒ field is null even though risk vetoes EXIST on the run.
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+        seed_agent_run(&state.pool, "live1").await;
+        seed_risk_note(&state.pool, "live1", "2026-06-13T10:00:00+00:00", "v1").await;
+
+        let resp = list_deployments(State(state), Query(ListParams::default()))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            resp.0.items[0].risk_veto_count_since_last_visit, None,
+            "absent ?since ⇒ null (can't count since an unknown time)"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_counts_notes_at_or_after_since() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+        seed_agent_run(&state.pool, "live1").await;
+        // One BEFORE the boundary (excluded), two AT/AFTER (counted).
+        seed_risk_note(&state.pool, "live1", "2026-06-10T00:00:00+00:00", "old").await;
+        seed_risk_note(&state.pool, "live1", "2026-06-12T00:00:00+00:00", "boundary").await;
+        seed_risk_note(&state.pool, "live1", "2026-06-12T06:00:00+00:00", "after").await;
+
+        let resp = list_deployments(
+            State(state),
+            Query(ListParams {
+                status: None,
+                mode: None,
+                since: Some("2026-06-12T00:00:00Z".into()),
+            }),
+        )
+        .await
+        .expect("list ok");
+        assert_eq!(
+            resp.0.items[0].risk_veto_count_since_last_visit,
+            Some(2),
+            "inclusive boundary counts at/after vetoes, excludes the earlier one"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_is_honest_zero_when_since_present_no_match() {
+        // Boundary present, no veto after it ⇒ Some(0) — an honest real zero.
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+        seed_agent_run(&state.pool, "live1").await;
+        seed_risk_note(&state.pool, "live1", "2026-06-01T00:00:00+00:00", "ancient").await;
+
+        let resp = list_deployments(
+            State(state),
+            Query(ListParams {
+                status: None,
+                mode: None,
+                since: Some("2026-06-12T00:00:00Z".into()),
+            }),
+        )
+        .await
+        .expect("list ok");
+        assert_eq!(
+            resp.0.items[0].risk_veto_count_since_last_visit,
+            Some(0),
+            "?since with zero matching notes ⇒ honest Some(0), never null"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_rejects_invalid_since() {
+        // HONESTY: an unparseable boundary is a 400, never silently ignored.
+        let (state, _tmp) = fresh_state().await;
+        let err = list_deployments(
+            State(state),
+            Query(ListParams {
+                status: None,
+                mode: None,
+                since: Some("not-a-timestamp".into()),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, DashboardError::Validation { ref field, .. } if field == "since"),
+            "invalid ?since ⇒ 400 Validation on the `since` field"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_empty_since_is_treated_as_absent() {
+        // `?since=` (empty) ⇒ no boundary, field stays null (not a 400).
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+        seed_agent_run(&state.pool, "live1").await;
+        seed_risk_note(&state.pool, "live1", "2026-06-13T10:00:00+00:00", "v1").await;
+
+        let resp = list_deployments(
+            State(state),
+            Query(ListParams {
+                status: None,
+                mode: None,
+                since: Some("   ".into()),
+            }),
+        )
+        .await
+        .expect("empty/whitespace ?since is absent, not an error");
+        assert_eq!(resp.0.items[0].risk_veto_count_since_last_visit, None);
     }
 
     #[tokio::test]
@@ -704,6 +904,7 @@ mod tests {
             Query(ListParams {
                 status: Some("paused".into()),
                 mode: None,
+                since: None,
             }),
         )
         .await
@@ -727,6 +928,7 @@ mod tests {
             Query(ListParams {
                 status: Some("stopped".into()),
                 mode: None,
+                since: None,
             }),
         )
         .await
@@ -756,6 +958,7 @@ mod tests {
             Query(ListParams {
                 status: Some("running,paused".into()),
                 mode: None,
+                since: None,
             }),
         )
         .await

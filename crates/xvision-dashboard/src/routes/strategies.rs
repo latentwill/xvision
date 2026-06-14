@@ -791,7 +791,9 @@ pub async fn validate_get_hint() -> (StatusCode, Json<serde_json::Value>) {
 
 // ── WU9: GET /api/strategy/pine-library + POST .../import ───────────────────
 
-use xvision_engine::strategies::pine_import::library::{pine_library, import_library_entry, LibraryEntrySummary};
+use xvision_engine::strategies::pine_import::library::{
+    import_library_entry, pine_library, LibraryEntrySummary,
+};
 
 /// Response body for `GET /api/strategy/pine-library`.
 ///
@@ -814,10 +816,7 @@ pub struct PineLibraryListResponse {
 /// in the response — use `POST /api/strategy/pine-library/{id}/import` to
 /// import a specific entry.
 pub async fn get_pine_library() -> Json<PineLibraryListResponse> {
-    let items = pine_library()
-        .iter()
-        .map(LibraryEntrySummary::from)
-        .collect();
+    let items = pine_library().iter().map(LibraryEntrySummary::from).collect();
     Json(PineLibraryListResponse { items })
 }
 

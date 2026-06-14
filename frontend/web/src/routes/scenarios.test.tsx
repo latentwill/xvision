@@ -201,8 +201,10 @@ describe("ScenariosRoute", () => {
       expect(
         calls.some(([f]) => {
           const filter = f as { source?: string | null; tags?: string[]; exclude_tags?: string[] };
+          // W6 fix: optimizer filter uses tag-only (source: null), not source: "Generated"
+          // so that ec-day-* DB rows (source != 'generated') are included.
           return (
-            filter.source === "Generated" &&
+            filter.source === null &&
             filter.tags?.includes("source:autooptimizer") &&
             (filter.exclude_tags?.length ?? 0) === 0
           );

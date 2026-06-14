@@ -49,6 +49,43 @@ pub fn to_markdown_with_resolved_prompts(strategy: &Strategy, resolved: &HashMap
     if let Some(ref filter) = strategy.filter {
         out.push_str(&render_filter_section(filter));
     }
+    // WU-B: render declared parameter bounds so the LLM experiment writer
+    // can propose values within the declared [min, max] range. from_markdown
+    // ignores unknown sections so this is additive and does not affect the
+    // round-trip invariant. Only rendered when bounds are present.
+    if !strategy.tunable_bounds.is_empty() {
+        out.push_str(&render_tunable_bounds_section(&strategy.tunable_bounds));
+    }
+    out
+}
+
+/// Render the "Tunable bounds" section listing each path's [min, max, step].
+///
+/// This section is a soft guide for the LLM experiment writer — it tells the
+/// writer the author-declared valid range for each Pine input so proposed values
+/// stay in bounds. `from_markdown` ignores unknown `## …` sections so this is
+/// purely additive and does not break the round-trip invariant.
+fn render_tunable_bounds_section(bounds: &[crate::strategies::TunableBound]) -> String {
+    use crate::strategies::pine_import::inputs::InputKind;
+    let mut out = String::from("## Tunable bounds\n\n");
+    out.push_str("<!-- Proposed values must stay within these author-declared ranges. -->\n");
+    out.push_str("| path | kind | min | max | step |\n");
+    out.push_str("|------|------|-----|-----|------|\n");
+    for b in bounds {
+        let kind = match b.kind {
+            InputKind::Int => "int",
+            InputKind::Float => "float",
+            InputKind::Bool => "bool",
+        };
+        let min = b.min.map(|v| format!("{v}")).unwrap_or_else(|| "-".to_string());
+        let max = b.max.map(|v| format!("{v}")).unwrap_or_else(|| "-".to_string());
+        let step = b.step.map(|v| format!("{v}")).unwrap_or_else(|| "-".to_string());
+        out.push_str(&format!(
+            "| `{}` | {} | {} | {} | {} |\n",
+            b.path, kind, min, max, step
+        ));
+    }
+    out.push('\n');
     out
 }
 
@@ -92,7 +129,6 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         hypothesis: base.hypothesis.clone(),
         pipeline: base.pipeline.clone(),
         regime_slot: base.regime_slot.clone(),
-        intern_slot: base.intern_slot.clone(),
         trader_slot: base.trader_slot.clone(),
         activation_mode: base.activation_mode,
         filter: base.filter.clone(),
@@ -100,6 +136,7 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         decision_mode: base.decision_mode.clone(),
         mechanistic_config: base.mechanistic_config.clone(),
         briefing_indicators: base.briefing_indicators.clone(),
+        tunable_bounds: base.tunable_bounds.clone(),
     })
 }
 
@@ -259,6 +296,75 @@ mod tests {
         assert!(
             round_trip_invariant_ok(&strategy).is_ok(),
             "round-trip must still hold after surfacing null filter fields"
+        );
+    }
+
+    // ── WU-B: tunable bounds section in to_markdown ───────────────────────────
+
+    fn strategy_with_tunable_bounds() -> Strategy {
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::TunableBound;
+        let mut s = strategy_with_filter_no_wakeups();
+        s.tunable_bounds = vec![
+            TunableBound {
+                path: "conditions.0.rhs.numeric".to_string(),
+                min: Some(2.0),
+                max: Some(50.0),
+                step: Some(1.0),
+                kind: InputKind::Int,
+            },
+            TunableBound {
+                path: "mechanistic.close_policies.0.pct".to_string(),
+                min: Some(0.5),
+                max: Some(10.0),
+                step: None,
+                kind: InputKind::Float,
+            },
+        ];
+        s
+    }
+
+    #[test]
+    fn to_markdown_contains_tunable_bounds_section() {
+        let s = strategy_with_tunable_bounds();
+        let md = to_markdown(&s);
+        assert!(
+            md.contains("Tunable bounds"),
+            "markdown must include a 'Tunable bounds' section when bounds are present: {md}"
+        );
+        assert!(
+            md.contains("conditions.0.rhs.numeric"),
+            "tunable bounds section must list path conditions.0.rhs.numeric: {md}"
+        );
+        assert!(
+            md.contains("mechanistic.close_policies.0.pct"),
+            "tunable bounds section must list path mechanistic.close_policies.0.pct: {md}"
+        );
+        // Verify min/max are surfaced
+        assert!(
+            md.contains("2") && md.contains("50"),
+            "tunable bounds section must show min=2, max=50: {md}"
+        );
+    }
+
+    #[test]
+    fn to_markdown_no_bounds_section_when_empty() {
+        let s = strategy_with_filter_no_wakeups(); // has no tunable_bounds
+        let md = to_markdown(&s);
+        assert!(
+            !md.contains("Tunable bounds"),
+            "markdown must NOT include a 'Tunable bounds' section when bounds list is empty: {md}"
+        );
+    }
+
+    #[test]
+    fn round_trip_still_holds_with_tunable_bounds_section() {
+        // from_markdown ignores unknown sections, so adding the bounds section
+        // must not break the round-trip invariant.
+        let s = strategy_with_tunable_bounds();
+        assert!(
+            round_trip_invariant_ok(&s).is_ok(),
+            "round-trip must still hold when tunable bounds section is present"
         );
     }
 }

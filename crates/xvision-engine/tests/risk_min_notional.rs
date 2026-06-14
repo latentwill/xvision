@@ -121,7 +121,6 @@ fn tiny_risk_strategy() -> Strategy {
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),
@@ -136,7 +135,8 @@ fn tiny_risk_strategy() -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

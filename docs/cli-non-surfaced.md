@@ -89,22 +89,20 @@ what `xvn strategy run` already exercises.
 
 ---
 
-### ACPX intern subprocess (removed 2026-05-10)
+### Stage 1 Intern subprocess and `xvn intern` (removed 2026-06)
 
-Previously, `xvn run-setup --intern acpx[:agent]` spawned the [acpx](https://github.com/openclaw/acpx) CLI to
-delegate Stage 1 to a coding-agent harness (codex / claude / openclaw / pi /
-…). Removed in favor of API-only intern paths (Anthropic Messages, OpenAI
-Chat Completions). Agents now drive xvn directly via Bash; the `xvn intern
-brief` command exposes Stage 1 in isolation. If multi-step tool-use ever lands
-again it will arrive as a new `InternBackend` impl, not as a subprocess shim.
+Previously, the two-stage Intern→Trader architecture included a separate Stage 1
+(briefing) run via `xvn intern brief/preview`. This stage has been retired and
+folded into the single-stage agent model (2026-06). Agents now dispatch directly
+without a separate briefing stage. If multi-step tool-use ever lands again it
+will arrive as a new backend impl, not as a subprocess shim.
 
 ## Surfaced as of this audit
 
 See `crates/xvision-cli/src/lib.rs` for the live list. The current set, in
 addition to the pre-existing commands, exposes:
 
-- `xvn intern brief` / `xvn intern preview` — Stage 1 in isolation
-- `xvn trader run` / `xvn trader preview` — Stage 2 in isolation
+- `xvn trader run` / `xvn trader preview` — Agent dispatch in isolation
 - `xvn risk evaluate` / `xvn risk show-config` — Stage 3 deterministic gate
 - `xvn portfolio --venue {alpaca,orderly}` — read live venue state
 - `xvn close-position --venue {alpaca,orderly} --asset BTC` — flatten one symbol

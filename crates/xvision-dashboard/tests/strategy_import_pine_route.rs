@@ -54,7 +54,9 @@ async fn post_import_pine_valid_source_returns_200() {
     );
 
     // fidelity_report must have captured/approximated/dropped keys
-    let report = json["fidelity_report"].as_object().expect("fidelity_report must be object");
+    let report = json["fidelity_report"]
+        .as_object()
+        .expect("fidelity_report must be object");
     assert!(
         report.contains_key("captured"),
         "fidelity_report must have `captured`; got: {report:?}"
@@ -83,13 +85,9 @@ async fn post_import_pine_malformed_source_returns_400() {
     let json: serde_json::Value = response.json();
 
     // Error response should have some error indicator
-    let has_error = json.get("code").is_some()
-        || json.get("error").is_some()
-        || json.get("message").is_some();
-    assert!(
-        has_error,
-        "400 response must have structured error; got: {json}"
-    );
+    let has_error =
+        json.get("code").is_some() || json.get("error").is_some() || json.get("message").is_some();
+    assert!(has_error, "400 response must have structured error; got: {json}");
 }
 
 // ── Test 3: optional name override ────────────────────────────────────────────

@@ -1,4 +1,4 @@
-//! Trading-domain types — InternBriefing, TraderDecision, RiskDecision.
+//! Trading-domain types — TraderDecision, RiskDecision.
 //!
 //! All structs validate via `garde::Validate`. Parsing JSON only checks shape;
 //! `decision.validate(&())` runs range/length checks at the boundary.
@@ -150,56 +150,6 @@ pub enum Regime {
     Chop,
     HighVol,
     LowVol,
-}
-
-/// Tag attached to a piece of evidence in an InternBriefing's case lists.
-/// Coarse — fine-grained schemas live in higher crates.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceTag {
-    Technical(String),
-    Onchain(String),
-    Macro(String),
-    Sentiment(String),
-    Fundamental(String),
-}
-
-/// Stage 1 output: balanced bull/bear/flat case for one setup. The Intern is
-/// forbidden from naming a recommendation (§2 architecture) — that keeps
-/// vectors' steering surface clean for Stage 2.
-#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InternBriefing {
-    #[garde(skip)]
-    pub cycle_id: Uuid,
-    #[garde(skip)]
-    pub asset: AssetSymbol,
-
-    #[garde(length(min = 20, max = 2000))]
-    pub bull_case: String,
-    #[garde(length(min = 20, max = 2000))]
-    pub bear_case: String,
-    #[garde(length(min = 20, max = 2000))]
-    pub flat_case: String,
-
-    #[garde(skip)]
-    pub evidence_long: Vec<EvidenceTag>,
-    #[garde(skip)]
-    pub evidence_short: Vec<EvidenceTag>,
-    #[garde(skip)]
-    pub evidence_flat: Vec<EvidenceTag>,
-
-    #[garde(skip)]
-    pub regime: Regime,
-
-    #[garde(range(min = 0.0, max = 1.0))]
-    pub signal_quality: f32,
-
-    #[garde(range(min = 1, max = 168))]
-    pub horizon_hours: u32,
-
-    #[garde(skip)]
-    pub created_at: DateTime<Utc>,
 }
 
 /// Stage 2 output: a concrete trade decision. Multiple arms (e.g.
@@ -555,23 +505,6 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn fixture_briefing() -> InternBriefing {
-        InternBriefing {
-            cycle_id: Uuid::nil(),
-            asset: AssetSymbol::Btc,
-            bull_case: "Funding rate compressed; smart money accumulating spot.".into(),
-            bear_case: "Realized vol expanding; long-leverage approaching prior squeeze level.".into(),
-            flat_case: "Range-bound between SMA20 and SMA50; await directional break.".into(),
-            evidence_long: vec![EvidenceTag::Onchain("smart_money_inflow".into())],
-            evidence_short: vec![EvidenceTag::Technical("rsi_overbought".into())],
-            evidence_flat: vec![EvidenceTag::Technical("range_bound".into())],
-            regime: Regime::Chop,
-            signal_quality: 0.6,
-            horizon_hours: 24,
-            created_at: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
-        }
-    }
-
     fn fixture_open_position() -> OpenPosition {
         OpenPosition {
             asset: AssetSymbol::Btc,
@@ -623,28 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn briefing_validates() {
-        fixture_briefing().validate().expect("fixture must pass");
-    }
-
-    #[test]
-    fn briefing_rejects_short_bull_case() {
-        let mut b = fixture_briefing();
-        b.bull_case = "tiny".into();
-        let err = b
-            .validate()
-            .expect_err("short string should fail garde length(min=20)");
-        assert!(format!("{err}").contains("bull_case"));
-    }
-
-    #[test]
-    fn briefing_rejects_signal_quality_out_of_range() {
-        let mut b = fixture_briefing();
-        b.signal_quality = 1.5;
-        b.validate().expect_err("signal_quality > 1.0 must fail");
-    }
-
-    #[test]
     fn decision_validates() {
         fixture_decision().validate().expect("fixture must pass");
     }
@@ -669,14 +580,6 @@ mod tests {
         let mut d = fixture_decision();
         d.trader_summary = "ok".into();
         d.validate().expect_err("trader_summary < 10 chars must fail");
-    }
-
-    #[test]
-    fn briefing_round_trips_json() {
-        let b = fixture_briefing();
-        let s = serde_json::to_string(&b).unwrap();
-        let back: InternBriefing = serde_json::from_str(&s).unwrap();
-        assert_eq!(b, back);
     }
 
     #[test]
@@ -775,19 +678,6 @@ mod tests {
     }
 
     // ── F-6: deny_unknown_fields + cross-field invariants ───────────
-
-    #[test]
-    fn briefing_rejects_unknown_field() {
-        // Take a valid briefing JSON and inject a stray field. With
-        // deny_unknown_fields the parse must fail.
-        let valid = serde_json::to_value(fixture_briefing()).unwrap();
-        let mut object = valid.as_object().unwrap().clone();
-        object.insert("rogue".into(), serde_json::json!("smuggled"));
-        let err = serde_json::from_value::<InternBriefing>(serde_json::Value::Object(object))
-            .expect_err("deny_unknown_fields must reject `rogue`");
-        assert!(err.to_string().contains("unknown field"), "{err}");
-        assert!(err.to_string().contains("rogue"), "{err}");
-    }
 
     #[test]
     fn decision_rejects_unknown_field() {

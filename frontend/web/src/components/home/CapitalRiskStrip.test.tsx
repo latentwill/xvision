@@ -33,6 +33,8 @@ function dep(over: Partial<LiveDeploymentSummary>): LiveDeploymentSummary {
     unrealized_pnl_usd: null,
     drawdown_pct: null,
     daily_loss_limit_remaining_usd: null,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
@@ -58,6 +60,7 @@ const HEALTHY = aggregateCapitalRisk([
     deployed_capital_usd: 1000,
     drawdown_pct: 2.5,
     daily_loss_limit_remaining_usd: 800,
+    daily_loss_budget_usd: 1000,
   }),
 ]);
 
@@ -118,7 +121,7 @@ describe("CapitalRiskStrip", () => {
 
   it("color-codes the buffer danger as it approaches 0", () => {
     const danger = aggregateCapitalRisk([
-      dep({ deployed_capital_usd: 1000, daily_loss_limit_remaining_usd: 10 }),
+      dep({ daily_loss_limit_remaining_usd: 0, daily_loss_budget_usd: 1000 }),
     ]);
     renderStrip(danger);
     const buf = screen.getByTestId("capital-risk-buffer");
@@ -127,18 +130,66 @@ describe("CapitalRiskStrip", () => {
 
   it("color-codes the buffer warn in the middle band", () => {
     const warn = aggregateCapitalRisk([
-      dep({ deployed_capital_usd: 1000, daily_loss_limit_remaining_usd: 70 }),
+      dep({ daily_loss_limit_remaining_usd: 70, daily_loss_budget_usd: 1000 }),
     ]);
     renderStrip(warn);
     const buf = screen.getByTestId("capital-risk-buffer");
     expect(buf.getAttribute("data-tone")).toBe("warn");
   });
 
-  it("renders the risk-veto chip as '—' (deferred), never 0", () => {
+  it("keeps the buffer neutral when its budget is not sourced", () => {
+    const neutral = aggregateCapitalRisk([
+      dep({ daily_loss_limit_remaining_usd: 500, daily_loss_budget_usd: null }),
+    ]);
+    renderStrip(neutral);
+    const buf = screen.getByTestId("capital-risk-buffer");
+    expect(buf.getAttribute("data-tone")).toBeNull();
+  });
+
+  // bead s78.2: the risk-veto chip now renders the REAL aggregate count.
+  it("renders '—' for the risk-veto chip when the count is null (no boundary)", () => {
+    // HEALTHY's deployment has risk_veto_count_since_last_visit: null (no
+    // ?since boundary) ⇒ the aggregate count is null ⇒ chip shows "—".
     renderStrip(HEALTHY);
     const chip = screen.getByTestId("capital-risk-veto");
     expect(chip.textContent).toBe("—");
-    expect(chip.textContent).not.toBe("0");
+  });
+
+  it("renders the real summed risk-veto count when known", () => {
+    const withVetoes = aggregateCapitalRisk([
+      dep({
+        deployment_id: "a",
+        deployed_capital_usd: 1000,
+        daily_loss_limit_remaining_usd: 800,
+        risk_veto_count_since_last_visit: 3,
+      }),
+      dep({
+        deployment_id: "b",
+        deployed_capital_usd: 500,
+        daily_loss_limit_remaining_usd: 400,
+        risk_veto_count_since_last_visit: 5,
+      }),
+    ]);
+    renderStrip(withVetoes);
+    const chip = screen.getByTestId("capital-risk-veto");
+    expect(chip.textContent).toBe("8");
+  });
+
+  it("renders a real 0 risk-veto count as '0' (honest), NOT '—'", () => {
+    // A boundary WAS supplied and the real count is 0 ("0 vetoes since you
+    // were last here") — an honest fact, distinct from null.
+    const zeroVetoes = aggregateCapitalRisk([
+      dep({
+        deployment_id: "a",
+        deployed_capital_usd: 1000,
+        daily_loss_limit_remaining_usd: 800,
+        risk_veto_count_since_last_visit: 0,
+      }),
+    ]);
+    renderStrip(zeroVetoes);
+    const chip = screen.getByTestId("capital-risk-veto");
+    expect(chip.textContent).toBe("0");
+    expect(chip.textContent).not.toBe("—");
   });
 
   it("routes to /live for per-deployment detail", () => {

@@ -81,25 +81,6 @@ pub enum Command {
         #[arg(long, default_value = "data/store.db")]
         db: PathBuf,
     },
-    /// Pretty-print a cached `InternBriefing` by cycle_id.
-    ShowBriefing {
-        #[arg(long)]
-        cycle_id: Uuid,
-        #[arg(long, default_value = "data/store.db")]
-        db: PathBuf,
-    },
-    /// Run a single setup through Intern → Risk slice.
-    RunSetup {
-        /// Path to a serialized `MarketSnapshot` (JSON).
-        #[arg(long)]
-        snapshot: PathBuf,
-        /// Intern provider — "anthropic" or "openai-compat".
-        #[arg(long, default_value = "anthropic")]
-        intern: String,
-        /// Intern model.
-        #[arg(long, default_value = "claude-haiku-4-5-20251001")]
-        model: String,
-    },
     /// Render the headline Markdown report for a backtest run.
     Report {
         #[arg(long)]
@@ -182,10 +163,6 @@ pub enum Command {
     /// library; `import` adds user files (md/txt/csv/pdf/json) with
     /// summary sidecars for csv/pdf.
     Strategies(commands::strategies::StrategiesCmd),
-    /// Stage 1 (Intern) in isolation — preview prompt or run a backend call.
-    Intern(commands::intern::InternCmd),
-    /// Stage 2 (Trader) in isolation — preview prompt or run a backend call.
-    Trader(commands::trader::TraderCmd),
     /// Risk layer evaluation + config inspection.
     Risk(commands::risk::RiskCmd),
     /// SQLite flight-recorder operations (migrate / stats).
@@ -271,16 +248,6 @@ impl Cli {
             Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
                 .await
                 .map_err(Into::into),
-            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db)
-                .await
-                .map_err(Into::into),
-            Command::RunSetup {
-                snapshot,
-                intern,
-                model,
-            } => commands::run_setup::run(snapshot, intern, model)
-                .await
-                .map_err(Into::into),
             Command::Report { input, output } => commands::report::run(input, output).map_err(Into::into),
             Command::Metrics {
                 report,
@@ -323,8 +290,6 @@ impl Cli {
                 .map_err(Into::into),
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
             Command::Strategies(cmd) => commands::strategies::run(cmd).await,
-            Command::Intern(cmd) => commands::intern::run(cmd).await.map_err(Into::into),
-            Command::Trader(cmd) => commands::trader::run(cmd).await.map_err(Into::into),
             Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),
             Command::Store(cmd) => commands::store_cmd::run(cmd).await.map_err(Into::into),
             Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),

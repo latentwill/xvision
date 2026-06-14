@@ -45,7 +45,7 @@ export function LiveChartV2({ payload, follow }: Props) {
   return (
     <div className="grid grid-cols-[1fr_240px] gap-3">
       <ChartFrame
-        title={`Live · ${payload.asset} · ${payload.granularity}`}
+        title={`Live · ${payload.asset} · ${payload.granularity} · ${range}`}
         range={range}
         onRange={setRange}
       >

@@ -2,10 +2,9 @@
 
 A strategy is a saved configuration that says: this hypothesis, these agents,
 this risk gate, this asset, this timeframe. It composes one or more agents
-that play named roles — the default agent (formerly "intern"), a trader, and
-optionally a risk gatekeeper — and wires them together into a pipeline.
-Strategies are the thing you iterate on; scenarios are the market window you
-run them against.
+that play named roles — the default agent, a trader, and optionally a risk
+gatekeeper — and wires them together into a pipeline. Strategies are the
+thing you iterate on; scenarios are the market window you run them against.
 
 See [Agents](/docs?slug=agents) for how to manage the reusable agent library
 that strategies draw from.

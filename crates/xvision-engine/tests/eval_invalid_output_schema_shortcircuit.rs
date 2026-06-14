@@ -104,7 +104,6 @@ fn minimal_strategy() -> Strategy {
         }],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -113,7 +112,8 @@ fn minimal_strategy() -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

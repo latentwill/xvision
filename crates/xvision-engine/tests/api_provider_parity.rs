@@ -259,7 +259,13 @@ sqlite_url = "sqlite://x.db"
 "#;
 
 #[tokio::test]
-async fn ollama_no_auth_provider_api_key_set_is_true() {
+async fn ollama_no_auth_provider_api_key_set_reflects_key_configuration() {
+    // Verifies the two-concept model introduced by f77558fa:
+    // - api_key_set (list/ModelPicker): "is a key configured?" — false for
+    //   Ollama with empty api_key_env + no stored secret. Ollama needs no key,
+    //   but the list surface reports whether one was explicitly provided.
+    // - has_key (effective/run-path): "is launch possible?" — true for Ollama
+    //   with empty api_key_env because no auth is required.
     let (ctx, _d) = open_api_context().await;
     let cfg = write_config(&ctx, OLLAMA_NO_AUTH_CONFIG);
 
@@ -268,19 +274,30 @@ async fn ollama_no_auth_provider_api_key_set_is_true() {
     assert_eq!(report.providers.len(), 1);
     let row = &report.providers[0];
     assert_eq!(row.name, "ollama");
+    // api_key_set=false: no key env var configured and no stored secret.
+    // Ollama doesn't need one, but none was explicitly provided.
     assert!(
-        row.api_key_set,
-        "Ollama with empty api_key_env must have api_key_set=true (no auth needed)"
+        !row.api_key_set,
+        "Ollama with empty api_key_env and no stored secret must have api_key_set=false \
+         (no key is configured, even though no key is required)"
     );
 
-    // Parity: effective_providers must agree.
+    // Effective path: has_key=true because Ollama is optional-auth.
     let effective = providers::effective_providers(&ctx, &cfg).await.unwrap();
     assert_eq!(effective.len(), 1);
     let eff = &effective[0];
-    assert!(eff.has_key, "effective has_key must match api_key_set");
-    assert_eq!(eff.has_key, row.api_key_set, "parity: has_key == api_key_set");
+    assert!(
+        eff.has_key,
+        "effective has_key must be true for Ollama (no auth needed, optional-auth kind)"
+    );
     assert!(
         eff.launchable,
         "Ollama with a model in enabled_models must be launchable"
+    );
+    // The two concepts intentionally diverge for no-auth providers:
+    // api_key_set=false (no key configured), has_key=true (launch is possible).
+    assert_ne!(
+        eff.has_key, row.api_key_set,
+        "for no-auth Ollama: has_key (launchability) and api_key_set (key presence) must differ"
     );
 }
