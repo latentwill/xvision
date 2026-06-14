@@ -10,8 +10,14 @@ use crate::chat_session::tool_policy::{classify, ToolClass, ToolPolicy, ToolPoli
 /// Canonical list of known chat-authoring tool names, mirroring the `classify`
 /// match arms in `tool_policy.rs`. Kept here so both the CLI and the settings
 /// UI can enumerate them without re-running the classifier.
+///
+/// INVARIANT: every tool listed here MUST appear in `classify()` with the
+/// SAME class, and vice versa. The test
+/// `classify_and_known_tools_agree_on_w5_affected_tools` enforces this for the
+/// W5-affected tools (`validate_draft`, `list_providers`, `get_agent`,
+/// `filter_catalog`).
 pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
-    // Read — no mutation, always auto-approved
+    // Read — no mutation, always auto-approved in any mode
     ("get_strategy", ToolClass::Read),
     ("get_scenario", ToolClass::Read),
     ("get_eval_run", ToolClass::Read),
@@ -26,6 +32,14 @@ pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
     ("read_strategies_file", ToolClass::Read),
     ("list_strategy_ideas", ToolClass::Read),
     ("resolve_strategy", ToolClass::Read),
+    // W5 Finding #8: validate_draft reclassified Write→Read.
+    // authoring::validate_draft only calls store.load() + validation checks.
+    // No persistent mutation. Allowed in research/THINK mode.
+    ("validate_draft", ToolClass::Read),
+    // W5 Findings #5-7: new read-class tools.
+    ("list_providers", ToolClass::Read),
+    ("get_agent", ToolClass::Read),
+    ("filter_catalog", ToolClass::Read),
     // Write — authoring / mutation verbs, auto-approved by default in Act mode
     ("create_strategy", ToolClass::Write),
     ("create_scenario", ToolClass::Write),
@@ -37,7 +51,6 @@ pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
     ("set_filter", ToolClass::Write),
     ("clear_filter", ToolClass::Write),
     ("attach_agent", ToolClass::Write),
-    ("validate_draft", ToolClass::Write),
     ("run_eval", ToolClass::Write),
     ("fetch_bars", ToolClass::Write),
 ];

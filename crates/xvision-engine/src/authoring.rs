@@ -19,7 +19,7 @@ use crate::strategies::{
     mechanistic::{DecisionMode, MechanisticConfig},
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
-    store::StrategyStore,
+    store::{apply_metadata_patch, StrategyMetadataPatch, StrategyStore},
     validate::{every_bar_warning, high_position_size_warning, no_filter_warnings, validate_strategy},
     AgentRef, PipelineDef, PipelineKind, Strategy,
 };
@@ -88,7 +88,17 @@ pub struct UpdateSlotOut {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateManifestReq {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plain_summary: Option<String>,
+    /// Optional display color. Use `Some("#RRGGBB")` to set, `Some("")` to clear,
+    /// `None` to leave unchanged. Must be a 7-character CSS hex string when non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_universe: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_cadence_minutes: Option<u32>,
 }
 
@@ -352,39 +362,55 @@ pub async fn update_manifest(
     req: UpdateManifestReq,
 ) -> anyhow::Result<UpdateManifestOut> {
     let mut strategy = store.load(&req.id).await?;
-    let mut updated: Vec<String> = Vec::new();
 
-    if let Some(asset_universe) = req.asset_universe {
-        let mut normalized = Vec::with_capacity(asset_universe.len());
-        for asset in asset_universe {
-            let asset = asset.trim();
-            if asset.is_empty() {
-                anyhow::bail!("asset_universe cannot include blank assets");
-            }
-            if !normalized.iter().any(|item| item == asset) {
-                normalized.push(asset.to_string());
-            }
-        }
-        if normalized.is_empty() {
-            anyhow::bail!("asset_universe must include at least one asset");
-        }
-        strategy.manifest.asset_universe = normalized;
-        updated.push("asset_universe".into());
+    // Determine which fields the caller intends to set (before applying)
+    // so we can record the `updated` list in a deterministic order.
+    // Color is included when Some("") (clear) or Some(non-empty) (set).
+    let has_display_name = req.display_name.is_some();
+    let has_plain_summary = req.plain_summary.is_some();
+    let has_color = req.color.is_some();
+    let has_asset_universe = req.asset_universe.is_some();
+    let has_decision_cadence = req.decision_cadence_minutes.is_some();
+
+    if !has_display_name && !has_plain_summary && !has_color && !has_asset_universe && !has_decision_cadence {
+        anyhow::bail!(
+            "no manifest fields to update — supply at least one of: \
+             display_name, plain_summary, color, asset_universe, decision_cadence_minutes"
+        );
     }
 
-    if let Some(decision_cadence_minutes) = req.decision_cadence_minutes {
-        if decision_cadence_minutes == 0 {
-            anyhow::bail!("decision_cadence_minutes must be greater than 0");
-        }
-        strategy.manifest.decision_cadence_minutes = decision_cadence_minutes;
+    // Delegate all validation + mutation to the shared metadata-patch helper.
+    // This keeps semantics consistent with the REST inspector path
+    // (update_inspector → update_metadata → StrategyMetadataPatch).
+    let patch = StrategyMetadataPatch {
+        display_name: req.display_name,
+        plain_summary: req.plain_summary,
+        color: req.color,
+        asset_universe: req.asset_universe,
+        decision_cadence_minutes: req.decision_cadence_minutes,
+    };
+    apply_metadata_patch(&mut strategy, patch).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    store.save(&strategy).await?;
+
+    // Build the `updated` list in a stable field order.
+    let mut updated: Vec<String> = Vec::new();
+    if has_display_name {
+        updated.push("display_name".into());
+    }
+    if has_plain_summary {
+        updated.push("plain_summary".into());
+    }
+    if has_color {
+        updated.push("color".into());
+    }
+    if has_asset_universe {
+        updated.push("asset_universe".into());
+    }
+    if has_decision_cadence {
         updated.push("decision_cadence_minutes".into());
     }
 
-    if updated.is_empty() {
-        anyhow::bail!("no manifest fields to update — supply asset_universe and/or decision_cadence_minutes");
-    }
-
-    store.save(&strategy).await?;
     Ok(UpdateManifestOut { id: req.id, updated })
 }
 
@@ -983,6 +1009,9 @@ mod tests {
             &store,
             UpdateManifestReq {
                 id: out.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
                 asset_universe: Some(vec!["BTC/USD".into()]),
                 decision_cadence_minutes: Some(360),
             },
@@ -1000,6 +1029,210 @@ mod tests {
         let strategy = get_strategy(&store, &out.id).await.unwrap();
         assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
         assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+    }
+
+    // W6: new failing tests for display_name / plain_summary / color fields.
+    // These must fail before the implementation is in place.
+
+    #[tokio::test]
+    async fn update_manifest_sets_display_name_and_plain_summary() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "Initial Name".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let upd = update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: Some("Renamed Strategy".into()),
+                plain_summary: Some("Buys dips on momentum signals".into()),
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(upd.updated, vec!["display_name", "plain_summary"]);
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.display_name, "Renamed Strategy");
+        assert_eq!(strategy.manifest.plain_summary, "Buys dips on momentum signals");
+    }
+
+    #[tokio::test]
+    async fn update_manifest_only_display_name_no_other_fields_succeeds() {
+        // Guard test: a call supplying ONLY display_name must succeed,
+        // not bail with the old "no manifest fields to update" guard.
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "Orig".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let upd = update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: Some("New Name".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(upd.updated, vec!["display_name"]);
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.display_name, "New Name");
+        // plain_summary and asset_universe must be untouched
+        assert_eq!(strategy.manifest.plain_summary, "");
+    }
+
+    #[tokio::test]
+    async fn update_manifest_partial_no_clobber() {
+        // Setting display_name must not touch asset_universe, cadence, or plain_summary.
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "Stable".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // First, set asset_universe and cadence.
+        update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
+                asset_universe: Some(vec!["ETH/USD".into()]),
+                decision_cadence_minutes: Some(120),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Now update only display_name — other fields must remain unchanged.
+        update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: Some("New Display".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.display_name, "New Display");
+        assert_eq!(strategy.manifest.asset_universe, vec!["ETH/USD"]);
+        assert_eq!(strategy.manifest.decision_cadence_minutes, 120);
+        assert_eq!(strategy.manifest.plain_summary, "");
+    }
+
+    #[tokio::test]
+    async fn update_manifest_sets_color() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "Colored".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let upd = update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: Some("#D4A547".into()),
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(upd.updated, vec!["color"]);
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(strategy.manifest.color, Some("#D4A547".into()));
+    }
+
+    #[tokio::test]
+    async fn update_manifest_clears_color_with_empty_string() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "Clearable".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Set a color first.
+        update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: Some("#AABBCC".into()),
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Clear with empty string.
+        let upd = update_manifest(
+            &store,
+            UpdateManifestReq {
+                id: out.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: Some("".into()),
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(upd.updated, vec!["color"]);
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        assert!(strategy.manifest.color.is_none());
     }
 
     #[tokio::test]

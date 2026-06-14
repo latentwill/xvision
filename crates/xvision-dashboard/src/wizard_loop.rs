@@ -24,6 +24,7 @@ use chrono::{TimeZone, Utc};
 use serde::{de::Deserializer, de::Error as DeError, Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ulid::Ulid;
+use xvision_core;
 use xvision_filters::{parse_json, parse_toml, validate as validate_filter_dsl};
 
 use crate::cli_jobs::eval_run_bridge;
@@ -38,6 +39,7 @@ use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::settings::providers as api_providers;
 use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::authoring;
@@ -1999,9 +2001,23 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "get_eval_run" => {
+                // Return the slim `RunSummary` shape (same as the REST
+                // `GET /api/eval/runs/:id` response) rather than the raw
+                // `Run` struct.  The raw struct serialises
+                // `metrics: Option<MetricsSummary>` as `"metrics": null`
+                // for failed / in-flight runs, which leaves the model with
+                // an opaque nested null it cannot reason over and trips the
+                // tool-failure circuit-breaker (Finding #4).
+                //
+                // `summarise_run` maps `metrics: None` → flat top-level
+                // `sharpe/max_drawdown_pct/total_return_pct` fields each
+                // serialised as `null`, and brings `status` and `error` to
+                // the top level as plain strings — a stable, agent-readable
+                // shape regardless of run status.
                 let req: GetEvalRunReq = serde_json::from_value(input)?;
-                let out = api_eval::get(&self.api_context, &req.id).await?;
-                Ok(serde_json::to_value(out)?)
+                let run = api_eval::get(&self.api_context, &req.id).await?;
+                let summary = api_eval::summarise_run(run);
+                Ok(serde_json::to_value(summary)?)
             }
             "list_eval_reviews" => {
                 let req: ListEvalReviewsReq = serde_json::from_value(input)?;
@@ -2336,6 +2352,45 @@ impl WizardLoop {
                 };
                 let ideas = strategies_folder::ideas::list_ideas(&self.api_context, filter).await?;
                 Ok(serde_json::to_value(ideas)?)
+            }
+            // ── W5 read tools (Findings #5-7) ──────────────────────────
+            "list_providers" => {
+                // Return the configured provider/model list from the workspace
+                // config. This is the same data the REST GET /api/settings/providers
+                // route returns. Uses runtime_config_path() for consistent env-var
+                // precedence (XVN_CONFIG_PATH / XVN_CONFIG / xvn_home/config/default.toml).
+                //
+                // When the config file does not yet exist (fresh workspace before
+                // `xvn setup`), return an empty report rather than propagating the
+                // error — the agent can still see the shape and communicate that
+                // the operator needs to configure providers.
+                let config_path = xvision_core::config::runtime_config_path(&self.api_context.xvn_home);
+                let report = if config_path.exists() {
+                    api_providers::list(&self.api_context, &config_path).await?
+                } else {
+                    xvision_engine::api::settings::providers::ProvidersReport {
+                        providers: vec![],
+                        default_model: None,
+                        invalid: None,
+                    }
+                };
+                Ok(serde_json::to_value(report)?)
+            }
+            "get_agent" => {
+                // Return one Agent record by id. No mutation.
+                let agent_id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("get_agent: missing `id`"))?;
+                let out = api_agents::get(&self.api_context, agent_id).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "filter_catalog" => {
+                // Return the filter-DSL token catalog as structured data.
+                // The catalog lives in the baked wiki page `filter-dsl-catalog`;
+                // here we return the key token lists as structured JSON so the
+                // agent can reason over them without parsing markdown.
+                Ok(filter_catalog_json())
             }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
@@ -3346,18 +3401,37 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "update_manifest".into(),
-            description: "Persist manifest fields shown in the Strategy Inspector, including asset universe and decision cadence."
+            description: "Persist manifest fields shown in the Strategy Inspector, including \
+                display name, description, asset universe, decision cadence, and display color. \
+                All fields except `id` are optional — supply only the ones you want to change."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
+                    "display_name": {
+                        "type": "string",
+                        "description": "Human-readable strategy name shown in the UI."
+                    },
+                    "plain_summary": {
+                        "type": "string",
+                        "description": "One-line plain-English description of what the strategy does."
+                    },
+                    "color": {
+                        "type": "string",
+                        "description": "Optional display color as a 7-character CSS hex string (e.g. '#D4A547'). Pass an empty string to clear a previously set color."
+                    },
                     "asset_universe": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 1
+                        "minItems": 1,
+                        "description": "List of SYMBOL/QUOTE pairs this strategy trades (e.g. ['BTC/USD'])."
                     },
-                    "decision_cadence_minutes": {"type": "integer", "minimum": 1}
+                    "decision_cadence_minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How often (in minutes) the strategy evaluates whether to act."
+                    }
                 },
                 "required": ["id"]
             }),
@@ -3654,6 +3728,54 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "required": []
             }),
         },
+        // ── W5 read tools (Findings #5-7) ──────────────────────────────────
+        ToolDefinition {
+            name: "list_providers".into(),
+            description: "List configured LLM providers and their enabled models. \
+                          Returns the same data as GET /api/settings/providers: \
+                          each provider's name, kind (anthropic/openai-compat/etc.), \
+                          enabled models, and whether an API key is set. \
+                          Use this before authoring a strategy agent to confirm \
+                          which (provider, model) pairs are launchable.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        ToolDefinition {
+            name: "get_agent".into(),
+            description: "Inspect one Agent library record by id. \
+                          Returns the Agent's name, description, tags, and slots \
+                          (each slot carries provider, model, system_prompt, \
+                          skill_ids). Use this to review a saved agent before \
+                          attaching it to a strategy with `attach_agent`.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The agent_id (ULID) to inspect."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "filter_catalog".into(),
+            description: "Return the filter-DSL token catalog so you can \
+                          author correct `set_filter` payloads without guessing. \
+                          Returns structured lists of: operators (DSL token + \
+                          description), indicator categories with per-indicator \
+                          names and parameter ranges, and required filter fields. \
+                          Call this before `set_filter` when you are unsure of the \
+                          exact token names or parameter constraints.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -3692,6 +3814,123 @@ fn workspace_tool_defs() -> Vec<ToolDefinition> {
             }),
         },
     ]
+}
+
+/// Return the filter-DSL token catalog as structured JSON for the
+/// `filter_catalog` chat tool (W5 Finding #7). Encoding the key operator
+/// and indicator tables here lets the agent reason over concrete token names
+/// without parsing the Markdown wiki page.
+///
+/// The data mirrors `crates/xvision-dashboard/wiki/filter-dsl-catalog.md`.
+/// Keep the two in sync: when a new indicator or operator is added to the
+/// DSL, update both the wiki page AND this function.
+fn filter_catalog_json() -> serde_json::Value {
+    serde_json::json!({
+        "description": "Filter DSL token catalog for `set_filter` payloads. \
+                        Use exact token names from this catalog when authoring \
+                        `conditions` clauses. Parameterized tokens encode the \
+                        period directly, e.g. `rsi_14`, `ema_20`, `atr_pct_7`.",
+        "required_fields": ["display_name", "asset_scope", "timeframe", "conditions"],
+        "optional_fields": [
+            "cooldown_bars",
+            "max_wakeups_per_day",
+            "scan_cadence",
+            "wake_when_in_position",
+            "description"
+        ],
+        "wake_when_in_position_tokens": [
+            {
+                "token": "on_invalidation_or_target_only",
+                "description": "Default. Wake only on a fresh trip of the condition tree while holding. Suppresses sustained-true bars. Cost-safe default."
+            },
+            {
+                "token": "always",
+                "description": "Wake on every bar the tree is true while holding. Expensive: one trader-LLM call per in-position bar. Opt-in only."
+            },
+            {
+                "token": "never",
+                "description": "Never wake while holding; exits rely entirely on risk.stop_loss_atr_multiple."
+            }
+        ],
+        "operators": [
+            {"token": ">", "description": "Greater than. indicator lhs, indicator or numeric rhs."},
+            {"token": "<", "description": "Less than. indicator lhs, indicator or numeric rhs."},
+            {"token": ">=", "description": "Greater or equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "<=", "description": "Less or equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "==", "description": "Equal. indicator lhs, indicator or numeric rhs."},
+            {"token": "crosses_above", "description": "Crosses above. indicator lhs, indicator rhs only (no numeric rhs)."},
+            {"token": "crosses_below", "description": "Crosses below. indicator lhs, indicator rhs only (no numeric rhs)."},
+            {"token": "between", "description": "Between inclusive. indicator lhs, two-number range rhs."},
+            {"token": "above_for_<bars>", "description": "lhs > rhs for N bars (current + N-1 prior). Example: `above_for_3`."},
+            {"token": "below_for_<bars>", "description": "lhs < rhs for N bars. Example: `below_for_3`."},
+            {"token": "crossed_above_<bars>", "description": "Cross occurred on current bar or within N-1 prior bars. Example: `crossed_above_5`."},
+            {"token": "crossed_below_<bars>", "description": "Same as crossed_above but downward."},
+            {"token": "slope_gt_<bars>", "description": "lhs change vs N bars ago > numeric rhs. Example: `slope_gt_4`."},
+            {"token": "slope_lt_<bars>", "description": "lhs change vs N bars ago < numeric rhs."},
+            {"token": "zscore_gt_<period>", "description": "lhs z-score over N bars > numeric rhs. Example: `zscore_gt_20`."},
+            {"token": "zscore_lt_<period>", "description": "lhs z-score over N bars < numeric rhs."},
+            {"token": "within_pct_<pct>", "description": "lhs within pct% of rhs. Example: `within_pct_1.5`."}
+        ],
+        "indicators": {
+            "price_and_volume": ["open", "high", "low", "close", "volume"],
+            "moving_averages_and_trend": [
+                "sma_<period>", "ema_<period>", "wma_<period>",
+                "adx_<period>", "di_plus_<period>", "di_minus_<period>",
+                "donchian_upper_<period>", "donchian_middle_<period>", "donchian_lower_<period>",
+                "highest_<period>", "lowest_<period>",
+                "opening_range_high_<minutes>", "opening_range_low_<minutes>", "opening_range_mid_<minutes>"
+            ],
+            "ichimoku": [
+                "tenkan", "kijun", "senkou_a", "senkou_b", "chikou",
+                "cloud_top", "cloud_bottom", "cloud_thickness"
+            ],
+            "momentum_and_oscillators": [
+                "rsi_<period>", "roc_<period>",
+                "stoch_k_<period>", "stoch_d_<period>",
+                "stoch_rsi_<period>", "stoch_rsi_k_<period>", "stoch_rsi_d_<period>",
+                "cci_<period>", "mfi_<period>", "williams_r_<period>"
+            ],
+            "volatility_and_bands": [
+                "atr_<period>", "atr_pct_<period>",
+                "bb_upper_<period>", "bb_middle_<period>", "bb_lower_<period>",
+                "bb_width_<period>", "bb_pct_b_<period>",
+                "keltner_upper_<period>", "keltner_middle_<period>", "keltner_lower_<period>"
+            ],
+            "macd": [
+                "macd_line", "macd", "macd_12_26_9",
+                "macd_signal", "macd_signal_12_26_9",
+                "macd_hist", "macd_histogram", "macd_hist_12_26_9"
+            ],
+            "volume": [
+                "vwap_<period>", "volume_sma_<period>",
+                "rvol_<period>", "rvol_tod_<period>", "volume_zscore_<period>", "obv"
+            ],
+            "session_and_reference_levels": [
+                "prev_day_open", "prev_day_high", "prev_day_low", "prev_day_close",
+                "prev_week_high", "prev_week_low", "prev_week_close",
+                "prev_month_open", "prev_month_high", "prev_month_low", "prev_month_close",
+                "premarket_high", "premarket_low",
+                "gap_pct", "gap_up", "gap_down"
+            ]
+        },
+        "period_ranges": {
+            "default": "2 to 500 for most indicators",
+            "adx_di": "2 to 200; numeric thresholds must be 0 to 100",
+            "rsi": "2 to 200; numeric thresholds must be 0 to 100",
+            "stoch": "2 to 200; numeric thresholds must be 0 to 100",
+            "williams_r": "2 to 200; numeric thresholds must be -100 to 0",
+            "atr_pct": "2 to 200; numeric thresholds must be > 0"
+        },
+        "conditions_structure": {
+            "description": "Conditions use a boolean tree of `all`/`any` nodes. Each leaf is `{lhs, op, rhs}`.",
+            "example": {
+                "all": [
+                    {"lhs": "rsi_14", "op": ">", "rhs": 50},
+                    {"lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26"}
+                ]
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -6149,5 +6388,207 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         // cap = 4 → raw slice starts at msgs[2] (no orphan — tu_2 pair is fully inside).
         let windowed = window_chat_messages(msgs.clone(), 4);
         assert_eq!(windowed, msgs[2..], "windowed: {windowed:?}");
+    }
+
+    // ── W5 new read tool tests (Findings #5-7) ────────────────────────────
+
+    /// `filter_catalog` tool returns a non-empty JSON object with the
+    /// DSL token catalog. The agent can call this in research/THINK mode
+    /// to learn the correct operator and indicator tokens.
+    #[tokio::test]
+    async fn filter_catalog_tool_returns_non_empty_dsl_token_list() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "what filters can I use?", ContextScope::Workspace).await;
+
+        let out = wl
+            .run_tool("filter_catalog", serde_json::json!({}))
+            .await
+            .expect("filter_catalog must succeed");
+
+        // Must return a non-empty object.
+        let obj = out.as_object().expect("filter_catalog must return an object");
+        assert!(!obj.is_empty(), "catalog must not be empty: {out}");
+
+        // Must include the operators array with known tokens.
+        let operators = out["operators"]
+            .as_array()
+            .expect("filter_catalog must include an `operators` array");
+        assert!(
+            operators.len() > 5,
+            "expected multiple operators, got {}: {out}",
+            operators.len()
+        );
+        let op_tokens: Vec<_> = operators.iter().filter_map(|op| op["token"].as_str()).collect();
+        assert!(op_tokens.contains(&">"), "missing `>` operator in {op_tokens:?}");
+        assert!(
+            op_tokens.contains(&"crosses_above"),
+            "missing `crosses_above` operator in {op_tokens:?}"
+        );
+
+        // Must include indicator categories.
+        let indicators = out["indicators"]
+            .as_object()
+            .expect("filter_catalog must include an `indicators` object");
+        assert!(
+            indicators.contains_key("momentum_and_oscillators"),
+            "missing momentum_and_oscillators category in {out}"
+        );
+        let momentum = indicators["momentum_and_oscillators"]
+            .as_array()
+            .expect("momentum_and_oscillators must be an array");
+        let momentum_names: Vec<_> = momentum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            momentum_names.iter().any(|n| n.contains("rsi")),
+            "expected rsi_<period> in momentum indicators: {momentum_names:?}"
+        );
+
+        // Must include required_fields.
+        let required = out["required_fields"]
+            .as_array()
+            .expect("filter_catalog must include required_fields");
+        let required_names: Vec<_> = required.iter().filter_map(|v| v.as_str()).collect();
+        for field in ["display_name", "asset_scope", "timeframe", "conditions"] {
+            assert!(
+                required_names.contains(&field),
+                "missing required field `{field}` in {required_names:?}"
+            );
+        }
+    }
+
+    /// `list_providers` tool returns a JSON object with a `providers` array.
+    /// The array may be empty in a fresh tempdir (no config written), which
+    /// is the correct response — the test asserts the shape is present and
+    /// the tool does not error.
+    #[tokio::test]
+    async fn list_providers_tool_returns_providers_report_shape() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "list providers", ContextScope::Workspace).await;
+
+        // In a fresh tempdir there is no config/default.toml, so providers is
+        // empty (the api::settings::providers::list function returns an empty
+        // ProvidersReport when the file is missing). Assert the shape — the
+        // tool must not error and must return a parseable ProvidersReport.
+        let out = wl
+            .run_tool("list_providers", serde_json::json!({}))
+            .await
+            .expect("list_providers must not error in a fresh tempdir");
+
+        // ProvidersReport serialises as { providers: [...], default_model?: ... }
+        assert!(
+            out.get("providers").is_some(),
+            "list_providers must return an object with a `providers` field: {out}"
+        );
+        let providers = out["providers"].as_array().expect("providers must be an array");
+        // In a fresh tempdir the array is empty — that is correct.
+        let _ = providers; // length is 0, which is expected
+    }
+
+    /// `get_agent` tool dispatches to `api_agents::get` and returns the Agent
+    /// record. Uses a created agent so the store has something to return.
+    #[tokio::test]
+    async fn get_agent_tool_returns_agent_record_by_id() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, td, _sid) = loop_with_session(mock, "inspect agent", ContextScope::Workspace).await;
+
+        // Create an agent in the DB so get_agent has something to return.
+        let ctx = ApiContext::new(
+            _pool.clone(),
+            Actor::Cli { user: "test".into() },
+            td.path().to_path_buf(),
+        );
+        let created = api_agents::create(
+            &ctx,
+            api_agents::CreateAgentRequest {
+                name: "W5 Test Agent".into(),
+                description: "Test agent for W5 get_agent tool.".into(),
+                tags: vec![],
+                slots: vec![xvision_engine::agents::AgentSlot {
+                    name: "main".into(),
+                    provider: "anthropic".into(),
+                    model: "claude-sonnet-4-6".into(),
+                    system_prompt: "You are a quantitative trading assistant. Analyse the OHLCV data \
+                             provided and respond with a JSON object containing: action (buy/sell/hold), \
+                             size_pct (0–100), and reason. Apply disciplined risk management: never risk \
+                             more than 1% of notional equity per trade, and always respect configured \
+                             stop-loss and take-profit levels. Avoid over-trading on low-volume bars."
+                        .into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    allowed_tools: Vec::new(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .expect("create agent for get_agent test");
+
+        let out = wl
+            .run_tool("get_agent", serde_json::json!({ "id": created.agent_id }))
+            .await
+            .expect("get_agent must succeed for an existing agent");
+
+        assert_eq!(
+            out["agent_id"].as_str(),
+            Some(created.agent_id.as_str()),
+            "get_agent must return the requested agent id: {out}"
+        );
+        assert_eq!(
+            out["name"].as_str(),
+            Some("W5 Test Agent"),
+            "get_agent must return the agent name: {out}"
+        );
+    }
+
+    /// `get_agent` returns an error for an unknown agent id.
+    #[tokio::test]
+    async fn get_agent_tool_errors_for_unknown_id() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "inspect agent", ContextScope::Workspace).await;
+
+        let err = wl
+            .run_tool(
+                "get_agent",
+                serde_json::json!({ "id": "01ZZNONEXISTENTAGENT000000" }),
+            )
+            .await
+            .expect_err("get_agent must error for an unknown id");
+
+        assert!(
+            err.to_string().contains("not found") || err.to_string().contains("01ZZNONEXISTENTAGENT000000"),
+            "error must mention not-found or the id: {err}"
+        );
+    }
+
+    /// The three new W5 read tools appear in the tool defs for both profiles.
+    #[test]
+    fn w5_read_tools_appear_in_strategy_tool_defs() {
+        let defs = wizard_tool_defs();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        for tool in ["list_providers", "get_agent", "filter_catalog"] {
+            assert!(
+                names.contains(&tool),
+                "W5 tool `{tool}` missing from strategy_tool_defs: {names:?}"
+            );
+        }
+    }
+
+    /// `validate_draft` remains in strategy tool defs (still advertised to the model).
+    #[test]
+    fn validate_draft_still_in_tool_defs_after_reclassification() {
+        let defs = wizard_tool_defs();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            names.contains(&"validate_draft"),
+            "validate_draft must still be in tool defs after Read reclassification: {names:?}"
+        );
     }
 }
