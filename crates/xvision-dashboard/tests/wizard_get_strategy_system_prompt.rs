@@ -61,7 +61,7 @@ async fn drain(wl: &mut WizardLoop) -> Vec<WizardEvent> {
 /// Extract the first `ToolResult` event for the given tool name.
 fn first_tool_result<'a>(events: &'a [WizardEvent], tool: &str) -> Option<&'a serde_json::Value> {
     events.iter().find_map(|ev| match ev {
-        WizardEvent::ToolResult { tool: t, result } if t == tool => Some(result),
+        WizardEvent::ToolResult { tool: t, result, .. } if t == tool => Some(result),
         _ => None,
     })
 }

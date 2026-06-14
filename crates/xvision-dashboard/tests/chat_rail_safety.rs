@@ -49,7 +49,7 @@ async fn drain_with_policy(wl: &mut WizardLoop) -> (Vec<WizardEvent>, Vec<Policy
 
 fn tool_result_for<'a>(events: &'a [WizardEvent], tool: &str) -> Option<&'a Value> {
     events.iter().find_map(|ev| match ev {
-        WizardEvent::ToolResult { tool: t, result } if t == tool => Some(result),
+        WizardEvent::ToolResult { tool: t, result, .. } if t == tool => Some(result),
         _ => None,
     })
 }
