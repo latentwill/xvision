@@ -154,6 +154,8 @@ import type { ActivationMode } from "./types.gen/ActivationMode";
 export type { StrategyRequirements } from "./types.gen/StrategyRequirements";
 export type { Requirement } from "./types.gen/Requirement";
 import type { StrategyRequirements } from "./types.gen/StrategyRequirements";
+export type { MarketplaceProvenance } from "./types.gen/MarketplaceProvenance";
+import type { MarketplaceProvenance } from "./types.gen/MarketplaceProvenance";
 
 /// One input knob declared in a Pine Script (or manually added) that the
 /// optimizer is allowed to tune. Mirrors `TunableBound` in the Rust engine
@@ -312,6 +314,8 @@ export const strategyKeys = {
   validate: (id: string) => [...strategyKeys.all, "validate", id] as const,
   requirements: (id: string) =>
     [...strategyKeys.all, "requirements", id] as const,
+  marketplace: (id: string) =>
+    [...strategyKeys.all, "marketplace", id] as const,
   templates: () => [...strategyKeys.all, "templates"] as const,
 };
 
@@ -358,6 +362,19 @@ export function getStrategyRequirements(
 ): Promise<StrategyRequirements> {
   return apiFetch<StrategyRequirements>(
     `/api/strategy/${encodeURIComponent(id)}/requirements`,
+  );
+}
+
+/// Marketplace provenance for a strategy acquired from the marketplace
+/// (issue #12 / QA #8): creator, price paid, license NFT, explorer link.
+/// `null` when the strategy was not bought (hand-authored / optimizer). Stored
+/// in a backend sidecar, NOT on the Strategy artifact — so it is fetched
+/// separately rather than read off `getStrategy`.
+export function getStrategyMarketplace(
+  id: string,
+): Promise<MarketplaceProvenance | null> {
+  return apiFetch<MarketplaceProvenance | null>(
+    `/api/strategy/${encodeURIComponent(id)}/marketplace`,
   );
 }
 

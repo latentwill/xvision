@@ -1192,6 +1192,91 @@ pub struct StrategyExport {
     pub agents: Vec<Agent>,
 }
 
+/// On-chain marketplace provenance for a strategy acquired from the
+/// marketplace (issue #12 / QA #8): creator, price paid, license NFT, and a
+/// "View on Explorer" link to the owned license token.
+///
+/// Stored in a SIDECAR JSON file next to the strategy (`{id}.marketplace.json`),
+/// NOT on the `Strategy` struct — provenance is import metadata, not part of the
+/// immutable strategy artifact, and a `Strategy` field would force every one of
+/// the ~89 `Strategy { .. }` literals across the workspace to be edited. The
+/// sidecar keeps the change to the import + read paths only. Absent sidecar =
+/// hand-authored / optimizer-minted strategy (no strip shown).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MarketplaceProvenance {
+    /// On-chain listing id the buyer purchased (== `license_token_id`).
+    pub listing_id: String,
+    /// Listing tier: `"open"` (plaintext manifest) or `"sealed"` (Lit-encrypted).
+    pub tier: String,
+    /// Seller handle / address from the listing (the strategy author).
+    pub creator: String,
+    /// Price paid in whole USDC. `0.0` for a free / open-tier listing.
+    pub price_usdc: f64,
+    /// ERC-1155 license token id minted to the buyer — equals `listing_id`.
+    pub license_token_id: String,
+    /// Network label, e.g. `"mantle-sepolia"` / `"mantle"`. Best-known label
+    /// even when the chain env is unset.
+    pub network: String,
+    /// Direct block-explorer link to the owned license token. `None` when the
+    /// chain is unconfigured / has no known explorer — the UI renders a muted,
+    /// non-link label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub explorer_url: Option<String>,
+}
+
+/// Path of the marketplace-provenance sidecar for `strategy_id`, next to the
+/// strategy's own `{id}.json`. Returns `None` when `strategy_id` is not a
+/// path-safe id (defensive: the read endpoint takes the id from the URL).
+fn marketplace_provenance_path(xvn_home: &std::path::Path, strategy_id: &str) -> Option<PathBuf> {
+    if strategy_id.is_empty() || !strategy_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(strategy_store_dir(xvn_home).join(format!("{strategy_id}.marketplace.json")))
+}
+
+/// Persist marketplace provenance for an imported strategy (sidecar JSON).
+/// Best-effort: the dashboard import handlers call this after `import_strategy`
+/// and log-but-swallow any error (the buyer already paid; provenance is
+/// decoration).
+pub async fn write_marketplace_provenance(
+    ctx: &ApiContext,
+    strategy_id: &str,
+    provenance: &MarketplaceProvenance,
+) -> ApiResult<()> {
+    let path = marketplace_provenance_path(&ctx.xvn_home, strategy_id)
+        .ok_or_else(|| ApiError::Validation(format!("unsafe strategy id: {strategy_id}")))?;
+    let json = serde_json::to_string_pretty(provenance).map_err(|e| ApiError::Internal(e.to_string()))?;
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(())
+}
+
+/// Read marketplace provenance for a strategy. `Ok(None)` when the strategy was
+/// not acquired from the marketplace (no sidecar) or the id is not path-safe.
+pub async fn read_marketplace_provenance(
+    ctx: &ApiContext,
+    strategy_id: &str,
+) -> ApiResult<Option<MarketplaceProvenance>> {
+    let Some(path) = marketplace_provenance_path(&ctx.xvn_home, strategy_id) else {
+        return Ok(None);
+    };
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => {
+            let mp = serde_json::from_str(&s).map_err(|e| ApiError::Internal(e.to_string()))?;
+            Ok(Some(mp))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
+}
+
 /// Build a self-contained [`StrategyExport`] for `strategy_id`: load the
 /// strategy, then resolve and bundle the full [`Agent`] definition behind
 /// every `AgentRef`.
@@ -3084,5 +3169,63 @@ mod tests {
             !list_items.iter().any(|s| s.agent_id == created.id),
             "archived strategy must not appear in list"
         );
+    }
+
+    #[tokio::test]
+    async fn marketplace_provenance_sidecar_round_trips() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "bought-strat".into(),
+                creator: Some("@seller".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        // No sidecar yet → None.
+        assert!(read_marketplace_provenance(&ctx, &created.id)
+            .await
+            .unwrap()
+            .is_none());
+
+        let provenance = MarketplaceProvenance {
+            listing_id: "42".into(),
+            tier: "open".into(),
+            creator: "0xseller".into(),
+            price_usdc: 12.5,
+            license_token_id: "42".into(),
+            network: "mantle-sepolia".into(),
+            explorer_url: Some("https://explorer.sepolia.mantle.xyz/token/0xlicense/instance/42".into()),
+        };
+        write_marketplace_provenance(&ctx, &created.id, &provenance)
+            .await
+            .unwrap();
+
+        let read = read_marketplace_provenance(&ctx, &created.id)
+            .await
+            .unwrap()
+            .expect("sidecar present after write");
+        assert_eq!(read, provenance);
+
+        // The strategy artifact itself is UNCHANGED — provenance lives in the
+        // sidecar, never on the Strategy JSON.
+        let s = get(&ctx, &created.id).await.unwrap();
+        let json = serde_json::to_value(&s).unwrap();
+        assert!(
+            json.get("marketplace").is_none(),
+            "provenance must NOT live on the Strategy artifact: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn marketplace_provenance_read_rejects_unsafe_id() {
+        let (ctx, _d) = ctx_with_audit().await;
+        // A non-path-safe id never reads outside the strategy store dir.
+        assert!(read_marketplace_provenance(&ctx, "../../etc/passwd")
+            .await
+            .unwrap()
+            .is_none());
     }
 }

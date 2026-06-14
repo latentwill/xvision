@@ -10,6 +10,7 @@ import {
   addStrategyAgent,
   deleteStrategy,
   getStrategy,
+  getStrategyMarketplace,
   getStrategyRequirements,
   patchStrategyMetadata,
   renameStrategyAgentRole,
@@ -24,6 +25,7 @@ import {
   type EntryDirection,
   type EntryRule,
   type PipelineDef,
+  type MarketplaceProvenance,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
@@ -63,6 +65,13 @@ function InspectorPage({ id }: { id: string }) {
     queryKey: strategyKeys.detail(id),
     queryFn: () => getStrategy(id),
   });
+  // #12 / QA #8: marketplace provenance lives in a backend sidecar (not on the
+  // Strategy artifact), so it's fetched separately. `null` for non-marketplace
+  // strategies → no strip.
+  const marketplaceQ = useQuery({
+    queryKey: strategyKeys.marketplace(id),
+    queryFn: () => getStrategyMarketplace(id),
+  });
 
   return (
     <>
@@ -88,6 +97,10 @@ function InspectorPage({ id }: { id: string }) {
       />
 
       <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
+
+      {marketplaceQ.data ? (
+        <MarketplaceProvenanceStrip provenance={marketplaceQ.data} />
+      ) : null}
 
       <div className="space-y-5">
         <div className="space-y-5">
@@ -1691,6 +1704,102 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
     stop_loss_atr_multiple: String(risk.stop_loss_atr_multiple),
     daily_loss_kill_pct: (risk.daily_loss_kill_pct * 100).toFixed(2),
   };
+}
+
+// Issue #12 / QA #8: when a strategy was acquired from the marketplace, surface
+// its on-chain provenance inline at the top of the detail page — creator, price
+// paid, license NFT (token id), and a working "View on Explorer" link to the
+// owned license token. Full-width strip (no right sidebar — chat-rail rule);
+// renders nothing for hand-authored / optimizer strategies (the caller only
+// mounts it when `strategy.marketplace` is present).
+function formatProvenancePrice(priceUsdc: number): string {
+  if (!Number.isFinite(priceUsdc) || priceUsdc <= 0) return "Free";
+  // Trim trailing zeros: 12.5 → "12.5 USDC", 49 → "49 USDC".
+  const trimmed = Number(priceUsdc.toFixed(2)).toString();
+  return `${trimmed} USDC`;
+}
+
+function MarketplaceProvenanceStrip({
+  provenance,
+}: {
+  provenance: MarketplaceProvenance;
+}) {
+  const hasExplorer =
+    typeof provenance.explorer_url === "string" &&
+    provenance.explorer_url.length > 0;
+
+  return (
+    <Card>
+      <div
+        data-testid="marketplace-provenance-strip"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 text-[12px]"
+      >
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/[0.1] px-2.5 py-1 font-medium text-gold">
+          Acquired from marketplace
+        </span>
+        <ProvenanceFact label="Creator" value={provenance.creator} mono />
+        <ProvenanceFact
+          label="Price paid"
+          value={formatProvenancePrice(provenance.price_usdc)}
+        />
+        <ProvenanceFact
+          label="License"
+          value={`#${provenance.license_token_id}`}
+          mono
+        />
+        <span className="text-text-3">{provenance.network}</span>
+        {hasExplorer ? (
+          <a
+            href={provenance.explorer_url ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 font-medium text-text hover:border-text-3"
+          >
+            View on Explorer
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 2h6v6M10 2L4.5 7.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </a>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-border-soft px-2 py-0.5 text-text-3"
+            title="No block explorer is configured for this network."
+          >
+            Explorer unavailable
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ProvenanceFact({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="uppercase tracking-wide text-text-3">{label}</span>
+      <span className={`text-text ${mono ? "font-mono" : ""}`}>{value}</span>
+    </span>
+  );
 }
 
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {

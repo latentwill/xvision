@@ -268,6 +268,12 @@ fn readonly_router(state: AppState) -> Router {
             "/api/strategy/:id/requirements",
             get(strategies::requirements),
         )
+        // #12 / QA #8: marketplace provenance (creator, price paid, license
+        // NFT, explorer link) for a strategy acquired from the marketplace.
+        .route(
+            "/api/strategy/:id/marketplace",
+            get(strategies::marketplace_provenance),
+        )
         // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
         // a strategy can't launch (typed per-agent blockers) BEFORE launch.
         .route(
