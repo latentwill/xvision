@@ -134,4 +134,40 @@ describe("SettingsSkillsRoute", () => {
     expect(screen.queryByText("rsi-tool")).not.toBeInTheDocument();
     expect(screen.getByText("macd-fragment")).toBeInTheDocument();
   });
+
+  // Regression: toggling a column off must hide BOTH its header and its body
+  // cells. The strategies fix (0bc34fa) threaded `visibleKeys` into row
+  // renderers but missed this Skills route — so the body cell stayed visible
+  // while only the title disappeared (the EJ QA finding).
+  it("hides body cells for a column toggled off via columnState", async () => {
+    // useListColumns persists visible keys at `xvn:list:<listId>:columns`.
+    // Omit "description" so that column is hidden; essential keys (name,
+    // actions) are always re-added by the hook.
+    window.localStorage.setItem(
+      "xvn:list:settings-skills:columns",
+      JSON.stringify(["name", "kind", "actions"]),
+    );
+
+    vi.mocked(skillsApi.listSkills).mockResolvedValue([
+      mkSkill({
+        skill_id: "sk_one",
+        name: "rsi-tool",
+        kind: "tool",
+        description: "uniq-desc-xyz",
+      }),
+    ]);
+
+    renderRoute();
+    await screen.findByText("rsi-tool");
+
+    // The "Description" header must NOT be rendered.
+    expect(
+      screen.queryByRole("columnheader", { name: /^Description$/i }),
+    ).not.toBeInTheDocument();
+
+    // …and neither must the description value as a body cell.
+    expect(screen.queryByText("uniq-desc-xyz")).not.toBeInTheDocument();
+
+    window.localStorage.removeItem("xvn:list:settings-skills:columns");
+  });
 });

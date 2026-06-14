@@ -194,10 +194,11 @@ export function SettingsSkillsRoute() {
             ? "No skills yet — click + Add skill to create one."
             : "No skills match these filters."
         }
-        renderRow={(skill) => (
+        renderRow={(skill, _i, visibleKeys) => (
           <SkillRow
             key={skill.skill_id}
             skill={skill}
+            visibleKeys={visibleKeys}
             editing={editingId === skill.skill_id}
             onEdit={() => setEditingId(skill.skill_id)}
             onCancelEdit={() => setEditingId(null)}
@@ -228,6 +229,7 @@ export function SettingsSkillsRoute() {
 
 function SkillRow({
   skill,
+  visibleKeys,
   editing,
   onEdit,
   onCancelEdit,
@@ -236,6 +238,7 @@ function SkillRow({
   archiving,
 }: {
   skill: Skill;
+  visibleKeys: Set<string>;
   editing: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
@@ -246,7 +249,7 @@ function SkillRow({
   if (editing) {
     return (
       <tr>
-        <td colSpan={4} className="py-3">
+        <td colSpan={Math.max(visibleKeys.size, 1)} className="py-3">
           <SkillForm
             mode="edit"
             skill={skill}
@@ -260,36 +263,44 @@ function SkillRow({
 
   return (
     <tr className="border-t border-border-soft align-middle">
-      <td className="py-2 px-3">
-        <code className="font-mono text-[13px] text-text">{skill.name}</code>
-      </td>
-      <td className="py-2 pr-3">
-        <Pill tone={skill.kind === "tool" ? "gold" : "default"}>
-          {skill.kind.replace("_", " ")}
-        </Pill>
-      </td>
-      <td className="py-2 pr-3 text-text-2 text-[13px]">
-        {skill.description || (
-          <span className="text-text-3 font-medium text-[12px]">no description</span>
-        )}
-      </td>
-      <td className="py-2 px-3 text-right">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="text-[12px] text-text-3 hover:text-text mr-3"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={onArchive}
-          disabled={archiving}
-          className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
-        >
-          {archiving ? "…" : "Archive"}
-        </button>
-      </td>
+      {visibleKeys.has("name") && (
+        <td className="py-2 px-3">
+          <code className="font-mono text-[13px] text-text">{skill.name}</code>
+        </td>
+      )}
+      {visibleKeys.has("kind") && (
+        <td className="py-2 pr-3">
+          <Pill tone={skill.kind === "tool" ? "gold" : "default"}>
+            {skill.kind.replace("_", " ")}
+          </Pill>
+        </td>
+      )}
+      {visibleKeys.has("description") && (
+        <td className="py-2 pr-3 text-text-2 text-[13px]">
+          {skill.description || (
+            <span className="text-text-3 font-medium text-[12px]">no description</span>
+          )}
+        </td>
+      )}
+      {visibleKeys.has("actions") && (
+        <td className="py-2 px-3 text-right">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-[12px] text-text-3 hover:text-text mr-3"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={onArchive}
+            disabled={archiving}
+            className="text-[12px] text-text-3 hover:text-danger disabled:opacity-50"
+          >
+            {archiving ? "…" : "Archive"}
+          </button>
+        </td>
+      )}
     </tr>
   );
 }

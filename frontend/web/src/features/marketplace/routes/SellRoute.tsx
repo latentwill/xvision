@@ -18,16 +18,24 @@ export function SellRoute() {
   const [step, setStep] = useState<Step>(1);
   const [draft, setDraft] = useState<PublishDraft | null>(null);
   const [loadingDraft, setLoadingDraft] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
 
   const handleStrategySelect = useCallback(
     async (strategy: ListableStrategy) => {
       setLoadingDraft(true);
+      setDraftError(null);
       try {
         const d = await mp.createPublishDraft(strategy.id);
         setDraft(d);
         setStep(2);
+      } catch (err) {
+        setDraftError(
+          err instanceof ApiError && err.status === 404
+            ? `"${strategy.name}" is no longer in your XVN — refresh and try again.`
+            : "Couldn't load that strategy — try again.",
+        );
       } finally {
         setLoadingDraft(false);
       }
@@ -56,9 +64,11 @@ export function SellRoute() {
         });
       } catch (err) {
         setMintError(
-          err instanceof Error
-            ? `Saving the public description failed — ${err.message}`
-            : "Saving the public description failed — try again.",
+          err instanceof ApiError && err.status === 404
+            ? "Couldn't save the description — this strategy isn't in your XVN anymore. Refresh your strategy list and try again."
+            : err instanceof Error
+              ? `Saving the public description failed — ${err.message}`
+              : "Saving the public description failed — try again.",
         );
         setMinting(false);
         return;
@@ -119,6 +129,9 @@ export function SellRoute() {
               <p className="text-[13px] text-text-3">Loading draft…</p>
             ) : (
               <Step1PickStrategy onSelect={handleStrategySelect} />
+            )}
+            {draftError && (
+              <p className="mt-3 text-[12px] text-danger">{draftError}</p>
             )}
           </div>
         )}
