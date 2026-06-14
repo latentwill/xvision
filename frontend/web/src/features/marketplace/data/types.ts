@@ -260,6 +260,13 @@ export interface ListabilityCheck {
 }
 export interface PublishDraft {
   strategyId: string;
+  /**
+   * Listing name shown on the marketplace. Defaults to the underlying xvn
+   * strategy's display name; the seller may override it in the configure step
+   * before minting. Sent to the publish endpoint so the listing inherits a real
+   * name instead of rendering a generic "Strategy #N".
+   */
+  name: string;
   listable: ListabilityCheck[];
   tier: Tier;
   priceUsdc: number | null;

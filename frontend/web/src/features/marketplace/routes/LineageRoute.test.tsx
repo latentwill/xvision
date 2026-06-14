@@ -149,6 +149,17 @@ describe("LineageRoute", () => {
     expect(screen.getAllByText(/14/).length).toBeGreaterThanOrEqual(1);
   });
 
+  // QA fix: the "$X paid to 0x…" line must NOT append the platform fee. The
+  // standalone fee disclosure below the price (data-testid="fee-line") is a
+  // separate element and stays.
+  it("does not append the platform fee to the buyer 'paid to' line", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-info-stack");
+    const paidLine = screen.getByText(/paid to/i);
+    expect(paidLine).toBeInTheDocument();
+    expect(paidLine).not.toHaveTextContent(/platform fee/i);
+  });
+
   it("clicking the gen-art thumbnail inline-expands the artifact & provenance inspector", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-hero");

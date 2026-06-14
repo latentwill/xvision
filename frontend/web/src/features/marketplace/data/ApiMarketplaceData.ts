@@ -7,11 +7,9 @@
 // than faked.
 import { ApiError, apiFetch } from "@/api/client";
 import {
-  getStrategy,
-  listStrategiesPaged,
-  type Strategy,
-  type StrategyListItem,
-} from "@/api/strategies";
+  fetchListableStrategies,
+  fetchPublishDraft,
+} from "./listable";
 import {
   approveUsdc,
   buyDirect,
@@ -96,94 +94,6 @@ export interface ReceiptOut {
 export function bundleCidFromContentUri(contentUri: string | undefined): string {
   if (!contentUri) return "";
   return contentUri.startsWith("ipfs://") ? contentUri.slice("ipfs://".length) : "";
-}
-
-function assetSymbols(assetUniverse: string[] | undefined): string[] {
-  const symbols = new Set<string>();
-  for (const raw of assetUniverse ?? []) {
-    const symbol = raw.split("/")[0]?.trim().toUpperCase();
-    if (symbol) symbols.add(symbol);
-  }
-  return [...symbols];
-}
-
-function listableStrategyVersion(strategy: StrategyListItem): string {
-  if (!strategy.last_eval_completed_at) return "not evaluated";
-  const date = strategy.last_eval_completed_at.slice(0, 10);
-  return date ? `evaluated ${date}` : "evaluated";
-}
-
-function toListableStrategy(strategy: StrategyListItem): ListableStrategy {
-  return {
-    id: strategy.agent_id,
-    name: strategy.display_name?.trim() || strategy.agent_id,
-    version: listableStrategyVersion(strategy),
-    assets: assetSymbols(strategy.asset_universe),
-  };
-}
-
-function ingredientsForStrategy(strategy: Strategy) {
-  return [
-    ...strategy.manifest.attested_with.map((name) => ({
-      name,
-      kind: "model" as const,
-      installed: true,
-    })),
-    ...strategy.manifest.required_tools.map((name) => ({
-      name,
-      kind: name.toLowerCase().includes("mcp") ? ("mcp" as const) : ("skill" as const),
-      installed: true,
-    })),
-  ];
-}
-
-function buildApiPublishDraft(
-  strategy: Strategy,
-  row: StrategyListItem | undefined,
-): PublishDraft {
-  const assets = assetSymbols(strategy.manifest.asset_universe);
-  const strategyId = strategy.manifest.id;
-  const name = strategy.manifest.display_name?.trim() || row?.display_name?.trim() || strategyId;
-  const hasBacktest = !!row?.last_eval_completed_at;
-  return {
-    strategyId,
-    listable: [
-      { ok: true, label: "Strategy exists in your XVN" },
-      {
-        ok: assets.length > 0,
-        label: "Declares an asset universe",
-        reason: assets.length > 0 ? undefined : "No assets configured",
-      },
-      {
-        ok: hasBacktest,
-        label: "Has a backtest on record",
-        reason: hasBacktest ? undefined : "No completed eval on record",
-      },
-    ],
-    tier: "sealed",
-    priceUsdc: 49,
-    acceptedPayers: { humans: true, agents: true },
-    ingredients: ingredientsForStrategy(strategy),
-    preview: {
-      id: name,
-      lineageId: strategyId,
-      version: row ? listableStrategyVersion(row) : "not evaluated",
-      creator: { address: strategy.manifest.creator || "" },
-      model: strategy.manifest.attested_with[0] ?? "Unknown model",
-      style: "Strategy",
-      assets,
-      return30dPct: 0,
-      sharpe: 0,
-      buyers: { humans: 0, agents: 0 },
-      priceUsdc: 49,
-      tier: "sealed",
-      transferableLicense: false,
-      verification: "unverified",
-      acceptsX402: true,
-      clones: 0,
-      genArtSeed: strategyId,
-    },
-  };
 }
 
 /**
@@ -575,16 +485,10 @@ export class ApiMarketplaceData implements MarketplaceData {
     };
   }
   async listListableStrategies(): Promise<ListableStrategy[]> {
-    const page = await listStrategiesPaged({ limit: 200 });
-    return page.items.map(toListableStrategy);
+    return fetchListableStrategies();
   }
   async createPublishDraft(strategyId: string): Promise<PublishDraft> {
-    const [strategy, page] = await Promise.all([
-      getStrategy(strategyId),
-      listStrategiesPaged({ limit: 200 }),
-    ]);
-    const row = page.items.find((item) => item.agent_id === strategyId);
-    return buildApiPublishDraft(strategy, row);
+    return fetchPublishDraft(strategyId);
   }
   // Real in-UI purchase. Primary path is gasless x402: sign an EIP-3009
   // TransferWithAuthorization in the browser and let the backend relay
