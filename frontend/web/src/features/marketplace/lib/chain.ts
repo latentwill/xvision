@@ -282,6 +282,7 @@ export async function ensureMantleSepolia(): Promise<void> {
   } catch (err) {
     const code = (err as { code?: number })?.code;
     if (code !== 4902) throw err;
+    const blockExplorerUrl = activeChain.blockExplorers?.default?.url;
     await window.ethereum.request({
       method: "wallet_addEthereumChain",
       params: [
@@ -290,7 +291,9 @@ export async function ensureMantleSepolia(): Promise<void> {
           chainName: activeChain.name,
           nativeCurrency: activeChain.nativeCurrency,
           rpcUrls: activeChain.rpcUrls.default.http,
-          blockExplorerUrls: [activeChain.blockExplorers.default.url],
+          ...(blockExplorerUrl
+            ? { blockExplorerUrls: [blockExplorerUrl] }
+            : {}),
         },
       ],
     });
