@@ -295,6 +295,13 @@ export type AgentRunSummary = {
   started_at: string;
   finished_at: string | null;
   status: RunStatus;
+  /**
+   * Execution venue from the parent live run's `broker_creds_ref`
+   * (e.g. `"degen_arena"`, `"orderly_testnet"`, `"byreal"`, `"alpaca"`).
+   * Absent for backtests / runs without a live_config. Drives venue-specific
+   * surfaces like the Degen Arena standing indicator.
+   */
+  venue?: string | null;
   // Pre-rolled aggregates (avoid client-side scans for the strip).
   span_count: number;
   model_call_count: number;
