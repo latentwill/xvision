@@ -682,18 +682,25 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             opt_mem = ctx.memory_recorder.clone();
         }
         let tools = Arc::new(ToolRegistry::default_with_builtins());
+        // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
+        // always returns Some on success and Err on failure — never Ok(None).
         let cline_ctx =
             xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools))
                 .await
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("spawn optimizer sidecar: {e}")))?;
-        let agent_runtime = if cline_ctx.is_some() {
-            xvision_core::config::AgentRuntime::Cline
-        } else {
-            xvision_core::config::AgentRuntime::LlmDispatch
-        };
+                .map_err(|e| {
+                    CliError::upstream(anyhow::anyhow!(
+                        "optimizer requires the Cline sidecar (WU-6): {e}"
+                    ))
+                })?
+                .ok_or_else(|| {
+                    CliError::upstream(anyhow::anyhow!(
+                        "optimizer requires the Cline sidecar (WU-6): \
+                     XVN_AGENTD_BIN must be set and the sidecar must be provisioned"
+                    ))
+                })?;
         Box::new(
             CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_dispatch), tools)
-                .with_cline_runtime(agent_runtime, cline_ctx),
+                .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
         )
     };
 

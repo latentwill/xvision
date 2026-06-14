@@ -1542,16 +1542,11 @@ async fn record_agent_runtime_note(store: &RunStore, run_id: &str, runtime: Agen
     let payload = serde_json::json!({
         "runtime": match runtime {
             AgentRuntime::Cline => "cline",
-            AgentRuntime::LlmDispatch => "llm-dispatch",
         },
         "reason": reason,
     });
     let severity = match runtime {
         AgentRuntime::Cline => "info",
-        // Any LlmDispatch resolution (explicit, fallback, or emergency
-        // rollback) is surfaced at warn severity — the fleet expectation
-        // is Cline everywhere.
-        AgentRuntime::LlmDispatch => "warn",
     };
     if let Err(e) = store
         .record_supervisor_note(run_id, AGENT_RUNTIME_NOTE_ROLE, severity, &payload.to_string())
@@ -2262,117 +2257,20 @@ async fn resolve_provider_api_key(xvn_home: &Path, entry: &ProviderEntry) -> Api
 ///
 /// The flag default is `Cline` (Task 9 flip). But the Cline path can only
 /// physically run when the `xvision-agentd` sidecar binary is available, so
-/// the eval entry point gates the effective runtime on `XVN_AGENTD_BIN`:
+/// Resolve the agent runtime (WU-6: always `Cline`).
 ///
-/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` set → `Cline`.
-/// * `agent_runtime = "cline"` (explicit) + `XVN_AGENTD_BIN` UNSET →
-///   `Cline` is still returned, so `spawn_cline_ctx` produces the typed
-///   "set XVN_AGENTD_BIN" error — an operator who explicitly asked for
-///   Cline gets a clear failure, never a silent downgrade (design
-///   decision 5 / failure contract).
-/// * config omits the field (resolves to the `Cline` serde default) but
-///   `XVN_AGENTD_BIN` is UNSET → `LlmDispatch`. This is the safe migration
-///   behavior: an environment that hasn't provisioned the sidecar (most
-///   tests, fresh installs) keeps running through the proven raw-dispatch
-///   path until the operator opts in by provisioning the sidecar.
-/// * config fails to load (no file / parse error) → `LlmDispatch`.
-///
-/// The distinction between "explicitly cline" and "defaulted cline" is read
-/// from the raw config text (the `agent_runtime` key's presence) because
-/// serde collapses both to the same deserialized value.
-///
-/// Every resolution is logged (the silent-fallback cases at `warn`) and the
-/// `(runtime, reason)` pair is returned so the launch paths can persist it as
-/// an `agent_runtime` supervisor note — a silent downgrade must never be
-/// invisible.
+/// Since WU-6 retired the `LlmDispatch` trader path, every run unconditionally
+/// uses the Cline sidecar. This function is kept for call-site compatibility
+/// and for logging the resolved runtime as a supervisor note. If the sidecar
+/// is not provisioned (`XVN_AGENTD_BIN` unset), `spawn_cline_ctx` will fail
+/// with a clear actionable error — never a silent downgrade.
 async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str) {
-    // Stage 3 Task 10 / inheritance item 6 — emergency off-ramp. When the
-    // documented env var is set, route the routine path back through the
-    // legacy LlmDispatch for incident rollback, with a loud warn naming the
-    // blast radius.
-    if config::emergency_llm_dispatch_enabled() {
-        tracing::warn!(
-            target: "agent_runtime",
-            env = config::EMERGENCY_LLM_DISPATCH_ENV,
-            "EMERGENCY ROLLBACK ACTIVE: routing LLM slots through legacy LlmDispatch \
-             (blast radius: this process only, opt-in). Cline is the unconditional \
-             routine runtime; unset {} to restore it. See MANUAL.md (Emergency rollback).",
-            config::EMERGENCY_LLM_DISPATCH_ENV,
-        );
-        return (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (XVN_EMERGENCY_LLM_DISPATCH rollback active)",
-        );
-    }
-
-    let cfg_path = runtime_config_path(ctx);
-    let sidecar_available = std::env::var("XVN_AGENTD_BIN")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-
-    let raw = tokio::fs::read_to_string(&cfg_path).await.ok();
-    let explicitly_set = raw
-        .as_deref()
-        .map(|s| {
-            s.lines()
-                .map(str::trim_start)
-                .any(|l| l.starts_with("agent_runtime") && l.contains('='))
-        })
-        .unwrap_or(false);
-
-    let configured = match tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path)).await {
-        Ok(Ok(cfg)) => Some(cfg.agent_runtime),
-        _ => None,
-    };
-
-    let (runtime, reason) = classify_agent_runtime(configured, explicitly_set, sidecar_available);
-    match runtime {
-        // The fallback cases are the ones the operator believed didn't
-        // exist — warn so they are never invisible in run logs.
-        AgentRuntime::LlmDispatch if configured != Some(AgentRuntime::LlmDispatch) => {
-            tracing::warn!(target: "agent_runtime", "agent_runtime={reason}");
-        }
-        _ => {
-            tracing::info!(target: "agent_runtime", "agent_runtime={reason}");
-        }
-    }
-    (runtime, reason)
-}
-
-/// Pure classification half of [`resolve_agent_runtime`]: maps the loaded
-/// config value (`None` = file missing/unparseable), whether the
-/// `agent_runtime` key was explicitly present in the raw config text, and
-/// `XVN_AGENTD_BIN` availability to the effective runtime plus a stable,
-/// human-readable reason string (logged + persisted as a supervisor note).
-fn classify_agent_runtime(
-    configured: Option<AgentRuntime>,
-    explicitly_set: bool,
-    sidecar_available: bool,
-) -> (AgentRuntime, &'static str) {
-    match configured {
-        None => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (FALLBACK: config file missing or unparseable)",
-        ),
-        Some(AgentRuntime::LlmDispatch) => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (explicit agent_runtime = \"llm-dispatch\" in config)",
-        ),
-        Some(AgentRuntime::Cline) if explicitly_set => (
-            AgentRuntime::Cline,
-            "cline (explicit agent_runtime = \"cline\" in config)",
-        ),
-        Some(AgentRuntime::Cline) if sidecar_available => (
-            AgentRuntime::Cline,
-            "cline (serde default; sidecar provisioned via XVN_AGENTD_BIN)",
-        ),
-        Some(AgentRuntime::Cline) => (
-            AgentRuntime::LlmDispatch,
-            "llm-dispatch (FALLBACK: agent_runtime not explicit in config and \
-             XVN_AGENTD_BIN unset — add `agent_runtime = \"cline\"` to the config \
-             or provision the sidecar)",
-        ),
-    }
+    let _ = ctx; // ctx retained for future per-workspace overrides
+    tracing::info!(target: "agent_runtime", "agent_runtime=cline (unconditional since WU-6)");
+    (
+        AgentRuntime::Cline,
+        "cline (unconditional — LlmDispatch retired in WU-6)",
+    )
 }
 
 /// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
@@ -2942,19 +2840,15 @@ async fn run_inner(
             .with_catalogs(obs_catalogs.clone())
     });
 
-    // Stage 1 (Cline runtime unification, Task 6): resolve the agent
-    // runtime once. When `Cline` is selected, spawn the sidecar and build
-    // the dispatch ctx so the backtest executor threads it into every slot
-    // dispatch. `LlmDispatch` leaves `build_eval_dispatch` exactly as
-    // before (the `dispatch` arg already in hand). An unmapped provider or
-    // an unset XVN_AGENTD_BIN surfaces as a typed error here — never a
-    // silent fallback (provider-matrix + failure contracts).
+    // WU-6: runtime is always Cline. Spawn the sidecar unconditionally.
+    // An unmapped provider or an unset XVN_AGENTD_BIN surfaces as a typed
+    // error here — never a silent fallback.
     let (agent_runtime, agent_runtime_reason) = resolve_agent_runtime(ctx).await;
     // `run_recording` is `Some` only when recording is enabled (per-run
     // `trajectory_mode = record`) AND a Cline client was spawned with a
     // recording sink. The eval finalizer below closes it out (complete /
     // corrupt) after the run.
-    let (cline_ctx, run_recording) = if matches!(agent_runtime, AgentRuntime::Cline) {
+    let (cline_ctx, run_recording) = {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
         let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
@@ -2985,8 +2879,6 @@ async fn run_inner(
         };
         let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
         (Some(cctx), rec)
-    } else {
-        (None, None)
     };
     // The recorder needs the spawned client's persist-failure flag at
     // finalize time; clone the Arc so the finalizer can read it after the
@@ -3961,8 +3853,9 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     // `run_inner` path whose finalizer can close the recording out
     // (complete/corrupt). Extending recording to this path needs a finalize
     // hook inside the spawned task (future work).
+    // WU-6: runtime is always Cline.
     let (agent_runtime, agent_runtime_reason) = resolve_agent_runtime(ctx).await;
-    let cline_ctx = if matches!(agent_runtime, AgentRuntime::Cline) {
+    let cline_ctx = {
         let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
         let cfg_path = runtime_config_path(ctx);
         let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, &provider_name, None)
@@ -3977,8 +3870,6 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
             })?;
         let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
         Some(cctx)
-    } else {
-        None
     };
 
     let executor: Box<dyn RunExecutor> = match req.mode {
@@ -4789,27 +4680,29 @@ pub async fn attach_run_to_batch(ctx: &ApiContext, run_id: &str, batch_id: &str)
         .map_err(|e| ApiError::Internal(format!("attach_run_to_batch: {e}")))
 }
 
-/// Public wrapper that resolves the agent runtime and, when Cline, spawns ONE
-/// [`crate::agent::dispatch_capability::ClineDispatchCtx`] without trajectory
-/// recording. Returns `Ok(None)` when the runtime resolves to `LlmDispatch`
-/// (no sidecar available / not configured). Used by the optimizer cycle so it
-/// can reuse the same Cline dispatch path as the eval runner without reaching
-/// into the private helpers.
+/// Public wrapper that spawns ONE [`crate::agent::dispatch_capability::ClineDispatchCtx`]
+/// without trajectory recording, for use by the optimizer cycle.
+///
+/// Since WU-6 retired `LlmDispatch`, the sidecar is mandatory — this function
+/// always attempts to spawn. If `XVN_AGENTD_BIN` is unset or the provider is
+/// not launchable it returns a clear `ApiError::Validation` so the caller can
+/// surface an actionable message rather than silently falling back.
+///
+/// The return type is `Option<ClineDispatchCtx>` for call-site compatibility;
+/// it is always `Some` on success (never `None`).
 pub async fn spawn_optimizer_cline_ctx(
     ctx: &ApiContext,
     provider_name: &str,
     tools: Arc<ToolRegistry>,
 ) -> ApiResult<Option<crate::agent::dispatch_capability::ClineDispatchCtx>> {
-    let (runtime, _reason) = resolve_agent_runtime(ctx).await;
-    if !matches!(runtime, AgentRuntime::Cline) {
-        return Ok(None);
-    }
     let cfg_path = runtime_config_path(ctx);
     let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, provider_name, None)
         .await
         .map_err(|u| {
             ApiError::Validation(format!(
-                "agent_runtime = cline: provider `{}` not launchable (reason={}): {}",
+                "optimizer sidecar (Cline) is required since WU-6: \
+                 provider `{}` not launchable (reason={}): {} \
+                 — ensure XVN_AGENTD_BIN is set and the provider is configured",
                 u.provider,
                 u.reason.as_str(),
                 u.hint
@@ -4830,7 +4723,10 @@ mod tests {
     #[test]
     fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
         for url in [None, Some("https://testnet-api-evm.orderly.org")] {
-            assert_eq!(resolve_live_venue("alpaca", url, None).unwrap(), LiveVenue::AlpacaPaper);
+            assert_eq!(
+                resolve_live_venue("alpaca", url, None).unwrap(),
+                LiveVenue::AlpacaPaper
+            );
         }
     }
 
@@ -4865,8 +4761,12 @@ mod tests {
     #[test]
     fn live_venue_orderly_testnet_accepts_testnet_base_url() {
         assert_eq!(
-            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org"), None)
-                .unwrap(),
+            resolve_live_venue(
+                "orderly_testnet",
+                Some("https://testnet-api-evm.orderly.org"),
+                None
+            )
+            .unwrap(),
             LiveVenue::OrderlyTestnet,
         );
     }
@@ -4880,7 +4780,10 @@ mod tests {
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
             assert!(msg.contains("BYREAL_NETWORK"), "must name the env var: {msg}");
-            assert!(msg.contains("fire-trade --venue byreal"), "must point to the CLI: {msg}");
+            assert!(
+                msg.contains("fire-trade --venue byreal"),
+                "must point to the CLI: {msg}"
+            );
             // Cred-safety: must NOT echo the env value into the error.
             assert!(!msg.contains("mainnet'"), "must not echo the env value: {msg}");
         }
@@ -4973,59 +4876,9 @@ mod tests {
         assert_eq!(signal_agentd_for_run(run_id), CancelOutcome::NoProcess);
     }
 
-    // --- classify_agent_runtime (Cline selection visibility, 2026-06-10) ----
-
-    #[test]
-    fn classify_explicit_cline_selects_cline_regardless_of_sidecar_env() {
-        // Explicit config opt-in wins even without XVN_AGENTD_BIN: the spawn
-        // then fails loudly with the typed "set XVN_AGENTD_BIN" error rather
-        // than silently downgrading.
-        for sidecar in [true, false] {
-            let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), true, sidecar);
-            assert_eq!(rt, AgentRuntime::Cline);
-            assert!(
-                reason.contains("explicit"),
-                "reason should say explicit: {reason}"
-            );
-        }
-    }
-
-    #[test]
-    fn classify_defaulted_cline_with_sidecar_selects_cline() {
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), false, true);
-        assert_eq!(rt, AgentRuntime::Cline);
-        assert!(
-            reason.contains("XVN_AGENTD_BIN"),
-            "reason should name the env var: {reason}"
-        );
-    }
-
-    #[test]
-    fn classify_defaulted_cline_without_sidecar_falls_back_with_loud_reason() {
-        // The previously-silent fallback: field not explicit, sidecar not
-        // provisioned. Must resolve LlmDispatch AND say so in the reason.
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::Cline), false, false);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("FALLBACK"), "fallback must be labeled: {reason}");
-        assert!(
-            reason.contains("XVN_AGENTD_BIN"),
-            "reason should name the fix: {reason}"
-        );
-    }
-
-    #[test]
-    fn classify_explicit_llm_dispatch_is_honored_and_labeled() {
-        let (rt, reason) = classify_agent_runtime(Some(AgentRuntime::LlmDispatch), true, true);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("explicit"), "reason: {reason}");
-    }
-
-    #[test]
-    fn classify_missing_config_falls_back_with_loud_reason() {
-        let (rt, reason) = classify_agent_runtime(None, false, true);
-        assert_eq!(rt, AgentRuntime::LlmDispatch);
-        assert!(reason.contains("FALLBACK"), "reason: {reason}");
-    }
+    // --- agent_runtime (WU-6: always Cline) ------------------------------------
+    // classify_agent_runtime was removed in WU-6 (LlmDispatch retirement).
+    // The tests that exercised LlmDispatch fallback paths were also removed.
 
     #[allow(dead_code)]
     fn provider(enabled_models: Vec<&str>) -> ProviderEntry {
@@ -5368,28 +5221,28 @@ mod tests {
         );
     }
 
-    // --- spawn_optimizer_cline_ctx (optimizer parity, Task 1.1) ---------------
+    // --- spawn_optimizer_cline_ctx (optimizer parity, WU-6) -------------------
 
-    /// With XVN_AGENTD_BIN unset and no cline config, resolve_agent_runtime
-    /// returns LlmDispatch, so spawn_optimizer_cline_ctx returns Ok(None).
+    /// Since WU-6 retired LlmDispatch, spawn_optimizer_cline_ctx always
+    /// attempts to spawn the sidecar. Without XVN_AGENTD_BIN set and no
+    /// configured provider, it must return a hard error (not Ok(None)).
     #[tokio::test]
-    async fn optimizer_cline_ctx_is_none_without_sidecar() {
+    async fn optimizer_cline_ctx_errors_without_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
             .await
             .unwrap();
 
         // Ensure XVN_AGENTD_BIN is NOT set so the sidecar is unavailable.
-        // With no runtime config and no sidecar, resolve_agent_runtime falls
-        // back to LlmDispatch → wrapper must return Ok(None).
+        // Without a configured provider, the wrapper must return an error.
         std::env::remove_var("XVN_AGENTD_BIN");
 
         let tools = Arc::new(crate::tools::ToolRegistry::empty());
         let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools).await;
-        assert!(result.is_ok(), "expected Ok but got an error");
+        // ClineDispatchCtx has no Debug, so report only the Ok/Err shape.
         assert!(
-            result.unwrap().is_none(),
-            "expected None (LlmDispatch path), but got Some(_)"
+            result.is_err(),
+            "expected Err (sidecar mandatory since WU-6), but got Ok(..)"
         );
     }
 }
