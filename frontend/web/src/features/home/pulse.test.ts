@@ -16,7 +16,9 @@ import {
   PULSE_VIEWS,
   pulseChartSeries,
   recentMetricSeries,
+  tradeMarkersFromPayload,
 } from "./pulse";
+import type { RunChartPayload } from "@/api/types.gen";
 
 function run(over: Partial<RunSummary>): RunSummary {
   return {
@@ -295,5 +297,46 @@ describe("holdCompareSeries", () => {
     const baseline = [{ time: 1, equity_usd: 100_000 }];
     const s = holdCompareSeries(equity, baseline);
     expect(s.hold).toEqual([0, null]);
+  });
+});
+
+describe("tradeMarkersFromPayload (QA #1 equity B/S markers)", () => {
+  function payloadWithTrades(
+    trades: Array<{ time: number; side: "Buy" | "Sell"; price: number }>,
+  ): RunChartPayload {
+    return {
+      markers: {
+        trades: trades.map((t) => ({
+          time: t.time,
+          side: t.side,
+          price: t.price,
+          size: 1,
+          fee: 0,
+          pnl_realized: null,
+          decision_index: 0,
+          justification: null,
+        })),
+        vetoes: [],
+        holds: [],
+      },
+    } as unknown as RunChartPayload;
+  }
+
+  it("maps Buy/Sell trades to buy/sell V2 markers with time + price", () => {
+    const out = tradeMarkersFromPayload(
+      payloadWithTrades([
+        { time: 1000, side: "Buy", price: 42 },
+        { time: 2000, side: "Sell", price: 43 },
+      ]),
+    );
+    expect(out).toEqual([
+      { kind: "buy", time: 1000, price: 42 },
+      { kind: "sell", time: 2000, price: 43 },
+    ]);
+  });
+
+  it("returns [] for undefined payload or no trades", () => {
+    expect(tradeMarkersFromPayload(undefined)).toEqual([]);
+    expect(tradeMarkersFromPayload(payloadWithTrades([]))).toEqual([]);
   });
 });
