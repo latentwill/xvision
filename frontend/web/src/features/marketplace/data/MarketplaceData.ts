@@ -36,6 +36,7 @@ export interface MarketplaceData {
   // deployed and `useWallet` exposes a signer) signs the authorization and
   // submits it here. Callers MUST treat this as testnet/simulated until then.
   purchaseIntent(listingId: Id): Promise<TxRef>;
+  setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef>;
   // SEALED-tier finalize: decrypt the bundle (Lit-gated) and materialize the
   // referenced agents server-side, resolving to the new local strategy ULID.
   importSealed(listingId: Id): Promise<{ agent_id: string }>;
@@ -153,6 +154,9 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async importListing(listingId: Id): Promise<{ agent_id: string }> {
     return { agent_id: fakeAgentId(listingId) };
   }
+  async setListingPrice(_listingId: Id, _priceUsdc: number): Promise<TxRef> {
+    return fakeTx();
+  }
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void {
     const id = setInterval(() => {
       cb({
@@ -164,4 +168,3 @@ export class FixtureMarketplaceData implements MarketplaceData {
     return () => clearInterval(id);
   }
 }
-

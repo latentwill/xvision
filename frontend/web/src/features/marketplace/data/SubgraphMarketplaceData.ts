@@ -190,6 +190,9 @@ export class SubgraphMarketplaceData implements MarketplaceData {
   importListing(listingId: Id): Promise<{ agent_id: string }> {
     return this.fallback.importListing(listingId);
   }
+  setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    return this.fallback.setListingPrice(listingId, priceUsdc);
+  }
 
   // --- helpers -----------------------------------------------------------
 

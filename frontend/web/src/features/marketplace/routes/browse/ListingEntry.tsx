@@ -9,6 +9,7 @@ import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlace
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { MiniSparkline } from "@/components/chart/v2/primitives/MiniSparkline";
+import { isFreeListing } from "@/features/marketplace/data/pricing";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
 // Known financial/asset acronyms that should render in all-caps when a slug is
@@ -76,7 +77,7 @@ function demoEquity(seed: string, positive: boolean): { time: number[]; values: 
 
 export function ListingEntry({ row, index: _index = 0, showSparkline = false }: ListingEntryProps) {
   const displayTitle = row.name ?? humanize(row.id);
-  const isOpen = row.priceUsdc === null || row.tier === "open";
+  const isOpen = isFreeListing(row);
   const tierLabel = isOpen ? "Open edition" : "Sealed";
   const positive = row.return30dPct >= 0;
   // Honest performance: only show a number/sparkline when there is a real

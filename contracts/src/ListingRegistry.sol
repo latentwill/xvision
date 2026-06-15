@@ -190,6 +190,22 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
     }
 
     /// @inheritdoc IListingRegistry
+    /// @dev Price-only mutation (tier, fee snapshot, content, transferable flag
+    ///      stay fixed). Preserves the create-time `FreeTransferableForbidden`
+    ///      invariant: a transferable listing can never be repriced to free.
+    function updatePrice(uint256 listingId, uint96 newPriceUSDC) external override {
+        Listing storage l = _listings[listingId];
+        if (l.seller == address(0)) revert UnknownListing(listingId);
+        if (l.seller != msg.sender) revert NotSeller(listingId, msg.sender);
+        if (l.revoked) revert AlreadyRevoked(listingId);
+        if (newPriceUSDC == 0 && l.transferableLicense) revert FreeTransferableForbidden();
+
+        uint96 oldPriceUSDC = l.priceUSDC;
+        l.priceUSDC = newPriceUSDC;
+        emit ListingPriceUpdated(listingId, oldPriceUSDC, newPriceUSDC);
+    }
+
+    /// @inheritdoc IListingRegistry
     function revokeListing(uint256 listingId) external override {
         Listing storage l = _listings[listingId];
         if (l.seller == address(0)) revert UnknownListing(listingId);

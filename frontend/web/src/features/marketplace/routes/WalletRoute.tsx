@@ -4,6 +4,7 @@
 // rule), inline two-step revoke confirm (no-popup rule).
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { OwnerListingCard } from "@/features/marketplace/components/OwnerListingCard";
 import {
   useMutation,
   useQuery,
@@ -227,256 +228,6 @@ function LicenseCard({ l }: { l: WalletLicense }) {
   );
 }
 
-// ── Listing row: earnings chip + inline two-step revoke/republish confirms
-//    and an inline attestation mini-form (no popups) ─────────────────────────
-
-function ListingRowItem({
-  listing,
-  onChanged,
-}: {
-  listing: IndexedListing;
-  /// Invalidate/refetch the wallet query after any successful mutation.
-  onChanged: () => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
-  const [attestOpen, setAttestOpen] = useState(false);
-  const [cycles, setCycles] = useState("");
-  const [sharpe, setSharpe] = useState("");
-
-  const revoke = useMutation({
-    mutationFn: () =>
-      apiFetch<{ listing_id: number; tx_hash: string }>(
-        `/api/marketplace/listings/${listing.listing_id}/revoke`,
-        { method: "POST" },
-      ),
-    onSuccess: () => {
-      setConfirming(false);
-      onChanged();
-    },
-  });
-
-  // Republish: re-canonicalize + re-pin the local strategy content and call
-  // updateListing on-chain (content-only; price is immutable).
-  const update = useMutation({
-    mutationFn: () =>
-      apiFetch<{
-        listing_id: number;
-        content_hash: string;
-        content_uri: string;
-        tx_hash: string;
-      }>(`/api/marketplace/listings/${listing.listing_id}/update`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      setConfirmingUpdate(false);
-      onChanged();
-    },
-  });
-
-  const attest = useMutation({
-    mutationFn: (body: { cycles: number; sharpe: number }) =>
-      apiFetch<{ tx_hash: string }>(
-        `/api/marketplace/listings/${listing.listing_id}/attest`,
-        { method: "POST", body: JSON.stringify(body) },
-      ),
-    onSuccess: () => onChanged(),
-  });
-
-  const cyclesNum = Number(cycles);
-  const sharpeNum = Number(sharpe);
-  const attestValid =
-    cycles.trim() !== "" &&
-    Number.isInteger(cyclesNum) &&
-    cyclesNum > 0 &&
-    sharpe.trim() !== "" &&
-    Number.isFinite(sharpeNum);
-
-  const tierLabel = listing.tier === 1 ? "sealed" : "open";
-  const price =
-    listing.price_usdc > 0 ? `${listing.price_usdc} USDC` : "free";
-
-  return (
-    <div className="px-4 py-2.5 border-b border-border last:border-b-0">
-      <div className="flex items-center gap-3 flex-wrap">
-        <GenArtPlaceholder seed={listing.gen_art_seed} size={28} />
-        <span className="font-mono text-[12px] text-text font-semibold min-w-0 truncate">
-          {listing.name || listing.agent_id}
-        </span>
-        <span className="font-mono text-[11px] text-gold">{price}</span>
-        <span className="font-mono text-[10px] px-1.5 py-0.5 border border-border rounded-[3px] text-text-2">
-          {tierLabel}
-        </span>
-        {listing.units_sold > 0 && (
-          <span className="font-mono text-[10px] px-1.5 py-0.5 border border-gold/40 rounded-[3px] text-gold">
-            sold ×{listing.units_sold} · ${listing.earned_usdc.toFixed(2)}{" "}
-            earned
-          </span>
-        )}
-        {listing.revoked ? (
-          <span className="font-mono text-[10px] px-1.5 py-0.5 border border-danger/40 rounded-[3px] text-danger ml-auto">
-            revoked
-          </span>
-        ) : (
-          <span className="ml-auto flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-[10px] px-1.5 py-0.5 border border-gold/40 rounded-[3px] text-gold">
-              active
-            </span>
-            <button
-              type="button"
-              onClick={() => setAttestOpen((v) => !v)}
-              className="font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text-2 hover:border-gold/50 hover:text-gold transition-colors"
-            >
-              Post attestation
-            </button>
-            {confirmingUpdate ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="font-mono text-[11px] text-text-2">
-                  Confirm republish?
-                </span>
-                <button
-                  type="button"
-                  disabled={update.isPending}
-                  onClick={() => update.mutate()}
-                  className="font-mono text-[11px] px-2 py-1 border border-gold/50 rounded-[3px] text-gold hover:bg-gold/10 transition-colors disabled:opacity-50"
-                >
-                  {update.isPending ? "Republishing…" : "Yes"}
-                </button>
-                <button
-                  type="button"
-                  disabled={update.isPending}
-                  onClick={() => {
-                    setConfirmingUpdate(false);
-                    update.reset();
-                  }}
-                  className="font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text-2 hover:text-text transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmingUpdate(true)}
-                className="font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text-2 hover:border-gold/50 hover:text-gold transition-colors"
-              >
-                Republish content
-              </button>
-            )}
-            {confirming ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="font-mono text-[11px] text-text-2">
-                  Confirm revoke?
-                </span>
-                <button
-                  type="button"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate()}
-                  className="font-mono text-[11px] px-2 py-1 border border-danger/50 rounded-[3px] text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
-                >
-                  {revoke.isPending ? "Revoking…" : "Yes"}
-                </button>
-                <button
-                  type="button"
-                  disabled={revoke.isPending}
-                  onClick={() => {
-                    setConfirming(false);
-                    revoke.reset();
-                  }}
-                  className="font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text-2 hover:text-text transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirming(true)}
-                className="font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text-2 hover:border-danger/50 hover:text-danger transition-colors"
-              >
-                Revoke
-              </button>
-            )}
-          </span>
-        )}
-      </div>
-      {revoke.isError && (
-        <div className="font-mono text-[11px] text-danger mt-1.5">
-          Revoke failed:{" "}
-          {revoke.error instanceof Error
-            ? revoke.error.message
-            : "unknown error"}
-        </div>
-      )}
-      {update.isError && (
-        <div className="font-mono text-[11px] text-danger mt-1.5">
-          Republish failed:{" "}
-          {update.error instanceof Error
-            ? update.error.message
-            : "unknown error"}
-        </div>
-      )}
-      {update.isSuccess && (
-        <div className="font-mono text-[11px] text-gold mt-1.5">
-          republished → {update.data.content_uri} · tx{" "}
-          {truncAddr(update.data.tx_hash)}
-        </div>
-      )}
-      {/* Inline attestation mini-form — cycles + sharpe, posted as the
-          backend's keccak'd {"cycles":N,"sharpe":F} eval payload. */}
-      {attestOpen && !listing.revoked && (
-        <div className="mt-2 border border-border rounded-[4px] px-3 py-2 flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[10.5px] text-text-3">
-            eval attestation
-          </span>
-          <input
-            type="number"
-            aria-label="cycles"
-            placeholder="cycles"
-            value={cycles}
-            onChange={(e) => setCycles(e.target.value)}
-            disabled={attest.isPending}
-            className="w-20 bg-transparent font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text focus:border-gold/50 outline-none disabled:opacity-50"
-          />
-          <input
-            type="number"
-            step="any"
-            aria-label="sharpe"
-            placeholder="sharpe"
-            value={sharpe}
-            onChange={(e) => setSharpe(e.target.value)}
-            disabled={attest.isPending}
-            className="w-20 bg-transparent font-mono text-[11px] px-2 py-1 border border-border rounded-[3px] text-text focus:border-gold/50 outline-none disabled:opacity-50"
-          />
-          <button
-            type="button"
-            disabled={!attestValid || attest.isPending}
-            onClick={() =>
-              attest.mutate({ cycles: cyclesNum, sharpe: sharpeNum })
-            }
-            className="font-mono text-[11px] px-2 py-1 border border-gold/50 rounded-[3px] text-gold hover:bg-gold/10 transition-colors disabled:opacity-50"
-          >
-            {attest.isPending ? "Posting…" : "Attest"}
-          </button>
-          {attest.isSuccess && (
-            <span className="font-mono text-[10.5px] text-gold">
-              attested · tx {truncAddr(attest.data.tx_hash)}
-            </span>
-          )}
-          {attest.isError && (
-            <span className="font-mono text-[10.5px] text-danger">
-              Attestation failed:{" "}
-              {attest.error instanceof Error
-                ? attest.error.message
-                : "unknown error"}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function WalletRoute() {
@@ -563,17 +314,27 @@ export function WalletRoute() {
             {data.listings.length === 0 ? (
               <EmptyLine>No listings published from this wallet.</EmptyLine>
             ) : (
-              data.listings.map((l) => (
-                <ListingRowItem
-                  key={l.listing_id}
-                  listing={l}
-                  onChanged={() =>
-                    void queryClient.invalidateQueries({
-                      queryKey: ["marketplace", "wallet", address],
-                    })
-                  }
-                />
-              ))
+              <>
+                {data.listings.map((l) => (
+                  <OwnerListingCard
+                    key={l.listing_id}
+                    listing={l}
+                    onChanged={() =>
+                      void queryClient.invalidateQueries({
+                        queryKey: ["marketplace", "wallet", address],
+                      })
+                    }
+                  />
+                ))}
+                <div className="px-4 py-2 border-t border-border">
+                  <Link
+                    to="/marketplace/mine"
+                    className="font-mono text-[11px] text-text-3 hover:text-text underline underline-offset-2 transition-colors"
+                  >
+                    Manage all →
+                  </Link>
+                </div>
+              </>
             )}
           </div>
         </>

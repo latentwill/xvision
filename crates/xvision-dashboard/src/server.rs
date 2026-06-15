@@ -42,6 +42,7 @@
 // 18f2. POST /api/marketplace/listings/:id/import-sealed marketplace_route::post_import_sealed
 // 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
 // 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
+// 18i. POST  /api/marketplace/listings/:id/price      marketplace_route::post_set_price
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -663,6 +664,13 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/listings/:id/update",
             post(marketplace_route::post_update),
+        )
+        // Seller in-place reprice (updatePrice). Env-gated: 503 without chain
+        // config; bad price → 400; NotSeller / AlreadyRevoked /
+        // FreeTransferableForbidden contract reverts → 400.
+        .route(
+            "/api/marketplace/listings/:id/price",
+            post(marketplace_route::post_set_price),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

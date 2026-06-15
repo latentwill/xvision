@@ -9,8 +9,10 @@
 // Data: useQuery from @tanstack/react-query + useMarketplaceData() seam.
 import { useState } from "react";
 import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
+import { isFreeListing } from "@/features/marketplace/data/pricing";
+import { OwnerListingCard } from "@/features/marketplace/components/OwnerListingCard";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import {
   isOnChainListingId,
@@ -423,6 +425,11 @@ export function LineageRoute() {
     enabled: !!name,
   });
 
+  const { data: viewer } = useQuery({
+    queryKey: ["marketplace", "viewer"],
+    queryFn: () => mp.getViewer(),
+  });
+
   // Verified manifest enrichment — real (numeric) on-chain listings only.
   // Fixture listings never fetch; on any error this is null and the page
   // renders exactly as before.
@@ -455,16 +462,19 @@ export function LineageRoute() {
     onSuccess: () => buyMutation.mutate(),
   });
 
-  // Free / open path (Run free + Clone to edit). Open-tier listings import for
-  // real via the plain import route, which materializes the referenced agents
-  // server-side and returns the new local strategy ULID — then land on the
-  // Strategy detail page. No fake clone tx, no receipt (QA #7/#12).
+  // Free / open path (Run free). Open-tier listings import for real via the
+  // plain import route, which materializes the referenced agents server-side
+  // and returns the new local strategy ULID — then land on the Strategy detail
+  // page. No fake clone tx, no receipt (QA #7/#12).
   const cloneMutation = useMutation({
     mutationFn: () => mp.importListing(detail!.id),
     onSuccess: ({ agent_id }) => navigate(`/strategies/${agent_id}`),
   });
 
-  const isOpenTier = !!detail && detail.tier === "open";
+  const queryClient = useQueryClient();
+  const isOwner = !!detail && !!viewer && viewer.createdListingIds.includes(detail.id);
+
+  const isOpenTier = !!detail && isFreeListing(detail);
 
   const receiptsOpen = sp.get("receipts") === "open";
   const toggleReceipts = () => {
@@ -579,6 +589,47 @@ export function LineageRoute() {
           Marketplace · {detail.onChain.nft.network.toUpperCase()}
         </div>
       </div>
+
+      {/* ===== OWNER STRIP — full-width inline, no side boxes, no popups ===== */}
+      {isOwner && detail && (
+        <div
+          data-testid="owner-strip"
+          className="mx-6 mt-4 border border-gold/40 rounded-[5px] bg-gold/5 overflow-hidden"
+        >
+          <div className="px-4 py-2 border-b border-gold/20">
+            <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-gold">
+              Owner controls
+            </span>
+          </div>
+          <OwnerListingCard
+            listing={{
+              listing_id: Number(detail.id) || 0,
+              agent_nft_id: detail.onChain.nft.tokenId,
+              agent_id: detail.id,
+              seller: detail.creator.address,
+              content_hash: detail.onChain.nft.manifestHash,
+              content_uri: detail.onChain.nft.agentURI,
+              tier: detail.tier === "sealed" ? 1 : 0,
+              price_usdc: detail.priceUsdc ?? 0,
+              transferable_license: detail.transferableLicense,
+              revoked: false,
+              gen_art_seed: detail.genArtSeed,
+              name: detail.name ?? detail.id,
+              symmetry: detail.style ?? "",
+              palette: "",
+              attestation_count: 0,
+              units_sold: detail.buyers.humans + detail.buyers.agents,
+              earned_usdc: detail.paidToCreatorUsd,
+            }}
+            omitMeta
+            onChanged={() =>
+              void queryClient.invalidateQueries({
+                queryKey: ["marketplace", "listing", name],
+              })
+            }
+          />
+        </div>
+      )}
 
       {/* ===== HERO (two zones: thumbnail + info/price) ===== */}
       <section

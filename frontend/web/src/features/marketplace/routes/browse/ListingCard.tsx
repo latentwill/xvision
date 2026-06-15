@@ -5,6 +5,7 @@ import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { isFreeListing } from "@/features/marketplace/data/pricing";
 import type { ListingRow } from "@/features/marketplace/data/types";
 import { formatPercent, formatSharpe } from "@/lib/format";
 
@@ -18,7 +19,7 @@ interface ListingCardProps {
 // TestnetBadge so every chain-bound affordance reads consistently.
 export function ListingCard({ row, onBuy }: ListingCardProps) {
   const positive = row.return30dPct >= 0;
-  const isFree = row.priceUsdc === null || row.tier === "open";
+  const isFree = isFreeListing(row);
 
   return (
     <div
