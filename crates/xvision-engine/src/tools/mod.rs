@@ -1,5 +1,6 @@
 pub mod indicators;
 pub mod ohlcv;
+pub mod signal_policy;
 
 use std::collections::HashMap;
 use std::sync::Arc;
