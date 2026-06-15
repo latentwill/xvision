@@ -10,6 +10,7 @@ pub mod broker_surface;
 pub mod bybit;
 pub mod byreal;
 pub mod byreal_clmm;
+pub mod byreal_spot;
 pub mod executor;
 pub mod hyperliquid;
 pub mod orderly;
