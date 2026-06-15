@@ -33,10 +33,10 @@ describe("MarketplaceLayout", () => {
     expect(await screen.findByText("browse-content")).toBeInTheDocument();
   });
 
-  it("does not render the testnet banner (removed per operator QA)", async () => {
+  it("renders the runtime-network testnet banner", async () => {
     renderAt("/marketplace");
     await screen.findByText("browse-content");
-    expect(screen.queryByText(/Mantle Sepolia testnet/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Mantle Sepolia testnet/i)).toBeInTheDocument();
   });
 });
 

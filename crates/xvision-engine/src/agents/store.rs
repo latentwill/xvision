@@ -1172,7 +1172,6 @@ mod tests {
             "agents": agents,
             "pipeline": { "kind": "single" },
             "risk": crate::strategies::risk::RiskPreset::Balanced.expand(),
-            "mechanical_params": {},
         })
     }
 

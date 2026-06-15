@@ -16,20 +16,25 @@ import {
   buildReturnFillGradient,
   xvnAreaFill,
   xvnLastDot,
+  xvnTradeMarkers,
   xvnZeroLine,
 } from "@/components/chart/v2/adapters/uplot-plugins";
 import { themeToUplotOptions } from "@/components/chart/v2/adapters/theme-to-uplot";
 import { useChart2Theme } from "@/components/chart/v2/hooks/useChart2Theme";
 import { usePlot } from "@/components/chart/v2/primitives/usePlot";
+import type { V2Marker } from "@/components/chart/v2/types";
 import type { PulseChartSeries } from "@/features/home/pulse";
 
 export interface PulseEquityChartProps {
   series: PulseChartSeries;
+  /** Buy/sell trade markers overlaid as green "B" / red "S" on the curve. */
+  markers?: V2Marker[];
   height?: number;
 }
 
 export function PulseEquityChart({
   series,
+  markers,
   height = 210,
 }: PulseEquityChartProps): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -82,6 +87,12 @@ export function PulseEquityChart({
       xvnAreaFill(2, "rgba(255,77,77,0.16)"),
       xvnZeroLine(),
       xvnLastDot(1, equityStroke, { backgroundFill: theme.surface.bg }),
+      // QA #1: green "B" / red "S" trade markers, anchored to the %-return
+      // curve (drawn last so they sit on top of the line + last-dot). Uses the
+      // plugin's green/red defaults so buys/sells read consistently.
+      ...(markers && markers.length > 0
+        ? [xvnTradeMarkers(markers, { glyph: "letter", anchorToSeries: true })]
+        : []),
     ],
   };
 

@@ -12,19 +12,19 @@ chain_id = 5000
 rpc_url  = "https://rpc.mantle.xyz"
 
 [erc8004]
-identity_registry   = "0x0000000000000000000000000000000000000000"
-reputation_registry = "0x0000000000000000000000000000000000000000"
-validation_registry = "0x0000000000000000000000000000000000000000"
+identity_registry   = "0xa0c9A5a00cbD5bcC7DBc92acE170356471352f2E"
+reputation_registry = "0xF0Eeb3412cbaeaD5E56fB35e1b2EAb7766f84Fce"
+validation_registry = "0x2d8faF345404F1A6A1a2aEc0eD78a9FB4ED93aDe"
 
 [marketplace]
-xvn_deployer            = "0x0000000000000000000000000000000000000000"
-listing_registry        = "0x0000000000000000000000000000000000000000"
-marketplace             = "0x0000000000000000000000000000000000000000"
-license_token           = "0x0000000000000000000000000000000000000000"
-eval_attestation        = "0x0000000000000000000000000000000000000000"
+xvn_deployer            = "0xA2A238B04d7ff717df17f9Abad4b08367Aec5b39"
+listing_registry        = "0xF491b6102F5c50Db46AeEc7fFb3D520aaF2f0151"
+marketplace             = "0xd02Cc76515021D2a140e7EfDadc561dA4ae57BFB"
+license_token           = "0x060642CbFae3F3a058aD8793b71E7540d8a71007"
+eval_attestation        = "0xB9cb44FD3c8F4e4025eBf8f640C56402546b91Fc"
 platform_agent_token_id = 0
-fee_recipient           = "0x0000000000000000000000000000000000000000" # V4: treasury multisig
-admin                   = "0x0000000000000000000000000000000000000000" # V4: TimelockController
+fee_recipient           = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V4: treasury multisig
+admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V4: TimelockController
 
 # V4/mainnet only — populated during V4 prep:
 # admin_multisig = "0x0000000000000000000000000000000000000000" # 2-of-3

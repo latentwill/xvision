@@ -61,7 +61,7 @@ struct FixedDispatch;
 #[async_trait]
 impl LlmDispatch for FixedDispatch {
     async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        Ok(param_diff_response("ema_fast", 12, 20))
+        Ok(param_diff_response("risk.max_concurrent_positions", 2, 3))
     }
 }
 
@@ -73,7 +73,7 @@ struct PromptCapturingDispatch {
 impl LlmDispatch for PromptCapturingDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
         self.prompts.lock().unwrap().push(prompt_of(&req));
-        Ok(param_diff_response("atr_period", 14, 20))
+        Ok(param_diff_response("risk.max_concurrent_positions", 2, 3))
     }
 }
 
@@ -98,8 +98,7 @@ fn make_strategy() -> Strategy {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": { "ema_fast": 12, "atr_period": 14 }
+        }
     });
     serde_json::from_value(v).expect("fixture strategy deserializes")
 }

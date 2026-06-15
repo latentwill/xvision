@@ -67,7 +67,6 @@ fn fixture_strategy() -> Strategy {
             model: Some("mock-trader-model".into()),
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -150,6 +149,7 @@ async fn legacy_pipeline_emits_agent_plan_span_with_topology() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -278,6 +278,7 @@ async fn agent_slots_pipeline_emits_agent_plan_span_with_topology() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await;
     // Either path is acceptable for the span assertions below; in the
@@ -360,6 +361,7 @@ async fn no_emitter_emits_no_agent_plan_span() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();

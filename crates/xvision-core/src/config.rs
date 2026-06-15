@@ -393,25 +393,24 @@ pub struct RiskConfig {
     #[garde(dive)]
     pub stops: RiskStops,
     /// Per-venue deterministic broker constraints (e.g. minimum
-    /// notional). The xvision-risk crate consumes these via its own
-    /// `RiskConfig::venue_limits()` accessor; xvision-core simply
-    /// passes them through so the schema deserializes. See
+    /// notional). xvision-core passes them through so `config/risk.toml`
+    /// deserializes here; the engine reads them directly. See
     /// `risk-gate-min-notional` contract for details.
     #[garde(skip)]
     #[serde(default)]
     pub venues: std::collections::BTreeMap<String, RiskVenueLimits>,
     /// Perps-guard thresholds. Like `venues`, xvision-core mirrors this section
     /// only so `config/risk.toml` deserializes here too; the thresholds are
-    /// consumed by the xvision-risk crate's own `PerpsGuards`. Absent `[perps]`
-    /// ⇒ default (all `None`).
+    /// a vestigial global mirror (the engine reads per-strategy `strategy.risk`).
+    /// Absent `[perps]` ⇒ default (all `None`).
     #[garde(skip)]
     #[serde(default)]
     pub perps: RiskPerpsGuards,
 }
 
-/// Pass-through mirror of the xvision-risk `[perps]` guard config. Deliberately
+/// Pass-through mirror of the `[perps]` guard config from `risk.toml`. Deliberately
 /// NOT `deny_unknown_fields` so future perps thresholds don't break
-/// xvision-core's loader; the risk crate owns the authoritative schema/defaults.
+/// xvision-core's loader. The engine reads per-strategy `strategy.risk` fields.
 #[derive(Debug, Clone, Default, PartialEq, Validate, Serialize, Deserialize)]
 pub struct RiskPerpsGuards {
     /// Funding-carry guard threshold (PR #985). Mirrored for deserialization.

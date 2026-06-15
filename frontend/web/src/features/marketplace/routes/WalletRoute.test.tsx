@@ -22,6 +22,7 @@ vi.mock("@/features/marketplace/lib/wallet", () => ({
 const usdcBalanceMock = vi.fn<(addr: string) => Promise<bigint>>();
 const faucetUsdcMock = vi.fn<(amount6: bigint) => Promise<string>>();
 vi.mock("@/features/marketplace/lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   usdcBalance: (addr: string) => usdcBalanceMock(addr),
   faucetUsdc: (amount6: bigint) => faucetUsdcMock(amount6),
 }));

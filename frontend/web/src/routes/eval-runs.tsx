@@ -89,7 +89,7 @@ const MODE_FILTER: FilterDef = {
   options: [
     { value: "all", label: "All modes" },
     { value: "backtest", label: "Backtest" },
-    { value: "live", label: "Live" },
+    { value: "live", label: "Forward test" },
   ],
 };
 
@@ -715,10 +715,13 @@ function StartEvalPanel({
   const [liveCapital, setLiveCapital] = useState("10000");
   const [liveBarLimit, setLiveBarLimit] = useState("5");
   const [liveWarmupBars, setLiveWarmupBars] = useState("200");
-  // Live execution venue. Values are the backend `broker_creds_ref` contract
-  // (resolve_live_venue): "alpaca" (paper), "orderly_testnet", "byreal".
-  // Orderly + Byreal are testnet-only in the current live scope.
-  const [brokerCredsRef, setBrokerCredsRef] = useState<"alpaca" | "orderly_testnet" | "byreal">("alpaca");
+  // Forward-test execution venue. Values are the backend `broker_creds_ref`
+  // contract (resolve_live_venue): "alpaca" (paper), "orderly_testnet",
+  // "byreal", "degen_arena". All are paper/testnet — real money lives on the
+  // /live surface (Degen Arena mainnet additionally gates on DEGEN_ALLOW_MAINNET).
+  const [brokerCredsRef, setBrokerCredsRef] = useState<
+    "alpaca" | "orderly_testnet" | "byreal" | "degen_arena"
+  >("alpaca");
   const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
   const [reviewProvider, setReviewProvider] = useState<string>("");
   const [reviewModel, setReviewModel] = useState<string>("");
@@ -781,7 +784,7 @@ function StartEvalPanel({
       const barLimit = Number(liveBarLimit);
       const warmupBars = Number(liveWarmupBars);
       if (!effectiveLiveAsset.trim()) {
-        setPreflightError("Select a strategy with an asset before starting Live.");
+        setPreflightError("Select a strategy with an asset before starting a Forward test.");
         return;
       }
       if (!Number.isFinite(capital) || capital <= 0) {
@@ -796,24 +799,32 @@ function StartEvalPanel({
         setPreflightError("Enter a non-negative live warmup bar count.");
         return;
       }
-      // Alpaca is always required — it supplies the live market-data bar stream
-      // regardless of which venue executes the orders.
-      if (brokers.data?.alpaca.configured !== true) {
+      // Alpaca supplies the live market-data bar stream for most venues, so it
+      // is required — EXCEPT Degen Arena, which sources its own Hyperliquid
+      // candles (mirrors the engine's `uses_alpaca_data = venue != DegenArena`).
+      const usesAlpacaData = brokerCredsRef !== "degen_arena";
+      if (usesAlpacaData && brokers.data?.alpaca.configured !== true) {
         setPreflightError(
-          "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
+          "Configure Alpaca paper credentials in Settings -> Brokers before starting a Forward test.",
         );
         return;
       }
       // The execution venue's own credentials must also be configured.
       if (brokerCredsRef === "orderly_testnet" && brokers.data?.orderly.configured !== true) {
         setPreflightError(
-          "Configure Orderly testnet credentials (ORDERLY_*) before starting a Live Orderly run.",
+          "Configure Orderly testnet credentials (ORDERLY_*) before starting a Forward test on Orderly.",
         );
         return;
       }
       if (brokerCredsRef === "byreal" && brokers.data?.byreal.configured !== true) {
         setPreflightError(
-          "Configure Byreal credentials (BYREAL_PRIVATE_KEY) with BYREAL_NETWORK=testnet before starting a Live Byreal run.",
+          "Configure Byreal credentials (BYREAL_PRIVATE_KEY) with BYREAL_NETWORK=testnet before starting a Forward test on Byreal.",
+        );
+        return;
+      }
+      if (brokerCredsRef === "degen_arena" && brokers.data?.degen_arena.configured !== true) {
+        setPreflightError(
+          "Configure Degen Arena credentials in Settings -> Brokers before starting a Forward test on Degen Arena.",
         );
         return;
       }
@@ -854,12 +865,14 @@ function StartEvalPanel({
             venue_label: "paper",
             warmup_bars: warmupBarsNum,
             safety_limits: null,
-            display_name: `Live ${
+            display_name: `Forward test ${
               brokerCredsRef === "alpaca"
                 ? "Alpaca paper"
                 : brokerCredsRef === "orderly_testnet"
                   ? "Orderly testnet"
-                  : "Byreal testnet"
+                  : brokerCredsRef === "degen_arena"
+                    ? "Degen Arena"
+                    : "Byreal testnet"
             } ${effectiveLiveAsset}`,
             description: null,
             tags: ["live", brokerCredsRef],
@@ -990,23 +1003,24 @@ function StartEvalPanel({
                   }}
                   className="accent-gold"
                 />
-                live
+                forward test
               </label>
             </div>
             <p className="m-0 mt-1.5 text-[11px] text-text-3 leading-snug">
-              Backtest replays a scenario. Live uses Alpaca paper credentials
-              and must be bounded by a stop policy.
+              Backtest replays a scenario. Forward test runs your strategy on
+              paper against the live market (no real money) and must be bounded
+              by a stop policy.
             </p>
           </fieldset>
 
           {mode === "live" ? (
             <fieldset className="grid grid-cols-2 gap-3">
               <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
-                Live execution venue
+                Forward-test venue
               </legend>
               <div
                 role="group"
-                aria-label="Live execution venue"
+                aria-label="Forward-test venue"
                 className="col-span-2 flex gap-1 rounded-md border border-border bg-surface-elev p-1"
               >
                 {(
@@ -1014,6 +1028,7 @@ function StartEvalPanel({
                     ["alpaca", "Alpaca paper"],
                     ["orderly_testnet", "Orderly testnet"],
                     ["byreal", "Byreal testnet"],
+                    ["degen_arena", "Degen Arena"],
                   ] as const
                 ).map(([value, label]) => (
                   <button
@@ -1034,13 +1049,13 @@ function StartEvalPanel({
               <LabeledInput
                 label="Asset"
                 help="From strategy assets"
-                ariaLabel="Live asset"
+                ariaLabel="Forward-test asset"
                 value={effectiveLiveAsset}
                 readOnly
               />
               <LabeledInput
                 label="Capital"
-                ariaLabel="Live capital"
+                ariaLabel="Forward-test capital"
                 type="number"
                 min="1"
                 value={liveCapital}
@@ -1049,7 +1064,7 @@ function StartEvalPanel({
               <LabeledInput
                 label="Bars to run"
                 help="Stop after this many live bars"
-                ariaLabel="Live bar limit"
+                ariaLabel="Forward-test bar limit"
                 type="number"
                 min="1"
                 value={liveBarLimit}
@@ -1058,7 +1073,7 @@ function StartEvalPanel({
               <LabeledInput
                 label="Warmup bars"
                 help="Historical context loaded before the first live bar"
-                ariaLabel="Live warmup bars"
+                ariaLabel="Forward-test warmup bars"
                 type="number"
                 min="0"
                 value={liveWarmupBars}

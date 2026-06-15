@@ -7,6 +7,7 @@ import { ApiMarketplaceData } from "./ApiMarketplaceData";
 import { FixtureMarketplaceData } from "./MarketplaceData";
 
 vi.mock("../lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   currentAddress: vi.fn(),
 }));
 vi.mock("../lib/sealed", () => ({

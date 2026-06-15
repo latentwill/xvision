@@ -62,6 +62,25 @@ fn long_open_with_tp_then_holds(tp_pct: f64, holds: usize) -> Arc<dyn LlmDispatc
     Arc::new(MockDispatch::sequence(resps))
 }
 
+/// N `long_open` responses, each carrying a tight `stop_loss_pct` bracket
+/// (mirrors a model that ignores the "let the ATR stop manage exits" prompt
+/// and emits its own stop). Used to reproduce the 2026-06-14 churn finding.
+fn repeated_long_open_with_sl(sl_pct: f64, n: usize) -> Arc<dyn LlmDispatch> {
+    let resps: Vec<LlmResponse> = (0..n)
+        .map(|_| LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: format!(
+                    r#"{{"action":"long_open","conviction":0.8,"justification":"trend","stop_loss_pct":{sl_pct}}}"#
+                ),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 1,
+            output_tokens: 1,
+        })
+        .collect();
+    Arc::new(MockDispatch::sequence(resps))
+}
+
 fn always_true_filter(strategy_id: &str, wake_when_in_position: WakeInPosition) -> Filter {
     Filter {
         id: FilterId::new("01TESTFILTERALWAYSTRUE000000"),
@@ -373,6 +392,9 @@ async fn daily_loss_kill_vetoes_further_opens_after_loss_budget_breached() {
         stop_loss_atr_multiple: 2.0,
         daily_loss_kill_pct: 0.001, // 0.1% of initial — tight on purpose
         max_position_pct_nav: 20.0,
+        max_funding_pay_8h: 0.0,
+        min_liq_distance_pct: 0.0,
+        max_total_exposure_pct: 0.0,
     };
     let strategy = strategy_with_risk(agent_id, &["BTC/USD"], risk, 1);
 
@@ -517,5 +539,185 @@ async fn winning_round_trip_yields_win_rate_one_and_two_legs() {
         metrics.n_trades, 2,
         "n_trades counts fill legs (open + TP close) for one round-trip, got {}",
         metrics.n_trades
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ERROR-1 (2026-06-14 eval finding) — wake:never + ATR stop must NOT churn
+// ─────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn wake_never_atr_stop_does_not_churn_in_steady_uptrend() {
+    // Regression for docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md
+    // (ERROR-1). With `wake_when_in_position = Never` and a configured ATR stop
+    // (no model bracket), a long-only trend strategy was force-closed and
+    // re-opened on (almost) every in-position bar: 1-bar holds, "stop_loss"
+    // exits firing on UP bars at a profit. A 2×ATR stop on a long can only
+    // trigger when the bar low falls to entry − 2×ATR, so a steady uptrend
+    // whose lows never approach that level must HOLD the single opened
+    // position to the end — exactly one long_open and zero stop_loss rows.
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTWAKENEVERUPTREND0000A";
+    let mut strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+    strategy.activation_mode = ActivationMode::FilterGated;
+    strategy.filter = Some(always_true_filter(agent_id, WakeInPosition::Never));
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    // 15 flat warmup bars (ATR ≈ 2 ⇒ stop sits ≈ 4 below entry), then a steady
+    // uptrend whose per-bar low never falls more than ~1 below the open — far
+    // short of the ~4 a 2×ATR stop needs. The opened long can never be hit.
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let mut bars: Vec<Ohlcv> = Vec::new();
+    for i in 0..15 {
+        bars.push(Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 1_000.0,
+        });
+    }
+    for i in 15..40 {
+        let close = 100.0 + (i - 14) as f64 * 2.0; // +2/bar uptrend
+        let open = close - 2.0; // == the previous bar's close
+        bars.push(Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open,
+            high: close + 1.0,
+            low: open - 1.0, // low only 1 below open — never ~4 below entry
+            close,
+            volume: 1_000.0,
+        });
+    }
+
+    // 15 warmup `hold`s (flat bars wake the trader since no position is open),
+    // then the trader always wants long. With wake:never a correctly-held
+    // position consumes only ONE long_open; the surplus opens exist so that,
+    // if the churn bug is present, re-entries have responses to consume and the
+    // test fails on the assertion below (not on a drained mock dispatch).
+    let mut actions = vec!["hold"; 15];
+    actions.extend(std::iter::repeat("long_open").take(40));
+    let dispatch = sequenced_dispatch(&actions);
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = Executor::with_bars(bars);
+
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let actions_seen: Vec<&str> = decisions.iter().map(|d| d.action.as_str()).collect();
+    let long_opens = decisions.iter().filter(|d| d.action == "long_open").count();
+    let stop_losses = decisions.iter().filter(|d| d.action == "stop_loss").count();
+    // The smoking gun from production: a "stop_loss" whose exit price is ABOVE
+    // entry, booking a profit — impossible for a real 2×ATR long stop.
+    let profitable_stops = decisions
+        .iter()
+        .filter(|d| d.action == "stop_loss" && d.pnl_realized.unwrap_or(0.0) > 0.0)
+        .count();
+
+    assert_eq!(
+        stop_losses, 0,
+        "a steady uptrend must never trip the 2×ATR stop; got {stop_losses} stop_loss rows. actions = {actions_seen:?}"
+    );
+    assert_eq!(
+        profitable_stops, 0,
+        "a long 2×ATR stop can never exit above entry at a profit; got {profitable_stops}. actions = {actions_seen:?}"
+    );
+    assert_eq!(
+        long_opens, 1,
+        "wake:never must open the trend position once and hold it; got {long_opens} opens (churn). actions = {actions_seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn wake_never_ignores_model_protective_bracket() {
+    // ERROR-1 regression (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+    // a model that emits a TIGHT stop_loss_pct (1%) in a wake:never trend
+    // strategy. Pre-fix, the basic % stop sits 1% below entry; a normal ~1.5%
+    // intraday dip on the entry bar trips it immediately, and wake:never
+    // re-enters the next bar → 1-bar churn with "stop_loss" rows booking a
+    // PROFIT (next-open fill in an uptrend). The documented wake:never contract
+    // is "exits rely entirely on the deterministic risk gate", so the model's
+    // protective bracket must be IGNORED: the config 2×ATR stop (~6% below)
+    // never trips here, so the single opened position is held to the end.
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTWAKENEVERTIGHTSTOP00A";
+    let mut strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+    strategy.activation_mode = ActivationMode::FilterGated;
+    strategy.filter = Some(always_true_filter(agent_id, WakeInPosition::Never));
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    // BTC-scale uptrend (+1%/bar) with a ~1.5% intraday dip below each open —
+    // well inside the ~6% config ATR stop, but below a 1% model bracket.
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let mut bars: Vec<Ohlcv> = Vec::new();
+    let mut close = 50_000.0_f64;
+    for i in 0..40 {
+        let open = close; // open at previous close
+        let next_close = open * 1.01; // +1%/bar uptrend
+        bars.push(Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open,
+            high: next_close * 1.003,
+            low: open * 0.985, // 1.5% intraday dip below open
+            close: next_close,
+            volume: 1_000.0,
+        });
+        close = next_close;
+    }
+
+    let dispatch = repeated_long_open_with_sl(1.0, 60);
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = Executor::with_bars(bars);
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let actions_seen: Vec<&str> = decisions.iter().map(|d| d.action.as_str()).collect();
+    let long_opens = decisions.iter().filter(|d| d.action == "long_open").count();
+    let stop_losses = decisions.iter().filter(|d| d.action == "stop_loss").count();
+    let profitable_stops = decisions
+        .iter()
+        .filter(|d| d.action == "stop_loss" && d.pnl_realized.unwrap_or(0.0) > 0.0)
+        .count();
+
+    assert_eq!(
+        profitable_stops, 0,
+        "a long stop can never exit above entry at a profit; the model's tight bracket leaked under wake:never. got {profitable_stops}. actions = {actions_seen:?}"
+    );
+    assert_eq!(
+        stop_losses, 0,
+        "under wake:never the model bracket must be ignored; the config 2×ATR stop never trips in this uptrend. got {stop_losses} stop_loss rows. actions = {actions_seen:?}"
+    );
+    assert_eq!(
+        long_opens, 1,
+        "wake:never must open the trend position once and hold it; got {long_opens} opens (churn). actions = {actions_seen:?}"
     );
 }

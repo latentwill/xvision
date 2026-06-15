@@ -5,12 +5,15 @@ export function Step2Configure({
   draft,
   onUpdate,
   onNext,
+  onBack,
 }: {
   draft: PublishDraft;
-  onUpdate: (patch: Partial<Pick<PublishDraft, "tier" | "priceUsdc" | "acceptedPayers">>) => void;
+  onUpdate: (patch: Partial<Pick<PublishDraft, "name" | "tier" | "priceUsdc" | "acceptedPayers">>) => void;
   onNext: () => void;
+  onBack?: () => void;
 }) {
   const allPass = draft.listable.every((c) => c.ok);
+  const nameEmpty = draft.name.trim().length === 0;
 
   function setTier(t: Tier) {
     onUpdate({ tier: t, priceUsdc: t === "open" ? null : (draft.priceUsdc ?? 49) });
@@ -18,6 +21,30 @@ export function Step2Configure({
 
   return (
     <div data-testid="sell-step-2-body" className="flex flex-col gap-6">
+
+      {/* Listing name — defaults to the strategy's display name; the seller can
+          rename the listing before minting so it never lists as "Strategy #N". */}
+      <div>
+        <label
+          htmlFor="listing-name-input"
+          className="block text-[11px] font-mono uppercase tracking-wide text-text-3 mb-2"
+        >
+          Listing name
+        </label>
+        <input
+          id="listing-name-input"
+          data-testid="listing-name-input"
+          type="text"
+          value={draft.name}
+          maxLength={80}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          placeholder="Name shown on the marketplace"
+          className="w-full px-3 py-2 bg-surface-elev border border-border rounded-md text-[13px] text-text focus:border-gold/60 focus:outline-none"
+        />
+        <p className="mt-1 text-[11px] text-text-3">
+          Defaults to your strategy’s name. Buyers see this on the listing.
+        </p>
+      </div>
 
       {/* Listability checks */}
       <div>
@@ -130,22 +157,32 @@ export function Step2Configure({
       </div>
 
       {/* Continue */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <button
           onClick={onNext}
-          disabled={!allPass}
+          disabled={!allPass || nameEmpty}
           className={`px-4 py-2 rounded-md text-[13px] font-medium motion-safe:active:scale-[0.96] ${
-            allPass
+            allPass && !nameEmpty
               ? "bg-gold text-black hover:bg-gold/90"
               : "bg-surface-elev border border-border text-text-3 cursor-not-allowed"
           }`}
         >
           Continue
         </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-[12px] text-text-3 hover:text-text-2"
+        >
+          ← Back
+        </button>
         {!allPass && (
           <p className="text-[12px] text-danger">
             Resolve listability failures before continuing.
           </p>
+        )}
+        {allPass && nameEmpty && (
+          <p className="text-[12px] text-danger">Give your listing a name before continuing.</p>
         )}
       </div>
     </div>

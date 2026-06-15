@@ -288,6 +288,7 @@ async fn lifecycle_event_evicts_routine_to_make_room() {
         is_run_terminator: false,
         input_hash: "sha256:in".to_string(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await;
 

@@ -1,6 +1,16 @@
 //! Shared `--venue` parser plus the `xvn portfolio` / `xvn close-position`
 //! commands that read from / write to a live executor.
+//!
+//! # Real-money guards (`close-position`, Phase 4 + Phase 5)
+//! When `--venue byreal` and `BYREAL_NETWORK` resolves to mainnet (the default),
+//! `close_position` requires `--i-understand-real-money`. Without that flag it
+//! exits with an error before touching the network (Phase 4).
+//!
+//! Additionally (Phase 5), the global SafetyManager pause-gate is checked: if
+//! the operator has paused trading via the dashboard or the CLI kill-switch,
+//! `close_position` refuses to proceed even with `--i-understand-real-money`.
 
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use xvision_core::AssetSymbol;
@@ -9,6 +19,7 @@ use xvision_execution::{
 };
 
 use crate::commands::asset::parse_asset;
+use crate::commands::live_guard::{check_not_paused, require_real_money_ack};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Venue {
@@ -57,7 +68,28 @@ pub async fn portfolio(venue: Venue) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn close_position(venue: Venue, asset_str: String) -> anyhow::Result<()> {
+pub async fn close_position(
+    venue: Venue,
+    asset_str: String,
+    i_understand_real_money: bool,
+    xvn_home: PathBuf,
+) -> anyhow::Result<()> {
+    let byreal_network = std::env::var("BYREAL_NETWORK").ok();
+    // Real-money mainnet applies to byreal perps only; Alpaca (paper) and Orderly
+    // (testnet) are never real money, so the kill-switch fail-closed-on-missing-DB
+    // must not gate them (the pause check still runs when a DB is present).
+    let network_is_mainnet = matches!(venue, Venue::Byreal)
+        && !byreal_network
+            .as_deref()
+            .map(|n| n.to_ascii_lowercase().contains("testnet"))
+            .unwrap_or(false);
+
+    // Phase 4 guard: refuse Byreal mainnet without the explicit ack flag.
+    require_real_money_ack(venue, byreal_network.as_deref(), i_understand_real_money)?;
+
+    // Phase 5 guard: refuse if the global safety kill-switch is active.
+    check_not_paused(&xvn_home, network_is_mainnet).await?;
+
     let asset: AssetSymbol = parse_asset(&asset_str).map_err(anyhow::Error::msg)?;
     let exec = executor_from_env(venue)?;
     let receipt = exec.close_position(asset).await?;

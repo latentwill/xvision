@@ -14,7 +14,6 @@ Observed during QA against `https://xvn.tail2bb69.ts.net`.
 - Strategy-level deletion/archive routes were not found on the observed API surface.
 - `/strategies/:id` is the canonical inspector route; `/authoring/:id` is a compatibility alias.
 - `PATCH /api/strategy/:id` supports editable manifest metadata including display name, summary, asset universe, cadence, and color.
-- `mechanical_params` is still active strategy state, not dead code. It is untyped JSON used by warmup derivation and autooptimizer param experiments. Set one key with `PUT /api/strategy/:id/mechanical_params` and body `{ "key": "...", "value": ... }`.
 - Strategy filters are real artifacts on the strategy. Prompt wording that describes a filter does not imply filter events will exist.
 
 ### Example mismatch

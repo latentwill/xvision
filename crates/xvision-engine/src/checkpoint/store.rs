@@ -692,7 +692,6 @@ mod tests {
             regime_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({"window": 14}),
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
@@ -775,7 +774,6 @@ mod tests {
         // MUTATE the strategy on disk.
         let mut mutated = original.clone();
         mutated.manifest.display_name = "MUTATED".to_string();
-        mutated.mechanical_params = serde_json::json!({"window": 999, "extra": true});
         store.save(&mutated).await.unwrap();
         let mutated_bytes = tokio::fs::read(&strategy_path).await.unwrap();
         assert_ne!(mutated_bytes, original_bytes, "mutation must change the file");

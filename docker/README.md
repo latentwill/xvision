@@ -63,7 +63,7 @@ assets in the data volume.
 
 | Var | Purpose | Default |
 |---|---|---|
-| `XVN_AUTOMIGRATE` | If `1`, run `xvn migrate --xvn-home $XVN_HOME` before exec | `0` |
+| `XVN_AUTOMIGRATE` | If `1`, run `xvn init --xvn-home $XVN_HOME` before exec | `0` |
 | `XVN_DATA_DIR` | Override the data dir | `/data` |
 | `XVN_HOME` | Runtime home for dashboard DB, strategies, config, and secrets | `$XVN_DATA_DIR` |
 | `XVN_CONFIG_DIR` | Override the config dir | `/config` |

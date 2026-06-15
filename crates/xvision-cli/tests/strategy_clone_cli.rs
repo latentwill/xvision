@@ -10,11 +10,6 @@
 //! Here we drive the actual `xvn` binary so the clap surface,
 //! `--json`-stdout discipline, and exit codes are exercised the same
 //! way an operator would hit them.
-//!
-//! Provenance lookup: clones stash `cloned_from` inside
-//! `strategy.mechanical_params.metadata.cloned_from` (no Strategy struct
-//! mutation — see contract Notes). The helper `cloned_from_from_value`
-//! reads that path for the assertions below.
 
 use std::process::Command;
 use tempfile::tempdir;
@@ -75,17 +70,6 @@ fn write_default_config(home: &std::path::Path) {
     let config_dir = home.join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("default.toml"), CLONE_TEST_CONFIG).unwrap();
-}
-
-/// Reads the source-strategy provenance from
-/// `mechanical_params.metadata.cloned_from`. Returns `None` when the
-/// path is missing (hand-authored strategy) or carries a non-string.
-fn cloned_from_from_strategy(s: &Strategy) -> Option<String> {
-    s.mechanical_params
-        .get("metadata")?
-        .get("cloned_from")?
-        .as_str()
-        .map(str::to_string)
 }
 
 /// Seed: writes the runtime config, creates one agent in the workspace
@@ -172,7 +156,6 @@ fn seed(home: &std::path::Path) -> (String, String) {
             regime_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({}),
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
@@ -234,10 +217,6 @@ fn clone_with_provider_and_model_override_creates_paired_agent_with_new_binding(
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let cloned = store.load(cloned_strategy_id).await.expect("load clone");
         assert_eq!(cloned.manifest.display_name, "clone-with-override");
-        assert_eq!(
-            cloned_from_from_strategy(&cloned).as_deref(),
-            Some(source_id.as_str())
-        );
         assert_eq!(cloned.agents.len(), 1);
         assert_eq!(cloned.agents[0].role, "trader");
         assert_eq!(cloned.agents[0].agent_id, cloned_agent_id);
@@ -245,7 +224,6 @@ fn clone_with_provider_and_model_override_creates_paired_agent_with_new_binding(
         // Source byte-identical.
         let source = store.load(&source_id).await.expect("reload source");
         assert_eq!(source.manifest.display_name, "clone-source");
-        assert!(cloned_from_from_strategy(&source).is_none());
         assert_eq!(source.agents[0].agent_id, source_agent_id);
 
         // Cloned agent uses override; source agent untouched.
@@ -322,10 +300,7 @@ fn clone_without_override_is_verbatim_copy() {
 
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let cloned = store.load(&cloned_strategy_id).await.unwrap();
-        assert_eq!(
-            cloned_from_from_strategy(&cloned).as_deref(),
-            Some(source_id.as_str())
-        );
+        assert_eq!(cloned.manifest.id, cloned_strategy_id);
     });
 }
 
@@ -369,7 +344,6 @@ fn clone_refuses_unreachable_provider() {
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let s = store.load(&source_id).await.unwrap();
         assert_eq!(s.manifest.display_name, "clone-source");
-        assert!(cloned_from_from_strategy(&s).is_none());
     });
 }
 

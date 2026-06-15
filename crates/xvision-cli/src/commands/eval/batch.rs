@@ -734,7 +734,24 @@ pub async fn run_batch_cmd(args: BatchRunArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
 
-    let result = run_batch_via_env(&ctx, &args).await?;
+    // Wire the agent-run observability bus so each batch run records
+    // spans / events / model_calls into SQLite (the trace the dashboard
+    // surfaces) and transitions `agent_runs.status` from `running` → its
+    // terminal value. The single-run path (`run_run`) already does this; the
+    // batch entry is a separate `open_ctx` and was leaving the ctx bus-less,
+    // so every run in the batch emitted zero spans and stayed `running`
+    // forever. Mirror the single-run wiring + post-run drain here.
+    let (ctx, obs_bus) = super::wire_obs_bus(ctx);
+
+    // Capture the batch result, then drain the obs bus to SQLite BEFORE
+    // returning, on both the success and error paths — the bus drains on a
+    // background task and this short-lived CLI process can exit before the
+    // recorder persists the spans + RunFinished events. A failed batch still
+    // emitted spans/events up to the point of failure, and those (plus the
+    // terminal status transition) must reach the recorder before exit.
+    let result = run_batch_via_env(&ctx, &args).await;
+    obs_bus.quiesce().await;
+    let result = result?;
 
     if args.json {
         crate::io::print_json(&result)?;

@@ -23,7 +23,7 @@ import {
   STATUS,
   type EvalCapsuleFocused,
 } from "../agent-runs/CapsuleShell";
-import type { BrokerCallDetail, RunSpan } from "@/api/types-agent-runs";
+import type { BrokerCallDetail, RetentionMode, RunSpan } from "@/api/types-agent-runs";
 
 export type LiveCapsuleProps = {
   /**
@@ -44,6 +44,12 @@ export type LiveCapsuleProps = {
   onPopOut?: () => void;
   /** Optional test hook id. Default `"live-capsule"`. */
   testId?: string;
+  /**
+   * The run's retention/fidelity (`AgentRunSummary.retention_mode`).
+   * Forwarded to the focused `CapsuleRow` so the operator sees whether bodies
+   * are present. Optional — omitted on legacy call sites.
+   */
+  retentionMode?: RetentionMode;
 };
 
 /** Compact numeric formatter for the order line — trims trailing zeros. */
@@ -115,6 +121,7 @@ export function LiveCapsule({
   onExpandDock,
   onPopOut,
   testId = "live-capsule",
+  retentionMode,
 }: LiveCapsuleProps) {
   // Status drives the border + the row pill. Running (eval tone) pulses;
   // terminal tones (pass/warn/error) are frozen. Error/warn tint the border
@@ -147,7 +154,12 @@ export function LiveCapsule({
         className="flex items-stretch"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <CapsuleRow run={run} focused={true} currentSpan={run.currentSpan ?? null} />
+        <CapsuleRow
+          run={run}
+          focused={true}
+          currentSpan={run.currentSpan ?? null}
+          retentionMode={retentionMode}
+        />
 
         {/* Trailing controls — expand-dock + pop-out (no sibling toggle). */}
         <div className="flex items-center gap-0.5 pr-1 shrink-0">

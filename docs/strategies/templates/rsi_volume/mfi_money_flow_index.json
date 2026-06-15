@@ -2,40 +2,8 @@
   "base_template": "mean_reversion",
   "display_name": "MFI Money Flow Index",
   "family": "rsi_volume",
-  "mechanical_params": [
-    {
-      "default": "14",
-      "name": "mfi_period",
-      "range": "7 / 14 / 21"
-    },
-    {
-      "default": "20",
-      "name": "mfi_oversold",
-      "range": "15 \u2013 30"
-    },
-    {
-      "default": "80",
-      "name": "mfi_overbought",
-      "range": "70 \u2013 85"
-    },
-    {
-      "default": "1",
-      "name": "confirmation_bars",
-      "range": "1 \u2013 3"
-    },
-    {
-      "default": "50",
-      "name": "target_mfi",
-      "range": "40 \u2013 60"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 3.5"
-    }
-  ],
   "name": "mfi_money_flow_index",
-  "plain_summary": "The Money Flow Index (MFI) is RSI computed on money flow (typical price \u00d7 volume) instead of price changes. Mathematically, it bakes the volume signal into the RSI computation \u2014 a 1\u03c3 overbought MFI is automatically an overbought reading that volume agrees with. There's no separate volume gate to tune.",
+  "plain_summary": "The Money Flow Index (MFI) is RSI computed on money flow (typical price × volume) instead of price changes. Mathematically, it bakes the volume signal into the RSI computation — a 1σ overbought MFI is automatically an overbought reading that volume agrees with. There's no separate volume gate to tune.",
   "regime_fit": [
     "any"
   ],
@@ -47,14 +15,14 @@
   "sections": {
     "data_dependencies": "Volume in addition to price. MFI is calculable from existing\n`PriceFrame` fields with no external data.",
     "decision_rule": "```\nif mfi_14 <= mfi_oversold for confirmation_bars and is_flat:\n    enter long, target = mfi >= target_mfi, stop = entry - stop_atr_multiple * atr_14\n\nelif mfi_14 >= mfi_overbought for confirmation_bars and is_flat:\n    enter short, target = mfi <= target_mfi, stop = entry + stop_atr_multiple * atr_14\n```",
-    "expected_regime": "Same as `rsi_mean_reversion` \u2014 calm and normal-volatility regimes \u2014\nwith the structural advantage that the volume agreement is *built in*\nand the structural disadvantage that the volume signal cannot be\nturned off, gated, or asymmetrically applied.",
-    "inputs": "- Computed (or panel field): `mfi_14` \u2014\n  ```\n  typical_price = (high + low + close) / 3\n  raw_money_flow = typical_price * volume\n  positive_flow = sum of raw_money_flow on bars where typical_price[t] > typical_price[t-1]\n  negative_flow = sum on bars where typical_price[t] < typical_price[t-1]\n  money_flow_ratio = positive_flow / negative_flow\n  mfi = 100 - (100 / (1 + money_flow_ratio))\n  ```\n  computed over a 14-bar window.\n- `PriceFrame.close`, `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `mfi_period`              | 14      | 7 / 14 / 21      |\n| `mfi_oversold`            | 20      | 15 \u2013 30          |\n| `mfi_overbought`          | 80      | 70 \u2013 85          |\n| `confirmation_bars`       | 1       | 1 \u2013 3            |\n| `target_mfi`              | 50      | 40 \u2013 60          |\n| `stop_atr_multiple`       | 2.0     | 1.5 \u2013 3.5        |\n\nThe parameter set is identical in *form* to a vanilla RSI mean-reversion\nstrategy. The difference lives entirely in the indicator computation.",
-    "references": "- Compendium README \u00a7Tree-finding \u2014 MFI flagged as the structural sibling.\n- Comparison targets: every strategy in this folder, especially\n  [`rsi_capitulation_long`](rsi_capitulation_long.md) and\n  [`rsi_euphoria_short`](rsi_euphoria_short.md), which encode similar\n  intent at the strategy level.\n- Classical reference: Quong & Soudack, *Stocks & Commodities*, 1989\n  (MFI introduction).",
+    "expected_regime": "Same as `rsi_mean_reversion` — calm and normal-volatility regimes —\nwith the structural advantage that the volume agreement is *built in*\nand the structural disadvantage that the volume signal cannot be\nturned off, gated, or asymmetrically applied.",
+    "inputs": "- Computed (or panel field): `mfi_14` —\n  ```\n  typical_price = (high + low + close) / 3\n  raw_money_flow = typical_price * volume\n  positive_flow = sum of raw_money_flow on bars where typical_price[t] > typical_price[t-1]\n  negative_flow = sum on bars where typical_price[t] < typical_price[t-1]\n  money_flow_ratio = positive_flow / negative_flow\n  mfi = 100 - (100 / (1 + money_flow_ratio))\n  ```\n  computed over a 14-bar window.\n- `PriceFrame.close`, `IndicatorPanel.atr_14`.",
+    "parameters": "| Param                     | Default | Range            |\n| ------------------------- | ------- | ---------------- |\n| `mfi_period`              | 14      | 7 / 14 / 21      |\n| `mfi_oversold`            | 20      | 15 – 30          |\n| `mfi_overbought`          | 80      | 70 – 85          |\n| `confirmation_bars`       | 1       | 1 – 3            |\n| `target_mfi`              | 50      | 40 – 60          |\n| `stop_atr_multiple`       | 2.0     | 1.5 – 3.5        |\n\nThe parameter set is identical in *form* to a vanilla RSI mean-reversion\nstrategy. The difference lives entirely in the indicator computation.",
+    "references": "- Compendium README §Tree-finding — MFI flagged as the structural sibling.\n- Comparison targets: every strategy in this folder, especially\n  [`rsi_capitulation_long`](rsi_capitulation_long.md) and\n  [`rsi_euphoria_short`](rsi_euphoria_short.md), which encode similar\n  intent at the strategy level.\n- Classical reference: Quong & Soudack, *Stocks & Commodities*, 1989\n  (MFI introduction).",
     "status": "`queued`. Implementation lives next to `rsi_mean_reversion.rs` in the\nbaselines crate; the head-to-head evaluation against the strategy-level-\nfused variants in this folder is the experiment the tree-finding\noperator surfaced.",
-    "thesis": "The Money Flow Index (MFI) is RSI computed on *money flow* (typical\nprice \u00d7 volume) instead of price changes. Mathematically, it bakes the\nvolume signal into the RSI computation \u2014 a 1\u03c3 overbought MFI is\n*automatically* an overbought reading that volume agrees with. There's\nno separate volume gate to tune.\n\nThis strategy is the *indicator-level fusion* contrast to every other\nstrategy in this folder. Its evaluation question is direct: **does\nfusing volume into the indicator give better edge than keeping RSI and\nvolume as independent signals with strategy-level rules?**\n\nIf MFI dominates, the rest of the folder is over-engineered. If the\nunfused RSI+volume strategies dominate, MFI fuses too early and discards\ninformation. This is the head-to-head experiment the tree-finding\noperator surfaced."
+    "thesis": "The Money Flow Index (MFI) is RSI computed on *money flow* (typical\nprice × volume) instead of price changes. Mathematically, it bakes the\nvolume signal into the RSI computation — a 1σ overbought MFI is\n*automatically* an overbought reading that volume agrees with. There's\nno separate volume gate to tune.\n\nThis strategy is the *indicator-level fusion* contrast to every other\nstrategy in this folder. Its evaluation question is direct: **does\nfusing volume into the indicator give better edge than keeping RSI and\nvolume as independent signals with strategy-level rules?**\n\nIf MFI dominates, the rest of the folder is over-engineered. If the\nunfused RSI+volume strategies dominate, MFI fuses too early and discards\ninformation. This is the head-to-head experiment the tree-finding\noperator surfaced."
   },
   "source_doc": "strategies/rsi_volume/mfi_money_flow_index.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `MFI Money Flow Index` strategy.\n\nThesis:\nThe Money Flow Index (MFI) is RSI computed on money flow (typical price \u00d7 volume) instead of price changes. Mathematically, it bakes the volume signal into the RSI computation \u2014 a 1\u03c3 overbought MFI is automatically an overbought reading that volume agrees with. There's no separate volume gate to tune.\n\nInputs:\n- Computed (or panel field): `mfi_14` \u2014\n  ```\n  typical_price = (high + low + close) / 3\n  raw_money_flow = typical_price * volume\n  positive_flow = sum of raw_money_flow on bars where typical_price[t] > typical_price[t-1]\n  negative_flow = sum on bars where typical_price[t] < typical_price[t-1]\n  money_flow_ratio = positive_flow / negative_flow\n  mfi = 100 - (100 / (1 + money_flow_ratio))\n  ```\n  computed over a 14-bar window.\n- `PriceFrame.close`, `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nif mfi_14 <= mfi_oversold for confirmation_bars and is_flat:\n    enter long, target = mfi >= target_mfi, stop = entry - stop_atr_multiple * atr_14\n\nelif mfi_14 >= mfi_overbought for confirmation_bars and is_flat:\n    enter short, target = mfi <= target_mfi, stop = entry + stop_atr_multiple * atr_14\n```\n\nExpected regime:\nSame as rsi_mean_reversion \u2014 calm and normal-volatility regimes \u2014 with the structural advantage that the volume agreement is built in and the structural disadvantage that the volume signal cannot be turned off, gated, or asymmetrically applied.\n\nData dependencies:\nVolume in addition to price. MFI is calculable from existing\n`PriceFrame` fields with no external data.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `MFI Money Flow Index` strategy.\n\nThesis:\nThe Money Flow Index (MFI) is RSI computed on money flow (typical price × volume) instead of price changes. Mathematically, it bakes the volume signal into the RSI computation — a 1σ overbought MFI is automatically an overbought reading that volume agrees with. There's no separate volume gate to tune.\n\nInputs:\n- Computed (or panel field): `mfi_14` —\n  ```\n  typical_price = (high + low + close) / 3\n  raw_money_flow = typical_price * volume\n  positive_flow = sum of raw_money_flow on bars where typical_price[t] > typical_price[t-1]\n  negative_flow = sum on bars where typical_price[t] < typical_price[t-1]\n  money_flow_ratio = positive_flow / negative_flow\n  mfi = 100 - (100 / (1 + money_flow_ratio))\n  ```\n  computed over a 14-bar window.\n- `PriceFrame.close`, `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nif mfi_14 <= mfi_oversold for confirmation_bars and is_flat:\n    enter long, target = mfi >= target_mfi, stop = entry - stop_atr_multiple * atr_14\n\nelif mfi_14 >= mfi_overbought for confirmation_bars and is_flat:\n    enter short, target = mfi <= target_mfi, stop = entry + stop_atr_multiple * atr_14\n```\n\nExpected regime:\nSame as rsi_mean_reversion — calm and normal-volatility regimes — with the structural advantage that the volume agreement is built in and the structural disadvantage that the volume signal cannot be turned off, gated, or asymmetrically applied.\n\nData dependencies:\nVolume in addition to price. MFI is calculable from existing\n`PriceFrame` fields with no external data.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

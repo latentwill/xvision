@@ -60,8 +60,7 @@ fn fixture_strategy() -> Strategy {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": { "ema_fast": 12, "atr_period": 14 }
+        }
     }))
     .expect("fixture strategy deserializes")
 }
@@ -69,9 +68,10 @@ fn fixture_strategy() -> Strategy {
 // A genuinely strategy-altering diff. F14 (QA 2026-06-04): `propose` rejects
 // identity (no-op) diffs, and a prose-only edit targets an agent prompt (a
 // `Strategy` references agents by `AgentRef`), so it never changes the strategy
-// hash. A real candidate bumps an existing mechanical param.
+// hash. A real candidate bumps an existing tunable `risk.*` param; the fixture's
+// `stop_loss_atr_multiple` is 2.0, so we move it to 3.0.
 fn valid_diff_json() -> &'static str {
-    r#"{"kind":"param","prose":[],"params":[{"key":"ema_fast","before":12,"after":20}],"tools":{"added":[],"removed":[]},"rationale":"faster EMA crossover"}"#
+    r#"{"kind":"param","prose":[],"params":[{"key":"risk.stop_loss_atr_multiple","before":2.0,"after":3.0}],"tools":{"added":[],"removed":[]},"rationale":"wider stop to ride volatility"}"#
 }
 
 async fn fresh_pool() -> sqlx::SqlitePool {

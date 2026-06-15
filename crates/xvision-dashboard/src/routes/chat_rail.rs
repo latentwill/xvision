@@ -411,6 +411,41 @@ pub(crate) async fn project_policy_event(
     }
 }
 
+/// Force-close any still-open tool span at turn end and persist+publish each
+/// synthetic `tool_cancelled` onto the unified session stream.
+///
+/// Call this right BEFORE projecting a terminal `WizardEvent`
+/// (`Done`/`Error`): a span that never received its `ToolResult` would
+/// otherwise leave its tool row spinning forever in the span-keyed reducer.
+/// Persisting a real `ToolCancelled` (see
+/// [`WizardEventProjector::terminalize_open_spans`]) means the durable log —
+/// not just the live UI — records the close, so it survives a reconnect /
+/// backfill. Returns the synthetic events (for tests); same never-silent
+/// persistence discipline as [`project_policy_event`].
+pub(crate) async fn terminalize_open_tool_spans(
+    projector: &mut WizardEventProjector,
+    pool: &SqlitePool,
+    session_bus: &Arc<SessionEventBus>,
+    session_id: &str,
+) -> Vec<UnifiedEvent> {
+    let synth = projector.terminalize_open_spans(|| Ulid::new().to_string(), Utc::now());
+    for unified in &synth {
+        if let Err(e) = SessionEventLog::append(pool, unified).await {
+            tracing::error!(
+                target: "xvision::dashboard::chat_rail",
+                session_id = %session_id,
+                seq = unified.seq,
+                kind = unified.event_name(),
+                error = %e,
+                "failed to append synthetic turn-end tool-cancel event",
+            );
+        } else {
+            session_bus.publish(unified).await;
+        }
+    }
+    synth
+}
+
 pub async fn chat(
     State(state): State<AppState>,
     Json(body): Json<ChatBody>,
@@ -593,6 +628,22 @@ pub async fn chat(
                     )
                     .await;
                 }
+            }
+
+            // Turn-end anti-strand: a terminal event means no further tool
+            // results are coming. Force-close any tool span still open (its
+            // ToolResult was never emitted) BEFORE projecting the terminal
+            // event, so the synthetic close lands first (lower seq) and the
+            // durable log can never leave a tool row spinning. See
+            // terminalize_open_tool_spans / WizardEventProjector::terminalize_open_spans.
+            if matches!(&ev, WizardEvent::Done { .. } | WizardEvent::Error { .. }) {
+                terminalize_open_tool_spans(
+                    &mut projector,
+                    &projector_pool,
+                    &session_bus,
+                    &projector_session_id,
+                )
+                .await;
             }
 
             // DEPRECATED: legacy WizardEvent stream, superseded by the unified
@@ -961,6 +1012,82 @@ mod tests {
         assert!(
             names.contains(&"error_policy_denied"),
             "project_policy_event must persist a row with event_name 'error_policy_denied'; got: {names:?}"
+        );
+    }
+
+    /// Turn-end anti-strand: an open tool span (its `ToolResult` never arrived)
+    /// must be force-closed with a persisted `tool_cancelled` row when the turn
+    /// terminates, so a consumer replaying the log never sees a tool row stuck
+    /// at "requested". A span that DID finish must not be re-closed.
+    #[tokio::test]
+    async fn terminalize_open_tool_spans_persists_tool_cancelled_for_unfinished_span() {
+        use std::sync::Arc;
+        use tempfile::TempDir;
+        use xvision_engine::chat_session::{ChatSessionStore, ContextScope, SessionEventLog};
+
+        use crate::chat_unified::WizardEventProjector;
+        use crate::session_bus::SessionEventBus;
+        use crate::state::AppState;
+        use crate::wizard_loop::WizardEvent;
+
+        let tmp = TempDir::new().unwrap();
+        let state = AppState::new(tmp.path().to_path_buf())
+            .await
+            .expect("init AppState");
+        let session_id = ChatSessionStore::create_session(&state.pool, &ContextScope::Workspace)
+            .await
+            .unwrap();
+        let mut projector = WizardEventProjector::new(&session_id, &ContextScope::Workspace);
+        let session_bus = Arc::new(SessionEventBus::new());
+
+        let mut mint = || Ulid::new().to_string();
+        // Span A finishes normally; span B is left open.
+        projector.project(
+            Ulid::new().to_string(),
+            WizardEvent::ToolCall {
+                id: "tu_a".into(),
+                tool: "list_strategies".into(),
+                args: serde_json::json!({}),
+            },
+            Utc::now(),
+            &mut mint,
+        );
+        projector.project(
+            Ulid::new().to_string(),
+            WizardEvent::ToolCall {
+                id: "tu_b".into(),
+                tool: "list_scenarios".into(),
+                args: serde_json::json!({}),
+            },
+            Utc::now(),
+            &mut mint,
+        );
+        projector.project(
+            Ulid::new().to_string(),
+            WizardEvent::ToolResult {
+                id: "tu_a".into(),
+                tool: "list_strategies".into(),
+                result: serde_json::json!({"ok": true}),
+            },
+            Utc::now(),
+            &mut mint,
+        );
+
+        let synth = terminalize_open_tool_spans(&mut projector, &state.pool, &session_bus, &session_id).await;
+        assert_eq!(synth.len(), 1, "exactly the one unfinished span should be closed");
+
+        let persisted = SessionEventLog::load_after(&state.pool, &session_id, -1)
+            .await
+            .unwrap();
+        let cancels: Vec<_> = persisted
+            .iter()
+            .filter(|e| e.event_name() == "tool_cancelled")
+            .collect();
+        assert_eq!(
+            cancels.len(),
+            1,
+            "exactly one tool_cancelled row must be persisted; got names: {:?}",
+            persisted.iter().map(|e| e.event_name()).collect::<Vec<_>>()
         );
     }
 }

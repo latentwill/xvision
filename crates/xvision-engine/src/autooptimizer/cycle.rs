@@ -131,6 +131,14 @@ struct MutationOutcome {
     /// both windows, plus the epsilon threshold and drawdown ratio.  `None` for
     /// regime-matrix paths where no single day/holdout pair is definitive.
     gate_scores: Option<GateScores>,
+    /// WS-11b: the persisted eval `Run.id` for this candidate's PRIMARY
+    /// day-window evaluation (the `paper_tester.run_with_run_id` call on the
+    /// legacy / scenario-pool path). `None` on the regime-matrix path (which
+    /// runs several evals and has no single definitive run) and for any
+    /// `PaperTestRunner` that doesn't surface a run id (test stubs). Threaded
+    /// onto `CycleProgressEvent::MutationGated` so the frontend can nest a
+    /// navigable eval-run node under the experiment row.
+    eval_run_id: Option<String>,
 }
 
 /// Numeric gate inputs captured at gate-verdict time so they can be persisted
@@ -157,25 +165,25 @@ struct GateScores {
 /// `true` when the trip threshold is reached. A successful eval resets the
 /// consecutive counter via `record_success()`. `max == 0` disables the breaker
 /// (never trips). 2026-06-13 trader-failure resilience.
-struct ConsecutiveErrors {
+pub(crate) struct ConsecutiveErrors {
     count: u32,
     max: u32,
 }
 
 impl ConsecutiveErrors {
-    fn new(max: u32) -> Self {
+    pub(crate) fn new(max: u32) -> Self {
         Self { count: 0, max }
     }
 
     /// Increment the consecutive-failure counter.
     /// Returns `true` when the circuit trips (`count >= max` and `max > 0`).
-    fn record_failure(&mut self) -> bool {
+    pub(crate) fn record_failure(&mut self) -> bool {
         self.count += 1;
         self.max > 0 && self.count >= self.max
     }
 
     /// Reset the consecutive-failure counter (a success breaks the streak).
-    fn record_success(&mut self) {
+    pub(crate) fn record_success(&mut self) {
         self.count = 0;
     }
 }
@@ -498,6 +506,10 @@ where
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
     let obj = cycle_config.objective;
+    // R2: `run_honesty_check` itself degrades a canary eval/trader error to a
+    // neutral failed-canary result (it never errors on canary eval), so this
+    // `?` only ever propagates a genuine internal bug (e.g. strategy
+    // serialization) — which cycle-level isolation (R3) then seals.
     let check = run_honesty_check(
         s,
         mutator,
@@ -1077,6 +1089,9 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
             delta_day: outcome.gate_scores.as_ref().map(|gs| gs.delta_day),
+            // WS-11b: the candidate's primary day-window eval run id, so the
+            // dashboard can nest a navigable eval-run node under the experiment.
+            eval_run_id: outcome.eval_run_id.clone(),
         });
         // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
         // a DB error must never abort the cycle.
@@ -1289,6 +1304,18 @@ async fn gate_and_classify<F>(
 where
     F: Fn(CycleProgressEvent),
 {
+    // R4: normalize the diff's stale `before` baselines to the parent's live
+    // values BEFORE the candidate is gated and stored. Beyond the inversion
+    // honesty-check, the stored diff feeds `describe_mutation_outcome` → the
+    // optimizer-memory write-back; an un-normalized (model-hallucinated)
+    // `before` would persist a fictitious baseline later recalled into the
+    // experiment-writer prompt. `after` is never touched, so the forward child
+    // and the lineage hash are unaffected.
+    let mut diff = diff;
+    crate::autooptimizer::inversion::normalize_prose_baseline(&mut diff, parent_strategy);
+    crate::autooptimizer::inversion::normalize_filter_baseline(&mut diff, parent_strategy);
+    crate::autooptimizer::inversion::normalize_param_baseline(&mut diff, parent_strategy);
+
     let child = diff.apply_to(parent_strategy);
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 
@@ -1441,6 +1468,9 @@ where
             regime_rows,
             // Regime-matrix path: no single day/holdout pair is the gate gate.
             gate_scores: None,
+            // Regime-matrix path runs several evals across windows — no single
+            // definitive eval run to nest under the experiment (WS-11b).
+            eval_run_id: None,
         });
     }
 
@@ -1458,7 +1488,11 @@ where
         detail: "Day-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_day = paper_tester.run(&child, sampled_day).await?;
+    // WS-11b: the candidate's PRIMARY day-window eval. Use `run_with_run_id` so
+    // the persisted eval `Run.id` flows onto `MutationGated` for the frontend
+    // experiment → eval-run nesting. `None` when the runner doesn't surface a
+    // run id (test stubs) — the experiment row then renders without the node.
+    let (child_day, eval_run_id) = paper_tester.run_with_run_id(&child, sampled_day).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1601,6 +1635,7 @@ where
         child_untouched,
         regime_rows: vec![],
         gate_scores,
+        eval_run_id,
     })
 }
 

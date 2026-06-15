@@ -475,21 +475,34 @@ export ORDERLY_SECRET=...                     # M6
 export ORDERLY_ACCOUNT_ID=...                 # M6
 export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
 
-# Byreal perps venue (executes on Hyperliquid via npx @byreal-io/byreal-perps-cli)
+# ── Live perps venues (all gated by the SafetyGate; mainnet = real money) ──
+# Hyperliquid perps — TWO NATIVE paths (preferred: EIP-712 signed in Rust, no npm,
+# no fund-capable key in env):
+#   --venue hyperliquid : HL_API_KEY / HL_ACCOUNT_ADDRESS / HL_NETWORK;
+#                         mainnet requires HL_ALLOW_MAINNET=1.
+#   --venue degen_arena : DEGEN_HL_API_KEY / DEGEN_HL_ACCOUNT_ADDRESS /
+#                         DEGEN_HL_NETWORK; mainnet requires DEGEN_ALLOW_MAINNET=1.
+#
+# Byreal — Solana ecosystem venue (SPL spot / CLMM-LP / RFQ / xStocks) that ALSO
+# routes perps to Hyperliquid via npx @byreal-io/byreal-perps-cli. The CLI reads the
+# key from env (custody trade-off) — prefer the native HL paths above for plain perps.
 export BYREAL_PRIVATE_KEY=$(op read 'op://Personal/xvision-byreal/private-key')
 export BYREAL_NETWORK=mainnet                 # or testnet; defaults to mainnet
 export BYREAL_ACCOUNT=...                      # optional account id
-export BYREAL_LEVERAGE=5                       # optional; set per-coin leverage before each
-                                               # live-eval entry. Unset ⇒ account default.
-# Then select Byreal as the execution venue from the CLI:
-#   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 ...
-#   xvn portfolio --venue byreal
-#   xvn close-position --venue byreal BTC
-# ([runtime] executor = "byreal" parses but is config-only / not yet dispatched,
-#  same as orderly — use --venue on the CLI verbs to select the venue.)
-# Live-eval engine runs: set broker_creds_ref="byreal" with BYREAL_NETWORK=testnet
-# (testnet-only in the current live scope; use the CLI verbs above for mainnet).
-# Alpaca creds (APCA_*) are still required — Alpaca supplies the live bar stream.
+export BYREAL_LEVERAGE=5                       # optional; per-coin leverage before each entry
+# Alpaca creds (APCA_*) are required for byreal/orderly (Alpaca supplies the bar
+# stream); Hyperliquid/Degen Arena use HL-native candles, no Alpaca needed.
+#
+# Manual one-shot CLI tools (mainnet byreal needs the explicit ack flag):
+#   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 --i-understand-real-money
+#   xvn close-position --venue byreal BTC --i-understand-real-money
+#   xvn portfolio --venue byreal            # read-only, no ack
+#
+# Agent-driven live runs (the parity path — SafetyGate + venue_label):
+#   Testnet: broker_creds_ref + the venue's *_NETWORK=testnet  → venue_label=Testnet
+#   Mainnet: xvn live --venue <byreal|hyperliquid|degen_arena> --network mainnet \
+#              --i-understand-real-money     (sets venue_label=Live; real money)
+#   A non-Live-labelled run can NEVER reach a Live (mainnet) broker — the gate blocks it.
 
 # Phase 11.5 Mantle (only if identity.enabled = true)
 export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7 (testnet, chain 5003)

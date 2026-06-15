@@ -27,7 +27,6 @@ fn make_filter_strategy() -> Strategy {
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
         },
-        "mechanical_params": {},
         "activation_mode": "filter_gated",
         "filter": {
             "id": "01HZFILTERTEST3",
@@ -83,10 +82,11 @@ fn make_strategy() -> Strategy {
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
         },
-        "mechanical_params": {
-            "ema_fast": 12,
-            "atr_period": 14,
-            "nested_obj": {"inner": 5}
+        "mechanistic_config": {
+            "close_policies": [
+                {"kind": "stop_loss", "pct": 2.0},
+                {"kind": "time_exit", "bars": 20}
+            ]
         }
     });
     serde_json::from_value(v).expect("fixture strategy deserializes")
@@ -118,14 +118,14 @@ fn happy_path_ok() {
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
-            agent_role: "regime".into(),
+            agent_role: "trader".into(),
             before: "analyze market".into(),
             after: "analyze trends".into(),
         }],
         vec![ParamChange {
-            key: "ema_fast".into(),
-            before: json!(12),
-            after: json!(26),
+            key: "risk.stop_loss_atr_multiple".into(),
+            before: json!(2.0),
+            after: json!(3.0),
         }],
         vec!["news_feed".into()],
         vec!["price_feed".into()],
@@ -198,47 +198,74 @@ fn unknown_param_not_in_mechanical_params() {
 }
 
 #[test]
-fn param_not_mutable_composite_value() {
+fn composite_mechanistic_key_rejected_as_unknown_param() {
+    // After the `mechanical_params` removal the only tunable surfaces are the
+    // scalar `risk.*` fields and the enumerated `mechanistic.close_policies.<i>.<leaf>`
+    // scalars. A key that addresses a composite location (here the
+    // `mechanistic.close_policies` array itself, not a scalar leaf) does not
+    // resolve to a tunable scalar, so the validator rejects it as `unknown_param`
+    // (naming the key) rather than `param_not_mutable` — that branch is now
+    // unreachable because no tunable key resolves to a composite current value.
     let base = make_strategy();
     let diff = make_diff(
         vec![],
         vec![ParamChange {
-            key: "nested_obj".into(),
-            before: json!({"inner": 5}),
-            after: json!({"inner": 10}),
+            key: "mechanistic.close_policies".into(),
+            before: json!([{"kind": "stop_loss", "pct": 2.0}]),
+            after: json!([{"kind": "stop_loss", "pct": 3.0}]),
         }],
         vec![],
         vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
-    assert!(codes(&errs).contains(&"param_not_mutable"), "{errs:?}");
+    assert!(codes(&errs).contains(&"unknown_param"), "{errs:?}");
+    // The rejection must name the composite key the writer tried to mutate, so
+    // the writer can self-correct toward a real scalar leaf on retry.
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("mechanistic.close_policies")),
+        "rejection must name the composite key: {errs:?}"
+    );
 }
 
 #[test]
-fn stale_param_baseline_wrong_before() {
+fn stale_param_baseline_now_accepted() {
+    // R4 (mirrors the filter B4 fix): a wrong `before` with a valid `after` must
+    // be ACCEPTED, not rejected. `apply_to` writes `after` and never reads
+    // `before`, so a stale baseline is harmless to the forward child; the reverse
+    // honesty-check baseline is repaired by `normalize_param_baseline`. Rejecting
+    // it only burned mutator attempts on an auto-fixable nit.
     let base = make_strategy();
     let diff = make_diff(
         vec![],
         vec![ParamChange {
-            key: "ema_fast".into(),
-            before: json!(99),
-            after: json!(26),
+            key: "risk.stop_loss_atr_multiple".into(),
+            before: json!(99.0), // deliberately wrong baseline
+            after: json!(3.0),   // valid target
         }],
         vec![],
         vec![],
     );
-    let errs = validate_mutation_diff(&diff, &base).unwrap_err();
-    assert!(codes(&errs).contains(&"stale_param_baseline"), "{errs:?}");
+    let result = validate_mutation_diff(&diff, &base);
+    assert!(
+        result.is_ok(),
+        "a stale `before` with a valid `after` must now be accepted (R4): {result:?}"
+    );
 }
 
 #[test]
-fn invalid_param_value_zero_period() {
+fn invalid_param_value_zero_bars_on_mechanistic_leaf() {
+    // Integer enforcement on the post-`mechanical_params` surface: the mechanistic
+    // close-policy `bars` field (TimeExit) is integer-typed, so a non-positive
+    // after-value (0) must be rejected via the positive-integer rule
+    // (`is_integer_param_key` recognises the `.bars` leaf). This exercises the
+    // integer branch, not the earlier null short-circuit.
     let base = make_strategy();
     let diff = make_diff(
         vec![],
         vec![ParamChange {
-            key: "ema_fast".into(),
-            before: json!(12),
+            key: "mechanistic.close_policies.1.bars".into(),
+            before: json!(20),
             after: json!(0),
         }],
         vec![],
@@ -246,6 +273,26 @@ fn invalid_param_value_zero_period() {
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"invalid_param_value"), "{errs:?}");
+}
+
+#[test]
+fn mechanistic_leaf_param_validates_ok() {
+    // Happy path for the load-bearing mechanistic resolver added when the
+    // `mechanical_params` baseline fallback was removed: a well-formed change to
+    // a mechanistic scalar leaf (StopLoss `pct`, current 2.0 → 3.0) must validate
+    // clean — proving the mechanistic surface accepts, not just rejects.
+    let base = make_strategy();
+    let diff = make_diff(
+        vec![],
+        vec![ParamChange {
+            key: "mechanistic.close_policies.0.pct".into(),
+            before: json!(2.0),
+            after: json!(3.0),
+        }],
+        vec![],
+        vec![],
+    );
+    validate_mutation_diff(&diff, &base).expect("valid mechanistic leaf change must pass validation");
 }
 
 #[test]
@@ -318,8 +365,8 @@ fn invalid_param_value_null_after() {
     let diff = make_diff(
         vec![],
         vec![ParamChange {
-            key: "ema_fast".into(),
-            before: json!(12),
+            key: "risk.stop_loss_atr_multiple".into(),
+            before: json!(2.0),
             after: json!(null),
         }],
         vec![],
@@ -351,8 +398,7 @@ fn mechanical_params_not_object_reports_unknown_param() {
             "max_leverage": 3.0,
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
-        },
-        "mechanical_params": null
+        }
     });
     let base: Strategy = serde_json::from_value(v).expect("fixture deserializes");
     let diff = make_diff(

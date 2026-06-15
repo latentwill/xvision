@@ -8,7 +8,7 @@
 //! dispatcher. The dashboard's Inspector route calls these; the MCP tool
 //! layer (PR #31) goes through `engine::authoring::*` directly.
 
-use crate::agents::{AgentStore, Capability};
+use crate::agents::{Agent, AgentStore, Capability, NewAgent};
 use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
@@ -140,6 +140,51 @@ fn default_strategy_summary_activation_mode() -> ActivationMode {
 pub struct ProviderModelPair {
     pub provider: String,
     pub model: String,
+}
+
+/// One requirement a strategy places on the buyer's machine — a model the
+/// agents need, a skill they reference, or a tool they may invoke.
+///
+/// QA #4 + Q1: a purchased strategy opens fully, but its models/skills may
+/// not be configured locally. The Strategy detail page renders these so the
+/// operator sees each gap (and whether it blocks eval). Only `model`
+/// requirements gate eval/go-live; skills surface as warnings and tools are
+/// purely informational (the engine has no installed-MCP inventory).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Requirement {
+    /// Display label: `"provider/model"` for a model, the skill name (or its
+    /// id when unresolvable) for a skill, the tool name for a tool.
+    pub name: String,
+    /// One of `"model"`, `"skill"`, `"tool"`.
+    pub kind: String,
+    pub satisfied: bool,
+    /// Why an unsatisfied requirement fails — the `ProviderUnavailable`
+    /// reason discriminant for models, a short note for missing skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Human-readable next step (e.g. the provider hint pointing at Settings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// Requirements report for a single strategy. `all_models_satisfied` is the
+/// gate the dashboard reads to enable/disable the eval + go-live action.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyRequirements {
+    pub requirements: Vec<Requirement>,
+    /// True iff every `kind == "model"` requirement is satisfied. Skills and
+    /// tools never affect this — they don't gate eval.
+    pub all_models_satisfied: bool,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -661,6 +706,150 @@ fn push_unique_provider_model(inventory: &mut ProviderModelInventory, provider: 
     }
 }
 
+/// Resolve every model/skill/tool a strategy requires against the buyer's
+/// local config, returning each as satisfied or missing.
+///
+/// Audit-emitting public entrypoint; the dashboard route calls this. Walks
+/// `strategy.agents` exactly like `provider_model_inventory`: each AgentRef
+/// → its `Agent` → each slot's `(provider, model)` (gated through
+/// `resolve_provider`), `skill_ids` (checked against the skill registry),
+/// and `allowed_tools` (informational, always satisfied). De-dups identical
+/// `(kind, name)` entries so multi-agent model/skill reuse shows once.
+pub async fn strategy_requirements(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyRequirements> {
+    let started = Instant::now();
+    let result = strategy_requirements_inner(ctx, strategy_id).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "requirements",
+        Some(strategy_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn strategy_requirements_inner(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyRequirements> {
+    use crate::api::settings::providers::resolve_provider;
+
+    let strategy = get_inner(ctx, strategy_id).await?;
+    let agent_store = AgentStore::new(ctx.db.clone());
+    let cfg_path = runtime_config_path(ctx);
+
+    let mut requirements: Vec<Requirement> = Vec::new();
+    // De-dup key: (kind, name). Multi-agent strategies reuse the same model
+    // / skill across slots; the panel shows each requirement once.
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+
+    let mut push = |req: Requirement, seen: &mut BTreeSet<(String, String)>| {
+        if seen.insert((req.kind.clone(), req.name.clone())) {
+            requirements.push(req);
+        }
+    };
+
+    for agent_ref in &strategy.agents {
+        let agent = match agent_store.get(&agent_ref.agent_id).await {
+            Ok(Some(agent)) => agent,
+            Ok(None) => {
+                tracing::warn!(
+                    agent_id = %agent_ref.agent_id,
+                    strategy_id = %strategy.manifest.id,
+                    "strategy_requirements skipped missing AgentRef"
+                );
+                continue;
+            }
+            Err(e) => return Err(ApiError::Internal(e.to_string())),
+        };
+
+        for slot in &agent.slots {
+            // Model requirement — gated through the same resolver eval uses.
+            let provider = slot.provider.trim();
+            let model = slot.model.trim();
+            if !provider.is_empty() && !model.is_empty() {
+                let name = format!("{provider}/{model}");
+                let requirement = match resolve_provider(ctx, &cfg_path, provider, Some(model)).await {
+                    Ok(_) => Requirement {
+                        name,
+                        kind: "model".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    Err(unavailable) => Requirement {
+                        name,
+                        kind: "model".into(),
+                        satisfied: false,
+                        reason: Some(unavailable.reason.as_str().to_string()),
+                        hint: Some(unavailable.hint),
+                    },
+                };
+                push(requirement, &mut seen);
+            }
+
+            // Skill requirements — existence check against the registry.
+            for skill_id in &slot.skill_ids {
+                let skill_id = skill_id.trim();
+                if skill_id.is_empty() {
+                    continue;
+                }
+                let requirement = match crate::api::skills::get(ctx, skill_id).await {
+                    Ok(skill) => Requirement {
+                        name: skill.name,
+                        kind: "skill".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    Err(ApiError::NotFound(_)) => Requirement {
+                        name: skill_id.to_string(),
+                        kind: "skill".into(),
+                        satisfied: false,
+                        reason: Some("skill_not_found".into()),
+                        hint: Some(format!("skill `{skill_id}` is not in this workspace's registry")),
+                    },
+                    Err(e) => return Err(e),
+                };
+                push(requirement, &mut seen);
+            }
+
+            // Tool requirements — informational only. There is no installed
+            // -MCP inventory in the engine, so these never gate eval.
+            for tool in &slot.allowed_tools {
+                let tool = tool.trim();
+                if tool.is_empty() {
+                    continue;
+                }
+                push(
+                    Requirement {
+                        name: tool.to_string(),
+                        kind: "tool".into(),
+                        satisfied: true,
+                        reason: None,
+                        hint: None,
+                    },
+                    &mut seen,
+                );
+            }
+        }
+    }
+
+    let all_models_satisfied = requirements
+        .iter()
+        .filter(|r| r.kind == "model")
+        .all(|r| r.satisfied);
+
+    Ok(StrategyRequirements {
+        requirements,
+        all_models_satisfied,
+    })
+}
+
 fn strategy_capabilities(strategy: &Strategy) -> Vec<String> {
     let mut capabilities = BTreeSet::new();
     for agent_ref in &strategy.agents {
@@ -977,41 +1166,207 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
     result
 }
 
-/// Install a marketplace-delivered strategy manifest as a NEW local
-/// strategy.
+/// A self-contained, transportable strategy bundle: the [`Strategy`]
+/// artifact plus the FULL [`Agent`] definitions every one of its
+/// `AgentRef`s points at.
+///
+/// The bare `Strategy` only carries `AgentRef { agent_id, role }`
+/// *pointers* into a local agent library. When a strategy is published to
+/// the marketplace, the buyer's machine does not have those agent rows, so
+/// importing the bare `Strategy` yields a strategy that can't run. The
+/// publish path serializes a `StrategyExport` instead, and the import path
+/// materializes the bundled `agents` into the buyer's library (with fresh
+/// ULIDs) and remaps the strategy's `AgentRef`s onto the new ids.
+///
+/// Named `StrategyExport` deliberately — the terminology lock forbids
+/// `StrategyBundle` / `bundle` for this concept.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyExport {
+    /// The strategy artifact. Its `agents` Vec holds `AgentRef` pointers
+    /// whose `agent_id`s match the `agent_id` of an entry in `agents`
+    /// below (when the referenced agent was resolvable at export time).
+    pub strategy: Strategy,
+    /// Full definitions of every agent the strategy references, in no
+    /// particular order. The import path keys off each entry's
+    /// `agent_id`.
+    pub agents: Vec<Agent>,
+}
+
+/// On-chain marketplace provenance for a strategy acquired from the
+/// marketplace (issue #12 / QA #8): creator, price paid, license NFT, and a
+/// "View on Explorer" link to the owned license token.
+///
+/// Stored in a SIDECAR JSON file next to the strategy (`{id}.marketplace.json`),
+/// NOT on the `Strategy` struct — provenance is import metadata, not part of the
+/// immutable strategy artifact, and a `Strategy` field would force every one of
+/// the ~89 `Strategy { .. }` literals across the workspace to be edited. The
+/// sidecar keeps the change to the import + read paths only. Absent sidecar =
+/// hand-authored / optimizer-minted strategy (no strip shown).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MarketplaceProvenance {
+    /// On-chain listing id the buyer purchased (== `license_token_id`).
+    pub listing_id: String,
+    /// Listing tier: `"open"` (plaintext manifest) or `"sealed"` (Lit-encrypted).
+    pub tier: String,
+    /// Seller handle / address from the listing (the strategy author).
+    pub creator: String,
+    /// Price paid in whole USDC. `0.0` for a free / open-tier listing.
+    pub price_usdc: f64,
+    /// ERC-1155 license token id minted to the buyer — equals `listing_id`.
+    pub license_token_id: String,
+    /// Network label, e.g. `"mantle-sepolia"` / `"mantle"`. Best-known label
+    /// even when the chain env is unset.
+    pub network: String,
+    /// Direct block-explorer link to the owned license token. `None` when the
+    /// chain is unconfigured / has no known explorer — the UI renders a muted,
+    /// non-link label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub explorer_url: Option<String>,
+}
+
+/// Path of the marketplace-provenance sidecar for `strategy_id`, next to the
+/// strategy's own `{id}.json`. Returns `None` when `strategy_id` is not a
+/// path-safe id (defensive: the read endpoint takes the id from the URL).
+fn marketplace_provenance_path(xvn_home: &std::path::Path, strategy_id: &str) -> Option<PathBuf> {
+    if strategy_id.is_empty() || !strategy_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(strategy_store_dir(xvn_home).join(format!("{strategy_id}.marketplace.json")))
+}
+
+/// Persist marketplace provenance for an imported strategy (sidecar JSON).
+/// Best-effort: the dashboard import handlers call this after `import_strategy`
+/// and log-but-swallow any error (the buyer already paid; provenance is
+/// decoration).
+pub async fn write_marketplace_provenance(
+    ctx: &ApiContext,
+    strategy_id: &str,
+    provenance: &MarketplaceProvenance,
+) -> ApiResult<()> {
+    let path = marketplace_provenance_path(&ctx.xvn_home, strategy_id)
+        .ok_or_else(|| ApiError::Validation(format!("unsafe strategy id: {strategy_id}")))?;
+    let json = serde_json::to_string_pretty(provenance).map_err(|e| ApiError::Internal(e.to_string()))?;
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(())
+}
+
+/// Read marketplace provenance for a strategy. `Ok(None)` when the strategy was
+/// not acquired from the marketplace (no sidecar) or the id is not path-safe.
+pub async fn read_marketplace_provenance(
+    ctx: &ApiContext,
+    strategy_id: &str,
+) -> ApiResult<Option<MarketplaceProvenance>> {
+    let Some(path) = marketplace_provenance_path(&ctx.xvn_home, strategy_id) else {
+        return Ok(None);
+    };
+    match tokio::fs::read_to_string(&path).await {
+        Ok(s) => {
+            let mp = serde_json::from_str(&s).map_err(|e| ApiError::Internal(e.to_string()))?;
+            Ok(Some(mp))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
+}
+
+/// Build a self-contained [`StrategyExport`] for `strategy_id`: load the
+/// strategy, then resolve and bundle the full [`Agent`] definition behind
+/// every `AgentRef`.
+///
+/// Used by the dashboard's `POST /api/marketplace/publish` route so the
+/// content that gets hashed / pinned / sealed is the buyer-runnable bundle
+/// rather than the bare `Strategy`. An `AgentRef` whose agent can't be
+/// resolved locally is skipped (logged) rather than failing the export —
+/// the strategy may legitimately reference an agent the publisher already
+/// deleted; the import side leaves such dangling refs untouched.
+pub async fn export_strategy(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyExport> {
+    let started = Instant::now();
+    let result = export_strategy_inner(ctx, strategy_id).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "export",
+        Some(strategy_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    result
+}
+
+async fn export_strategy_inner(ctx: &ApiContext, strategy_id: &str) -> ApiResult<StrategyExport> {
+    let strategy = get_inner(ctx, strategy_id).await?;
+
+    let mut agents: Vec<Agent> = Vec::with_capacity(strategy.agents.len());
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for agent_ref in &strategy.agents {
+        // De-dup: two AgentRefs may point at the same library agent (a
+        // multi-role reuse). Bundle each agent definition once.
+        if !seen.insert(agent_ref.agent_id.clone()) {
+            continue;
+        }
+        match crate::api::agents::get(ctx, &agent_ref.agent_id).await {
+            Ok(agent) => agents.push(agent),
+            Err(ApiError::NotFound(_)) => {
+                tracing::warn!(
+                    agent_id = agent_ref.agent_id.as_str(),
+                    strategy_id = strategy_id,
+                    "export_strategy: referenced agent not found locally; \
+                     publishing without it (dangling AgentRef)",
+                );
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(StrategyExport { strategy, agents })
+}
+
+/// Install a marketplace-delivered strategy as a NEW local strategy.
 ///
 /// Used by the dashboard's license-gated
-/// `POST /api/marketplace/listings/:id/import` route. Mirrors the shallow
-/// clone path: the manifest is deserialized into a full [`Strategy`], a
-/// fresh ULID is minted (the seller's id is NEVER reused — the buyer's copy
-/// is an independent local draft), `published_at` is cleared, and the
-/// source id is stashed in `mechanical_params.metadata.imported_from` so
-/// audit tooling can chain the import back to the listed original. Persists
-/// via the same [`FilesystemStore`] the clone path uses and returns the
-/// stored strategy.
+/// `POST /api/marketplace/listings/:id/import` (and `…/import-sealed`)
+/// routes. The on-disk `manifest` is one of two shapes:
 ///
-/// A manifest that does not deserialize as a `Strategy` is a `Validation`
-/// error — the caller has already verified the bytes against the on-chain
-/// content hash, so a shape failure means the listing was published from an
-/// incompatible engine version, not transport corruption.
+/// - **`StrategyExport` envelope** (current publish path): a top-level
+///   `{ "strategy": {…}, "agents": [{…}] }`. The bundled agents are
+///   materialized into the buyer's library with FRESH ULIDs, and the
+///   strategy's `AgentRef`s are remapped onto those new ids so the
+///   imported strategy is runnable.
+/// - **Bare `Strategy`** (legacy / open-tier `xvn://` published before
+///   the envelope landed): no `agents` to materialize — the strategy is
+///   saved verbatim (its `AgentRef` pointers are preserved unchanged).
+///
+/// In both shapes a fresh strategy ULID is minted (the seller's id is
+/// NEVER reused — the buyer's copy is an independent local draft) and
+/// `published_at` is cleared. Persists via the same [`FilesystemStore`]
+/// the clone path uses and returns the stored, remapped strategy.
+///
+/// A manifest that is neither an envelope nor a bare `Strategy` is a
+/// `Validation` error — the caller has already verified the bytes against
+/// the on-chain content hash, so a shape failure means the listing was
+/// published from an incompatible engine version, not transport
+/// corruption. Failures during agent materialization roll back every
+/// agent row created so far (mirroring the clone path) so a partial import
+/// leaves no orphan agents.
 pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
     let started = Instant::now();
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = async {
-        let mut strategy: Strategy = serde_json::from_value(manifest)
-            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
-        let source_id = strategy.manifest.id.clone();
-        strategy.manifest.id = Ulid::new().to_string();
-        strategy.manifest.published_at = None;
-        strategy.mechanical_params =
-            stash_metadata_string(&strategy.mechanical_params, "imported_from", &source_id);
-        store
-            .save(&strategy)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-        Ok::<_, ApiError>(strategy)
-    }
-    .await;
+    let result = import_strategy_inner(ctx, manifest).await;
 
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
@@ -1030,10 +1385,116 @@ pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> A
     .await;
 
     if let Ok(strategy) = &result {
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
         index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
     }
 
     result
+}
+
+async fn import_strategy_inner(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
+    // Detect the envelope by a top-level `strategy` key. A bare `Strategy`
+    // has a top-level `manifest`/`risk` instead, never `strategy`. (Note
+    // `Strategy`'s deserializer ignores unknown fields, so we must branch
+    // on the JSON shape explicitly rather than rely on a failed parse.)
+    let is_envelope = manifest.get("strategy").is_some();
+
+    let (mut strategy, bundled_agents): (Strategy, Vec<Agent>) = if is_envelope {
+        let export: StrategyExport = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid StrategyExport: {e}")))?;
+        (export.strategy, export.agents)
+    } else {
+        let strategy: Strategy = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
+        (strategy, Vec::new())
+    };
+
+    // Materialize the bundled agents into the buyer's library with fresh
+    // ULIDs, building a source-id → new-id remap as we go. Roll back every
+    // created agent on any failure (mirrors `clone_strategy_full_inner`).
+    let store = AgentStore::new(ctx.db.clone());
+    let mut id_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut created_agent_ids: Vec<String> = Vec::with_capacity(bundled_agents.len());
+    for agent in &bundled_agents {
+        let new_id = match store
+            .create(NewAgent {
+                name: import_agent_name(&agent.name),
+                description: agent.description.clone(),
+                tags: agent.tags.clone(),
+                slots: agent.slots.clone(),
+                // Imported agents land in the buyer's workspace library,
+                // not scoped to the seller's (now-defunct) strategy id.
+                scope_strategy_id: None,
+            })
+            .await
+        {
+            Ok(id) => id,
+            Err(err) => {
+                cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+                let msg = err.to_string();
+                // `create` surfaces content-quality rejections as
+                // "save validation failed:"; map those to Validation so
+                // the caller sees an actionable message.
+                return Err(
+                    if let Some(detail) = msg.strip_prefix("save validation failed: ") {
+                        ApiError::Validation(detail.to_string())
+                    } else {
+                        ApiError::Internal(msg)
+                    },
+                );
+            }
+        };
+        created_agent_ids.push(new_id.clone());
+        id_remap.insert(agent.agent_id.clone(), new_id);
+    }
+
+    // Remap the strategy's AgentRefs onto the freshly-minted local ids.
+    // A ref whose id isn't in the map (dangling — e.g. a bare-Strategy
+    // import, or an envelope whose agent failed to resolve at export) is
+    // left untouched with a warning.
+    for agent_ref in &mut strategy.agents {
+        match id_remap.get(&agent_ref.agent_id) {
+            Some(new_id) => agent_ref.agent_id = new_id.clone(),
+            None => {
+                if is_envelope {
+                    tracing::warn!(
+                        agent_id = agent_ref.agent_id.as_str(),
+                        "import_strategy: AgentRef has no bundled agent definition; \
+                         leaving the pointer unremapped (strategy may not run until \
+                         the buyer wires a local agent into this role)",
+                    );
+                }
+            }
+        }
+    }
+
+    strategy.manifest.id = Ulid::new().to_string();
+    strategy.manifest.published_at = None;
+
+    let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    if let Err(e) = strategy_store.save(&strategy).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Internal(e.to_string()));
+    }
+
+    Ok(strategy)
+}
+
+/// Name an imported agent. Agent names are globally unique in the buyer's
+/// library, so a verbatim copy of the seller's name would collide if the
+/// buyer happens to own a same-named agent. Suffix a short random token to
+/// keep imports idempotent across repeated buys.
+fn import_agent_name(source_name: &str) -> String {
+    let suffix: String = Ulid::new()
+        .to_string()
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{source_name} (imported {suffix})")
 }
 
 /// Atomic strategy + paired-Agent clone with optional `(provider, model)`
@@ -1055,12 +1516,8 @@ pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> A
 ///   override is supplied, each cloned Agent's slots are rewritten to
 ///   the override `(provider, model)`; other slot fields (system_prompt,
 ///   skill_ids, max_tokens, …) carry forward unchanged.
-/// - Mints a fresh ULID for the cloned strategy, copies every other
-///   manifest field except `id` / `display_name` / `published_at`, and
-///   stashes `cloned_from: "<source-id>"` in
-///   `mechanical_params.metadata.cloned_from` so audit tooling can chain
-///   clones back to the original (no schema change — `mechanical_params`
-///   is already an arbitrary-JSON column).
+/// - Mints a fresh ULID for the cloned strategy and copies every other
+///   manifest field except `id` / `display_name` / `published_at`.
 /// - The source strategy is byte-identical before and after. Failures in
 ///   the agent-clone step short-circuit before the strategy file is
 ///   written, so disk state remains consistent. Already-created clone-
@@ -1241,10 +1698,8 @@ async fn clone_strategy_full_inner(
         });
     }
 
-    // 6. Build the new Strategy. Copy every other
-    //    field from the source. Provenance lands in
-    //    `mechanical_params.metadata.cloned_from`.
-    let new_mechanical_params = stash_cloned_from(&source.mechanical_params, source_strategy_id);
+    // 6. Build the new Strategy by copying every other field from the source
+    //    (`source.clone()` carries them verbatim).
     let display_name = req
         .display_name
         .clone()
@@ -1255,7 +1710,6 @@ async fn clone_strategy_full_inner(
     new_strategy.manifest.display_name = display_name;
     new_strategy.manifest.published_at = None;
     new_strategy.agents = cloned_agent_refs;
-    new_strategy.mechanical_params = new_mechanical_params;
 
     // 7. Shape validation surfaces here (rather than after a partial
     //    filesystem write).
@@ -1307,51 +1761,6 @@ async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
     }
 }
 
-/// Insert (or overwrite) `metadata.cloned_from` inside a strategy's
-/// `mechanical_params` JSON. If the source value is not a JSON object,
-/// the existing value is preserved under a reserved `_legacy` key so the
-/// caller never silently drops authoring data.
-fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json::Value {
-    stash_metadata_string(source, "cloned_from", source_id)
-}
-
-/// Insert (or overwrite) `metadata.{key}` inside a strategy's
-/// `mechanical_params` JSON. If the source value is not a JSON object, the
-/// existing value is preserved under a reserved `_legacy` key so the caller
-/// never silently drops authoring data. Shared by the clone provenance
-/// (`cloned_from`) and the marketplace import provenance (`imported_from`).
-fn stash_metadata_string(source: &serde_json::Value, key: &str, value: &str) -> serde_json::Value {
-    let mut params = source.clone();
-    if !params.is_object() {
-        let prior = params.clone();
-        params = serde_json::json!({ "_legacy": prior });
-    }
-    let obj = params.as_object_mut().expect("ensured object above");
-    let metadata = obj
-        .entry("metadata".to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    if !metadata.is_object() {
-        let prior = metadata.clone();
-        *metadata = serde_json::json!({ "_legacy": prior });
-    }
-    let metadata_obj = metadata.as_object_mut().expect("ensured object above");
-    metadata_obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
-    params
-}
-
-/// Convenience accessor for `mechanical_params.metadata.cloned_from`.
-/// Returns the source strategy id when the clone was minted via
-/// [`clone_strategy_full`]; `None` for hand-authored or pre-clone-feature
-/// strategies. Audit tooling uses this to chain clones back to the
-/// original.
-pub fn cloned_from(strategy: &Strategy) -> Option<&str> {
-    strategy
-        .mechanical_params
-        .get("metadata")
-        .and_then(|m| m.get("cloned_from"))
-        .and_then(|v| v.as_str())
-}
-
 /// Map an `anyhow::Error` from `engine::authoring::*` dispatcher fns to a
 /// typed `ApiError`. The dispatcher emits validation failures as
 /// `anyhow!("...")` strings (no typed enum), so we string-match the prefix
@@ -1397,7 +1806,6 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",
-        "mechanical_params is not a JSON object",
         "role is required",
         "already exists on strategy",
         "not found on strategy",
@@ -1997,40 +2405,6 @@ pub async fn set_filter(ctx: &ApiContext, req: SetFilterReq) -> ApiResult<Strate
     result
 }
 
-/// Set one mechanical parameter on the strategy and refresh the search index.
-pub async fn set_mechanical_param(
-    ctx: &ApiContext,
-    req: authoring::SetMechanicalParamReq,
-) -> ApiResult<serde_json::Value> {
-    let started = Instant::now();
-    let agent_id = req.id.clone();
-    let args_json = serde_json::to_string(&req).ok();
-    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = authoring::set_mechanical_param(&store, req)
-        .await
-        .map(|_| serde_json::json!({ "ok": true }))
-        .map_err(|e| map_authoring_error(e, Some(&agent_id)));
-
-    let outcome = match &result {
-        Ok(_) => Outcome::Ok,
-        Err(e) => Outcome::Error(e.to_string()),
-    };
-    let _ = audit::record(
-        ctx,
-        "strategy",
-        "set_mechanical_param",
-        Some(&agent_id),
-        args_json.as_deref(),
-        outcome,
-        started.elapsed().as_millis() as i64,
-    )
-    .await;
-    if result.is_ok() {
-        index_strategy_after_mutation(ctx, &store, &agent_id).await;
-    }
-    result
-}
-
 /// Update the strategy's risk config — preset (Conservative / Balanced /
 /// Aggressive) or an explicit `RiskConfig` blob, but not both.
 pub async fn set_risk_config(ctx: &ApiContext, req: SetRiskConfigReq) -> ApiResult<SetRiskConfigOut> {
@@ -2305,12 +2679,6 @@ mod tests {
         // Round-trips through the same store the clone path uses.
         let reread = get(&ctx, &imported.manifest.id).await.unwrap();
         assert_eq!(reread.manifest.display_name, source.manifest.display_name);
-
-        // Provenance: the source id lands in mechanical_params.metadata.
-        assert_eq!(
-            reread.mechanical_params["metadata"]["imported_from"],
-            serde_json::Value::String(created.id.clone()),
-        );
         assert!(audit_row_exists(&ctx, "import", &imported.manifest.id).await);
     }
 
@@ -2801,5 +3169,63 @@ mod tests {
             !list_items.iter().any(|s| s.agent_id == created.id),
             "archived strategy must not appear in list"
         );
+    }
+
+    #[tokio::test]
+    async fn marketplace_provenance_sidecar_round_trips() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "bought-strat".into(),
+                creator: Some("@seller".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        // No sidecar yet → None.
+        assert!(read_marketplace_provenance(&ctx, &created.id)
+            .await
+            .unwrap()
+            .is_none());
+
+        let provenance = MarketplaceProvenance {
+            listing_id: "42".into(),
+            tier: "open".into(),
+            creator: "0xseller".into(),
+            price_usdc: 12.5,
+            license_token_id: "42".into(),
+            network: "mantle-sepolia".into(),
+            explorer_url: Some("https://explorer.sepolia.mantle.xyz/token/0xlicense/instance/42".into()),
+        };
+        write_marketplace_provenance(&ctx, &created.id, &provenance)
+            .await
+            .unwrap();
+
+        let read = read_marketplace_provenance(&ctx, &created.id)
+            .await
+            .unwrap()
+            .expect("sidecar present after write");
+        assert_eq!(read, provenance);
+
+        // The strategy artifact itself is UNCHANGED — provenance lives in the
+        // sidecar, never on the Strategy JSON.
+        let s = get(&ctx, &created.id).await.unwrap();
+        let json = serde_json::to_value(&s).unwrap();
+        assert!(
+            json.get("marketplace").is_none(),
+            "provenance must NOT live on the Strategy artifact: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn marketplace_provenance_read_rejects_unsafe_id() {
+        let (ctx, _d) = ctx_with_audit().await;
+        // A non-path-safe id never reads outside the strategy store dir.
+        assert!(read_marketplace_provenance(&ctx, "../../etc/passwd")
+            .await
+            .unwrap()
+            .is_none());
     }
 }

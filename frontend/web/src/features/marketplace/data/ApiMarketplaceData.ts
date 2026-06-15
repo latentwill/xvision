@@ -7,16 +7,16 @@
 // than faked.
 import { ApiError, apiFetch } from "@/api/client";
 import {
-  getStrategy,
-  listStrategiesPaged,
-  type Strategy,
-  type StrategyListItem,
-} from "@/api/strategies";
+  fetchListableStrategies,
+  fetchPublishDraft,
+} from "./listable";
 import {
+  activeNetworkSlug,
   approveUsdc,
   buyDirect,
   currentAddress,
   ensureMantleSepolia,
+  getActiveNetworkConfigOrDefault,
   getContracts,
   signTransferAuthorization,
   usdcBalance,
@@ -98,94 +98,6 @@ export function bundleCidFromContentUri(contentUri: string | undefined): string 
   return contentUri.startsWith("ipfs://") ? contentUri.slice("ipfs://".length) : "";
 }
 
-function assetSymbols(assetUniverse: string[] | undefined): string[] {
-  const symbols = new Set<string>();
-  for (const raw of assetUniverse ?? []) {
-    const symbol = raw.split("/")[0]?.trim().toUpperCase();
-    if (symbol) symbols.add(symbol);
-  }
-  return [...symbols];
-}
-
-function listableStrategyVersion(strategy: StrategyListItem): string {
-  if (!strategy.last_eval_completed_at) return "not evaluated";
-  const date = strategy.last_eval_completed_at.slice(0, 10);
-  return date ? `evaluated ${date}` : "evaluated";
-}
-
-function toListableStrategy(strategy: StrategyListItem): ListableStrategy {
-  return {
-    id: strategy.agent_id,
-    name: strategy.display_name?.trim() || strategy.agent_id,
-    version: listableStrategyVersion(strategy),
-    assets: assetSymbols(strategy.asset_universe),
-  };
-}
-
-function ingredientsForStrategy(strategy: Strategy) {
-  return [
-    ...strategy.manifest.attested_with.map((name) => ({
-      name,
-      kind: "model" as const,
-      installed: true,
-    })),
-    ...strategy.manifest.required_tools.map((name) => ({
-      name,
-      kind: name.toLowerCase().includes("mcp") ? ("mcp" as const) : ("skill" as const),
-      installed: true,
-    })),
-  ];
-}
-
-function buildApiPublishDraft(
-  strategy: Strategy,
-  row: StrategyListItem | undefined,
-): PublishDraft {
-  const assets = assetSymbols(strategy.manifest.asset_universe);
-  const strategyId = strategy.manifest.id;
-  const name = strategy.manifest.display_name?.trim() || row?.display_name?.trim() || strategyId;
-  const hasBacktest = !!row?.last_eval_completed_at;
-  return {
-    strategyId,
-    listable: [
-      { ok: true, label: "Strategy exists in your XVN" },
-      {
-        ok: assets.length > 0,
-        label: "Declares an asset universe",
-        reason: assets.length > 0 ? undefined : "No assets configured",
-      },
-      {
-        ok: hasBacktest,
-        label: "Has a backtest on record",
-        reason: hasBacktest ? undefined : "No completed eval on record",
-      },
-    ],
-    tier: "sealed",
-    priceUsdc: 49,
-    acceptedPayers: { humans: true, agents: true },
-    ingredients: ingredientsForStrategy(strategy),
-    preview: {
-      id: name,
-      lineageId: strategyId,
-      version: row ? listableStrategyVersion(row) : "not evaluated",
-      creator: { address: strategy.manifest.creator || "" },
-      model: strategy.manifest.attested_with[0] ?? "Unknown model",
-      style: "Strategy",
-      assets,
-      return30dPct: 0,
-      sharpe: 0,
-      buyers: { humans: 0, agents: 0 },
-      priceUsdc: 49,
-      tier: "sealed",
-      transferableLicense: false,
-      verification: "unverified",
-      acceptsX402: true,
-      clones: 0,
-      genArtSeed: strategyId,
-    },
-  };
-}
-
 /**
  * PublicManifest fields the marketplace surfaces from an open-tier bundle.
  * All optional defensively — the bundle is author-supplied JSON.
@@ -231,10 +143,10 @@ export async function fetchBundle(listingId: Id): Promise<BundleOut> {
 
 /**
  * Standalone sealed-tier import: fetch bundle → Lit-gated decrypt → POST the
- * plaintext manifest to import-sealed. Exported so the InstallSteps stepper can
- * drive it without instantiating the data client. See `importSealed` below for
- * the error contract; the server's on-chain `content_hash` recheck (409) is the
- * integrity authority.
+ * plaintext manifest to import-sealed. Exported so callers can drive it without
+ * instantiating the data client (the LineageRoute buy flow finalizes through
+ * `importSealed` below). See `importSealed` for the error contract; the
+ * server's on-chain `content_hash` recheck (409) is the integrity authority.
  */
 export async function importSealedListing(
   listingId: Id,
@@ -307,7 +219,10 @@ function toRow(l: IndexedListing): ListingRow {
   };
 }
 
-function toDetail(l: IndexedListing): ListingDetail {
+function toDetail(
+  l: IndexedListing,
+  networkSlug: string = activeNetworkSlug,
+): ListingDetail {
   return {
     ...toRow(l),
     // Chain metadata name is the only human-readable copy we have; it renders
@@ -342,7 +257,7 @@ function toDetail(l: IndexedListing): ListingDetail {
         bornAt: "",
         operatorSig: "",
         contract: "",
-        network: "mantle-sepolia",
+        network: networkSlug,
       },
       attestations: [],
       anchors: [],
@@ -425,7 +340,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      const detail = toDetail(l);
+      const detail = toDetail(l, (await getActiveNetworkConfigOrDefault()).slug);
       // For OPEN-tier listings, enrich the detail with the verified bundle
       // manifest. Tolerate failure — manifest unavailable must not throw the
       // detail page down.
@@ -533,7 +448,7 @@ export class ApiMarketplaceData implements MarketplaceData {
     const buyers = { humans: 0, agents: 0 };
     return {
       txHash: r.tx_hash,
-      network: "mantle-sepolia",
+      network: (await getActiveNetworkConfigOrDefault()).slug,
       at,
       buyer: r.buyer,
       listing: {
@@ -579,16 +494,10 @@ export class ApiMarketplaceData implements MarketplaceData {
     };
   }
   async listListableStrategies(): Promise<ListableStrategy[]> {
-    const page = await listStrategiesPaged({ limit: 200 });
-    return page.items.map(toListableStrategy);
+    return fetchListableStrategies();
   }
   async createPublishDraft(strategyId: string): Promise<PublishDraft> {
-    const [strategy, page] = await Promise.all([
-      getStrategy(strategyId),
-      listStrategiesPaged({ limit: 200 }),
-    ]);
-    const row = page.items.find((item) => item.agent_id === strategyId);
-    return buildApiPublishDraft(strategy, row);
+    return fetchPublishDraft(strategyId);
   }
   // Real in-UI purchase. Primary path is gasless x402: sign an EIP-3009
   // TransferWithAuthorization in the browser and let the backend relay
@@ -628,13 +537,19 @@ export class ApiMarketplaceData implements MarketplaceData {
           }),
         },
       );
-      return { txHash: out.tx_hash, network: "mantle-sepolia" };
+      return {
+        txHash: out.tx_hash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 503) throw e;
       // Relay unavailable — approve + buy directly from the wallet.
       await approveUsdc(price6);
       const txHash = await buyDirect(BigInt(listingId), addr);
-      return { txHash, network: "mantle-sepolia" };
+      return {
+        txHash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     }
   }
   /**
@@ -652,8 +567,22 @@ export class ApiMarketplaceData implements MarketplaceData {
   async importSealed(listingId: Id): Promise<{ agent_id: string }> {
     return importSealedListing(listingId);
   }
-  cloneIntent(listingId: Id): Promise<TxRef> {
-    return this.fallback.cloneIntent(listingId);
+  /**
+   * OPEN/free-tier finalize: POST `{address}` to the plain import route, which
+   * materializes the referenced agents server-side and returns the new local
+   * strategy `agent_id`. Mirrors the legacy InstallSteps.runImport apiFetch
+   * shape. Fixture slug ids delegate to the fixture client (deterministic fake).
+   */
+  async importListing(listingId: Id): Promise<{ agent_id: string }> {
+    if (!/^\d+$/.test(listingId)) {
+      return this.fallback.importListing(listingId);
+    }
+    const address = await currentAddress();
+    if (!address) throw new WalletRequiredError();
+    return apiFetch<{ agent_id: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import`,
+      { method: "POST", body: JSON.stringify({ address }) },
+    );
   }
 }
 

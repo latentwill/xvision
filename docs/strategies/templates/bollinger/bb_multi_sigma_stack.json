@@ -2,55 +2,8 @@
   "base_template": "range_trade",
   "display_name": "BB Multi Sigma Stack",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "[1.0, 2.0, 3.0]",
-      "name": "sigma_levels",
-      "range": "various subsets"
-    },
-    {
-      "default": "(see below)",
-      "name": "zone_actions",
-      "range": "per-zone strategy"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.5 \u2013 4.0"
-    },
-    {
-      "default": "Long-side action",
-      "name": "Zone",
-      "range": "Short-side action"
-    },
-    {
-      "default": "Flat (no signal)",
-      "name": "inside 1\u03c3",
-      "range": "Flat"
-    },
-    {
-      "default": "Reduce existing long",
-      "name": "1\u03c3 \u2014 2\u03c3",
-      "range": "Reduce existing short"
-    },
-    {
-      "default": "Enter mean-reversion (weak)",
-      "name": "2\u03c3 \u2014 3\u03c3",
-      "range": "Enter mean-reversion (weak)"
-    },
-    {
-      "default": "Enter mean-reversion (strong)",
-      "name": "beyond 3\u03c3",
-      "range": "Enter mean-reversion (strong, w/ caveat)"
-    }
-  ],
   "name": "bb_multi_sigma_stack",
-  "plain_summary": "Standard BB collapses the entire deviation distribution into a single 2\u03c3 threshold. By stacking multiple \u03c3 multipliers, the strategy gains a finer-grained read of how extreme a touch is. Touching the 1\u03c3 band means something different from touching the 3\u03c3 band \u2014 the latter is a much rarer event and historically has been associated with stronger mean-reversion (or, in trend, stronger continuation).",
+  "plain_summary": "Standard BB collapses the entire deviation distribution into a single 2σ threshold. By stacking multiple σ multipliers, the strategy gains a finer-grained read of how extreme a touch is. Touching the 1σ band means something different from touching the 3σ band — the latter is a much rarer event and historically has been associated with stronger mean-reversion (or, in trend, stronger continuation).",
   "regime_fit": [
     "any"
   ],
@@ -60,16 +13,16 @@
   ],
   "schema_version": "xvision.strategy_template.v1",
   "sections": {
-    "data_dependencies": "None beyond price; multi-\u03c3 bands are derived from the same SMA + std-dev.",
+    "data_dependencies": "None beyond price; multi-σ bands are derived from the same SMA + std-dev.",
     "decision_rule": "```\nzone(price) =\n    \"inside_1\"  if abs(price - bb_middle) <= bb_1sigma_dist\n    \"1_to_2\"    if bb_1sigma_dist < abs(price - bb_middle) <= bb_2sigma_dist\n    \"2_to_3\"    if bb_2sigma_dist < abs(price - bb_middle) <= bb_3sigma_dist\n    \"beyond_3\"  otherwise\n\ndirection = \"above\" if price > bb_middle else \"below\"\n\n# Mean-reversion entries on outer zones:\nif zone == \"2_to_3\":\n    if direction == \"below\" and is_flat: enter long, size = base\n    if direction == \"above\" and is_flat: enter short, size = base\n\nif zone == \"beyond_3\":\n    if direction == \"below\" and is_flat: enter long, size = base * 1.5  (deeper signal, larger size)\n    if direction == \"above\" and is_flat: enter short, size = base * 1.5\n\n# Reduction in inner-outer zones:\nif zone == \"1_to_2\" and in_long_position: reduce_long_size_pct\nif zone == \"1_to_2\" and in_short_position: reduce_short_size_pct\n\n# Exit when price re-enters inside_1.\n```",
     "expected_regime": "B1 / B2 (mean-reversion regimes). In B3 / B4, the deeper-zone touches\nbecome walks rather than reversions; gate with bandwidth_percentile.",
-    "inputs": "- `bb_upper_20_1`, `bb_lower_20_1` (1\u03c3).\n- `bb_upper_20_2`, `bb_lower_20_2` (2\u03c3 \u2014 standard).\n- `bb_upper_20_3`, `bb_lower_20_3` (3\u03c3).\n- `bb_middle_20`.\n- `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `sigma_levels`                 | [1.0, 2.0, 3.0] | various subsets |\n| `zone_actions`                 | (see below) | per-zone strategy |\n| `stop_atr_multiple`            | 2.0     | 1.5 \u2013 4.0        |\n\n### Zone action defaults\n\n| Zone                    | Long-side action            | Short-side action           |\n| ----------------------- | --------------------------- | --------------------------- |\n| inside 1\u03c3               | Flat (no signal)            | Flat                        |\n| 1\u03c3 \u2014 2\u03c3                 | Reduce existing long        | Reduce existing short       |\n| 2\u03c3 \u2014 3\u03c3                 | Enter mean-reversion (weak) | Enter mean-reversion (weak) |\n| beyond 3\u03c3               | Enter mean-reversion (strong) | Enter mean-reversion (strong, w/ caveat) |\n\nThe 1\u03c3 zone is the \"noise zone\" \u2014 being inside it is normal and produces\nno signal. Crossings between zones are the events; deeper crossings get\nlarger position sizes.",
-    "references": "- Compendium README \u00a7Pivot dimensions, cardinality co-pivot.\n- Implementation note: `IndicatorPanel` will need three \u03c3 multipliers\n  computed; that's a one-line addition to the indicator stack.",
+    "inputs": "- `bb_upper_20_1`, `bb_lower_20_1` (1σ).\n- `bb_upper_20_2`, `bb_lower_20_2` (2σ — standard).\n- `bb_upper_20_3`, `bb_lower_20_3` (3σ).\n- `bb_middle_20`.\n- `IndicatorPanel.atr_14`.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `sigma_levels`                 | [1.0, 2.0, 3.0] | various subsets |\n| `zone_actions`                 | (see below) | per-zone strategy |\n| `stop_atr_multiple`            | 2.0     | 1.5 – 4.0        |\n\n### Zone action defaults\n\n| Zone                    | Long-side action            | Short-side action           |\n| ----------------------- | --------------------------- | --------------------------- |\n| inside 1σ               | Flat (no signal)            | Flat                        |\n| 1σ — 2σ                 | Reduce existing long        | Reduce existing short       |\n| 2σ — 3σ                 | Enter mean-reversion (weak) | Enter mean-reversion (weak) |\n| beyond 3σ               | Enter mean-reversion (strong) | Enter mean-reversion (strong, w/ caveat) |\n\nThe 1σ zone is the \"noise zone\" — being inside it is normal and produces\nno signal. Crossings between zones are the events; deeper crossings get\nlarger position sizes.",
+    "references": "- Compendium README §Pivot dimensions, cardinality co-pivot.\n- Implementation note: `IndicatorPanel` will need three σ multipliers\n  computed; that's a one-line addition to the indicator stack.",
     "status": "`queued`. Tests whether the cardinality-substitution from 2 to many\nproduces a step-function improvement or just smooths the same edge.",
-    "thesis": "Standard BB collapses the entire deviation distribution into a single 2\u03c3\nthreshold. By stacking multiple \u03c3 multipliers, the strategy gains a\nfiner-grained read of *how extreme* a touch is. Touching the 1\u03c3 band\nmeans something different from touching the 3\u03c3 band \u2014 the latter is a\nmuch rarer event and historically has been associated with stronger\nmean-reversion (or, in trend, stronger continuation).\n\nThis is the cleanest cardinality-substitution: instead of \"in-bands or\nnot,\" the strategy classifies into 4 zones (inside 1\u03c3 / between 1\u03c3-2\u03c3 /\nbetween 2\u03c3-3\u03c3 / beyond 3\u03c3). Each zone has its own action."
+    "thesis": "Standard BB collapses the entire deviation distribution into a single 2σ\nthreshold. By stacking multiple σ multipliers, the strategy gains a\nfiner-grained read of *how extreme* a touch is. Touching the 1σ band\nmeans something different from touching the 3σ band — the latter is a\nmuch rarer event and historically has been associated with stronger\nmean-reversion (or, in trend, stronger continuation).\n\nThis is the cleanest cardinality-substitution: instead of \"in-bands or\nnot,\" the strategy classifies into 4 zones (inside 1σ / between 1σ-2σ /\nbetween 2σ-3σ / beyond 3σ). Each zone has its own action."
   },
   "source_doc": "strategies/bollinger/bb_multi_sigma_stack.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Multi Sigma Stack` strategy.\n\nThesis:\nStandard BB collapses the entire deviation distribution into a single 2\u03c3 threshold. By stacking multiple \u03c3 multipliers, the strategy gains a finer-grained read of how extreme a touch is. Touching the 1\u03c3 band means something different from touching the 3\u03c3 band \u2014 the latter is a much rarer event and historically has been associated with stronger mean-reversion (or, in trend, stronger continuation).\n\nInputs:\n- `bb_upper_20_1`, `bb_lower_20_1` (1\u03c3).\n- `bb_upper_20_2`, `bb_lower_20_2` (2\u03c3 \u2014 standard).\n- `bb_upper_20_3`, `bb_lower_20_3` (3\u03c3).\n- `bb_middle_20`.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nzone(price) =\n    \"inside_1\"  if abs(price - bb_middle) <= bb_1sigma_dist\n    \"1_to_2\"    if bb_1sigma_dist < abs(price - bb_middle) <= bb_2sigma_dist\n    \"2_to_3\"    if bb_2sigma_dist < abs(price - bb_middle) <= bb_3sigma_dist\n    \"beyond_3\"  otherwise\n\ndirection = \"above\" if price > bb_middle else \"below\"\n\n# Mean-reversion entries on outer zones:\nif zone == \"2_to_3\":\n    if direction == \"below\" and is_flat: enter long, size = base\n    if direction == \"above\" and is_flat: enter short, size = base\n\nif zone == \"beyond_3\":\n    if direction == \"below\" and is_flat: enter long, size = base * 1.5  (deeper signal, larger size)\n    if direction == \"above\" and is_flat: enter short, size = base * 1.5\n\n# Reduction in inner-outer zones:\nif zone == \"1_to_2\" and in_long_position: reduce_long_size_pct\nif zone == \"1_to_2\" and in_short_position: reduce_short_size_pct\n\n# Exit when price re-enters inside_1.\n```\n\nExpected regime:\nB1 / B2 (mean-reversion regimes). In B3 / B4, the deeper-zone touches become walks rather than reversions; gate with bandwidth_percentile.\n\nData dependencies:\nNone beyond price; multi-\u03c3 bands are derived from the same SMA + std-dev.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Multi Sigma Stack` strategy.\n\nThesis:\nStandard BB collapses the entire deviation distribution into a single 2σ threshold. By stacking multiple σ multipliers, the strategy gains a finer-grained read of how extreme a touch is. Touching the 1σ band means something different from touching the 3σ band — the latter is a much rarer event and historically has been associated with stronger mean-reversion (or, in trend, stronger continuation).\n\nInputs:\n- `bb_upper_20_1`, `bb_lower_20_1` (1σ).\n- `bb_upper_20_2`, `bb_lower_20_2` (2σ — standard).\n- `bb_upper_20_3`, `bb_lower_20_3` (3σ).\n- `bb_middle_20`.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nzone(price) =\n    \"inside_1\"  if abs(price - bb_middle) <= bb_1sigma_dist\n    \"1_to_2\"    if bb_1sigma_dist < abs(price - bb_middle) <= bb_2sigma_dist\n    \"2_to_3\"    if bb_2sigma_dist < abs(price - bb_middle) <= bb_3sigma_dist\n    \"beyond_3\"  otherwise\n\ndirection = \"above\" if price > bb_middle else \"below\"\n\n# Mean-reversion entries on outer zones:\nif zone == \"2_to_3\":\n    if direction == \"below\" and is_flat: enter long, size = base\n    if direction == \"above\" and is_flat: enter short, size = base\n\nif zone == \"beyond_3\":\n    if direction == \"below\" and is_flat: enter long, size = base * 1.5  (deeper signal, larger size)\n    if direction == \"above\" and is_flat: enter short, size = base * 1.5\n\n# Reduction in inner-outer zones:\nif zone == \"1_to_2\" and in_long_position: reduce_long_size_pct\nif zone == \"1_to_2\" and in_short_position: reduce_short_size_pct\n\n# Exit when price re-enters inside_1.\n```\n\nExpected regime:\nB1 / B2 (mean-reversion regimes). In B3 / B4, the deeper-zone touches become walks rather than reversions; gate with bandwidth_percentile.\n\nData dependencies:\nNone beyond price; multi-σ bands are derived from the same SMA + std-dev.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

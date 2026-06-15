@@ -37,13 +37,23 @@ use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
 
+use crate::blobs::{BlobRef, BlobStore};
 use crate::rows::{
     AgentRunRow, ApprovalRow, ModelCallRow, SandboxResultRow, SpanRow, SupervisorNoteRow, ToolCallRow,
 };
 
-/// Schema-version tag stamped onto every export. v2 preserves the v1
-/// top-level fields and adds `accounting` provenance for eval-linked runs.
-pub const SCHEMA_VERSION: &str = "xvn.agent_run.v2";
+/// Schema-version tag stamped onto every export.
+///
+/// - v2 preserved the v1 top-level fields and added `accounting`
+///   provenance for eval-linked runs.
+/// - v3 (WS-7, "the flywheel document") adds the `events` array — every
+///   `events` row for the run, not just `model_call_payload` — and inlines
+///   blob-backed model/tool payloads so the export is self-contained.
+///
+/// Schema-version discipline is load-bearing: a shape change bumps this
+/// tag rather than mutating an older version in place, so v1/v2 consumers
+/// can detect the new shape instead of silently breaking.
+pub const SCHEMA_VERSION: &str = "xvn.agent_run.v3";
 
 /// Errors raised when building an export from the ledger.
 #[derive(Debug, Error)]
@@ -138,7 +148,27 @@ pub struct FinalArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-/// The `xvn.agent_run.v2` payload. Top-level field order follows the
+/// One row from the `events` table, shaped for the export. Carries every
+/// `EngineEvent` kind — `decision_completed`, `risk_veto`,
+/// `regime_transition`, `filter_fired`, `order_state`,
+/// `venue_account_snapshot`, `position_exit`, `memory_recall`,
+/// `memory_write`, `model_call_payload`, `tool_call_payload`, … — so the
+/// flywheel document is a complete record of what the run did, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportEvent {
+    /// Span this event was scoped to, if any. `None` for run-scoped
+    /// events (e.g. a filter firing not bracketed by a specific span).
+    pub span_id: Option<String>,
+    /// Producer-defined kind string (the `events.kind` column).
+    pub kind: String,
+    /// Parsed structured payload if `payload_json` was valid JSON;
+    /// otherwise the raw string wrapped as a JSON string. `None` when the
+    /// row carried no payload.
+    pub payload_json: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// The `xvn.agent_run.v3` payload. Top-level field order follows the
 /// schema layout in the plan so the serialized JSON is human-scannable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunExport {
@@ -160,6 +190,13 @@ pub struct AgentRunExport {
     pub approvals: Vec<ApprovalRow>,
     pub sandbox_results: Vec<SandboxResultRow>,
     pub supervisor_notes: Vec<SupervisorNoteRow>,
+    /// Every `events` row for the run, in timeline (`created_at`, then
+    /// `id`) order. WS-7: the headline full-fidelity addition — the old
+    /// export loaded only the `model_call_payload` event as a correlated
+    /// subquery and dropped every other engine/decision/risk/filter/
+    /// order/regime/memory event on the floor.
+    #[serde(default)]
+    pub events: Vec<ExportEvent>,
     pub final_artifact: Option<FinalArtifact>,
     pub sidecar_version: Option<String>,
     pub cline_sdk_version: Option<String>,
@@ -195,18 +232,47 @@ impl std::fmt::Display for AgentRunReport {
 /// call concurrently with the recorder (write-side). If the run is not
 /// found this returns [`ExportError::NotFound`].
 pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExport, ExportError> {
+    build_export_with_blobs(pool, run_id, None).await
+}
+
+/// Build a full [`AgentRunExport`], optionally inlining blob-backed
+/// payloads so the document is self-contained.
+///
+/// When `blobs` is `Some`, model-call prompt/response bodies and tool-call
+/// input/output bodies are read from the content-addressed blob store
+/// (using the refs stored on each row) and embedded into the export — so
+/// a downstream coding agent can read the whole run without any follow-up
+/// `/blobs/:ref` calls. When `blobs` is `None` (the default
+/// [`build_export`] path), payloads still inline from the
+/// `model_call_payload` / `tool_call_payload` event rows if present, but
+/// raw blob refs are not dereferenced.
+///
+/// Blob inlining is best-effort: a missing or unreadable blob leaves the
+/// corresponding `*_text` field as whatever the event-row reconstruction
+/// produced (often `None`) rather than failing the whole export.
+pub async fn build_export_with_blobs(
+    pool: &SqlitePool,
+    run_id: &str,
+    blobs: Option<&BlobStore>,
+) -> Result<AgentRunExport, ExportError> {
     let run = load_agent_run_or_eval_projection(pool, run_id).await?;
     let span_rows = load_spans(pool, run_id).await?;
-    let model_calls = load_model_calls(pool, run_id).await?;
-    let tool_calls = load_tool_calls(pool, run_id).await?;
+    let mut model_calls = load_model_calls(pool, run_id).await?;
+    let mut tool_calls = load_tool_calls(pool, run_id).await?;
     let approvals = load_approvals(pool, run_id).await?;
     let sandbox_results = load_sandbox_results(pool, run_id).await?;
     let supervisor_notes = load_supervisor_notes(pool, run_id).await?;
+    let events = load_events(pool, run_id).await?;
     let final_artifact = if let Some(ref aid) = run.final_artifact_id {
         load_artifact(pool, aid).await?
     } else {
         None
     };
+
+    if let Some(store) = blobs {
+        inline_model_call_blobs(&mut model_calls, store);
+        inline_tool_call_blobs(&mut tool_calls, store);
+    }
 
     let detail_totals = compute_totals(&model_calls, &tool_calls, &approvals);
     let eval_accounting = load_eval_accounting(pool, &run.id, run.eval_run_id.as_deref()).await?;
@@ -236,6 +302,7 @@ pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExp
         approvals,
         sandbox_results,
         supervisor_notes,
+        events,
         final_artifact,
         sidecar_version: run.sidecar_version,
         cline_sdk_version: run.cline_sdk_version,
@@ -243,6 +310,41 @@ pub async fn build_export(pool: &SqlitePool, run_id: &str) -> Result<AgentRunExp
         mcp_servers,
         skills,
     })
+}
+
+/// Inline prompt/response bodies from the blob store onto each model call,
+/// when the row's `*_payload_ref` resolves and the text wasn't already
+/// reconstructed from the `model_call_payload` event.
+fn inline_model_call_blobs(model_calls: &mut [ModelCallRow], store: &BlobStore) {
+    for mc in model_calls.iter_mut() {
+        if mc.prompt_text.is_none() {
+            mc.prompt_text = read_blob_text(store, mc.prompt_payload_ref.as_deref());
+        }
+        if mc.response_text.is_none() {
+            mc.response_text = read_blob_text(store, mc.response_payload_ref.as_deref());
+        }
+    }
+}
+
+/// Inline input/output bodies from the blob store onto each tool call.
+fn inline_tool_call_blobs(tool_calls: &mut [ToolCallRow], store: &BlobStore) {
+    for tc in tool_calls.iter_mut() {
+        if tc.input_text.is_none() {
+            tc.input_text = read_blob_text(store, tc.input_payload_ref.as_deref());
+        }
+        if tc.output_text.is_none() {
+            tc.output_text = read_blob_text(store, tc.output_payload_ref.as_deref());
+        }
+    }
+}
+
+/// Read a blob ref into a UTF-8 string, lossily. Returns `None` for a
+/// missing ref, a missing/unreadable blob, so blob inlining never fails
+/// the whole export.
+fn read_blob_text(store: &BlobStore, blob_ref: Option<&str>) -> Option<String> {
+    let blob_ref = blob_ref?;
+    let bytes = store.read(&BlobRef(blob_ref.to_owned())).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Build a markdown [`AgentRunReport`] for the same run. Idempotent on
@@ -273,6 +375,7 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     let _ = writeln!(out, "- Status: {}", export.status);
     let _ = writeln!(out, "- Retention: {}", export.retention_mode);
     let _ = writeln!(out, "- Schema: {}", export.schema_version);
+    let _ = writeln!(out, "- Fidelity: {}", fidelity_banner(export));
     if let Some(ref sid) = export.strategy_id {
         let _ = writeln!(out, "- Strategy: {sid}");
     }
@@ -318,7 +421,66 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     let _ = writeln!(out, "| Cost USD | {:.6} |", export.totals.cost_usd);
     let _ = writeln!(out);
 
-    // Tool calls.
+    // Span tree — the structural skeleton of the run, rendered as a
+    // nested bullet list so a reader can see the shape at a glance.
+    if !export.spans.is_empty() {
+        let _ = writeln!(out, "## Span tree");
+        let _ = writeln!(out);
+        for root in &export.spans {
+            render_span_node(&mut out, root, 0);
+        }
+        let _ = writeln!(out);
+    }
+
+    // Model calls / decisions — the full prompt + response for each model
+    // call, inlined. This is the substance a coding agent needs.
+    if !export.model_calls.is_empty() {
+        let _ = writeln!(out, "## Model calls");
+        let _ = writeln!(out);
+        for (i, mc) in export.model_calls.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "### Model call {} — {} / {} (span `{}`)",
+                i + 1,
+                mc.provider,
+                mc.model,
+                mc.span_id
+            );
+            let _ = writeln!(out);
+            if let Some(reqs) = mc.tool_calls_requested.as_deref() {
+                let _ = writeln!(out, "- Tool calls requested: `{reqs}`");
+            }
+            if let Some(cap) = mc.capability_path.as_deref() {
+                let _ = writeln!(out, "- Capability path: `{cap}`");
+            }
+            let _ = writeln!(out);
+            match mc.prompt_text.as_deref() {
+                Some(p) => {
+                    let _ = writeln!(out, "**Prompt.**");
+                    let _ = writeln!(out);
+                    render_fenced(&mut out, p);
+                }
+                None => {
+                    let _ = writeln!(out, "**Prompt.** _(not retained — hash `{}`)_", mc.prompt_hash);
+                    let _ = writeln!(out);
+                }
+            }
+            match mc.response_text.as_deref() {
+                Some(r) => {
+                    let _ = writeln!(out, "**Response.**");
+                    let _ = writeln!(out);
+                    render_fenced(&mut out, r);
+                }
+                None => {
+                    let hash = mc.response_hash.as_deref().unwrap_or("—");
+                    let _ = writeln!(out, "**Response.** _(not retained — hash `{hash}`)_");
+                    let _ = writeln!(out);
+                }
+            }
+        }
+    }
+
+    // Tool calls — table summary plus inlined input/output bodies.
     if !export.tool_calls.is_empty() {
         let _ = writeln!(out, "## Tool calls");
         let _ = writeln!(out);
@@ -334,6 +496,47 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
                 "| {} | {} | {} | {} |",
                 tc.tool_name, tc.origin, tc.risk_level, exit
             );
+        }
+        let _ = writeln!(out);
+
+        for tc in &export.tool_calls {
+            if tc.input_text.is_none() && tc.output_text.is_none() {
+                continue;
+            }
+            let _ = writeln!(out, "### `{}` (span `{}`)", tc.tool_name, tc.span_id);
+            let _ = writeln!(out);
+            if let Some(input) = tc.input_text.as_deref() {
+                let _ = writeln!(out, "**Input.**");
+                let _ = writeln!(out);
+                render_fenced(&mut out, input);
+            }
+            if let Some(output) = tc.output_text.as_deref() {
+                let _ = writeln!(out, "**Output.**");
+                let _ = writeln!(out);
+                render_fenced(&mut out, output);
+            }
+        }
+    }
+
+    // Event timeline — every `events` row in order. This is the WS-7
+    // full-fidelity core: decisions, risk gates, filter firings, regime
+    // transitions, broker/order events, memory recalls/writes, … all in
+    // chronological order, so the document is a complete record.
+    if !export.events.is_empty() {
+        let _ = writeln!(out, "## Event timeline");
+        let _ = writeln!(out);
+        for ev in &export.events {
+            let when = ev.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let span = ev
+                .span_id
+                .as_deref()
+                .map(|s| format!(" (span `{s}`)"))
+                .unwrap_or_default();
+            let _ = writeln!(out, "- `{when}` **{kind}**{span}", kind = ev.kind);
+            if let Some(payload) = &ev.payload_json {
+                let rendered = serde_json::to_string(payload).unwrap_or_else(|_| payload.to_string());
+                let _ = writeln!(out, "  - {rendered}");
+            }
         }
         let _ = writeln!(out);
     }
@@ -379,6 +582,66 @@ pub fn render_report(export: &AgentRunExport) -> AgentRunReport {
     }
 
     AgentRunReport { markdown: out }
+}
+
+/// One-line fidelity statement for the report header. Surfaces clearly
+/// whether full payloads (prompts / responses / tool I/O) were retained,
+/// so an operator pasting this into a coding agent knows up-front whether
+/// the document is complete or hash-only.
+fn fidelity_banner(export: &AgentRunExport) -> String {
+    let has_payloads = export
+        .model_calls
+        .iter()
+        .any(|m| m.prompt_text.is_some() || m.response_text.is_some())
+        || export
+            .tool_calls
+            .iter()
+            .any(|t| t.input_text.is_some() || t.output_text.is_some());
+    match export.retention_mode.as_str() {
+        "hash_only" => "hash_only — payloads were NOT retained; prompts, responses, and tool I/O \
+             are unavailable (hashes only). This document is a structural record, not a \
+             full transcript."
+            .to_string(),
+        _ if has_payloads => "full — prompts, responses, and tool I/O are inlined below.".to_string(),
+        _ => format!(
+            "{} — retention allowed payloads, but none were captured for this run \
+             (the run may predate payload capture, or no model/tool bodies were stored).",
+            export.retention_mode
+        ),
+    }
+}
+
+/// Render one span subtree as an indented bullet list.
+fn render_span_node(out: &mut String, node: &SpanNode, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let dur = node
+        .row
+        .duration_ms
+        .map(|ms| format!(" — {ms}ms"))
+        .unwrap_or_default();
+    let _ = writeln!(
+        out,
+        "{indent}- `{kind}` {name} [{status}]{dur} (span `{id}`)",
+        kind = node.row.kind,
+        name = node.row.name,
+        status = node.row.status,
+        id = node.row.id,
+    );
+    for child in &node.children {
+        render_span_node(out, child, depth + 1);
+    }
+}
+
+/// Emit a fenced code block. Picks a fence long enough to not collide with
+/// any backtick run inside the body, so payloads that themselves contain
+/// triple backticks still render as one block.
+fn render_fenced(out: &mut String, body: &str) {
+    let longest_run = body.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest_run.max(2) + 1);
+    let _ = writeln!(out, "{fence}");
+    let _ = writeln!(out, "{}", body.trim_end_matches('\n'));
+    let _ = writeln!(out, "{fence}");
+    let _ = writeln!(out);
 }
 
 // ─── blob ownership lookup ──────────────────────────────────────────────────
@@ -825,12 +1088,39 @@ fn parse_model_call_payload(payload_json: Option<&str>) -> (Option<String>, Opti
     (prompt, response)
 }
 
+/// Extract a single string field (`input` / `output`) from a
+/// `tool_call_payload` side-row's `payload_json`. Mirrors
+/// `parse_model_call_payload`, but tool input and output arrive on
+/// separate events so each is reconstructed independently.
+fn parse_tool_call_payload_field(payload_json: Option<&str>, field: &str) -> Option<String> {
+    let raw = payload_json?;
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    json_field_to_text(value.get(field))
+}
+
 async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCallRow>, ExportError> {
+    // The `tool_call_payload` correlated subquery mirrors the
+    // `model_call_payload` reconstruction on `load_model_calls`: WS-5
+    // added a `tool_call_payload` side-row carrying the tool's input /
+    // output bodies, so the full-fidelity export can inline tool I/O
+    // even when the blob store isn't available.
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT tc.span_id, tc.tool_name, tc.origin, tc.tool_version, tc.tool_hash, \
                 tc.input_hash, tc.output_hash, tc.input_payload_ref, tc.output_payload_ref, \
                 tc.side_effect_level, tc.risk_level, tc.requires_approval, tc.approval_id, \
-                tc.exit_code, tc.is_run_terminator \
+                tc.exit_code, tc.is_run_terminator, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.input') IS NOT NULL \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS tool_input_payload_json, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.output') IS NOT NULL \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS tool_output_payload_json \
          FROM tool_calls tc \
          JOIN spans s ON s.id = tc.span_id \
          WHERE s.run_id = ? \
@@ -844,6 +1134,10 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
         .map(|r| {
             let requires_approval: i64 = r.try_get("requires_approval")?;
             let is_run_terminator: i64 = r.try_get("is_run_terminator")?;
+            let input_payload_json: Option<String> = r.try_get("tool_input_payload_json")?;
+            let output_payload_json: Option<String> = r.try_get("tool_output_payload_json")?;
+            let input_text = parse_tool_call_payload_field(input_payload_json.as_deref(), "input");
+            let output_text = parse_tool_call_payload_field(output_payload_json.as_deref(), "output");
             Ok(ToolCallRow {
                 span_id: r.try_get("span_id")?,
                 tool_name: r.try_get("tool_name")?,
@@ -852,6 +1146,8 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
                 tool_hash: r.try_get("tool_hash")?,
                 input_hash: r.try_get("input_hash")?,
                 output_hash: r.try_get("output_hash")?,
+                input_text,
+                output_text,
                 input_payload_ref: r.try_get("input_payload_ref")?,
                 output_payload_ref: r.try_get("output_payload_ref")?,
                 side_effect_level: r.try_get("side_effect_level")?,
@@ -863,6 +1159,16 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
             })
         })
         .collect()
+}
+
+/// Coerce a JSON field into display text: strings pass through; other
+/// values are compactly re-serialized; `null`/absent → `None`.
+fn json_field_to_text(value: Option<&serde_json::Value>) -> Option<String> {
+    match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(other) => Some(other.to_string()),
+    }
 }
 
 async fn load_approvals(pool: &SqlitePool, run_id: &str) -> Result<Vec<ApprovalRow>, ExportError> {
@@ -952,6 +1258,50 @@ async fn load_supervisor_notes(
             })
         })
         .collect()
+}
+
+/// Load every `events` row for the run, in timeline order. WS-7: this is
+/// the headline full-fidelity loader — the old export never read the
+/// `events` table directly (it only pulled `model_call_payload` as a
+/// correlated subquery off `model_calls`), so all the engine/decision/
+/// risk/filter/order/regime/memory events were absent from the document.
+async fn load_events(pool: &SqlitePool, run_id: &str) -> Result<Vec<ExportEvent>, ExportError> {
+    let rows: Vec<SqliteRow> = sqlx::query(
+        "SELECT span_id, kind, payload_json, created_at \
+         FROM events WHERE run_id = ? \
+         ORDER BY created_at ASC, id ASC",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|r| {
+            let created_at: String = r.try_get("created_at")?;
+            let payload_raw: Option<String> = r.try_get("payload_json")?;
+            Ok(ExportEvent {
+                span_id: r.try_get("span_id")?,
+                kind: r.try_get("kind")?,
+                payload_json: parse_event_payload(payload_raw.as_deref()),
+                created_at: parse_ts(&created_at)?,
+            })
+        })
+        .collect()
+}
+
+/// Parse an event payload into structured JSON. A row that is not valid
+/// JSON is preserved verbatim as a JSON string rather than dropped — the
+/// flywheel document must not silently lose payloads. An empty payload
+/// maps to `None`.
+fn parse_event_payload(raw: Option<&str>) -> Option<serde_json::Value> {
+    let raw = raw?;
+    if raw.is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(value) => Some(canonical_json(value)),
+        Err(_) => Some(serde_json::Value::String(raw.to_owned())),
+    }
 }
 
 async fn load_artifact(pool: &SqlitePool, artifact_id: &str) -> Result<Option<FinalArtifact>, ExportError> {
@@ -1154,7 +1504,7 @@ mod blob_owner_tests {
     async fn seed_span(pool: &SqlitePool, span_id: &str, run_id: &str) {
         sqlx::query(
             "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
-             VALUES (?1, ?2, 'model.call', 'm', 'ok', '2026-05-17T16:00:01Z')",
+             VALUES (?1, ?2, 'decision.model', 'm', 'ok', '2026-05-17T16:00:01Z')",
         )
         .bind(span_id)
         .bind(run_id)

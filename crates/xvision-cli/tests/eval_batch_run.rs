@@ -206,7 +206,6 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,

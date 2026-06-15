@@ -2,35 +2,8 @@
   "base_template": "momentum",
   "display_name": "EMA Slope Momentum",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "50",
-      "name": "ema_period",
-      "range": "21 / 34 / 50"
-    },
-    {
-      "default": "5",
-      "name": "slope_window",
-      "range": "3 \u2013 20"
-    },
-    {
-      "default": "0.05%",
-      "name": "min_slope_pct",
-      "range": "0.01% \u2013 0.5%"
-    },
-    {
-      "default": "pct_of_atr",
-      "name": "slope_unit",
-      "range": "raw / pct_of_price / pct_of_atr"
-    },
-    {
-      "default": "2.0",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "ema_slope_momentum",
-  "plain_summary": "The slope of an EMA is the smoothed first derivative of price \u2014 i.e., a momentum proxy. Most EMA strategies trade the line itself (crosses, distance) and ignore the slope. Trading slope directly avoids two weaknesses of cross-strategies: (1) it doesn't require two EMAs to align (reducing whipsaw count), and (2) slope-sign flips occur before crosses do, so entries are earlier.",
+  "plain_summary": "The slope of an EMA is the smoothed first derivative of price — i.e., a momentum proxy. Most EMA strategies trade the line itself (crosses, distance) and ignore the slope. Trading slope directly avoids two weaknesses of cross-strategies: (1) it doesn't require two EMAs to align (reducing whipsaw count), and (2) slope-sign flips occur before crosses do, so entries are earlier.",
   "regime_fit": [
     "any"
   ],
@@ -42,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price. Slope is computed in-strategy from `ema_period`.",
     "decision_rule": "```\nslope = (ema_period[t] - ema_period[t - slope_window]) / slope_window\nslope_normalized = slope / atr_14    (when slope_unit = pct_of_atr)\n\nif slope_normalized >= min_slope_pct and is_flat:\n    enter long\nelif slope_normalized <= -min_slope_pct and is_flat:\n    enter short\n\nexit when slope crosses zero against position (slope-flip exit).\n```",
-    "expected_regime": "R1 (strong trend). Slope-zero crossings give early exits in R4 (early\nreversal) \u2014 earlier than the EMA-cross would. Toxic in R5: the strategy\nmust be gated `OFF` when `|slope_normalized| < ZERO_THRESHOLD` for\nmultiple bars (the \"ZERO\" cell of the atlas).",
-    "inputs": "- `IndicatorPanel.ema_50` \u2014 the line whose slope is the signal.\n- Computed: `slope_ema_50 = ema_50[t] - ema_50[t-N]` for slope window N.\n- `IndicatorPanel.atr_14` \u2014 for stop placement and slope normalization.\n- `PriceFrame.close`.",
-    "parameters": "| Param                       | Default | Range            |\n| --------------------------- | ------- | ---------------- |\n| `ema_period`                | 50      | 21 / 34 / 50     |\n| `slope_window`              | 5       | 3 \u2013 20           |\n| `min_slope_pct`             | 0.05%   | 0.01% \u2013 0.5%     |\n| `slope_unit`                | `pct_of_atr` | `raw` / `pct_of_price` / `pct_of_atr` |\n| `stop_atr_multiple`         | 2.0     | 1.0 \u2013 3.0        |\n\n`slope_unit = pct_of_atr` normalizes the slope by current volatility \u2014\ncritical because raw slope thresholds drift across regimes (the same\nabsolute slope is \"fast\" in low-vol and \"slow\" in high-vol).",
+    "expected_regime": "R1 (strong trend). Slope-zero crossings give early exits in R4 (early\nreversal) — earlier than the EMA-cross would. Toxic in R5: the strategy\nmust be gated `OFF` when `|slope_normalized| < ZERO_THRESHOLD` for\nmultiple bars (the \"ZERO\" cell of the atlas).",
+    "inputs": "- `IndicatorPanel.ema_50` — the line whose slope is the signal.\n- Computed: `slope_ema_50 = ema_50[t] - ema_50[t-N]` for slope window N.\n- `IndicatorPanel.atr_14` — for stop placement and slope normalization.\n- `PriceFrame.close`.",
+    "parameters": "| Param                       | Default | Range            |\n| --------------------------- | ------- | ---------------- |\n| `ema_period`                | 50      | 21 / 34 / 50     |\n| `slope_window`              | 5       | 3 – 20           |\n| `min_slope_pct`             | 0.05%   | 0.01% – 0.5%     |\n| `slope_unit`                | `pct_of_atr` | `raw` / `pct_of_price` / `pct_of_atr` |\n| `stop_atr_multiple`         | 2.0     | 1.0 – 3.0        |\n\n`slope_unit = pct_of_atr` normalizes the slope by current volatility —\ncritical because raw slope thresholds drift across regimes (the same\nabsolute slope is \"fast\" in low-vol and \"slow\" in high-vol).",
     "references": "- Atlas Page 5 (Slope side-effect).\n- Comparison target: [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md).\n- Acceleration sibling: [`ema_acceleration_reversal`](ema_acceleration_reversal.md).",
     "status": "`queued`. Differentiator vs cross-based baselines; the head-to-head test\nbetween `ema_slope_momentum` and `ema_50_200_golden_cross` on the same\ninstrument is the cleanest experimental answer to \"does trading the\nderivative beat trading the line?\"",
-    "thesis": "The slope of an EMA is the smoothed first derivative of price \u2014 i.e., a\nmomentum proxy. Most EMA strategies trade the line itself (crosses,\ndistance) and ignore the slope. Trading slope directly avoids two\nweaknesses of cross-strategies: (1) it doesn't require two EMAs to align\n(reducing whipsaw count), and (2) slope-sign flips occur *before* crosses\ndo, so entries are earlier.\n\nThis is the cleanest expression of the atlas's pivot dimension\n(side-effect): the derivative is the leaked property, and there's edge\nin trading it directly. Pre-smoothed by the EMA, so it's cleaner than\na raw rate-of-change calculation."
+    "thesis": "The slope of an EMA is the smoothed first derivative of price — i.e., a\nmomentum proxy. Most EMA strategies trade the line itself (crosses,\ndistance) and ignore the slope. Trading slope directly avoids two\nweaknesses of cross-strategies: (1) it doesn't require two EMAs to align\n(reducing whipsaw count), and (2) slope-sign flips occur *before* crosses\ndo, so entries are earlier.\n\nThis is the cleanest expression of the atlas's pivot dimension\n(side-effect): the derivative is the leaked property, and there's edge\nin trading it directly. Pre-smoothed by the EMA, so it's cleaner than\na raw rate-of-change calculation."
   },
   "source_doc": "strategies/EMA/ema_slope_momentum.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `EMA Slope Momentum` strategy.\n\nThesis:\nThe slope of an EMA is the smoothed first derivative of price \u2014 i.e., a momentum proxy. Most EMA strategies trade the line itself (crosses, distance) and ignore the slope. Trading slope directly avoids two weaknesses of cross-strategies: (1) it doesn't require two EMAs to align (reducing whipsaw count), and (2) slope-sign flips occur before crosses do, so entries are earlier.\n\nInputs:\n- `IndicatorPanel.ema_50` \u2014 the line whose slope is the signal.\n- Computed: `slope_ema_50 = ema_50[t] - ema_50[t-N]` for slope window N.\n- `IndicatorPanel.atr_14` \u2014 for stop placement and slope normalization.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nslope = (ema_period[t] - ema_period[t - slope_window]) / slope_window\nslope_normalized = slope / atr_14    (when slope_unit = pct_of_atr)\n\nif slope_normalized >= min_slope_pct and is_flat:\n    enter long\nelif slope_normalized <= -min_slope_pct and is_flat:\n    enter short\n\nexit when slope crosses zero against position (slope-flip exit).\n```\n\nExpected regime:\nR1 (strong trend). Slope-zero crossings give early exits in R4 (early reversal) \u2014 earlier than the EMA-cross would. Toxic in R5: the strategy must be gated OFF when |slope_normalized| < ZERO_THRESHOLD for multiple bars (the \"ZERO\" cell of the atlas).\n\nData dependencies:\nNone beyond price. Slope is computed in-strategy from `ema_period`.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA Slope Momentum` strategy.\n\nThesis:\nThe slope of an EMA is the smoothed first derivative of price — i.e., a momentum proxy. Most EMA strategies trade the line itself (crosses, distance) and ignore the slope. Trading slope directly avoids two weaknesses of cross-strategies: (1) it doesn't require two EMAs to align (reducing whipsaw count), and (2) slope-sign flips occur before crosses do, so entries are earlier.\n\nInputs:\n- `IndicatorPanel.ema_50` — the line whose slope is the signal.\n- Computed: `slope_ema_50 = ema_50[t] - ema_50[t-N]` for slope window N.\n- `IndicatorPanel.atr_14` — for stop placement and slope normalization.\n- `PriceFrame.close`.\n\nDecision rule:\n```\nslope = (ema_period[t] - ema_period[t - slope_window]) / slope_window\nslope_normalized = slope / atr_14    (when slope_unit = pct_of_atr)\n\nif slope_normalized >= min_slope_pct and is_flat:\n    enter long\nelif slope_normalized <= -min_slope_pct and is_flat:\n    enter short\n\nexit when slope crosses zero against position (slope-flip exit).\n```\n\nExpected regime:\nR1 (strong trend). Slope-zero crossings give early exits in R4 (early reversal) — earlier than the EMA-cross would. Toxic in R5: the strategy must be gated OFF when |slope_normalized| < ZERO_THRESHOLD for multiple bars (the \"ZERO\" cell of the atlas).\n\nData dependencies:\nNone beyond price. Slope is computed in-strategy from `ema_period`.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

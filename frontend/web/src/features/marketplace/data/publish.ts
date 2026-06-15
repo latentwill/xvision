@@ -5,6 +5,7 @@
 // (chain env unset) propagates up as a thrown error — callers must not catch
 // it silently.
 import { apiFetch } from "@/api/client";
+import { getActiveNetworkConfigOrDefault } from "../lib/chain";
 import type { PublishDraft, TxRef } from "./types";
 
 export interface PublishOut {
@@ -24,10 +25,17 @@ export async function publishListing(d: PublishDraft): Promise<TxRef> {
       tier: d.tier,
       price_usdc: d.priceUsdc ?? 0,
       transferable_license: false,
+      // Creator-chosen listing name (defaults to the strategy's display name).
+      // The backend stores it on the publish receipt so the listing inherits a
+      // real name instead of rendering a generic "Strategy #N".
+      name: d.name,
     }),
   });
   // TxRef: { txHash: string; network: string }
   // listing_id is the closest stable on-chain handle available at submit time;
-  // the real tx hash is attached by the confirmation path once mined.
-  return { txHash: out.listing_id, network: "mantle-sepolia" };
+  // the real tx hash is attached by the confirmation path once mined. The
+  // network slug is the BACKEND's chain (runtime) so explorer links resolve to
+  // the right network; lenient fallback to the build-time default.
+  const net = await getActiveNetworkConfigOrDefault();
+  return { txHash: out.listing_id, network: net.slug };
 }

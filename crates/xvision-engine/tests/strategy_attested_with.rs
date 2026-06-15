@@ -54,7 +54,6 @@ fn strategy_with(
         regime_slot: None,
         trader_slot: Some(trader_slot(slot_attested, provider, model)),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
