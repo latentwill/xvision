@@ -112,3 +112,43 @@ export function formatCadence(minutes: number): string {
 
   return `${hours}h ${remainderMinutes}m`;
 }
+
+/**
+ * Percentage display for performance figures (returns, win rate, drawdown).
+ * Rounds to `digits` (default 2) and strips trailing zeros, so "47.20" reads
+ * as "47.2" while a raw "0.19077721054834548" collapses to "0.19" — fixing the
+ * marketplace stat boxes that overflowed when full-precision floats were
+ * interpolated straight into the cell. `signed` (default true) prefixes a "+"
+ * on positive values for return-style metrics; pass `signed: false` for win
+ * rate / drawdown where the sign is implied or already carried by the value.
+ * Null / undefined / non-finite → "—".
+ */
+export function formatPercent(
+  value: number | null | undefined,
+  opts?: { digits?: number; signed?: boolean },
+): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const digits = opts?.digits ?? 2;
+  const signed = opts?.signed ?? true;
+  const rounded = Number(value.toFixed(digits));
+  const sign = signed && rounded > 0 ? "+" : "";
+  return `${sign}${rounded}%`;
+}
+
+/**
+ * Ratio display for Sharpe and other unitless performance ratios. Same
+ * round-and-strip rule as `formatPercent` but without the "%" unit; defaults to
+ * a signed "+" on positive values (matching the listing cards). Null /
+ * undefined / non-finite → "—".
+ */
+export function formatSharpe(
+  value: number | null | undefined,
+  opts?: { digits?: number; signed?: boolean },
+): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const digits = opts?.digits ?? 2;
+  const signed = opts?.signed ?? true;
+  const rounded = Number(value.toFixed(digits));
+  const sign = signed && rounded > 0 ? "+" : "";
+  return `${sign}${rounded}`;
+}

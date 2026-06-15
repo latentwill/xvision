@@ -1,28 +1,9 @@
 import { NavLink } from "react-router-dom";
-import { Icon, type IconName } from "@/components/primitives/Icon";
+import { Icon } from "@/components/primitives/Icon";
 import { BrandMark } from "@/components/primitives/BrandMark";
 import { useTheme } from "@/theme/useTheme";
 import { WalletConnectFooter } from "@/components/shell/WalletConnectFooter";
-
-type Item = { to: string; label: string; icon: IconName };
-
-// Charts section (chart-rework Track B) is now unconditional after
-// B-rollout. The `xvn.chartv2` cookie gate was removed once B0–B4
-// shipped — see docs/superpowers/plans/2026-05-23-charts-section-b5-hero-default-review.md
-// for the rollout notes.
-const PRIMARY: Item[] = [
-  { to: "/", label: "Dashboard", icon: "home" },
-  { to: "/strategies", label: "Strategies", icon: "chart" },
-  { to: "/agents", label: "Agents", icon: "user" },
-  { to: "/scenarios", label: "Scenarios", icon: "list" },
-  { to: "/charts", label: "Charts", icon: "chartPie" },
-  { to: "/eval-runs", label: "Eval", icon: "bars" },
-  { to: "/live", label: "Live Trading", icon: "play" },
-  { to: "/marketplace", label: "Marketplace", icon: "bag" },
-  { to: "/optimizer", label: "Optimizer", icon: "pulse" },
-  { to: "/docs", label: "Docs", icon: "book" },
-  { to: "/settings", label: "Settings", icon: "sliders" },
-];
+import { PRIMARY_NAV } from "@/components/shell/nav";
 
 export function Sidebar({ className = "" }: { className?: string }) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
@@ -45,7 +26,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
       </div>
 
       <nav className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        {PRIMARY.map((it) => (
+        {PRIMARY_NAV.map((it) => (
           <div key={it.to}>
             <NavLink
               to={it.to}

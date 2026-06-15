@@ -4,9 +4,9 @@ import { Sparkline } from "@/features/marketplace/components/Sparkline";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
-import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
 import type { ListingRow } from "@/features/marketplace/data/types";
+import { formatPercent, formatSharpe } from "@/lib/format";
 
 interface ListingCardProps {
   row: ListingRow;
@@ -18,7 +18,6 @@ interface ListingCardProps {
 // TestnetBadge so every chain-bound affordance reads consistently.
 export function ListingCard({ row, onBuy }: ListingCardProps) {
   const positive = row.return30dPct >= 0;
-  const retSign = positive ? "+" : "";
   const isFree = row.priceUsdc === null || row.tier === "open";
 
   return (
@@ -41,14 +40,21 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
           </span>
           <span className="font-mono text-[11px] text-text-3 shrink-0">{row.version}</span>
           {row.verification === "verified" && <VerifiedBadge />}
-          {row.acceptsX402 && <X402Badge />}
         </div>
         <div className="flex items-center gap-2 mt-1 whitespace-nowrap overflow-hidden">
           <span className="font-mono text-[11px] text-text-2">{row.creator.handle ?? row.creator.address.slice(0, 8)}</span>
-          <span className="text-text-4 text-[10px]">·</span>
-          <span className="font-mono text-[10.5px] text-text-3 truncate">{row.model}</span>
-          <span className="text-text-4 text-[10px]">·</span>
-          <span className="font-mono text-[10.5px] text-text-3">{row.style}</span>
+          {row.model && (
+            <>
+              <span className="text-text-4 text-[10px]">·</span>
+              <span className="font-mono text-[10.5px] text-text-3 truncate">{row.model}</span>
+            </>
+          )}
+          {row.style && (
+            <>
+              <span className="text-text-4 text-[10px]">·</span>
+              <span className="font-mono text-[10.5px] text-text-3">{row.style}</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -67,7 +73,7 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
         >
           {row.return30dPct === 0 && row.sharpe === 0
             ? "—"
-            : `${retSign}${row.return30dPct}%`}
+            : formatPercent(row.return30dPct)}
         </span>
         <Sparkline seed={row.id} positive={positive} />
       </div>
@@ -87,7 +93,7 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
         <span className="font-mono text-[12px] text-text-3">
           {row.return30dPct === 0 && row.sharpe === 0
             ? "—"
-            : `${row.sharpe > 0 ? "+" : ""}${row.sharpe.toFixed(2)}`}
+            : formatSharpe(row.sharpe)}
         </span>
       </div>
 

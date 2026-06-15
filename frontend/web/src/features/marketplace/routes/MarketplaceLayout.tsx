@@ -9,7 +9,6 @@ import {
 import { chooseMarketplaceData } from "@/features/marketplace/data/ApiMarketplaceData";
 import { SubgraphMarketplaceData } from "@/features/marketplace/data/SubgraphMarketplaceData";
 import { createSubgraphClient } from "@/features/marketplace/data/subgraph/client";
-import { TestnetBanner } from "@/features/marketplace/components/TestnetBadge";
 
 // Data-source selection, layered (merge of the subgraph track #908 and the
 // dashboard-indexer track #912):
@@ -81,7 +80,6 @@ export function MarketplaceLayout() {
   return (
     <MarketplaceDataProvider client={client}>
       <div className="relative space-y-4">
-        <TestnetBanner />
         <Outlet />
       </div>
     </MarketplaceDataProvider>

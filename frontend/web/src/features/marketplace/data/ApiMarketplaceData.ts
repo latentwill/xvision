@@ -278,7 +278,11 @@ function toRow(l: IndexedListing): ListingRow {
     name: l.name || undefined,
     creator: { address: l.seller },
     model: "",
-    style: l.symmetry,
+    // The indexer has no trading-style field; `symmetry` is a gen-art trait
+    // (e.g. "rot90", "mirror-x") and must NOT surface as the listing's style
+    // (operator QA: listings were displaying "rot90" as the style). The art
+    // itself keeps its symmetry — only this mislabeled text is dropped.
+    style: "",
     assets: [],
     // Part B: consume real perf metrics when the backend provides them.
     // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
