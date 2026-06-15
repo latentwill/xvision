@@ -12,7 +12,9 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
 use crate::executor::ExecutorError;
+use xvision_core::config::SpotAssetConfig;
 
 /// Whether a swap is a no-funds preview (`--dry-run`) or a real, confirmed
 /// swap (`--confirm`).
@@ -234,13 +236,338 @@ impl ByrealSpotApi for SubprocessByrealSpotApi {
     }
 }
 
+// ── ByrealSpotSurface ─────────────────────────────────────────────────────────
+
+/// Hard cap on slippage; byreal-cli warns above 200 bps, we refuse above it.
+const MAX_SLIPPAGE_BPS: u32 = 200;
+
+/// `BrokerSurface` over `byreal-cli` for curated Solana spot. Buy = USDC→token,
+/// sell = token→USDC. Long/Flat only (no shorting). Holds the curated set for
+/// symbol→mint resolution and the quote (USDC) mint.
+pub struct ByrealSpotSurface<A = SubprocessByrealSpotApi> {
+    api: A,
+    assets: SpotAssetConfig,
+    mode: ByrealSpotMode,
+    slippage_bps: u32,
+}
+
+impl<A: ByrealSpotApi> ByrealSpotSurface<A> {
+    /// Defaults to `Preview` (no funds) and a conservative 100 bps slippage.
+    pub fn new(api: A, assets: SpotAssetConfig) -> Self {
+        Self {
+            api,
+            assets,
+            mode: ByrealSpotMode::Preview,
+            slippage_bps: 100,
+        }
+    }
+    pub fn with_mode(mut self, mode: ByrealSpotMode) -> Self {
+        self.mode = mode;
+        self
+    }
+    pub fn with_slippage_bps(mut self, bps: u32) -> Self {
+        self.slippage_bps = bps;
+        self
+    }
+}
+
+#[async_trait]
+impl<A: ByrealSpotApi + Send + Sync + 'static> BrokerSurface for ByrealSpotSurface<A> {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        if self.slippage_bps > MAX_SLIPPAGE_BPS {
+            anyhow::bail!(
+                "byreal_spot slippage {} bps exceeds the {} bps cap",
+                self.slippage_bps,
+                MAX_SLIPPAGE_BPS
+            );
+        }
+        if !(req.size > 0.0) {
+            anyhow::bail!("byreal_spot order size must be positive (got {})", req.size);
+        }
+        let entry = self
+            .assets
+            .resolve(&req.asset)
+            .ok_or_else(|| anyhow::anyhow!("byreal_spot: '{}' is not in the curated set", req.asset))?;
+        let usdc = self.assets.usdc_mint.as_str();
+
+        let (input_mint, output_mint, amount) = match req.side {
+            Side::Buy => (usdc, entry.mint.as_str(), req.size * req.reference_price_usd),
+            Side::Sell => {
+                let amount = if self.mode == ByrealSpotMode::Live {
+                    // Long/Flat: refuse a real sell with no position (no shorting).
+                    let pos = self
+                        .api
+                        .token_balance(&entry.mint)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("byreal_spot balance: {e}"))?;
+                    if pos <= 0.0 {
+                        anyhow::bail!(
+                            "byreal_spot broker_unsupported: short_open is not supported (no {} position to sell)",
+                            req.asset
+                        );
+                    }
+                    req.size.min(pos)
+                } else {
+                    // Preview/forward-test: no wallet; simulate the sell as requested.
+                    req.size
+                };
+                (entry.mint.as_str(), usdc, amount)
+            }
+        };
+
+        let res = self
+            .api
+            .swap(input_mint, output_mint, amount, self.slippage_bps, self.mode)
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal_spot swap: {e}"))?;
+
+        let broker_order_id = res
+            .order_id
+            .or_else(|| res.transaction.filter(|s| !s.is_empty()))
+            .unwrap_or_else(|| format!("preview-{}", req.idempotency_key));
+        Ok(OrderConfirmation {
+            broker_order_id,
+            fill_price: (req.reference_price_usd > 0.0).then_some(req.reference_price_usd),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+
+    async fn position(&self, asset: &str) -> anyhow::Result<f64> {
+        let entry = self
+            .assets
+            .resolve(asset)
+            .ok_or_else(|| anyhow::anyhow!("byreal_spot: '{asset}' is not in the curated set"))?;
+        self.api
+            .token_balance(&entry.mint)
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal_spot position: {e}"))
+    }
+
+    async fn balance(&self) -> anyhow::Result<f64> {
+        self.api
+            .token_balance(&self.assets.usdc_mint)
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal_spot balance: {e}"))
+    }
+
+    fn venue(&self) -> &str {
+        "byreal_spot"
+    }
+    fn signing_scheme(&self) -> &str {
+        "cli"
+    }
+    fn is_perp_venue(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use xvision_core::config::{SpotAssetConfig, SpotAssetEntry, SpotAssetKind};
 
     #[test]
     fn mode_maps_to_dry_run_or_confirm() {
         assert_eq!(ByrealSpotMode::Preview.swap_flag(), "--dry-run");
         assert_eq!(ByrealSpotMode::Live.swap_flag(), "--confirm");
+    }
+
+    // ── Mock ByrealSpotApi for ByrealSpotSurface tests ───────────────────────
+
+    #[derive(Clone)]
+    struct RecordedSwap {
+        input_mint: String,
+        output_mint: String,
+        amount: f64,
+        slippage_bps: u32,
+        mode: ByrealSpotMode,
+    }
+
+    #[derive(Default, Clone)]
+    struct MockSpotApi {
+        price: f64,
+        position: f64,
+        swaps: Arc<Mutex<Vec<RecordedSwap>>>,
+    }
+
+    #[async_trait]
+    impl ByrealSpotApi for MockSpotApi {
+        async fn swap(
+            &self,
+            input_mint: &str,
+            output_mint: &str,
+            amount: f64,
+            slippage_bps: u32,
+            mode: ByrealSpotMode,
+        ) -> Result<SwapResult, ExecutorError> {
+            self.swaps.lock().unwrap().push(RecordedSwap {
+                input_mint: input_mint.into(),
+                output_mint: output_mint.into(),
+                amount,
+                slippage_bps,
+                mode,
+            });
+            Ok(SwapResult {
+                mode: Some("dry-run".into()),
+                order_id: Some("mock-ord".into()),
+                transaction: Some(String::new()),
+                ui_out_amount: Some("1.0".into()),
+                price_impact_pct: Some("0.01".into()),
+            })
+        }
+        async fn token_price(&self, _mint: &str) -> Result<f64, ExecutorError> {
+            Ok(self.price)
+        }
+        async fn token_balance(&self, _mint: &str) -> Result<f64, ExecutorError> {
+            Ok(self.position)
+        }
+    }
+
+    fn curated() -> SpotAssetConfig {
+        SpotAssetConfig {
+            usdc_mint: "USDC1111111111111111111111111111111111111111".into(),
+            assets: vec![SpotAssetEntry {
+                symbol: "SOL".into(),
+                mint: "So11111111111111111111111111111111111111112".into(),
+                kind: SpotAssetKind::Spl,
+                decimals: 9,
+            }],
+        }
+    }
+
+    fn req(side: Side, size: f64) -> OrderRequest {
+        OrderRequest {
+            asset: "SOL".into(),
+            side,
+            size,
+            reference_price_usd: 150.0,
+            stop_loss_pct: None,
+            take_profit_pct: None,
+            idempotency_key: "cycle-1".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn surface_metadata_is_spot_not_perp() {
+        let s = ByrealSpotSurface::new(
+            MockSpotApi {
+                price: 150.0,
+                ..Default::default()
+            },
+            curated(),
+        );
+        assert_eq!(s.venue(), "byreal_spot");
+        assert_eq!(s.signing_scheme(), "cli");
+        assert!(!s.is_perp_venue());
+    }
+
+    #[tokio::test]
+    async fn buy_swaps_usdc_into_token() {
+        let api = MockSpotApi {
+            price: 150.0,
+            ..Default::default()
+        };
+        let swaps = api.swaps.clone();
+        let s = ByrealSpotSurface::new(api, curated())
+            .with_mode(ByrealSpotMode::Live)
+            .with_slippage_bps(100);
+        let conf = s.submit_order(req(Side::Buy, 2.0)).await.unwrap();
+        let rec = swaps.lock().unwrap()[0].clone();
+        assert_eq!(rec.input_mint, "USDC1111111111111111111111111111111111111111");
+        assert_eq!(rec.output_mint, "So11111111111111111111111111111111111111112");
+        assert_eq!(rec.amount, 300.0); // 2.0 * 150.0 USDC notional
+        assert_eq!(rec.slippage_bps, 100);
+        assert_eq!(rec.mode, ByrealSpotMode::Live);
+        assert_eq!(conf.broker_order_id, "mock-ord");
+    }
+
+    #[tokio::test]
+    async fn sell_with_position_swaps_token_into_usdc() {
+        let api = MockSpotApi {
+            price: 150.0,
+            position: 5.0,
+            ..Default::default()
+        };
+        let swaps = api.swaps.clone();
+        let s = ByrealSpotSurface::new(api, curated()).with_mode(ByrealSpotMode::Live);
+        s.submit_order(req(Side::Sell, 5.0)).await.unwrap();
+        let rec = swaps.lock().unwrap()[0].clone();
+        assert_eq!(rec.input_mint, "So11111111111111111111111111111111111111112");
+        assert_eq!(rec.output_mint, "USDC1111111111111111111111111111111111111111");
+        assert_eq!(rec.amount, 5.0);
+    }
+
+    #[tokio::test]
+    async fn live_sell_without_position_is_rejected_no_shorting() {
+        let api = MockSpotApi {
+            price: 150.0,
+            position: 0.0,
+            ..Default::default()
+        };
+        let swaps = api.swaps.clone();
+        let s = ByrealSpotSurface::new(api, curated()).with_mode(ByrealSpotMode::Live);
+        let err = s.submit_order(req(Side::Sell, 1.0)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("short_open is not supported"),
+            "must refuse shorting; got: {err}"
+        );
+        assert_eq!(swaps.lock().unwrap().len(), 0, "no swap on a rejected short");
+    }
+
+    #[tokio::test]
+    async fn preview_sell_skips_balance_check() {
+        // Preview/forward-test has no wallet; a sell must still preview (no balance gate).
+        let api = MockSpotApi {
+            price: 150.0,
+            position: 0.0,
+            ..Default::default()
+        };
+        let swaps = api.swaps.clone();
+        let s = ByrealSpotSurface::new(api, curated()); // default = Preview
+        s.submit_order(req(Side::Sell, 1.0)).await.unwrap();
+        let rec = swaps.lock().unwrap()[0].clone();
+        assert_eq!(rec.mode, ByrealSpotMode::Preview);
+        assert_eq!(rec.amount, 1.0);
+    }
+
+    #[tokio::test]
+    async fn unknown_symbol_is_rejected() {
+        let s = ByrealSpotSurface::new(
+            MockSpotApi {
+                price: 1.0,
+                ..Default::default()
+            },
+            curated(),
+        );
+        let mut r = req(Side::Buy, 1.0);
+        r.asset = "DOGE".into();
+        assert!(s.submit_order(r).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn preview_mode_uses_dry_run() {
+        let api = MockSpotApi {
+            price: 150.0,
+            ..Default::default()
+        };
+        let swaps = api.swaps.clone();
+        let s = ByrealSpotSurface::new(api, curated()); // default Preview
+        s.submit_order(req(Side::Buy, 1.0)).await.unwrap();
+        assert_eq!(swaps.lock().unwrap()[0].mode, ByrealSpotMode::Preview);
+    }
+
+    #[tokio::test]
+    async fn slippage_over_cap_is_refused() {
+        let s = ByrealSpotSurface::new(
+            MockSpotApi {
+                price: 150.0,
+                ..Default::default()
+            },
+            curated(),
+        )
+        .with_slippage_bps(500); // 500 > 200 cap
+        assert!(s.submit_order(req(Side::Buy, 1.0)).await.is_err());
     }
 }
