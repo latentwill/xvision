@@ -21,11 +21,7 @@ import {
   settingsKeys,
   testAlpacaConnection,
 } from "@/api/settings";
-import type {
-  AlpacaTestReport,
-  BrokerEntry,
-  CredentialRef,
-} from "@/api/types.gen";
+import type { AlpacaTestReport, BrokerEntry } from "@/api/types.gen";
 
 // ── Market refresh types ──────────────────────────────────────────────────
 
@@ -1328,84 +1324,5 @@ function BrokerFormActions({
         </button>
       ) : null}
     </div>
-  );
-}
-
-function BrokerCard({ entry }: { entry: BrokerEntry }) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
-            {entry.name}
-          </h3>
-          {entry.note ? (
-            <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
-          ) : null}
-        </div>
-        {entry.configured ? (
-          <Pill tone="gold">
-            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
-          </Pill>
-        ) : (
-          <Pill tone="warn">
-            <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
-          </Pill>
-        )}
-      </div>
-
-      <table className="w-full mt-2">
-        <tbody>
-          {entry.credentials.map((c) => (
-            <CredentialRow key={c.env_var} cred={c} />
-          ))}
-          {entry.base_url ? (
-            <tr className="border-t border-border-soft">
-              <td className="py-2 text-text-2 text-[12px]">base url</td>
-              <td className="py-2 text-right">
-                <code className="font-mono text-[12px] text-text">
-                  {entry.base_url}
-                </code>
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-    </Card>
-  );
-}
-
-const FRIENDLY_NAMES: Record<string, string> = {
-  ORDERLY_KEY: "API Key",
-  ORDERLY_SECRET: "API Secret",
-  ALPACA_API_KEY: "API Key",
-  ALPACA_SECRET_KEY: "API Secret",
-  ALPACA_BASE_URL: "Base URL",
-  BYREAL_API_KEY: "API Key",
-  BYREAL_API_SECRET: "API Secret",
-};
-
-function CredentialRow({ cred }: { cred: CredentialRef }) {
-  const friendly = FRIENDLY_NAMES[cred.env_var];
-  return (
-    <tr className="border-t border-border-soft first:border-t-0">
-      <td className="py-2">
-        {friendly ? (
-          <span className="flex flex-col gap-0.5">
-            <span className="text-[12px] text-text">{friendly}</span>
-            <code className="font-mono text-[10px] text-text-4">{cred.env_var}</code>
-          </span>
-        ) : (
-          <code className="font-mono text-[12px] text-text-2">{cred.env_var}</code>
-        )}
-      </td>
-      <td className="py-2 text-right">
-        {cred.is_set ? (
-          <span className="text-gold text-[12px]">● set</span>
-        ) : (
-          <span className="text-text-3 text-[12px]">○ unset</span>
-        )}
-      </td>
-    </tr>
   );
 }
