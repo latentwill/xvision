@@ -38,6 +38,7 @@ pub struct BrokersReport {
     pub orderly: BrokerEntry,
     pub byreal: BrokerEntry,
     pub degen_arena: BrokerEntry,
+    pub hyperliquid: BrokerEntry,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -49,7 +50,8 @@ pub struct BrokersReport {
 pub struct BrokerEntry {
     /// Display name ("Alpaca", "Orderly Network", "Byreal").
     pub name: String,
-    /// Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal").
+    /// Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal" |
+    /// "degen_arena" | "hyperliquid").
     pub kind: String,
     /// Per-required-env-var presence; values are never returned.
     pub credentials: Vec<CredentialRef>,
@@ -271,6 +273,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
         orderly: orderly_entry(),
         byreal: byreal_entry(stored.byreal.as_ref()),
         degen_arena: degen_arena_entry(stored.degen_arena.as_ref()),
+        hyperliquid: hyperliquid_entry(stored.hyperliquid.as_ref()),
     })
 }
 
@@ -375,6 +378,31 @@ fn degen_arena_entry(stored: Option<&DegenArenaCredentials>) -> BrokerEntry {
         note: Some(
             "Virtuals Degen Arena (Hyperliquid perps) — live execution via native EIP-712 \
              signing. Use a trade-only HL agent key (cannot withdraw). testnet supported."
+                .into(),
+        ),
+    }
+}
+
+fn hyperliquid_entry(stored: Option<&HyperliquidCredentials>) -> BrokerEntry {
+    let credentials = vec![cred("HL_API_KEY"), cred("HL_ACCOUNT_ADDRESS"), cred("HL_NETWORK")];
+    let env_configured = credentials
+        .iter()
+        .find(|c| c.env_var == "HL_API_KEY")
+        .map(|c| c.is_set)
+        .unwrap_or(false);
+    let stored_present = stored.is_some();
+    let stored_key_suffix = stored.map(|c| last4(&c.api_key));
+    BrokerEntry {
+        name: "Hyperliquid".into(),
+        kind: "hyperliquid".into(),
+        credentials,
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix: stored_key_suffix,
+        base_url: stored.map(|c| c.network.clone()),
+        note: Some(
+            "Hyperliquid perps (direct) — live execution via native EIP-712 signing. \
+             Use a trade-only HL agent key (cannot withdraw). testnet supported."
                 .into(),
         ),
     }

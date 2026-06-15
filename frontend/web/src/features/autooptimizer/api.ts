@@ -192,6 +192,9 @@ export type CycleRunSummary = {
   input_tokens?: number | null;
   output_tokens?: number | null;
   unpriced_calls?: number | null;
+  /** The strategy (agent_id) this cycle optimized. `null`/absent when the
+   *  cycle has no session-bridge row. Flattened from `CycleRunRow` server-side. */
+  strategy_id?: string | null;
 };
 
 /** Full detail for one cycle: summary fields + its lineage nodes + honesty check. */

@@ -60,7 +60,7 @@ export const firstRunTourSteps: DriveStep[] = [
     popover: {
       title: "Deploy your winners",
       description:
-        "Fund your agent and let it trade for real. Live trading is real money — full stop.",
+        "Fund your agent and let it trade for real. Live trading is real money.",
       side: "right",
       align: "start",
     },

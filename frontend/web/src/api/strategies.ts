@@ -265,6 +265,9 @@ export type StrategyMetadataPatch = {
   asset_universe?: string[];
   decision_cadence_minutes?: number;
   color?: string;
+  /** Strategy author/owner handle. Non-empty sets the creator (e.g. the
+   *  operator's profile handle); omitted/empty leaves it untouched. */
+  creator?: string;
 };
 
 export type DecisionMode = "agentic" | "mechanistic";

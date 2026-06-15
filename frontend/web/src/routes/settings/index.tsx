@@ -40,7 +40,9 @@ const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
-  { to: "marketplace", label: "Marketplace" },
+  // Marketplace tab removed (QA) — opt-in marketplace settings live on the
+  // marketplace surface itself; the `/settings/marketplace` route is kept
+  // registered so the legacy `identity` redirect and deep links still resolve.
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -91,6 +93,8 @@ export function SettingsBrokersRoute() {
           <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
           <ByrealBrokerCard entry={data.byreal} />
+          <BrokerCard entry={data.degen_arena} />
+          <BrokerCard entry={data.hyperliquid} />
           <MarketsRefreshCard />
         </div>
       )}
@@ -632,9 +636,9 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
       {showForm ? (
         <form onSubmit={onSubmit} className="space-y-3">
           <p className="m-0 text-[12px] text-text-3 leading-snug">
-            Use a Hyperliquid{" "}
-            <strong className="text-text-2">agent / API wallet key</strong> —
-            trading-only, cannot withdraw.
+            Use a{" "}
+            <strong className="text-text-2">trading-only agent / API wallet key</strong>{" "}
+            (cannot withdraw) — never your master account key.
           </p>
           <div>
             <label className="block text-[12px] text-text-2 mb-1">

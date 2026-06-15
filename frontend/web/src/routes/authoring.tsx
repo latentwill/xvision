@@ -38,7 +38,7 @@ import { createAgent, listAgents, type Agent } from "@/api/agents";
 // deferred per-agent filter composer; re-add it to this import when
 // un-deferring (see authoring.tsx FilterCard wiring below).
 import { FilterCard, StrategyRequirementChip } from "@/components/strategy";
-import { listProviders, settingsKeys } from "@/api/settings";
+import { getProfile, listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -1410,6 +1410,24 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     },
   });
 
+  // Operator profile handle — offered as the creator for this strategy (QA:
+  // "allow creator field to be updated with the user profile").
+  const profileQ = useQuery({
+    queryKey: settingsKeys.profile(),
+    queryFn: getProfile,
+  });
+  const profileHandle = profileQ.data?.display_name?.trim() || null;
+  const setCreator = useMutation({
+    mutationFn: (creator: string) => patchStrategyMetadata(m.id, { creator }),
+    onSuccess: (updated) => {
+      setLocalError(null);
+      qc.setQueryData(strategyKeys.detail(m.id), updated);
+    },
+    onError: (err) => {
+      setLocalError(errorMessage(err));
+    },
+  });
+
   const sameAssets =
     assetUniverse.length === m.asset_universe.length &&
     assetUniverse.every((a, i) => a === m.asset_universe[i]);
@@ -1512,10 +1530,21 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
           />
         </Field>
         <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-[13px]">
-          <DT>Template</DT>
-          <DD className="font-mono text-text-2">{m.template}</DD>
           <DT>Creator</DT>
-          <DD className="font-mono text-text-2">{m.creator}</DD>
+          <DD className="flex flex-wrap items-center gap-2 font-mono text-text-2">
+            <span>{m.creator}</span>
+            {profileHandle && profileHandle !== m.creator ? (
+              <button
+                type="button"
+                onClick={() => setCreator.mutate(profileHandle)}
+                disabled={setCreator.isPending}
+                title={`Set creator to your profile handle (${profileHandle})`}
+                className="rounded border border-border px-2 py-0.5 font-sans text-[11px] text-text-2 hover:border-text-3 hover:text-text disabled:opacity-50"
+              >
+                {setCreator.isPending ? "Setting…" : `Use my handle (${profileHandle})`}
+              </button>
+            ) : null}
+          </DD>
           <DT>Risk basis</DT>
           <DD>{m.risk_preset_or_config}</DD>
         </dl>

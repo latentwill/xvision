@@ -24,14 +24,31 @@ const PRIMARY: Item[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
-export function Sidebar({ className = "" }: { className?: string }) {
+/**
+ * The primary left nav.
+ *
+ * `compact` renders an icon-only rail (~60px) used by the tablet shell
+ * (768–1279px), where the full 220px sidebar was previously absent — leaving
+ * the nav unreachable at that breakpoint (QA: "side menu disappears when screen
+ * res is too small"). Labels collapse to `title` tooltips; the theme toggle
+ * stacks; the wallet footer (text-heavy) is hidden — the wallet lives on its
+ * own settings tab.
+ */
+export function Sidebar({
+  className = "",
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
   const isLight = resolvedTheme === "light";
 
   return (
     <aside
       className={[
-        "bg-surface-sidebar border-r border-border-soft flex flex-col w-[220px] pt-6 pb-4",
+        "bg-surface-sidebar border-r border-border-soft flex flex-col pt-6 pb-4",
+        compact ? "w-[60px]" : "w-[220px]",
         // Pin to the viewport so the theme toggle + account row stay anchored
         // to the bottom of the screen instead of scrolling away with a tall
         // main column (the shell grid is min-h-screen, which would otherwise
@@ -40,8 +57,8 @@ export function Sidebar({ className = "" }: { className?: string }) {
         className,
       ].join(" ")}
     >
-      <div className="px-6 pb-8">
-        <BrandMark height={24} />
+      <div className={compact ? "flex justify-center pb-8" : "px-6 pb-8"}>
+        <BrandMark height={compact ? 14 : 24} />
       </div>
 
       <nav className="flex-1 flex flex-col min-h-0 overflow-y-auto">
@@ -50,9 +67,13 @@ export function Sidebar({ className = "" }: { className?: string }) {
             <NavLink
               to={it.to}
               end={it.to === "/"}
+              title={compact ? it.label : undefined}
               className={({ isActive }) =>
                 [
-                  "flex items-center gap-3 px-6 py-2.5 text-[13.5px] border-l-2 transition-colors",
+                  "flex items-center border-l-2 text-[13.5px] transition-colors",
+                  compact
+                    ? "justify-center px-0 py-3"
+                    : "gap-3 px-6 py-2.5",
                   isActive
                     ? "text-text border-gold bg-gold/[0.06]"
                     : "text-text-2 border-transparent hover:text-text",
@@ -64,7 +85,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
                   <span className={isActive ? "text-gold" : ""}>
                     <Icon name={it.icon} size={17} />
                   </span>
-                  <span>{it.label}</span>
+                  {!compact && <span>{it.label}</span>}
                 </>
               )}
             </NavLink>
@@ -82,13 +103,19 @@ export function Sidebar({ className = "" }: { className?: string }) {
         viewport bottom regardless of nav-list length.
       */}
       <div className="mt-auto">
-        <div className="mx-4 mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1">
+        <div
+          className={[
+            "mb-3 flex items-center gap-1 rounded border border-border-soft bg-surface-elev p-1",
+            compact ? "mx-2 flex-col" : "mx-4",
+          ].join(" ")}
+        >
           <button
             type="button"
             onClick={setLightTheme}
             aria-label="Switch to light theme"
             className={[
               "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+              compact ? "w-full" : "",
               isLight ? "bg-gold/[0.12] text-gold" : "",
             ].join(" ")}
           >
@@ -100,6 +127,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
             aria-label="Switch to dark theme"
             className={[
               "flex h-7 flex-1 items-center justify-center rounded text-text-3 transition-colors hover:text-text",
+              compact ? "w-full" : "",
               !isLight ? "bg-gold/[0.12] text-gold" : "",
             ].join(" ")}
           >
@@ -107,7 +135,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
           </button>
         </div>
 
-        <WalletConnectFooter />
+        {!compact && <WalletConnectFooter />}
       </div>
     </aside>
   );

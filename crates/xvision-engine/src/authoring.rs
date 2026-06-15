@@ -377,6 +377,7 @@ pub async fn update_manifest(
         color: req.color,
         asset_universe: req.asset_universe,
         decision_cadence_minutes: req.decision_cadence_minutes,
+        creator: None,
     };
     apply_metadata_patch(&mut strategy, patch).map_err(|e| anyhow::anyhow!("{e}"))?;
 

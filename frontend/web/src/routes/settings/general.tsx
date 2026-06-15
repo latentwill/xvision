@@ -7,6 +7,7 @@ import {
 import { useTheme } from "@/theme/useTheme";
 import { RestartTourButton } from "@/features/onboarding";
 import { MemorySettingsCard } from "./MemorySettingsCard";
+import { ProfileSettingsCard } from "./ProfileSettingsCard";
 
 function swatchFor(value: string) {
   const id: ResolvedTheme = value === "auto" ? "dark" : (value as ResolvedTheme);
@@ -18,6 +19,8 @@ export function SettingsGeneralRoute() {
 
   return (
     <div className="space-y-5">
+      <ProfileSettingsCard />
+
       <Card className="p-5">
         <div className="mb-4">
           <h3 className="m-0 font-sans font-semibold text-[18px] tracking-tight">
