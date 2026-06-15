@@ -14,6 +14,7 @@ import { LineageRoute } from "./LineageRoute";
 
 const faucetUsdcMock = vi.fn(async () => "0xfaucet-tx");
 vi.mock("@/features/marketplace/lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   faucetUsdc: (...args: unknown[]) =>
     (faucetUsdcMock as (...a: unknown[]) => Promise<string>)(...args),
 }));
@@ -59,7 +60,8 @@ function Wrapper({ client }: { client: FixtureMarketplaceData }) {
         <MemoryRouter initialEntries={["/marketplace/lineage/btc-momentum-v3"]}>
           <Routes>
             <Route path="/marketplace/lineage/:name" element={<LineageRoute />} />
-            <Route path="/marketplace/receipts/:tx" element={<div>receipt</div>} />
+            {/* Buy now finalizes and lands on the Strategy detail page. */}
+            <Route path="/strategies/:id" element={<div>strategy detail</div>} />
           </Routes>
         </MemoryRouter>
       </MarketplaceDataProvider>
@@ -90,6 +92,8 @@ describe("LineageRoute buy states", () => {
       .spyOn(client, "purchaseIntent")
       .mockRejectedValueOnce(new InsufficientUsdcError(49_000_000n, 1_000_000n))
       .mockResolvedValueOnce({ txHash: "0xreal", network: "mantle-sepolia" });
+    // After the funded retry succeeds, finalize materializes the strategy.
+    vi.spyOn(client, "importSealed").mockResolvedValue({ agent_id: "NEW" });
     render(<Wrapper client={client} />);
 
     const user = userEvent.setup();
@@ -106,7 +110,7 @@ describe("LineageRoute buy states", () => {
     // Faucet mints the needed amount, then the purchase retries
     await waitFor(() => expect(faucetUsdcMock).toHaveBeenCalledWith(49_000_000n));
     await waitFor(() => expect(intentSpy).toHaveBeenCalledTimes(2));
-    // Second attempt succeeds → navigates to the receipt
-    expect(await screen.findByText("receipt")).toBeInTheDocument();
+    // Second attempt succeeds → finalizes and lands on the Strategy detail page
+    expect(await screen.findByText("strategy detail")).toBeInTheDocument();
   });
 });

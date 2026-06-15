@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { UnifiedEvent, UnifiedPayload } from "@/api/unified-events";
 import { useSessionEvents } from "./session-events";
+import { projectionToRunSpan } from "@/features/agent-runs/TraceDock";
 import type { ToolRow } from "./message-row-reducer";
 
 // ─── Event builder (mirrors message-row-reducer.test.ts) ────────────────────
@@ -212,6 +213,225 @@ describe("session-events store — one source, two projections", () => {
 
     const seqs = useSessionEvents.getState().sessions["sess_ooo"]!.events.map((e) => e.seq);
     expect(seqs).toEqual([0, 1, 2]);
+  });
+
+  it("an engine_event in a chat session projects an engine.event dock row (WS-8 Part 2) without disturbing the tool lifecycle", () => {
+    const store = useSessionEvents.getState();
+    // The full tool lifecycle (the existing rail path) …
+    for (const e of toolLifecycle()) store.ingest(SESSION, e);
+    // … plus a run-scoped engine event interleaved into the SAME log.
+    store.ingest(
+      SESSION,
+      ev(
+        {
+          kind: "engine_event",
+          data: {
+            run_id: "run_1",
+            span_id: null,
+            kind: "risk_veto",
+            payload_json: JSON.stringify({ reason: "max_drawdown" }),
+            created_at: "2026-05-24T12:00:02Z",
+          },
+        },
+        { event_id: "ee_risk", seq: 5, session_id: SESSION },
+      ),
+    );
+
+    const spans = useSessionEvents.getState().spansFor(SESSION);
+    // The tool span is untouched (no rail regression).
+    const tool = spans.find((s) => s.spanId === SPAN);
+    expect(tool?.kind).toBe("tool.call");
+    expect(tool?.status).toBe("ok");
+    // The engine event is now a first-class engine.event dock row carrying the
+    // kind + payload the render layer resolves a family/label off.
+    const engine = spans.filter((s) => s.kind === "engine.event");
+    expect(engine).toHaveLength(1);
+    expect(engine[0]!.attributes.engine_event_kind).toBe("risk_veto");
+    expect(engine[0]!.attributes.engine_event_payload).toEqual({ reason: "max_drawdown" });
+    expect(engine[0]!.parentSpanId).toBeNull(); // run-scoped ⇒ top-level row
+
+    // The rail rows are unchanged: still exactly one tool row (engine events
+    // are not rail rows — they pass through the reducer untouched).
+    const toolRows = useSessionEvents.getState().rowsFor(SESSION).filter((r) => r.type === "tool");
+    expect(toolRows).toHaveLength(1);
+  });
+
+  it("a re-delivered engine_event (reconnect/replay) dedupes onto the same dock row", () => {
+    const store = useSessionEvents.getState();
+    const engineEv = ev(
+      {
+        kind: "engine_event",
+        data: {
+          run_id: "run_1",
+          span_id: "sp_decide",
+          kind: "regime_transition",
+          payload_json: null,
+          created_at: "2026-05-24T12:00:03Z",
+        },
+      },
+      { event_id: "ee_regime", seq: 0, span_id: "sp_decide", session_id: "sess_ee" },
+    );
+    store.ingest("sess_ee", engineEv);
+    // Same event_id re-ingested (dedupe gate) AND a distinct event_id carrying
+    // the SAME engine event (e.g. snapshot + live tail overlap) — neither must
+    // produce a duplicate engine.event row.
+    store.ingest("sess_ee", engineEv);
+    store.ingest("sess_ee", { ...engineEv, event_id: "ee_regime_dup", seq: 1 });
+
+    const engine = useSessionEvents
+      .getState()
+      .spansFor("sess_ee")
+      .filter((s) => s.kind === "engine.event");
+    expect(engine).toHaveLength(1);
+    expect(engine[0]!.parentSpanId).toBe("sp_decide");
+  });
+
+  it("a LIVE agent.decision span_started folds attributes_json onto the projection so the inspector renders mark px / position pre (WS-8 B2)", () => {
+    // B2 dropped the per-frame export refetch that USED to backfill the
+    // decision span's entry-state snapshot. For a decision span that opens
+    // AFTER the connect-time snapshot (the normal case in a running live
+    // trade), the ONLY carrier for asset/bar_ts/mark_price/position_pre is the
+    // `span_started.attributes_json` blob — `SpanStartedEvent.attributes_json`
+    // (crates/xvision-observability/src/events.rs:137). If `projectSpan`'s
+    // span_started arm leaves `attributes` as the seed `{}`, the inspector's
+    // DecisionSpanDetailRows renders `mark px —` / `position pre —` from
+    // span-open until the terminal refetch — a never-go-dark violation on the
+    // live-money dock.
+    const store = useSessionEvents.getState();
+    const SESS = "sess_live_decision";
+    const DECISION_SPAN = "sp_live_decision";
+    // NO seed snapshot entry for this span — it is created live by span_started.
+    store.ingest(
+      SESS,
+      ev(
+        {
+          kind: "span_started",
+          data: {
+            span_id: DECISION_SPAN,
+            run_id: "run_1",
+            parent_span_id: "sp_root",
+            kind: "agent.decision",
+            name: "trader",
+            started_at: "2026-06-14T10:00:00.200Z",
+            otel_trace_id: null,
+            otel_span_id: null,
+            attributes_json: JSON.stringify({
+              asset: "ETH",
+              bar_ts: "2026-06-14T10:00:00.000Z",
+              mark_price: 3456.78,
+              position_pre: -0.5,
+              decision_input: { regime: "trend_up" },
+            }),
+          },
+        },
+        { event_id: "live_dec_start", seq: 0, span_id: DECISION_SPAN, session_id: SESS },
+      ),
+    );
+
+    const spans = useSessionEvents.getState().spansFor(SESS);
+    const decision = spans.find((s) => s.spanId === DECISION_SPAN);
+    expect(decision?.kind).toBe("agent.decision");
+    // The entry-state snapshot is folded onto the projection's attribute bag
+    // (no longer the seed `{}`), so the inspector has the numbers to render.
+    expect(decision?.attributes.asset).toBe("ETH");
+    expect(decision?.attributes.bar_ts).toBe("2026-06-14T10:00:00.000Z");
+    expect(decision?.attributes.mark_price).toBe(3456.78);
+    expect(decision?.attributes.position_pre).toBe(-0.5);
+    expect(decision?.attributes.decision_input).toEqual({ regime: "trend_up" });
+
+    // …and it survives projectionToRunSpan onto RunSpan.attributes — the exact
+    // bag DecisionSpanDetailRows reads `mark_price` / `position_pre` off.
+    const runSpan = projectionToRunSpan(decision!);
+    expect(runSpan.kind).toBe("agent.decision");
+    expect(runSpan.attributes?.mark_price).toBe(3456.78);
+    expect(runSpan.attributes?.position_pre).toBe(-0.5);
+    expect(runSpan.attributes?.asset).toBe("ETH");
+  });
+
+  it("a malformed or null span_started attributes_json never throws and folds to an empty bag (WS-8 B2)", () => {
+    const store = useSessionEvents.getState();
+    const SESS = "sess_bad_attrs";
+    const SP = "sp_bad_attrs";
+    // Malformed JSON (not parseable) must not throw — guard to `{}`.
+    expect(() =>
+      store.ingest(
+        SESS,
+        ev(
+          {
+            kind: "span_started",
+            data: {
+              span_id: SP,
+              run_id: "run_1",
+              parent_span_id: null,
+              kind: "agent.decision",
+              name: "trader",
+              started_at: "2026-06-14T10:00:00.200Z",
+              otel_trace_id: null,
+              otel_span_id: null,
+              attributes_json: "{not valid json",
+            },
+          },
+          { event_id: "bad_attrs", seq: 0, span_id: SP, session_id: SESS },
+        ),
+      ),
+    ).not.toThrow();
+    const decision = useSessionEvents
+      .getState()
+      .spansFor(SESS)
+      .find((s) => s.spanId === SP);
+    // No keys folded; the bag is an object the inspector can read safely.
+    expect(decision?.attributes).toEqual({});
+  });
+
+  it("re-delivery of span_started (reconnect/replay) does not clobber an already-folded decision attribute bag (WS-8 B2)", () => {
+    const store = useSessionEvents.getState();
+    const SESS = "sess_redeliver_attrs";
+    const SP = "sp_redeliver_attrs";
+    const start = ev(
+      {
+        kind: "span_started",
+        data: {
+          span_id: SP,
+          run_id: "run_1",
+          parent_span_id: null,
+          kind: "agent.decision",
+          name: "trader",
+          started_at: "2026-06-14T10:00:00.200Z",
+          otel_trace_id: null,
+          otel_span_id: null,
+          attributes_json: JSON.stringify({ asset: "BTC", mark_price: 100 }),
+        },
+      },
+      { event_id: "redeliver_start", seq: 0, span_id: SP, session_id: SESS },
+    );
+    store.ingest(SESS, start);
+    // A distinct event_id carrying the SAME span_started but with a null
+    // attributes_json (snapshot/live overlap) must NOT blank the folded bag.
+    store.ingest(SESS, {
+      ...start,
+      event_id: "redeliver_start_dup",
+      seq: 1,
+      payload: {
+        kind: "span_started",
+        data: {
+          span_id: SP,
+          run_id: "run_1",
+          parent_span_id: null,
+          kind: "agent.decision",
+          name: "trader",
+          started_at: "2026-06-14T10:00:00.200Z",
+          otel_trace_id: null,
+          otel_span_id: null,
+          attributes_json: null,
+        },
+      },
+    });
+    const decision = useSessionEvents
+      .getState()
+      .spansFor(SESS)
+      .find((s) => s.spanId === SP);
+    expect(decision?.attributes.asset).toBe("BTC");
+    expect(decision?.attributes.mark_price).toBe(100);
   });
 
   it("reset clears a session's log without touching siblings", () => {

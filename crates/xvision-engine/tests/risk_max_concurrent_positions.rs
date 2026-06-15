@@ -101,7 +101,6 @@ fn three_asset_strategy(max_concurrent: u32) -> Strategy {
             model: None,
         }),
         risk,
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,

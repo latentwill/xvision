@@ -184,36 +184,59 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
     let mut paired: Vec<StrategyRun> = Vec::new();
 
     for (idx, strategy) in strategies.into_iter().enumerate() {
+        // Fetch the most recent completed runs (newest-first) rather than just
+        // one. The single-latest run can be a completed run whose `metrics_json`
+        // was never finalized (`metrics == None`) — which previously collapsed
+        // EVERY headline to 0.00 ("Strategy Comparison completely flat" QA). We
+        // now pick the newest run that has BOTH a non-empty equity curve AND
+        // stored metrics; only if none in the window have metrics do we fall
+        // back to the newest run with an equity curve (metrics still zero, but
+        // the curve renders).
         let runs = run_store
             .list(ListFilter {
                 agent_id: Some(strategy.manifest.id.clone()),
                 status: Some(vec![RunStatus::Completed]),
-                limit: Some(1),
+                limit: Some(12),
                 ..Default::default()
             })
             .await
             .map_err(|e| ApiError::Internal(format!("list runs for {}: {e}", strategy.manifest.id)))?;
 
-        let Some(latest_run) = runs.into_iter().next() else {
-            // No completed run for this strategy; skip it.
-            continue;
-        };
-
-        let equity = run_store
-            .read_equity_curve(&latest_run.id)
-            .await
-            .map_err(|e| ApiError::Internal(format!("read equity for run {}: {e}", latest_run.id)))?;
-
-        if equity.is_empty() {
-            continue;
+        // Selected (equity, metrics) for the chosen run. `chosen` holds the
+        // newest run that has metrics; `fallback` the newest with just a curve.
+        type RunData = (
+            Vec<(chrono::DateTime<chrono::Utc>, f64)>,
+            Option<crate::eval::run::MetricsSummary>,
+        );
+        let mut chosen: Option<RunData> = None;
+        let mut fallback: Option<RunData> = None;
+        for run in runs {
+            let equity = run_store
+                .read_equity_curve(&run.id)
+                .await
+                .map_err(|e| ApiError::Internal(format!("read equity for run {}: {e}", run.id)))?;
+            if equity.is_empty() {
+                continue;
+            }
+            if run.metrics.is_some() {
+                // Newest run with metrics wins; stop scanning.
+                chosen = Some((equity, run.metrics));
+                break;
+            }
+            // Remember the newest run with a curve as a last resort.
+            if fallback.is_none() {
+                fallback = Some((equity, run.metrics));
+            }
         }
 
-        paired.push(StrategyRun {
-            strategy,
-            equity,
-            metrics: latest_run.metrics,
-            idx,
-        });
+        if let Some((equity, metrics)) = chosen.or(fallback) {
+            paired.push(StrategyRun {
+                strategy,
+                equity,
+                metrics,
+                idx,
+            });
+        }
     }
 
     if paired.is_empty() {
@@ -289,21 +312,20 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
         // Monthly return matrix derived from the equity curve.
         let monthly = build_monthly_returns(&sr.equity);
 
+        // Profit factor is not stored in MetricsSummary v1. Rather than show a
+        // permanent 0.00, derive it from the equity curve: gross up-moves /
+        // gross down-moves across consecutive points. This is an equity-curve
+        // (period) profit factor, not a per-trade one, but it is an honest,
+        // non-zero signal that tracks the same curve the chart renders.
+        let pf = equity_curve_profit_factor(&sr.equity);
+
         // Headline metrics. Fall back to zeros when the run has no stored
         // metrics (e.g. a manually-created run without the metrics finalize
         // step — uncommon but possible during early development).
-        let (ret, sharpe, mdd, win, pf) = if let Some(m) = sr.metrics {
-            (
-                m.total_return_pct,
-                m.sharpe,
-                m.max_drawdown_pct,
-                m.win_rate,
-                // Profit factor is not stored in MetricsSummary v1;
-                // default to 0.0 until a dedicated pf column lands.
-                0.0,
-            )
+        let (ret, sharpe, mdd, win) = if let Some(m) = sr.metrics {
+            (m.total_return_pct, m.sharpe, m.max_drawdown_pct, m.win_rate)
         } else {
-            (0.0, 0.0, 0.0, 0.0, 0.0)
+            (0.0, 0.0, 0.0, 0.0)
         };
 
         bundle_strategies.push(MultiStrategyBundleEntry {
@@ -340,6 +362,30 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
 
 /// Pad `v` to length `n` with `f64::NAN`. If `v` is already `>= n`, returns
 /// the first `n` elements (truncates to the shared timeline).
+/// Equity-curve (period) profit factor: gross sum of up-moves divided by the
+/// gross absolute sum of down-moves between consecutive equity samples.
+///
+/// This is NOT a per-trade profit factor (the run's trade ledger is not loaded
+/// here) — it is an honest curve-derived proxy so the Strategy Comparison card
+/// shows a real number instead of a hardcoded 0.00. Returns 0.0 when the curve
+/// has no down-moves (no meaningful denominator) or fewer than two points.
+fn equity_curve_profit_factor(equity: &[(chrono::DateTime<chrono::Utc>, f64)]) -> f64 {
+    let mut gross_win = 0.0_f64;
+    let mut gross_loss = 0.0_f64;
+    for pair in equity.windows(2) {
+        let delta = pair[1].1 - pair[0].1;
+        if delta > 0.0 {
+            gross_win += delta;
+        } else if delta < 0.0 {
+            gross_loss += -delta;
+        }
+    }
+    if gross_loss <= f64::EPSILON {
+        return 0.0;
+    }
+    gross_win / gross_loss
+}
+
 fn pad_to(mut v: Vec<f64>, n: usize) -> Vec<f64> {
     match v.len().cmp(&n) {
         std::cmp::Ordering::Less => {
@@ -394,6 +440,36 @@ fn build_monthly_returns(equity: &[(chrono::DateTime<chrono::Utc>, f64)]) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── profit-factor (equity-curve proxy) ───────────────────────────────────
+
+    #[test]
+    fn equity_curve_profit_factor_basic() {
+        use chrono::{TimeZone, Utc};
+        let ts = |i: i64| Utc.timestamp_opt(1_700_000_000 + i * 86_400, 0).unwrap();
+        // Up +10, down -5, up +20, down -5 → gross_win 30, gross_loss 10 → pf 3.0
+        let curve = vec![
+            (ts(0), 100.0),
+            (ts(1), 110.0),
+            (ts(2), 105.0),
+            (ts(3), 125.0),
+            (ts(4), 120.0),
+        ];
+        let pf = equity_curve_profit_factor(&curve);
+        assert!((pf - 3.0).abs() < 1e-9, "expected pf=3.0, got {pf}");
+    }
+
+    #[test]
+    fn equity_curve_profit_factor_no_losses_or_empty_is_zero() {
+        use chrono::{TimeZone, Utc};
+        let ts = |i: i64| Utc.timestamp_opt(1_700_000_000 + i * 86_400, 0).unwrap();
+        // Monotonic up → no down-moves → 0.0 (no meaningful denominator).
+        let up_only = vec![(ts(0), 100.0), (ts(1), 110.0), (ts(2), 130.0)];
+        assert_eq!(equity_curve_profit_factor(&up_only), 0.0);
+        // Single point / empty → 0.0.
+        assert_eq!(equity_curve_profit_factor(&[(ts(0), 100.0)]), 0.0);
+        assert_eq!(equity_curve_profit_factor(&[]), 0.0);
+    }
 
     // ── stub tests (renamed with stub_ prefix) ───────────────────────────────
 

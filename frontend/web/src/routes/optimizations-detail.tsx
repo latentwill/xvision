@@ -471,7 +471,7 @@ export function OptimizationDetailRoute() {
               {latestSnapshot && !latestHoldout ? (
                 <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
                   <input
-                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    className="rounded border border-border bg-surface-elev px-3 py-2 text-[13px] text-text"
                     inputMode="decimal"
                     placeholder="Train metric"
                     value={trainMetric}
@@ -479,7 +479,7 @@ export function OptimizationDetailRoute() {
                     data-testid="holdout-train-input"
                   />
                   <input
-                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    className="rounded border border-border bg-surface-elev px-3 py-2 text-[13px] text-text"
                     inputMode="decimal"
                     placeholder="Holdout metric"
                     value={holdoutMetric}
@@ -496,7 +496,7 @@ export function OptimizationDetailRoute() {
                     {holdoutMut.isPending ? "Recording…" : "Record holdout"}
                   </button>
                   <input
-                    className="md:col-span-3 rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    className="md:col-span-3 rounded border border-border bg-surface-elev px-3 py-2 text-[13px] text-text"
                     placeholder="Override reason"
                     value={overrideReason}
                     onChange={(e) => setOverrideReason(e.target.value)}
@@ -510,7 +510,7 @@ export function OptimizationDetailRoute() {
               !latestHoldout.overfit_waiver_reason ? (
                 <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2">
                   <input
-                    className="rounded border border-border bg-surface px-3 py-2 text-[13px]"
+                    className="rounded border border-border bg-surface-elev px-3 py-2 text-[13px] text-text"
                     placeholder="Overfit waiver reason"
                     value={waiverReason}
                     onChange={(e) => setWaiverReason(e.target.value)}

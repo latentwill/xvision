@@ -181,6 +181,14 @@ pub struct ToolCallStartedEvent {
     pub is_run_terminator: bool,
     pub input_hash: String,
     pub input_payload_ref: Option<String>,
+    /// Full plaintext tool input (args JSON) BEFORE blob persistence.
+    /// Carried on the event so the recorder can write a
+    /// `tool_call_payload` side-row, mirroring `prompt_text` on
+    /// `ModelCallFinishedEvent`. NEVER persisted as a `tool_calls`
+    /// column — the recorder consumes it into the `events` table only.
+    /// Producers under `hash_only` leave it `None`.
+    #[serde(default)]
+    pub input_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +197,12 @@ pub struct ToolCallFinishedEvent {
     pub output_hash: Option<String>,
     pub output_payload_ref: Option<String>,
     pub exit_code: Option<i64>,
+    /// Full plaintext tool output BEFORE blob persistence. Same
+    /// recorder-only side-row contract as
+    /// `ToolCallStartedEvent::input_text` / `response_text` on the
+    /// model-call event. Producers under `hash_only` leave it `None`.
+    #[serde(default)]
+    pub output_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,50 +2,8 @@
   "base_template": "range_trade",
   "display_name": "BB Pctb Oscillator",
   "family": "bollinger",
-  "mechanical_params": [
-    {
-      "default": "20",
-      "name": "bb_period",
-      "range": "10 / 20 / 50"
-    },
-    {
-      "default": "2.0",
-      "name": "bb_mult",
-      "range": "1.5 \u2013 2.5"
-    },
-    {
-      "default": "3",
-      "name": "pct_b_smoothing",
-      "range": "1 \u2013 10"
-    },
-    {
-      "default": "0.10",
-      "name": "oversold_threshold",
-      "range": "0.0 \u2013 0.30"
-    },
-    {
-      "default": "0.90",
-      "name": "overbought_threshold",
-      "range": "0.70 \u2013 1.0"
-    },
-    {
-      "default": "[0.40, 0.60]",
-      "name": "neutral_band",
-      "range": "various"
-    },
-    {
-      "default": "continuous",
-      "name": "position_mode",
-      "range": "continuous / binary"
-    },
-    {
-      "default": "70",
-      "name": "max_bandwidth_percentile",
-      "range": "50 \u2013 90"
-    }
-  ],
   "name": "bb_pctb_oscillator",
-  "plain_summary": "%B is already a normalized oscillator-style value: 0 = lower band, 0.5 = SMA, 1 = upper band. By dropping the band-line interpretation entirely and treating %B as a pure oscillator (analogous to RSI), the strategy removes threshold artifacts: there is no longer a binary \"touched / didn't touch\" \u2014 the signal is a continuous score that supports continuous sizing.",
+  "plain_summary": "%B is already a normalized oscillator-style value: 0 = lower band, 0.5 = SMA, 1 = upper band. By dropping the band-line interpretation entirely and treating %B as a pure oscillator (analogous to RSI), the strategy removes threshold artifacts: there is no longer a binary \"touched / didn't touch\" — the signal is a continuous score that supports continuous sizing.",
   "regime_fit": [
     "any"
   ],
@@ -57,14 +15,14 @@
   "sections": {
     "data_dependencies": "None beyond price.",
     "decision_rule": "```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\nif not in_normal_vol: return Flat\n\n# Continuous-sizing variant:\nif position_mode == \"continuous\":\n    if pct_b_smoothed <= oversold_threshold:\n        long_signal_strength = (oversold_threshold - pct_b_smoothed) / oversold_threshold\n        position_size = base_size * long_signal_strength\n        enter long with that size\n    elif pct_b_smoothed >= overbought_threshold:\n        short_signal_strength = (pct_b_smoothed - overbought_threshold) / (1 - overbought_threshold)\n        position_size = base_size * short_signal_strength\n        enter short\n\n    exit when pct_b_smoothed re-enters neutral_band\n\n# Binary variant (RSI-style):\nelif position_mode == \"binary\":\n    if pct_b_smoothed <= oversold_threshold and is_flat:  enter long\n    elif pct_b_smoothed >= overbought_threshold and is_flat: enter short\n    exit on opposite threshold or neutral_band re-entry\n```",
-    "expected_regime": "B1 / B2. The continuous-sizing form fires more often than `bb_meanrev_zscore`\nbecause there's no binary threshold \u2014 small signals get small positions.\nThis shifts the strategy's character toward \"always quoted\" rather than\n\"intermittently triggered.\"",
-    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2` (used only to compute %B).\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `pct_b_smoothed` \u2014 EMA(%B, period=3) for noise reduction.\n- `bandwidth_percentile` for regime gating.",
-    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 \u2013 2.5        |\n| `pct_b_smoothing`              | 3       | 1 \u2013 10           |\n| `oversold_threshold`           | 0.10    | 0.0 \u2013 0.30       |\n| `overbought_threshold`         | 0.90    | 0.70 \u2013 1.0       |\n| `neutral_band`                 | [0.40, 0.60] | various |\n| `position_mode`                | `continuous` | `continuous` / `binary` |\n| `max_bandwidth_percentile`     | 70      | 50 \u2013 90          |\n\n`position_mode = continuous`: position size scales with how oversold /\noverbought %B is. Binary mode reduces to a thresholded RSI-style entry.",
-    "references": "- Compendium README \u00a7Pivot dimensions, cardinality.\n- Comparison target: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) \u2014 same regime, threshold vs continuous form.\n- Methodologically similar: RSI-based mean reversion (RSI is an oscillator with no underlying band lines).",
+    "expected_regime": "B1 / B2. The continuous-sizing form fires more often than `bb_meanrev_zscore`\nbecause there's no binary threshold — small signals get small positions.\nThis shifts the strategy's character toward \"always quoted\" rather than\n\"intermittently triggered.\"",
+    "inputs": "- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2` (used only to compute %B).\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `pct_b_smoothed` — EMA(%B, period=3) for noise reduction.\n- `bandwidth_percentile` for regime gating.",
+    "parameters": "| Param                          | Default | Range            |\n| ------------------------------ | ------- | ---------------- |\n| `bb_period`                    | 20      | 10 / 20 / 50     |\n| `bb_mult`                      | 2.0     | 1.5 – 2.5        |\n| `pct_b_smoothing`              | 3       | 1 – 10           |\n| `oversold_threshold`           | 0.10    | 0.0 – 0.30       |\n| `overbought_threshold`         | 0.90    | 0.70 – 1.0       |\n| `neutral_band`                 | [0.40, 0.60] | various |\n| `position_mode`                | `continuous` | `continuous` / `binary` |\n| `max_bandwidth_percentile`     | 70      | 50 – 90          |\n\n`position_mode = continuous`: position size scales with how oversold /\noverbought %B is. Binary mode reduces to a thresholded RSI-style entry.",
+    "references": "- Compendium README §Pivot dimensions, cardinality.\n- Comparison target: [`bb_meanrev_zscore`](bb_meanrev_zscore.md) — same regime, threshold vs continuous form.\n- Methodologically similar: RSI-based mean reversion (RSI is an oscillator with no underlying band lines).",
     "status": "`queued`. Useful as a *family identity* check: does dropping the bands\nand trading %B-as-oscillator outperform threshold-based entries? The\nanswer informs whether the band-touch is information or just a UI\nartifact.",
-    "thesis": "%B is already a normalized oscillator-style value: 0 = lower band, 0.5 =\nSMA, 1 = upper band. By dropping the band-line interpretation entirely\nand treating %B as a pure oscillator (analogous to RSI), the strategy\nremoves threshold artifacts: there is no longer a binary \"touched / didn't\ntouch\" \u2014 the signal is a continuous score that supports continuous sizing.\n\nThis strategy is what BB looks like when cardinality is substituted from\n2-bands to continuous. The bands are still computed under the hood (to\nderive %B), but they are no longer the trade signal \u2014 the position-within\nis."
+    "thesis": "%B is already a normalized oscillator-style value: 0 = lower band, 0.5 =\nSMA, 1 = upper band. By dropping the band-line interpretation entirely\nand treating %B as a pure oscillator (analogous to RSI), the strategy\nremoves threshold artifacts: there is no longer a binary \"touched / didn't\ntouch\" — the signal is a continuous score that supports continuous sizing.\n\nThis strategy is what BB looks like when cardinality is substituted from\n2-bands to continuous. The bands are still computed under the hood (to\nderive %B), but they are no longer the trade signal — the position-within\nis."
   },
   "source_doc": "strategies/bollinger/bb_pctb_oscillator.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `BB Pctb Oscillator` strategy.\n\nThesis:\n%B is already a normalized oscillator-style value: 0 = lower band, 0.5 = SMA, 1 = upper band. By dropping the band-line interpretation entirely and treating %B as a pure oscillator (analogous to RSI), the strategy removes threshold artifacts: there is no longer a binary \"touched / didn't touch\" \u2014 the signal is a continuous score that supports continuous sizing.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2` (used only to compute %B).\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `pct_b_smoothed` \u2014 EMA(%B, period=3) for noise reduction.\n- `bandwidth_percentile` for regime gating.\n\nDecision rule:\n```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\nif not in_normal_vol: return Flat\n\n# Continuous-sizing variant:\nif position_mode == \"continuous\":\n    if pct_b_smoothed <= oversold_threshold:\n        long_signal_strength = (oversold_threshold - pct_b_smoothed) / oversold_threshold\n        position_size = base_size * long_signal_strength\n        enter long with that size\n    elif pct_b_smoothed >= overbought_threshold:\n        short_signal_strength = (pct_b_smoothed - overbought_threshold) / (1 - overbought_threshold)\n        position_size = base_size * short_signal_strength\n        enter short\n\n    exit when pct_b_smoothed re-enters neutral_band\n\n# Binary variant (RSI-style):\nelif position_mode == \"binary\":\n    if pct_b_smoothed <= oversold_threshold and is_flat:  enter long\n    elif pct_b_smoothed >= overbought_threshold and is_flat: enter short\n    exit on opposite threshold or neutral_band re-entry\n```\n\nExpected regime:\nB1 / B2. The continuous-sizing form fires more often than bb_meanrev_zscore because there's no binary threshold \u2014 small signals get small positions. This shifts the strategy's character toward \"always quoted\" rather than \"intermittently triggered.\"\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `BB Pctb Oscillator` strategy.\n\nThesis:\n%B is already a normalized oscillator-style value: 0 = lower band, 0.5 = SMA, 1 = upper band. By dropping the band-line interpretation entirely and treating %B as a pure oscillator (analogous to RSI), the strategy removes threshold artifacts: there is no longer a binary \"touched / didn't touch\" — the signal is a continuous score that supports continuous sizing.\n\nInputs:\n- `IndicatorPanel.bb_upper_20_2`, `bb_lower_20_2` (used only to compute %B).\n- Computed: `pct_b = (price - bb_lower) / (bb_upper - bb_lower)`.\n- Computed: `pct_b_smoothed` — EMA(%B, period=3) for noise reduction.\n- `bandwidth_percentile` for regime gating.\n\nDecision rule:\n```\nin_normal_vol = bandwidth_percentile <= max_bandwidth_percentile\nif not in_normal_vol: return Flat\n\n# Continuous-sizing variant:\nif position_mode == \"continuous\":\n    if pct_b_smoothed <= oversold_threshold:\n        long_signal_strength = (oversold_threshold - pct_b_smoothed) / oversold_threshold\n        position_size = base_size * long_signal_strength\n        enter long with that size\n    elif pct_b_smoothed >= overbought_threshold:\n        short_signal_strength = (pct_b_smoothed - overbought_threshold) / (1 - overbought_threshold)\n        position_size = base_size * short_signal_strength\n        enter short\n\n    exit when pct_b_smoothed re-enters neutral_band\n\n# Binary variant (RSI-style):\nelif position_mode == \"binary\":\n    if pct_b_smoothed <= oversold_threshold and is_flat:  enter long\n    elif pct_b_smoothed >= overbought_threshold and is_flat: enter short\n    exit on opposite threshold or neutral_band re-entry\n```\n\nExpected regime:\nB1 / B2. The continuous-sizing form fires more often than bb_meanrev_zscore because there's no binary threshold — small signals get small positions. This shifts the strategy's character toward \"always quoted\" rather than \"intermittently triggered.\"\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

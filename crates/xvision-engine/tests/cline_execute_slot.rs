@@ -97,6 +97,7 @@ fn slot_input<'a>(
         trajectory_mode: xvision_engine::agent::execute_cline::TrajectoryMode::Record,
         record_slot_role: None,
         obs: None,
+        model_call_span_id: None,
         reasoning_effort: None,
     }
 }

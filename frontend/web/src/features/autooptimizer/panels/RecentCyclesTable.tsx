@@ -38,6 +38,7 @@ export function RecentCyclesTableBody() {
         <thead>
           <tr className="text-left text-text-3">
             <th className="py-1.5 pr-3 font-medium">Cycle</th>
+            <th className="py-1.5 pr-3 font-medium">Strategy</th>
             <th className="py-1.5 pr-3 text-right font-medium">Experiments</th>
             <th className="py-1.5 pr-3 text-right font-medium">Kept</th>
             <th className="py-1.5 pr-3 text-right font-medium">Tokens</th>
@@ -51,6 +52,19 @@ export function RecentCyclesTableBody() {
                 <Link to={`/optimizer/cycle/${encodeURIComponent(c.cycle_id)}`} className="text-text hover:text-gold">
                   {c.cycle_id}
                 </Link>
+              </td>
+              <td className="py-1.5 pr-3">
+                {c.strategy_id ? (
+                  <Link
+                    to={`/strategies/${encodeURIComponent(c.strategy_id)}`}
+                    title={c.strategy_id}
+                    className="text-text-2 hover:text-gold"
+                  >
+                    {c.strategy_id.length > 14 ? `${c.strategy_id.slice(0, 12)}…` : c.strategy_id}
+                  </Link>
+                ) : (
+                  <span className="text-text-4">—</span>
+                )}
               </td>
               <td className="py-1.5 pr-3 text-right text-text-2">{c.node_count}</td>
               <td className="py-1.5 pr-3 text-right text-gold">{c.active_count}</td>

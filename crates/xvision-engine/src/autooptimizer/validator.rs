@@ -64,7 +64,7 @@ fn warn_out_of_bounds(diff: &MutationDiff, base: &Strategy) {
     if base.tunable_bounds.is_empty() {
         return;
     }
-    // Check param changes (covers mechanistic.*, risk.*, and mechanical_params paths).
+    // Check param changes (covers mechanistic.* and risk.* paths).
     for change in &diff.params {
         if let Some(bound) = base.tunable_bounds.iter().find(|b| b.path == change.key) {
             let clamped = clamp_to_bound(&change.after, bound);
@@ -126,18 +126,30 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
     }
 }
 
-/// Resolve a param key to its current value on `base`. F14: a key may address
-/// a top-level `mechanical_params` entry OR a tunable `risk.<field>` (or a bare
-/// risk-field name not shadowed by a mechanical key). Returns `None` when the
-/// key matches no tunable surface.
-fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
+/// Resolve a param key to its current value on `base`. A key may address a
+/// tunable `risk.<field>` (or a bare risk-field name) or a
+/// `mechanistic.close_policies.<i>.<leaf>` scalar in `mechanistic_config` —
+/// the surfaces the executor actually reads at decision time. Returns `None`
+/// when the key matches no tunable surface (the validator then reports
+/// `unknown_param`). Resolution must stay in sync with
+/// [`crate::autooptimizer::mutator::tunable_param_keys`].
+pub(crate) fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
     if let Some(field) = crate::autooptimizer::mutator::risk_field_for_key(base, key) {
         let risk = serde_json::to_value(&base.risk).ok()?;
         return risk.get(&field).cloned();
     }
-    base.mechanical_params
-        .as_object()
-        .and_then(|mp| mp.get(key).cloned())
+    // mechanistic.* keys resolve against the typed config's enumerated tunable
+    // leaves (the same paths `tunable_param_keys` advertises). Closing this
+    // gap — previously masked by the now-removed `mechanical_params` fallback —
+    // makes the mechanistic surface genuinely validatable, matching `apply_to`.
+    if key.starts_with("mechanistic.") {
+        let mc = base.mechanistic_config.as_ref()?;
+        return crate::autooptimizer::mutator::mechanistic_tunable_paths(mc)
+            .into_iter()
+            .find(|(path, _)| path == key)
+            .map(|(_, value)| value);
+    }
+    None
 }
 
 fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut Vec<ValidationError>) {
@@ -156,6 +168,11 @@ fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut 
             ));
             continue;
         };
+        // Defensive guard: a tunable key whose current value is composite cannot
+        // be scalar-mutated. Currently unreachable on the post-mechanical_params
+        // surface — every `risk.*` field and every `mechanistic_tunable_paths`
+        // leaf resolves to a scalar — but retained so a future composite tunable
+        // surface is rejected cleanly rather than mis-applied.
         if current_val.is_object() || current_val.is_array() {
             errors.push(ValidationError::with_path(
                 "param_not_mutable",
@@ -167,16 +184,15 @@ fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut 
             ));
             continue;
         }
-        if change.before != current_val {
-            errors.push(ValidationError::with_path(
-                "stale_param_baseline",
-                format!(
-                    "Param '{}' baseline is stale: 'before' must match the current value.",
-                    change.key
-                ),
-                format!("params[{i}].before"),
-            ));
-        }
+        // R4: NO stale-baseline reject (mirrors the filter B4 fix). A wrong
+        // `before` is not fatal — `apply_to` writes `after` and never reads
+        // `before`, so the forward child is unaffected. Consumers of `before`
+        // (the inversion honesty-check AND `describe_mutation_outcome`'s memory
+        // write-back) are kept truthful by normalizing the diff to the parent's
+        // live values up-front in `gate_and_classify` (via the inversion
+        // `normalize_*_baseline` helpers). Rejecting a stale baseline here only
+        // burned mutator attempts on an auto-fixable nit.
+        let _ = current_val;
         validate_param_after_value(&change.key, &change.after, i, errors);
     }
 }
@@ -187,6 +203,10 @@ fn is_integer_param_key(key: &str) -> bool {
         || k.contains("lookback")
         || k.contains("window")
         || k.ends_with("_bars")
+        // mechanistic TimeExit bar count: `mechanistic.close_policies.<i>.bars`.
+        // A dotted-path leaf, so `_bars` (above) does not catch it — it must be a
+        // positive integer just like the underscore forms.
+        || k.ends_with(".bars")
         || k.ends_with("_minutes")
         || k.ends_with("_trades")
         || k.contains("cadence")
@@ -273,12 +293,19 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
     for (i, edit) in edits.iter().enumerate() {
         // Path must be one of the enumerated tunable paths.
         let Some(current) = tunable.get(&edit.path) else {
+            // R4: echo the allowed paths INLINE so the retry feedback is
+            // prescriptive — the list lands in `last_errors` and survives into
+            // the next attempt's prompt even if the model ignored the user
+            // message, letting it self-correct instead of burning the budget.
+            let mut allowed: Vec<&str> = tunable.keys().map(String::as_str).collect();
+            allowed.sort_unstable();
             errors.push(ValidationError::with_path(
                 "unknown_filter_path",
                 format!(
                     "Filter path '{}' is not a tunable path on this strategy's filter. \
-                     Use the paths listed in the user message.",
-                    edit.path
+                     Use EXACTLY one of these tunable paths: [{}].",
+                    edit.path,
+                    allowed.join(", ")
                 ),
                 format!("filter[{i}].path"),
             ));
@@ -423,11 +450,25 @@ fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors:
     }
     for name in added.iter() {
         if !is_valid_tool_name(name) {
+            // R4: prescriptive feedback — include a sanitized suggestion so the
+            // retry can self-correct instead of re-emitting the same bad name.
+            // (We suggest, not auto-rename: there is no validator-side tool
+            // catalog to confirm a sanitized name is a real registered tool.)
+            let suggestion: String = name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(64)
+                .collect();
+            let hint = if suggestion.is_empty() {
+                String::new()
+            } else {
+                format!(" Use a valid name such as '{suggestion}'.")
+            };
             errors.push(ValidationError::with_path(
                 "invalid_tool_name",
                 format!(
                     "Tool name '{name}' is invalid \
-                     (only letters, digits, underscores allowed; max 64 chars)."
+                     (only ASCII letters, digits, underscores allowed; max 64 chars).{hint}"
                 ),
                 "tools.added",
             ));
@@ -468,8 +509,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": {}
+            }
         });
         serde_json::from_value(v).expect("fixture strategy must deserialise")
     }
@@ -515,7 +555,6 @@ mod tests {
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
             },
-            "mechanical_params": {},
             "activation_mode": "filter_gated",
             "filter": {
                 "id": "01HZFILTER000000000000000V",

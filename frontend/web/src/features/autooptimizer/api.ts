@@ -69,6 +69,12 @@ export type CycleProgressEvent = {
   bundle_hash?: string | null;
   parent_hash?: string | null;
   child_hash?: string | null;
+  /** WS-11b: on `mutation_gated`, the candidate's persisted eval `Run.id`.
+   *  The OPTI reducer nests a navigable `opti.eval-run` node carrying it under
+   *  the experiment so an operator can drill cycle → experiment → eval-run
+   *  trace. Absent for the regime/no-candidate paths and for runners that
+   *  don't surface a run id. */
+  eval_run_id?: string | null;
   display_label?: string | null;
   ts?: string;
   payload?: Record<string, unknown> | null;
@@ -186,6 +192,9 @@ export type CycleRunSummary = {
   input_tokens?: number | null;
   output_tokens?: number | null;
   unpriced_calls?: number | null;
+  /** The strategy (agent_id) this cycle optimized. `null`/absent when the
+   *  cycle has no session-bridge row. Flattened from `CycleRunRow` server-side. */
+  strategy_id?: string | null;
 };
 
 /** Full detail for one cycle: summary fields + its lineage nodes + honesty check. */
@@ -881,17 +890,27 @@ export type RiverNode = {
 };
 
 /**
- * Fetch the persisted event log for a completed cycle (oldest-first).
+ * Fetch the persisted event log for a cycle (oldest-first).
  * Enabled only when `cycleId` is non-null. Returns an empty array gracefully
  * on backends that don't yet have the events table (fresh install).
+ *
+ * Pass `{ pollMs }` to poll while a cycle is live: the persisted log is the
+ * resilient telemetry source for a CLI run with no live SSE bridge (IPC off),
+ * so the console can stream straight from the DB. Polling also shortens the
+ * stale window to `pollMs` so freshly-landed events appear promptly.
  */
-export function useCycleEvents(cycleId: string | null) {
+export function useCycleEvents(
+  cycleId: string | null,
+  opts?: { pollMs?: number },
+) {
+  const pollMs = opts?.pollMs;
   return useQuery<PersistedCycleEvent[]>({
     queryKey: autooptimizerKeys.cycleEvents(cycleId),
     queryFn: () =>
       apiFetch<PersistedCycleEvent[]>(`/api/autooptimizer/cycles/${cycleId}/events`),
     enabled: !!cycleId,
-    staleTime: 60_000,
+    staleTime: pollMs ?? 60_000,
+    refetchInterval: pollMs ?? false,
     retry: false, // endpoint may not exist on older backends
   });
 }

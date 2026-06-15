@@ -146,14 +146,6 @@ pub struct SetPipelineRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SetMechanicalParamReq {
-    pub id: String,
-    pub key: String,
-    pub value: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SetRiskConfigReq {
     pub id: String,
     pub preset: Option<String>,
@@ -246,7 +238,7 @@ pub fn list_templates() -> Vec<TemplateInfo> {
 /// template-registry removal this always produces a blank `Strategy`
 /// — there is no `template` discriminator to scaffold from. Operators
 /// (via the wizard, CLI, or MCP follow-up calls) populate slots /
-/// agents / mechanical_params / risk on the blank draft before save.
+/// agents / risk on the blank draft before save.
 pub async fn create_strategy(
     store: &dyn StrategyStore,
     req: CreateStrategyReq,
@@ -259,10 +251,8 @@ pub async fn create_strategy(
 /// `create_strategy_agent` / `update_slot` calls fill in real agent
 /// content before the operator hits save.
 ///
-/// Manifest carries `template: "custom"` so the typed-`MechanicalParams`
-/// dispatch falls through to `MechanicalParams::Custom` and
-/// `mechanical_params: {}` validates. The strategies module is not edited
-/// — the public `Strategy` / `PublicManifest` types are constructed
+/// Manifest carries `template: "custom"`. The strategies module is not
+/// edited — the public `Strategy` / `PublicManifest` types are constructed
 /// directly. No call into `template_registry`.
 pub async fn create_blank_strategy(
     store: &dyn StrategyStore,
@@ -296,7 +286,6 @@ pub async fn create_blank_strategy(
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Conservative.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -388,6 +377,7 @@ pub async fn update_manifest(
         color: req.color,
         asset_universe: req.asset_universe,
         decision_cadence_minutes: req.decision_cadence_minutes,
+        creator: None,
     };
     apply_metadata_patch(&mut strategy, patch).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -599,23 +589,6 @@ fn graph_cycle_from(
     visiting.remove(role);
     visited.insert(role.to_string());
     false
-}
-
-pub async fn set_mechanical_param(
-    store: &dyn StrategyStore,
-    req: SetMechanicalParamReq,
-) -> anyhow::Result<()> {
-    let mut strategy = store.load(&req.id).await?;
-    let map = strategy
-        .mechanical_params
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("mechanical_params is not a JSON object"))?;
-    map.insert(req.key, req.value);
-    // Post-2026-05-21 template-registry removal: no per-template typed
-    // dispatch exists, so the param is persisted verbatim. Per-strategy
-    // schema validation lands in a future change keyed on the
-    // strategies-folder seed library, not on a binary registry.
-    store.save(&strategy).await
 }
 
 pub async fn set_filter(store: &dyn StrategyStore, req: SetFilterReq) -> anyhow::Result<Strategy> {
@@ -864,11 +837,6 @@ mod tests {
             .expect("blank strategy create must succeed");
 
         let draft = get_strategy(&store, &out.id).await.expect("draft must load");
-        assert!(
-            draft.mechanical_params.as_object().is_some_and(|m| m.is_empty()),
-            "blank draft must have empty mechanical_params, got: {:?}",
-            draft.mechanical_params
-        );
         assert!(draft.agents.is_empty(), "blank draft must have no AgentRefs");
         assert!(
             draft.trader_slot.is_none(),

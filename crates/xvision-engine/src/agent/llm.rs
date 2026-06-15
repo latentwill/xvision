@@ -832,6 +832,16 @@ impl LlmDispatch for MockDispatch {
 /// giving the model sufficient time for large completions. The connect timeout
 /// is a fraction of the full timeout.
 const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Hard wall-clock timeout for OpenAI-compatible requests (DeepSeek / OpenAI /
+/// Groq / OpenRouter / Together / Ollama / vLLM). Set higher than the Anthropic
+/// ceiling because local reasoning models (deepseek-r1, qwq) legitimately spend
+/// 150 s+ emitting chain-of-thought before the visible answer, and the
+/// local/loopback path has no ~122 s cloud proxy cutoff to sit below. This is
+/// the timeout the optimizer mutator/judge hit when driving a slow local
+/// reasoning model (previously shared the 90 s Anthropic ceiling, which clipped
+/// healthy deepseek-r1 generations at ~90 s — see xvision-localmodel findings).
+const OPENAI_COMPAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const LLM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct AnthropicDispatch {
@@ -1244,12 +1254,12 @@ impl OpenaiCompatDispatch {
     /// Provider roots that already include a non-`/v1` OpenAI-compatible API
     /// path (for example Gemini's `/v1beta/openai`) are preserved.
     pub fn new(base_url: String, api_key: String) -> Self {
-        Self::with_timeout(base_url, api_key, LLM_REQUEST_TIMEOUT)
+        Self::with_timeout(base_url, api_key, OPENAI_COMPAT_REQUEST_TIMEOUT)
     }
 
     /// Constructor used in tests to inject a short timeout so the behavioral
     /// timeout test completes in milliseconds rather than waiting for the
-    /// production 90 s ceiling.
+    /// production 300 s ceiling.
     pub fn with_timeout(base_url: String, api_key: String, timeout: Duration) -> Self {
         let client = reqwest::Client::builder()
             .timeout(timeout)

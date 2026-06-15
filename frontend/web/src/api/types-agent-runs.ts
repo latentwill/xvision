@@ -5,6 +5,8 @@
 // When the backend lands ts-rs derives, replace this file with the
 // generated bindings.
 
+import type { UnifiedEvent } from "./unified-events";
+
 export type RunStatus =
   | "queued"
   | "running"
@@ -30,7 +32,19 @@ export type SpanKind =
   | "agent.run"
   | "agent.plan"
   | "agent.decision"
+  // WS-17 span taxonomy: the model invocation that produces the trade
+  // decision (`decision.model`) and its captured chain-of-thought
+  // (`decision.reasoning`, nested under `decision.model`). These replace
+  // the generic `model.call` / `model.reasoning` on the trading path —
+  // the slot ROLES (trader/regime/filter) were retired, so it's a single
+  // decision-model call now.
+  | "decision.model"
+  | "decision.reasoning"
+  // Legacy wire values, retained so historical exports / older recorded
+  // rows still type-check. The engine no longer emits these (the variant
+  // was renamed to DecisionModel/DecisionReasoning).
   | "model.call"
+  | "model.reasoning"
   | "tool.call"
   | "tool.validate_input"
   | "tool.validate_output"
@@ -44,7 +58,41 @@ export type SpanKind =
   | "skill.invoke"
   | "broker.call"
   | "recovery.attempt"
-  | "state.transition";
+  | "state.transition"
+  // WS-11a OPTI trace scope: the autooptimizer *cycle* projected onto the
+  // trace-dock surface. These rows are NOT agent-run spans — the OPTI scope
+  // reducer (`features/autooptimizer/opti-trace-reducer.ts`) synthesizes them
+  // from the existing `CycleProgressEvent` SSE stream so the optimizer cycle
+  // reads as a live trace (operator-labeled rows) in the dock. They share the
+  // `RunSpan` shape + `SpanTree` rendering, hence they live on `SpanKind`.
+  //   opti.cycle      — the cycle root (CycleStarted → CycleFinished)
+  //   opti.parent     — the selected parent strategy for the cycle
+  //   opti.experiment — one proposed candidate (MutationProposed)
+  //   opti.gate       — a candidate's gate verdict (kept/suspect/rejected)
+  //   opti.honesty    — the per-cycle honesty check (null-result canary)
+  //   opti.judge      — a reviewer finding on a candidate
+  //   opti.flywheel   — the DSPy flywheel compile step
+  //   opti.eval-run   — WS-11b: the candidate's persisted eval run, nested
+  //                     under its experiment. A navigable drill-link node
+  //                     (its `attributes.eval_run_id` points at the
+  //                     `/agent-runs/:runId` trace); NOT an inline embed of
+  //                     that run's span tree.
+  | "opti.cycle"
+  | "opti.parent"
+  | "opti.experiment"
+  | "opti.gate"
+  | "opti.honesty"
+  | "opti.judge"
+  | "opti.flywheel"
+  | "opti.eval-run"
+  // WS-8 taxonomy convergence: a synthetic span kind for the bar-level engine
+  // lifecycle signals written to the `events` table (and streamed live as
+  // `engine_event` SSE frames). These were dropped from the trace before WS-8
+  // — projecting each `EngineEvent` onto a `RunSpan` with this kind lets them
+  // flow through the existing tree / inspector / filter machinery. The actual
+  // `EngineEvent.kind` (e.g. `risk_veto`, `order_signed`) is carried in
+  // `attributes.engine_event_kind`; the family/label/color resolve off that.
+  | "engine.event";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are
@@ -247,6 +295,13 @@ export type AgentRunSummary = {
   started_at: string;
   finished_at: string | null;
   status: RunStatus;
+  /**
+   * Execution venue from the parent live run's `broker_creds_ref`
+   * (e.g. `"degen_arena"`, `"orderly_testnet"`, `"byreal"`, `"alpaca"`).
+   * Absent for backtests / runs without a live_config. Drives venue-specific
+   * surfaces like the Degen Arena standing indicator.
+   */
+  venue?: string | null;
   // Pre-rolled aggregates (avoid client-side scans for the strip).
   span_count: number;
   model_call_count: number;
@@ -514,6 +569,13 @@ export type AgentRunStreamEvent =
   | { event: "summary"; data: AgentRunSummary }
   // Real-branch arms (SSE wire protocol).
   | { event: "snapshot"; data: AgentRunDetail }
+  // WS-8 Part 2 B2: the LIVE tail now arrives as `UnifiedEvent` frames on a
+  // single stable `event: unified` name (the backend projects each `RunEvent`
+  // via `RunEventProjector`). The dock folds these through the shared
+  // fidelity-complete projection so span detail reconstructs without a refetch.
+  // The per-`RunEvent`-name arms below are retained ONLY for the legacy mock
+  // path + back-compat; the real wire no longer emits them.
+  | { event: "unified"; data: UnifiedEvent }
   | { event: "run_started"; data: { run_id: string; objective: string; started_at: string } }
   | { event: "run_finished"; data: { run_id: string; finished_at: string; status: RunStatus } }
   | { event: "run_interrupted"; data: { run_id: string; finished_at: string; reason: string } }

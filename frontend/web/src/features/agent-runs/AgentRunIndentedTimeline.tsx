@@ -1,7 +1,7 @@
 // frontend/web/src/features/agent-runs/AgentRunIndentedTimeline.tsx
 import { useMemo } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
-import { categoryOf, spanColor, withAlpha } from "./span-colors";
+import { categoryOf, spanColorForSpan, withAlpha } from "./span-colors";
 
 function depthOf(span: RunSpan, byId: Map<string, RunSpan>): number {
   let depth = 0;
@@ -72,7 +72,14 @@ export function AgentRunIndentedTimeline({
   onSelect: (spanId: string) => void;
 }) {
   const visibleSpans = useMemo(
-    () => spans.filter((span) => categoryOf(span.kind) !== "supervisor"),
+    // Hide supervisor-category instrumentation, but keep engine.event rows
+    // (WS-8) — they resolve to `unknown` via the bare-kind lookup yet carry
+    // first-class lifecycle signals that must render.
+    () =>
+      spans.filter(
+        (span) =>
+          span.kind === "engine.event" || categoryOf(span.kind) !== "supervisor",
+      ),
     [spans],
   );
   const rows = useMemo(() => buildRows(visibleSpans), [visibleSpans]);
@@ -93,7 +100,7 @@ export function AgentRunIndentedTimeline({
     >
       {rows.map((row) => {
         const { span, depth, leftPct, widthPct, durationMs } = row;
-        const color = spanColor(span.kind);
+        const color = spanColorForSpan(span);
         const selected = span.span_id === selectedSpanId;
         const isError = span.status === "error";
         const isLive = span.status === "in_progress";

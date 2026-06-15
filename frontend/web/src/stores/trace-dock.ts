@@ -17,8 +17,15 @@ export type DockMode = "post-hoc" | "live";
  * pages" bug: nulling one scope on unmount no longer clobbers the
  * other surface's run, and the floating capsule only renders for the
  * scope that matches the current route.
+ *
+ * WS-11a adds a third scope, `opti` — the autooptimizer *cycle* projected onto
+ * the trace dock on the `/optimizer` route. It owns `byScope.opti`; the
+ * eval/live routes must not touch it (and vice versa). The cycle rows
+ * themselves are derived from the existing cycle SSE stream by
+ * `features/autooptimizer/opti-trace-reducer.ts` — the slice here only tracks
+ * the active cycle id, selection, mode, and cost override, mirroring eval/live.
  */
-export type TraceScope = "eval" | "live";
+export type TraceScope = "eval" | "live" | "opti";
 
 /**
  * Per-scope dock slice. One of these exists for each {@link TraceScope}.
@@ -120,6 +127,17 @@ type State = {
    * Advanced is the forensics view.
    */
   advanced_view: boolean;
+  /**
+   * Set of span ids whose subtree is COLLAPSED in the structured span-tree
+   * view (WS-16). A collapsed parent hides its entire descendant subtree
+   * and renders a one-line rollup; expanding restores the subtree. SHARED
+   * across scopes (it's a UI pref keyed by span id, and only one trace is
+   * inspected at a time), and persisted under
+   * `xvision.trace-dock.collapsed-spans` in localStorage so the operator's
+   * collapse choices survive a reload. Span ids not present in the run are
+   * simply inert — a stale persisted id costs nothing.
+   */
+  collapsedSpanIds: Set<string>;
 };
 
 type Actions = {
@@ -146,6 +164,14 @@ type Actions = {
   resetStreamingState: () => void;
   setAdvancedView: (v: boolean) => void;
   setCostOverrideUsd: (scope: TraceScope, v: number | null) => void;
+  /** Flip a single node's collapsed state in the span-tree view. */
+  toggleSpanCollapsed: (spanId: string) => void;
+  /** Collapse every supplied node id (typically all nodes with children). */
+  collapseAllSpans: (spanIds: string[]) => void;
+  /** Expand every node (clear the collapsed set). */
+  expandAllSpans: () => void;
+  /** Replace the collapsed set wholesale (used by tests / rehydration). */
+  setCollapsedSpanIds: (spanIds: string[]) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -178,6 +204,8 @@ function freshScopeState(): ScopeState {
 
 export const DOCK_HEIGHT_STORAGE_KEY = "xvision.trace-dock.height";
 export const DOCK_ADVANCED_VIEW_STORAGE_KEY = "xvision.trace-dock.advanced-view";
+export const DOCK_COLLAPSED_SPANS_STORAGE_KEY =
+  "xvision.trace-dock.collapsed-spans";
 export const DOCK_MIN_PX = 96;
 export const DEFAULT_DOCK_PX = 480;
 
@@ -237,20 +265,78 @@ function writePersistedAdvancedView(v: boolean): void {
   }
 }
 
+/**
+ * Read the persisted set of collapsed span ids (WS-16). Stored as a JSON
+ * array of span-id strings. Returns an empty set for any missing or
+ * malformed value so a corrupt entry can never crash the dock — the worst
+ * case is "everything renders expanded", the safe default.
+ */
+export function readPersistedCollapsedSpanIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(DOCK_COLLAPSED_SPANS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writePersistedCollapsedSpanIds(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      DOCK_COLLAPSED_SPANS_STORAGE_KEY,
+      JSON.stringify([...ids]),
+    );
+  } catch {
+    // Best effort only — Safari private-mode etc.
+  }
+}
+
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
   heightPx: readPersistedHeightPx(),
   byScope: {
     eval: freshScopeState(),
     live: freshScopeState(),
+    opti: freshScopeState(),
   },
   activeSessionId: null,
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
   advanced_view: readPersistedAdvancedView(),
+  collapsedSpanIds: readPersistedCollapsedSpanIds(),
   setAdvancedView: (v) => {
     writePersistedAdvancedView(v);
     set({ advanced_view: v });
+  },
+  toggleSpanCollapsed: (spanId) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      if (next.has(spanId)) next.delete(spanId);
+      else next.add(spanId);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  collapseAllSpans: (spanIds) =>
+    set((s) => {
+      const next = new Set(s.collapsedSpanIds);
+      for (const id of spanIds) next.add(id);
+      writePersistedCollapsedSpanIds(next);
+      return { collapsedSpanIds: next };
+    }),
+  expandAllSpans: () => {
+    const next = new Set<string>();
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
+  },
+  setCollapsedSpanIds: (spanIds) => {
+    const next = new Set(spanIds);
+    writePersistedCollapsedSpanIds(next);
+    set({ collapsedSpanIds: next });
   },
   setCostOverrideUsd: (scope, v) =>
     set((s) => ({
@@ -363,6 +449,65 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   applyStreamEvent: (ev) => {
     const actions = get();
     switch (ev.event) {
+      // WS-8 Part 2 B2: the real LIVE tail arrives as `UnifiedEvent` frames.
+      // Drive the SAME streaming-slice indicators (active spans / assistant
+      // deltas / lag) the legacy per-`RunEvent`-name arms below maintained,
+      // reading off the unified payload. Span DETAIL is reconstructed by the
+      // dock's `live-stream-reducer` (the cache mutation), not here.
+      case "unified": {
+        const p = ev.data.payload;
+        switch (p.kind) {
+          case "span_started":
+            actions.markSpanActive(p.data.span_id, {
+              name: p.data.name,
+              started_at: p.data.started_at,
+              kind: p.data.kind as SpanKind,
+            });
+            return;
+          case "span_finished":
+          case "model_call_finished":
+          case "tool_finished":
+          case "tool_failed":
+          case "tool_cancelled":
+          case "broker_call_finished":
+            // Terminal events on a span — drop it from the active set if an
+            // explicit span_finished hasn't already closed it.
+            actions.markSpanInactive(p.data.span_id);
+            return;
+          case "assistant_token_delta":
+            // The unified delta carries text but no per-span length count; the
+            // dock's live response pull-quote appends the text and tracks its
+            // length. The envelope's `span_id` scopes it.
+            if (ev.data.span_id) {
+              actions.appendDelta(ev.data.span_id, p.data.text.length, p.data.text);
+            }
+            return;
+          case "backpressure_dropped":
+            actions.recordLag(p.data.dropped);
+            if (typeof console !== "undefined") {
+              console.warn(
+                `[trace-dock] backpressure: dropped ${p.data.dropped} stream event(s)`,
+              );
+            }
+            return;
+          case "run_finished":
+          case "run_interrupted":
+            // Run-terminal: any still-active spans are now stale. Clear the
+            // streaming indicators so consumers stop showing a live chip.
+            set((s) => ({
+              streamingState: {
+                ...s.streamingState,
+                activeSpanIds: new Set<string>(),
+                activeSpanMeta: {},
+              },
+            }));
+            return;
+          default:
+            // Lifecycle / informational unified payloads — no streaming-slice
+            // side effect (engine_event rows, memory, broker_call_started, …).
+            return;
+        }
+      }
       case "snapshot": {
         // Authoritative resync. A reconnect snapshot must REPLACE the
         // active set, not merge into it — a span that finished while we

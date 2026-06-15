@@ -27,23 +27,38 @@ import {
 } from "@/api/search";
 import { useUi } from "@/stores/ui";
 import { isMacPlatform, modKeyLabel } from "@/lib/platform";
+import { PRIMARY_NAV } from "@/components/shell/nav";
 
 const DEBOUNCE_MS = 80;
 const MAX_RESULTS = 40;
 
-// Static page-navigation entries. Always present; filtered client-side by the
-// current query so "strategies" reliably resolves even before the backend
-// index returns any artifact-level hits.
-export const STATIC_ACTIONS: SearchHit[] = [
-  { kind: "action", artifact_id: "nav:home", title: "Dashboard", summary: "Workspace status at a glance", tags: ["nav"], href: "/", updated_at: "", bm25_score: 0 },
-  { kind: "action", artifact_id: "nav:strategies", title: "Strategies", summary: "Manage strategies", tags: ["nav"], href: "/strategies", updated_at: "", bm25_score: 0 },
-  { kind: "action", artifact_id: "nav:scenarios", title: "Scenarios", summary: "Browse and create eval scenarios", tags: ["nav"], href: "/scenarios", updated_at: "", bm25_score: 0 },
+// Primary page entries come straight from the shared PRIMARY_NAV list (single
+// source of truth with the Sidebar), so the palette can never drift out of sync
+// again — every sidebar page (incl. Optimizer) is reachable from ⌘K.
+const NAV_ACTIONS: SearchHit[] = PRIMARY_NAV.map((it) => ({
+  kind: "action",
+  artifact_id: `nav:${it.to}`,
+  title: it.label,
+  summary: it.summary,
+  tags: ["nav"],
+  href: it.to,
+  updated_at: "",
+  bm25_score: 0,
+}));
+
+// Deep-links that aren't top-level sidebar pages (create flow + settings
+// sub-pages). Appended after the primary nav.
+const EXTRA_ACTIONS: SearchHit[] = [
   { kind: "action", artifact_id: "nav:new-strategy", title: "New strategy", summary: "Create a blank strategy draft", tags: ["nav", "create"], href: "/strategies/new", updated_at: "", bm25_score: 0 },
-  { kind: "action", artifact_id: "nav:eval-runs", title: "Eval runs", summary: "Backtests and paper-trade runs", tags: ["nav"], href: "/eval-runs", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-providers", title: "Settings · Providers", summary: "LLM keys & providers", tags: ["nav", "settings"], href: "/settings/providers", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-brokers", title: "Settings · Brokers", summary: "Alpaca / Orderly credentials", tags: ["nav", "settings"], href: "/settings/brokers", updated_at: "", bm25_score: 0 },
   { kind: "action", artifact_id: "nav:settings-danger", title: "Settings · Danger zone", summary: "Reset / destructive ops", tags: ["nav", "settings"], href: "/settings/danger", updated_at: "", bm25_score: 0 },
 ];
+
+// Static page-navigation entries. Always present; filtered client-side by the
+// current query so "strategies" reliably resolves even before the backend
+// index returns any artifact-level hits.
+export const STATIC_ACTIONS: SearchHit[] = [...NAV_ACTIONS, ...EXTRA_ACTIONS];
 
 function filterStatic(q: string): SearchHit[] {
   const needle = q.trim().toLowerCase();

@@ -138,6 +138,14 @@ pub enum CycleProgressEvent {
         /// Sharpe. `None` when gate scores were not computed (e.g. early rejection).
         #[serde(default)]
         delta_day: Option<f64>,
+        /// WS-11b: the persisted eval `Run.id` for this candidate's primary
+        /// day-window evaluation. `None` for paths that don't surface a run id
+        /// (test stubs, the regime/no-candidate paths) — the frontend renders
+        /// the experiment row without a nested eval-run node in that case.
+        /// Lets an operator drill cycle → experiment → that candidate's
+        /// eval-run trace.
+        #[serde(default)]
+        eval_run_id: Option<String>,
     },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
     /// F9: carries the sabotage variant + a human-readable message so the CLI
@@ -311,6 +319,7 @@ mod tests {
             passed: true,
             outcome: "kept".into(),
             delta_day: Some(0.042),
+            eval_run_id: None,
         };
         let v = serde_json::to_value(&event).unwrap();
         assert_eq!(v["type"], "mutation_gated");
@@ -323,6 +332,58 @@ mod tests {
         match parsed {
             CycleProgressEvent::MutationGated { delta_day, .. } => {
                 assert_eq!(delta_day, None, "delta_day should default to None");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// WS-11b: MutationGated carries the candidate's eval_run_id at the top
+    /// level so the frontend can nest a navigable eval-run node under the
+    /// experiment. Old JSON (without eval_run_id) still deserializes to None.
+    #[test]
+    fn test_mutation_gated_eval_run_id_serde() {
+        // With eval_run_id populated, it serializes at the top level.
+        let event = CycleProgressEvent::MutationGated {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            child_hash: "ch1".into(),
+            passed: true,
+            outcome: "kept".into(),
+            delta_day: Some(0.042),
+            eval_run_id: Some("01EVALRUNULID".into()),
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "mutation_gated");
+        assert_eq!(v["eval_run_id"], "01EVALRUNULID");
+
+        // Old JSON (no eval_run_id) still deserializes to None — back-compat.
+        let old_json =
+            r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::MutationGated { eval_run_id, .. } => {
+                assert_eq!(eval_run_id, None, "eval_run_id should default to None");
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        // A candidate that produced no run id (e.g. the regime path) serializes
+        // eval_run_id as JSON null and round-trips back to None.
+        let no_run = CycleProgressEvent::MutationGated {
+            session_id: String::new(),
+            cycle_id: "c1".into(),
+            child_hash: "ch2".into(),
+            passed: false,
+            outcome: "dropped".into(),
+            delta_day: None,
+            eval_run_id: None,
+        };
+        let nv = serde_json::to_value(&no_run).unwrap();
+        assert!(nv["eval_run_id"].is_null());
+        let reparsed: CycleProgressEvent = serde_json::from_value(nv).unwrap();
+        match reparsed {
+            CycleProgressEvent::MutationGated { eval_run_id, .. } => {
+                assert_eq!(eval_run_id, None);
             }
             _ => panic!("wrong variant"),
         }

@@ -32,6 +32,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::agent::observability::ObsEmitter;
+
 /// Snapshot of a live run's *listed performance* at an N-trade boundary,
 /// handed to the [`AttestHook`]. Built from the same live accumulators that
 /// feed `compute_run_metrics`, so the numbers an attestation publishes match
@@ -72,12 +74,37 @@ pub struct AttestSummary {
 /// while holding the runtime mutex, so a slow chain RPC inline would stall
 /// trading. Return promptly (spawn your own background submit) and never
 /// panic — a failed attestation must not abort the run.
+///
+/// ## WS-9 observability seam
+///
+/// The engine itself emits an `attest_boundary_reached` engine event at the
+/// call site each time this fires (so the trace dock shows the boundary even
+/// with the no-op hook). The DOWNSTREAM attestation-lifecycle events —
+/// `attest_verdict`, `chain_submit_started`, `chain_submit_finished`,
+/// `attestation_posted` — are the HOOK's to emit, because only the
+/// identity-backed impl knows the verdict numbers, tx hash, gas, and registry
+/// addresses. To let a future hook stream those onto the SAME observability
+/// bus the engine already publishes onto, the executor threads its
+/// `Option<ObsEmitter>` into this call. The hook calls
+/// [`ObsEmitter::emit_engine_event`] with the same string-kind convention.
+///
+/// REDACTION CONTRACT: payloads a hook emits through `obs` carry tx hash,
+/// contract/registry addresses, chain id, gas, block, and verdict numbers —
+/// NEVER a private key or a raw signature. Do not put them in the payload in
+/// the first place.
 #[async_trait]
 pub trait AttestHook: Send + Sync {
     /// Attest the listed performance captured in `summary`. Invoked exactly
     /// once each time the cumulative trade count crosses an `N`-trade
     /// boundary (`n_trades == N, 2N, 3N, …`).
-    async fn maybe_attest(&self, summary: AttestSummary);
+    ///
+    /// `obs` is the live run's [`ObsEmitter`] (cheap `Arc`-backed clone), or
+    /// `None` for non-observed runs. A hook that performs an attestation
+    /// should emit `attest_verdict` / `chain_submit_started` /
+    /// `chain_submit_finished` / `attestation_posted` engine events through it
+    /// so the on-chain submission is visible in the trace dock + run export.
+    /// The no-op default ignores it.
+    async fn maybe_attest(&self, summary: AttestSummary, obs: Option<ObsEmitter>);
 }
 
 /// The default no-op hook. Used by every engine path that does not inject a
@@ -88,7 +115,7 @@ pub struct NoopAttestHook;
 
 #[async_trait]
 impl AttestHook for NoopAttestHook {
-    async fn maybe_attest(&self, _summary: AttestSummary) {}
+    async fn maybe_attest(&self, _summary: AttestSummary, _obs: Option<ObsEmitter>) {}
 }
 
 // Blanket impl so an `Arc<H>` is itself an `AttestHook` — lets callers keep a
@@ -96,8 +123,8 @@ impl AttestHook for NoopAttestHook {
 // the executor an `Arc<dyn AttestHook>`.
 #[async_trait]
 impl<H: AttestHook + ?Sized> AttestHook for Arc<H> {
-    async fn maybe_attest(&self, summary: AttestSummary) {
-        (**self).maybe_attest(summary).await;
+    async fn maybe_attest(&self, summary: AttestSummary, obs: Option<ObsEmitter>) {
+        (**self).maybe_attest(summary, obs).await;
     }
 }
 
@@ -158,16 +185,19 @@ mod tests {
     async fn noop_hook_is_inert() {
         // The default never records or panics.
         let hook = NoopAttestHook;
-        hook.maybe_attest(AttestSummary {
-            run_id: "R".into(),
-            agent_id: "A".into(),
-            n_trades: 20,
-            n_decisions: 25,
-            realized_count: 10,
-            wins: 6,
-            gross_return_pct: 1.5,
-            equity: 101_500.0,
-        })
+        hook.maybe_attest(
+            AttestSummary {
+                run_id: "R".into(),
+                agent_id: "A".into(),
+                n_trades: 20,
+                n_decisions: 25,
+                realized_count: 10,
+                wins: 6,
+                gross_return_pct: 1.5,
+                equity: 101_500.0,
+            },
+            None,
+        )
         .await;
     }
 
@@ -179,7 +209,7 @@ mod tests {
         }
         #[async_trait]
         impl AttestHook for Recorder {
-            async fn maybe_attest(&self, summary: AttestSummary) {
+            async fn maybe_attest(&self, summary: AttestSummary, _obs: Option<ObsEmitter>) {
                 self.seen.lock().unwrap().push(summary.n_trades);
             }
         }
@@ -187,16 +217,19 @@ mod tests {
         // Drive through the Arc blanket impl.
         let as_hook: Arc<dyn AttestHook> = rec.clone();
         as_hook
-            .maybe_attest(AttestSummary {
-                run_id: "R".into(),
-                agent_id: "A".into(),
-                n_trades: 40,
-                n_decisions: 50,
-                realized_count: 20,
-                wins: 12,
-                gross_return_pct: 2.0,
-                equity: 102_000.0,
-            })
+            .maybe_attest(
+                AttestSummary {
+                    run_id: "R".into(),
+                    agent_id: "A".into(),
+                    n_trades: 40,
+                    n_decisions: 50,
+                    realized_count: 20,
+                    wins: 12,
+                    gross_return_pct: 2.0,
+                    equity: 102_000.0,
+                },
+                None,
+            )
             .await;
         assert_eq!(rec.seen.lock().unwrap().clone(), vec![40]);
     }

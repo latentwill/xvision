@@ -106,6 +106,7 @@ async fn republish_existing_agent_id_is_409_no_chain() {
         "7",
         "ab".repeat(32).as_str(),
         "2026-06-13T00:00:00Z",
+        None,
     )
     .await
     .expect("seed receipt");

@@ -38,6 +38,44 @@ pub(crate) struct TraderOutput {
     pub(crate) tp1_close_fraction: Option<f64>,
     #[serde(default)]
     pub(crate) tp2_pct: Option<f64>,
+    /// Set when the parser coerced a non-canonical `action` to a canonical
+    /// one (R1). `(from, to)`. Not part of the wire schema — `#[serde(skip)]`
+    /// keeps `deny_unknown_fields` happy and `Default` leaves it `None`. The
+    /// eval executor reads this after a successful parse to emit a non-fatal
+    /// `trader_output_action_coerced` event.
+    #[serde(skip)]
+    pub(crate) coerced_action: Option<(String, String)>,
+}
+
+/// Outcome of mapping a raw trader `action` string onto the canonical
+/// vocabulary (`long_open` / `short_open` / `flat` / `hold`).
+enum ActionCoercion {
+    /// Already canonical; leave action and conviction untouched.
+    Canonical,
+    /// A recognized synonym mapped to a canonical action — keep the model's
+    /// conviction (its confidence in the *decision* still applies).
+    Synonym(&'static str),
+    /// Unrecognized value — map to `hold` and zero the conviction, since we
+    /// cannot trust a confidence attached to an action we did not understand.
+    Unknown,
+}
+
+/// Coerce a (lowercased) trader `action` to the canonical enum (R1). Local
+/// reasoning models routinely emit out-of-enum actions (`skip`, `buy`,
+/// `close`, `none`, …); coercing here — before `validate()` — keeps a bad
+/// action from triggering an `InvalidField` skip or a paid schema-patch
+/// retry, in every eval phase (primary, random-baseline, honesty canary).
+fn coerce_action(action: &str) -> ActionCoercion {
+    match action {
+        "long_open" | "short_open" | "flat" | "hold" => ActionCoercion::Canonical,
+        "skip" | "none" | "no_trade" | "wait" | "pass" | "stay" | "nothing" | "noop" => {
+            ActionCoercion::Synonym("hold")
+        }
+        "buy" | "enter_long" | "open_long" | "long" => ActionCoercion::Synonym("long_open"),
+        "sell" | "short" | "enter_short" => ActionCoercion::Synonym("short_open"),
+        "close" | "exit" | "flat_all" | "close_all" => ActionCoercion::Synonym("flat"),
+        _ => ActionCoercion::Unknown,
+    }
 }
 
 /// Stable classification of trader-output failure modes. Persisted as part
@@ -359,6 +397,48 @@ impl TraderOutput {
                     // `self.action` therefore show the normalized form the
                     // parser actually tested.
                     parsed.action = parsed.action.to_ascii_lowercase();
+                    // R1: coerce non-canonical action synonyms BEFORE
+                    // validating. A recognized synonym keeps the model's
+                    // conviction; an unrecognized value becomes `hold` with
+                    // conviction forced to 0. `coerced_action` records the
+                    // (from, to) so the caller can emit a non-fatal
+                    // `trader_output_action_coerced` event. This kills the
+                    // `skip` class in every phase without a schema-patch retry.
+                    let (mapped_to, unknown) = match coerce_action(&parsed.action) {
+                        ActionCoercion::Canonical => (None, false),
+                        ActionCoercion::Synonym(canonical) => (Some(canonical), false),
+                        ActionCoercion::Unknown => (Some("hold"), true),
+                    };
+                    if let Some(to) = mapped_to {
+                        let from = std::mem::replace(&mut parsed.action, to.to_string());
+                        if unknown {
+                            parsed.conviction = 0.0;
+                        }
+                        // Non-fatal `trader_output_action_coerced` event. Debug
+                        // level so a skip-happy local model can't spam one line
+                        // per decision; the `coerced_action` field below is the
+                        // structured signal the caller can surface/aggregate.
+                        tracing::debug!(
+                            target: "xvision::eval",
+                            from = %from,
+                            to,
+                            unknown,
+                            "trader_output_action_coerced"
+                        );
+                        parsed.coerced_action = Some((from, to.to_string()));
+                    }
+                    // ERROR-3: a model emits `stop_loss_pct`/`take_profit_pct`
+                    // = 0 to mean "no bracket of my own; rely on the configured
+                    // risk gate". Normalize an exact 0 to `None` so it validates
+                    // first-try (no schema-patch repair retry) and the R1
+                    // config-ATR fallback supplies the protective stop. A
+                    // nonzero out-of-range value still fails validate() below.
+                    if parsed.stop_loss_pct == Some(0.0) {
+                        parsed.stop_loss_pct = None;
+                    }
+                    if parsed.take_profit_pct == Some(0.0) {
+                        parsed.take_profit_pct = None;
+                    }
                     parsed.validate(run_id, decision_index, response, raw)?;
                     return Ok(parsed);
                 }
@@ -702,7 +782,7 @@ fn trader_output_error_detail(error: &serde_json::Error) -> String {
 mod tests {
     use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
 
-    use super::{TraderFailureKind, TraderOutput};
+    use super::{TraderFailureKind, TraderOutput, TraderOutputError};
 
     // ─── F-5 phase 2b: problem_fields extraction ──────────────────────
 
@@ -735,16 +815,38 @@ mod tests {
     }
 
     #[test]
-    fn zero_stop_loss_pct_is_rejected() {
-        // 0 would be silently treated as "no stop" by the SL/TP engine — the
-        // exact failure mode (a position with a degenerate bracket riding an
-        // adverse move) this validation guards against.
-        let err = TraderOutput::parse_strict(
-            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.0}"#,
+    fn zero_brackets_normalize_to_none() {
+        // ERROR-3 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // a model told to "let the deterministic ATR stop manage the exit"
+        // emits `stop_loss_pct: 0` ("no bracket of my own"). Pre-fix the parser
+        // REJECTED 0 as a degenerate bracket, forcing a schema-patch repair
+        // retry on every such call (the 58 `trader_output_schema_patch_recovered`
+        // events). Since the R1 fix planted a config ATR-stop floor for any
+        // position lacking a model SL, 0 is no longer degenerate — normalize it
+        // to `None` so the first emission validates and the config ATR stop
+        // takes over. Same for `take_profit_pct: 0`.
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.0,"take_profit_pct":0.0}"#,
             "01TEST",
             0,
         )
-        .expect_err("zero stop_loss_pct must be rejected");
+        .expect("zero brackets must normalize to None, not error");
+        assert_eq!(parsed.stop_loss_pct, None);
+        assert_eq!(parsed.take_profit_pct, None);
+    }
+
+    #[test]
+    fn nonzero_out_of_range_stop_loss_pct_still_rejected() {
+        // The degenerate-bracket guard still rejects a genuinely invalid
+        // nonzero stop (e.g. 0.05% — below the 0.1 floor): only an exact 0
+        // means "no model stop". This keeps a churny micro-stop from slipping
+        // through while letting the "no stop" intent validate first-try.
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.05}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("nonzero out-of-range stop_loss_pct must still be rejected");
         assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert!(err.to_string().contains("stop_loss_pct must be between"));
     }
@@ -816,12 +918,20 @@ mod tests {
 
     #[test]
     fn problem_fields_extracts_invalid_action() {
-        let err = TraderOutput::parse_strict(
-            r#"{"action":"BUY_BIG","conviction":0.7,"justification":"go big"}"#,
+        // R1 coerces non-canonical actions before validation, so this error
+        // is no longer reachable through `parse_strict`. The `validate()`
+        // action guard remains as a defensive invariant, and `problem_fields()`
+        // must still extract "action" from its detail — construct the error
+        // directly to keep that diagnostic path covered.
+        let err = TraderOutputError::build(
+            TraderFailureKind::InvalidField,
             "01TEST",
             0,
-        )
-        .expect_err("invalid action must fail");
+            None,
+            Some(r#"{"action":"BUY_BIG"}"#),
+            "trader output action must be one of long_open, short_open, flat, hold (got `buy_big`)"
+                .to_string(),
+        );
         assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert_eq!(err.problem_fields(), vec!["action".to_string()]);
     }
@@ -926,18 +1036,62 @@ mod tests {
     }
 
     #[test]
-    fn invalid_action_has_field_level_diagnostic() {
-        let err = TraderOutput::parse_strict(
-            r#"{"action":"buy","conviction":0.7,"justification":"trend continuation"}"#,
+    fn unknown_action_coerced_to_hold_with_zero_conviction() {
+        // R1: an action outside both the canonical set AND the synonym table
+        // is coerced to `hold` with conviction forced to 0 — we cannot trust a
+        // confidence attached to an action we did not understand.
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"yolo_moon","conviction":0.9,"justification":"vibes"}"#,
             "01TEST",
             3,
         )
-        .expect_err("invalid action must fail");
+        .expect("unknown action must coerce to hold, not fail");
 
-        assert_eq!(err.kind, TraderFailureKind::InvalidField);
-        assert!(err
-            .to_string()
-            .contains("action must be one of long_open, short_open, flat, hold"));
+        assert_eq!(parsed.action, "hold");
+        assert_eq!(parsed.conviction, 0.0, "unknown action zeroes conviction");
+        assert_eq!(
+            parsed.coerced_action,
+            Some(("yolo_moon".to_string(), "hold".to_string()))
+        );
+    }
+
+    #[test]
+    fn coerces_every_action_synonym_class() {
+        // R1: exhaustive coverage of the synonym table across all four
+        // canonical targets, plus the canonical-passthrough (no coercion).
+        let cases = [
+            ("skip", "hold"),
+            ("none", "hold"),
+            ("wait", "hold"),
+            ("pass", "hold"),
+            ("noop", "hold"),
+            ("buy", "long_open"),
+            ("long", "long_open"),
+            ("sell", "short_open"),
+            ("short", "short_open"),
+            ("close", "flat"),
+            ("exit", "flat"),
+        ];
+        for (raw, expected) in cases {
+            let json = format!(r#"{{"action":"{raw}","conviction":0.5,"justification":"x"}}"#);
+            let parsed = TraderOutput::parse_strict(&json, "01TEST", 0)
+                .unwrap_or_else(|e| panic!("synonym {raw} must coerce: {e}"));
+            assert_eq!(parsed.action, expected, "synonym {raw} -> {expected}");
+            assert_eq!(parsed.conviction, 0.5, "synonym {raw} keeps conviction");
+            assert_eq!(
+                parsed.coerced_action,
+                Some((raw.to_string(), expected.to_string()))
+            );
+        }
+
+        // Canonical actions are passed through untouched (no coercion record).
+        for canon in ["long_open", "short_open", "flat", "hold"] {
+            let json = format!(r#"{{"action":"{canon}","conviction":0.5,"justification":"x"}}"#);
+            let parsed = TraderOutput::parse_strict(&json, "01TEST", 0)
+                .unwrap_or_else(|e| panic!("canonical {canon} must parse: {e}"));
+            assert_eq!(parsed.action, canon);
+            assert_eq!(parsed.coerced_action, None, "canonical {canon} not coerced");
+        }
     }
 
     #[test]
@@ -979,26 +1133,24 @@ mod tests {
     }
 
     #[test]
-    fn unknown_action_after_lowercase_still_fails() {
-        // Defence against accidental vocabulary widening: lowercasing
-        // shouldn't sneak a non-canonical action past the gate. "Buy"
-        // lowercases to "buy", which is still not in the canonical
-        // set — the diagnostic reflects the normalised form the
-        // parser actually tested, not the raw agent string.
-        let err = TraderOutput::parse_strict(
+    fn synonym_action_buy_coerced_to_long_open() {
+        // R1: a recognized synonym ("Buy" -> lowercase "buy" -> "long_open")
+        // is coerced before validation instead of failing, and the model's
+        // conviction is preserved (its confidence in the decision still holds).
+        let parsed = TraderOutput::parse_strict(
             r#"{"action":"Buy","conviction":0.7,"justification":"momentum"}"#,
             "01TEST",
             4,
         )
-        .expect_err("unknown action 'Buy' must still fail after lowercase");
+        .expect("synonym action 'Buy' must coerce, not fail");
 
-        assert_eq!(err.kind, TraderFailureKind::InvalidField);
-        let message = err.to_string();
-        assert!(
-            message.contains("got `buy`"),
-            "diagnostic should reference normalised form, got: {message}"
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.7, "synonym keeps the model's conviction");
+        assert_eq!(
+            parsed.coerced_action,
+            Some(("buy".to_string(), "long_open".to_string())),
+            "coercion is recorded as (normalised-from, to)"
         );
-        assert!(message.contains("action must be one of long_open, short_open, flat, hold"));
     }
 
     #[test]

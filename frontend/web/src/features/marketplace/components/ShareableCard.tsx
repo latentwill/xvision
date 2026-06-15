@@ -4,7 +4,6 @@
 import { GenArtPlaceholder } from "./GenArtPlaceholder";
 import { AgentIcon } from "./AgentIcon";
 import { VerifiedBadge } from "./VerifiedBadge";
-import { X402Badge } from "./X402Badge";
 import type { ShareableCardData } from "../data/types";
 
 export function ShareableCard({ data }: { data: ShareableCardData }) {
@@ -20,7 +19,6 @@ export function ShareableCard({ data }: { data: ShareableCardData }) {
       <div className="w-[600px] h-full p-[38px_44px] flex flex-col justify-between">
         <div className="flex items-center gap-2">
           {data.verification === "verified" ? <VerifiedBadge /> : null}
-          {data.acceptsX402 ? <X402Badge /> : null}
         </div>
         <div>
           <h1 className="font-mono text-[44px] font-semibold leading-none">{data.id}</h1>

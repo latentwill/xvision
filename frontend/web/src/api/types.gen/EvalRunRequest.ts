@@ -22,8 +22,9 @@ scenario_id: string,
  */
 mode: RunMode,
 /**
- * Optional per-run override of `Strategy.mechanical_params`. Persisted as
- * `eval_runs.params_override_json`.
+ * Optional free-form per-run config bag, persisted verbatim as
+ * `eval_runs.params_override_json`. Used as part of the run's dedup
+ * fingerprint and read by the watchdog (e.g. `max_run_duration_secs`).
  */
 params_override: Record<string, unknown> | null,
 /**

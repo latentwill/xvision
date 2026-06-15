@@ -30,7 +30,6 @@
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
-// 17b. PUT   /api/strategy/:id/mechanical_params      strategies::put_mechanical_params
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
 // 17e. PUT    /api/strategy/:id/mechanistic            strategies::put_mechanistic
@@ -92,6 +91,8 @@
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
 // 61. POST  /api/assets/refresh               assets_refresh::refresh
+// 62. POST  /api/live/deploy/degen-arena      settings::brokers::set_degen_arena
+// 62b. DELETE /api/live/deploy/degen-arena    settings::brokers::delete_degen_arena
 //
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
@@ -109,6 +110,7 @@
 //  R12. GET  /api/templates
 //  R12b. GET /api/strategy/pine-library          strategies::get_pine_library   (WU9)
 //  R13. GET  /api/strategy/:id
+//  R13b. GET /api/strategy/:id/requirements      strategies::requirements      (QA #4)
 //  R14. GET  /api/strategies/:id/chart
 //  R15. GET  /api/strategies-folder/list
 //  R16. GET  /api/scenarios
@@ -261,6 +263,18 @@ fn readonly_router(state: AppState) -> Router {
             get(strategies::get_pine_library),
         )
         .route("/api/strategy/:id", get(strategies::get))
+        // QA #4: per-strategy model/skill/tool requirements for the buyer's
+        // machine. The Strategy detail page highlights gaps + gates eval.
+        .route(
+            "/api/strategy/:id/requirements",
+            get(strategies::requirements),
+        )
+        // #12 / QA #8: marketplace provenance (creator, price paid, license
+        // NFT, explorer link) for a strategy acquired from the marketplace.
+        .route(
+            "/api/strategy/:id/marketplace",
+            get(strategies::marketplace_provenance),
+        )
         // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
         // a strategy can't launch (typed per-agent blockers) BEFORE launch.
         .route(
@@ -457,6 +471,10 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/observability", get(settings::observability::get))
         .route("/api/settings/memory", get(settings::memory::get))
         .route("/api/settings/memory/status", get(settings::memory::status))
+        .route(
+            "/api/settings/profile",
+            get(settings::profile::get).put(settings::profile::put),
+        )
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
         .route(
@@ -595,10 +613,6 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
         .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
-        .route(
-            "/api/strategy/:id/mechanical_params",
-            put(strategies::put_mechanical_params),
-        )
         .route(
             "/api/strategy/:id/filter",
             put(strategies::put_filter).delete(strategies::delete_filter),
@@ -785,6 +799,14 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
+        )
+        // ── Live deploy: Degen Arena key ingest ───────────────────────────
+        // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet
+        // credentials (apiKey, accountAddress, network) for the Virtuals Degen
+        // Arena venue. Validates format; key is never echoed back.
+        .route(
+            "/api/live/deploy/degen-arena",
+            post(settings::brokers::set_degen_arena).delete(settings::brokers::delete_degen_arena),
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))

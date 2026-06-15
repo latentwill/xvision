@@ -23,7 +23,70 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import type { RetentionMode } from "../../api/types-agent-runs";
+
 export type EvalCapsuleStatus = "eval" | "pass" | "warn" | "error" | "queued";
+
+/**
+ * Operator-facing fidelity token per retention mode. Tells the operator
+ * at a glance whether prompt/response/tool bodies are present on this
+ * run (the badge sits beside the capsule rows so it's always visible,
+ * not buried in the inspector).
+ *
+ * Mapping (WS-5 Gap 2):
+ *   - `hash_only`  → "hash-only" — only hashes/counts stored, no bodies.
+ *   - `redacted`   → "redacted"  — bodies present but secret-scrubbed.
+ *   - `full_debug` → "full"      — raw bodies on disk.
+ */
+const FIDELITY_TOKEN: Record<
+  RetentionMode,
+  { label: string; tint: string; title: string }
+> = {
+  hash_only: {
+    label: "hash-only",
+    tint: "var(--text-3)",
+    title: "Hash-only retention — no prompt/response/tool bodies stored on disk",
+  },
+  redacted: {
+    label: "redacted",
+    tint: "var(--warn)",
+    title: "Redacted retention — secret-scrubbed bodies stored on disk",
+  },
+  full_debug: {
+    label: "full",
+    tint: "var(--info)",
+    title: "Full retention — raw prompt/response/tool bodies stored on disk",
+  },
+};
+
+/**
+ * Small fidelity chip surfacing the run's retention mode. Matches the
+ * capsule's `text-[10px] font-mono tracking` chip language (same family
+ * as the EVAL/LIVE prefix + status label) and is keyed by
+ * `data-fidelity` for deep-linking / testing.
+ */
+export function FidelityBadge({
+  retentionMode,
+}: {
+  retentionMode: RetentionMode;
+}): ReactNode {
+  const tok = FIDELITY_TOKEN[retentionMode] ?? FIDELITY_TOKEN.hash_only;
+  return (
+    <span
+      data-testid="capsule-fidelity-badge"
+      data-fidelity={retentionMode}
+      title={tok.title}
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase shrink-0"
+      style={{
+        color: tok.tint,
+        background: "color-mix(in srgb, currentColor 12%, transparent)",
+        border: "1px solid color-mix(in srgb, currentColor 30%, transparent)",
+      }}
+    >
+      {tok.label}
+    </span>
+  );
+}
 
 export type EvalCapsuleCurrentSpan = {
   color: string;     // hex / css color (typically span_colors)
@@ -38,10 +101,12 @@ export type EvalCapsuleRow = {
   /**
    * Capsule prefix label. `"live"` ⇒ the row is a live-money run: prefix
    * reads LIVE in the gold tint and the short tag routes to the live
-   * inspector (`/live/runs/:id`). Defaults to `"eval"` (prefix EVAL,
-   * routes to `/eval-runs/:id`) so existing call sites are unchanged.
+   * inspector (`/live/runs/:id`). `"opti"` ⇒ an autooptimizer cycle row
+   * (WS-11a): prefix reads OPTI and the short tag links to the cycle detail
+   * route. Defaults to `"eval"` (prefix EVAL, routes to `/eval-runs/:id`) so
+   * existing call sites are unchanged.
    */
-  kind?: "eval" | "live";
+  kind?: "eval" | "live" | "opti";
   /** Short `strategy·scenario` tag (e.g. `mr·flash`). Never the hex run-id. */
   short: string;
   status: EvalCapsuleStatus;
@@ -98,16 +163,37 @@ export function CapsuleRow({
   focused,
   currentSpan,
   onClick,
+  retentionMode,
 }: {
   run: EvalCapsuleRow;
   focused: boolean;
   currentSpan?: EvalCapsuleCurrentSpan | null;
   onClick?: () => void;
+  /**
+   * Retention/fidelity of the focused run (`AgentRunSummary.retention_mode`).
+   * When provided AND this is the focused row, the `FidelityBadge` renders
+   * INLINE in the row's chip cluster (trailing the spans·cost·pnl text) so the
+   * operator always sees whether bodies are present — without the badge ever
+   * stacking as a separate row that adds vertical height (the collapsed-pill
+   * layout bug it used to cause). Sibling rows never render their own badge.
+   */
+  retentionMode?: RetentionMode;
 }): ReactNode {
   const tok = STATUS[run.status] ?? STATUS.eval;
   // Live-money rows get a LIVE prefix in the gold tint and route to the
   // live inspector; everything else keeps the EVAL prefix + eval inspector.
   const isLiveMoney = run.kind === "live";
+  // WS-11a: OPTI cycle rows get an OPTI prefix and link to the cycle detail
+  // route. The optimizer cycle is not an agent-run, so it never uses the
+  // eval / live inspector links.
+  const isOpti = run.kind === "opti";
+  const prefixLabel = isOpti ? "OPTI" : isLiveMoney ? "LIVE" : "EVAL";
+  const linkTo = isOpti
+    ? `/optimizer/cycle/${encodeURIComponent(run.id)}`
+    : isLiveMoney
+      ? `/live/runs/${encodeURIComponent(run.id)}`
+      : `/eval-runs/${encodeURIComponent(run.id)}`;
+  const prefixEmphasised = isLiveMoney || isOpti;
   return (
     <div
       className="relative h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
@@ -142,11 +228,17 @@ export function CapsuleRow({
 
       <span className="relative z-10 pointer-events-none flex items-center gap-2 shrink-0">
         <span
-          className={`text-[10px] font-mono tracking-[0.18em] ${isLiveMoney ? "font-semibold" : "text-text-3"}`}
-          style={isLiveMoney ? { color: "var(--gold)" } : undefined}
+          className={`text-[10px] font-mono tracking-[0.18em] ${prefixEmphasised ? "font-semibold" : "text-text-3"}`}
+          style={
+            isLiveMoney
+              ? { color: "var(--gold)" }
+              : isOpti
+                ? { color: "var(--info)" }
+                : undefined
+          }
           data-testid="capsule-kind-label"
         >
-          {isLiveMoney ? "LIVE" : "EVAL"}
+          {prefixLabel}
         </span>
         {/*
           F-6 (qa-round-7): the short `strategy·scenario` tag routes to the
@@ -156,15 +248,11 @@ export function CapsuleRow({
           middle-click / cmd-click keep native link behavior.
         */}
         <Link
-          to={
-            isLiveMoney
-              ? `/live/runs/${encodeURIComponent(run.id)}`
-              : `/eval-runs/${encodeURIComponent(run.id)}`
-          }
+          to={linkTo}
           onClick={(e) => e.stopPropagation()}
           className="relative z-20 pointer-events-auto text-[11px] font-mono hover:underline"
           style={{ color: tok.tint }}
-          aria-label={`Open eval run ${run.short}`}
+          aria-label={isOpti ? `Open optimizer cycle ${run.short}` : `Open eval run ${run.short}`}
         >
           {run.short}
         </Link>
@@ -193,6 +281,19 @@ export function CapsuleRow({
           </>
         ) : null}
       </span>
+
+      {/*
+        WS-5 Gap 2 (inline placement): the focused run's fidelity badge sits
+        INLINE here in the chip cluster — `shrink-0`, on the single horizontal
+        line — instead of being injected by CapsuleShell as a separate stacked
+        row above the body (which added a near-empty second line and broke the
+        collapsed pill). Only the focused row carries it.
+      */}
+      {focused && retentionMode ? (
+        <span className="relative z-10 pointer-events-none shrink-0">
+          <FidelityBadge retentionMode={retentionMode} />
+        </span>
+      ) : null}
 
       {focused && currentSpan && (
         <>

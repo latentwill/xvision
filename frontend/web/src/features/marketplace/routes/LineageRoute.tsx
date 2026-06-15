@@ -18,20 +18,21 @@ import {
   isOnChainListingId,
   requirementsFromManifest,
   useBundleManifest,
+  type Requirement,
 } from "@/features/marketplace/data/bundle";
 import { RequirementChip } from "@/features/marketplace/components/RequirementChip";
+import { formatPercent, formatSharpe } from "@/lib/format";
 import { useWallet } from "@/features/marketplace/lib/wallet";
 import { faucetUsdc } from "@/features/marketplace/lib/chain";
 import { InsufficientUsdcError } from "@/features/marketplace/lib/purchaseErrors";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
-import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { relativeTime } from "@/features/marketplace/lib/time";
 import { humanize } from "./browse/ListingEntry";
-import { IngredientBanner } from "./IngredientBanner";
+import { finalizeImportWithRetry } from "@/features/marketplace/lib/finalizeImport";
 import { PerformanceSection } from "./PerformanceSection";
 import { ReceiptsDrawer } from "./ReceiptsDrawer";
 import type {
@@ -49,14 +50,12 @@ function BuyerCard({
   humans,
   agents,
   paidToCreatorUsd,
-  platformFeeBps,
   creator,
   isDemo,
 }: {
   humans: number;
   agents: number;
   paidToCreatorUsd: number;
-  platformFeeBps: number;
   creator: Creator;
   /** Fixture/demo client — adoption + earnings figures are illustrative. */
   isDemo: boolean;
@@ -104,53 +103,9 @@ function BuyerCard({
         </p>
         {hasPaid && (
           <p className="font-mono text-[10px] text-text-3">
-            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)} ·{" "}
-            {platformFeeBps / 100}% platform fee
+            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)}
           </p>
         )}
-      </div>
-    </div>
-  );
-}
-
-function WhatYouGetCards({ get, dont }: { get: string[]; dont: string[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="rounded-md border border-border bg-surface-card p-4">
-        <div className="text-[12px] font-medium text-text mb-0.5">What you get</div>
-        <div className="font-mono text-[10.5px] text-text-3 mb-2">
-          Tier 2 sealed bundle · decrypts after purchase
-        </div>
-        <ul className="flex flex-col gap-1">
-          {get.map((item) => (
-            <li key={item} className="flex items-center gap-1.5 text-[12.5px] text-text-2">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gold flex-shrink-0">
-                <path
-                  d="M2 5l2 2 4-4"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="rounded-md border border-border bg-surface-card p-4">
-        <div className="text-[12px] font-medium text-text mb-0.5">What you don&apos;t get</div>
-        <div className="font-mono text-[10.5px] text-text-3 mb-2">Tier 3 — never bundled</div>
-        <ul className="flex flex-col gap-1">
-          {dont.map((item) => (
-            <li key={item} className="flex items-center gap-1.5 text-[12.5px] text-text-3">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-text-3 flex-shrink-0">
-                <path d="M3 3l4 4M7 3l-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              {item}
-            </li>
-          ))}
-        </ul>
       </div>
     </div>
   );
@@ -294,8 +249,7 @@ function MoreFromCreatorCard({
               {row.buyers.humans + row.buyers.agents} acqd
             </span>
             <span className="font-mono text-[12px] font-semibold text-gold ml-2">
-              {row.return30dPct > 0 ? "+" : ""}
-              {row.return30dPct}%
+              {formatPercent(row.return30dPct)}
             </span>
           </button>
         ))}
@@ -480,16 +434,25 @@ export function LineageRoute() {
   // Fixture listings never fetch; on any error this is null and the page
   // renders exactly as before.
   const manifest = useBundleManifest(detail?.id);
-  const requirements = requirementsFromManifest(manifest);
 
   // Real purchase via the MarketplaceData seam: ApiMarketplaceData signs an
   // EIP-3009 TransferWithAuthorization and POSTs the gasless relay (falling
-  // back to approve+buy when the relay 503s); the fixture client still
-  // returns a fake TxRef for fixture slugs. Errors render inline below the
-  // Acquire button (no popups); InsufficientUsdcError gets a faucet affordance.
+  // back to approve+buy when the relay 503s); the fixture client still returns
+  // a fake TxRef for fixture slugs. The relay awaits the on-chain receipt, so
+  // the license is minted by the time purchaseIntent resolves; we then finalize
+  // the acquisition (decrypt + import + materialize the referenced agents) and
+  // land the buyer on the runnable Strategy detail page — no receipt page (QA
+  // #11/#12). The import license-gate can briefly 403 while the freshly-mined
+  // license isn't yet visible to the gate's RPC node, so importSealed runs
+  // through a bounded retry on that condition (finalizeImportWithRetry). Any
+  // final failure renders inline below the Acquire button (no popups, no dead
+  // end, no navigate-to-500); InsufficientUsdcError gets a faucet affordance.
   const buyMutation = useMutation({
-    mutationFn: () => mp.purchaseIntent(detail!.id),
-    onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+    mutationFn: async () => {
+      await mp.purchaseIntent(detail!.id);
+      return finalizeImportWithRetry(() => mp.importSealed(detail!.id));
+    },
+    onSuccess: ({ agent_id }) => navigate(`/strategies/${agent_id}`),
   });
 
   // Testnet affordance: mint the missing test USDC, then retry the purchase
@@ -499,20 +462,19 @@ export function LineageRoute() {
     onSuccess: () => buyMutation.mutate(),
   });
 
-  // Free / clone path. Open-tier listings route through cloneIntent (QA12) —
-  // a clone receipt, never a purchase.
+  // Free / open path (Run free). Open-tier listings import for real via the
+  // plain import route, which materializes the referenced agents server-side
+  // and returns the new local strategy ULID — then land on the Strategy detail
+  // page. No fake clone tx, no receipt (QA #7/#12).
   const cloneMutation = useMutation({
-    mutationFn: () => mp.cloneIntent(detail!.id),
-    onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+    mutationFn: () => mp.importListing(detail!.id),
+    onSuccess: ({ agent_id }) => navigate(`/strategies/${agent_id}`),
   });
 
   const queryClient = useQueryClient();
   const isOwner = !!detail && !!viewer && viewer.createdListingIds.includes(detail.id);
 
   const isOpenTier = !!detail && isFreeListing(detail);
-  const canClone =
-    !!detail &&
-    (isOpenTier || (viewer?.ownedListingIds.includes(detail.id) ?? false));
 
   const receiptsOpen = sp.get("receipts") === "open";
   const toggleReceipts = () => {
@@ -586,6 +548,26 @@ export function LineageRoute() {
   // path. When empty (sealed listings pre-purchase) we show an honest line
   // rather than a blank gap.
   const description = detail.promise?.trim() ?? "";
+
+  // Run-requirements shown in place of the old "What you get / Tier 2·Tier 3"
+  // jargon cards (operator: the tier wording was unclear). Always lead with the
+  // model the strategy runs on — the listing row always carries it — then any
+  // manifest-derived models / tools (verified on-chain listings only), de-duped
+  // so the model isn't listed twice.
+  const requirements: Requirement[] = (() => {
+    const fromManifest = requirementsFromManifest(manifest);
+    // Lead with the model the strategy runs on. When the verified manifest
+    // already declares its model(s) we use those (more precise); otherwise fall
+    // back to the listing's own `model` field so every listing shows at least
+    // its model — without rendering the same model twice.
+    const hasManifestModel = fromManifest.some((r) => r.kind === "model");
+    const lead: Requirement[] =
+      !hasManifestModel && detail.model
+        ? [{ name: detail.model, kind: "model" }]
+        : [];
+    return [...lead, ...fromManifest];
+  })();
+
   const platformFeePct = detail.platformFeeBps / 100;
   const netToCreator =
     detail.priceUsdc != null
@@ -708,7 +690,6 @@ export function LineageRoute() {
             {detail.verification === "verified" && (
               <VerifiedBadge data-testid="verified-badge" />
             )}
-            {detail.acceptsX402 && <X402Badge data-testid="x402-badge" />}
             {detail.assets.map((a) => (
               <AssetPill key={a} asset={a} />
             ))}
@@ -752,32 +733,59 @@ export function LineageRoute() {
           )}
 
           {/* Metric strip — every value FITS: tabular-nums + whitespace-nowrap,
-              "—" for absent values (never 0). */}
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2 pt-1">
+              "—" for absent values (never 0).
+              Provenance: these figures come from XVN backtest/eval (indicative).
+              Live Degen Arena (on-chain) PnL is shown in the PerformanceSection
+              provenance banner below when available. */}
+          <div className="flex items-center gap-2 pt-1 pb-0.5">
+            <span
+              data-testid="metric-strip-provenance"
+              className="font-mono text-[9px] tracking-[0.12em] uppercase text-text-3 whitespace-nowrap"
+            >
+              Indicative · XVN backtest
+            </span>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
             <MetricCell
               label="30D Return"
               value={
                 detail.metrics.return30dPct === 0
                   ? "—"
-                  : `${detail.metrics.return30dPct > 0 ? "+" : ""}${detail.metrics.return30dPct}%`
+                  : formatPercent(detail.metrics.return30dPct)
               }
             />
             <MetricCell
               label="Sharpe"
-              value={detail.metrics.sharpe === 0 ? "—" : String(detail.metrics.sharpe)}
+              value={
+                detail.metrics.sharpe === 0
+                  ? "—"
+                  : formatSharpe(detail.metrics.sharpe)
+              }
             />
             <MetricCell
               label="Win rate"
-              value={detail.metrics.winRatePct === 0 ? "—" : `${detail.metrics.winRatePct}%`}
+              value={
+                detail.metrics.winRatePct === 0
+                  ? "—"
+                  : formatPercent(detail.metrics.winRatePct, { signed: false })
+              }
             />
             <MetricCell
               label="Max DD"
-              value={detail.metrics.maxDrawdownPct === 0 ? "—" : `${detail.metrics.maxDrawdownPct}%`}
+              value={
+                detail.metrics.maxDrawdownPct === 0
+                  ? "—"
+                  : formatPercent(detail.metrics.maxDrawdownPct, { signed: false })
+              }
               intent="danger"
             />
             <MetricCell
               label="Avg dur"
-              value={detail.metrics.avgDurationDays === 0 ? "—" : `${detail.metrics.avgDurationDays}d`}
+              value={
+                detail.metrics.avgDurationDays === 0
+                  ? "—"
+                  : `${Number(detail.metrics.avgDurationDays.toFixed(1))}d`
+              }
             />
           </div>
 
@@ -786,7 +794,6 @@ export function LineageRoute() {
             humans={detail.buyers.humans}
             agents={detail.buyers.agents}
             paidToCreatorUsd={detail.paidToCreatorUsd}
-            platformFeeBps={detail.platformFeeBps}
             creator={detail.creator}
             isDemo={isDemo}
           />
@@ -817,8 +824,8 @@ export function LineageRoute() {
               perpetual license · one-time
             </div>
 
-            {/* Primary CTA. Open tier = Run free (cloneIntent); paid = Acquire
-                (purchaseIntent) gated on wallet connection. */}
+            {/* Primary CTA. Open tier = Run free (importListing); paid = Acquire
+                (purchaseIntent → finalize) gated on wallet connection. */}
             {isOpenTier ? (
               <button
                 data-testid="run-free-btn"
@@ -889,15 +896,6 @@ export function LineageRoute() {
             <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
               Mantle Sepolia testnet — pays with test USDC.
             </div>
-
-            {/* Clone to edit — the editor handoff (kept). The Share button is removed (QA3). */}
-            <button
-              onClick={() => cloneMutation.mutate()}
-              disabled={!canClone || cloneMutation.isPending}
-              className="mt-2 w-full py-2 rounded border border-border text-[12px] font-medium text-text-2 hover:text-text hover:border-border-strong transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Clone to edit
-            </button>
           </div>
         </div>
       </section>
@@ -977,20 +975,27 @@ export function LineageRoute() {
         </section>
       )}
 
-      {/* ===== INGREDIENT BANNER ===== */}
-      <IngredientBanner ingredients={detail.ingredients} />
-
       {/* ===== BELOW THE FOLD — single full-width column ===== */}
       <div className="p-6 space-y-6">
         {/* PERFORMANCE — first-class citizen, full-width, on-chain markers */}
-        <PerformanceSection curve={detail.equityCurve} trades={detail.onChain.trades} />
+        <PerformanceSection
+          curve={detail.equityCurve}
+          trades={detail.onChain.trades}
+          // Live Degen Arena PnL is authoritative once there's real on-chain
+          // trading; hidden (null) until the indexer reports trades, so an
+          // un-traded listing doesn't show a misleading $0.00 live figure.
+          liveDegenPnlUsd={
+            detail.onChain.tradesMeta.totalOnChain > 0
+              ? detail.onChain.tradesMeta.netPnlUsd
+              : null
+          }
+        />
 
         {/* EVAL ATTESTATIONS (inline, only for attested on-chain listings) */}
         {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
           <VerifiedEvalsSection listingId={detail.id} />
         )}
 
-        <WhatYouGetCards get={detail.whatYouGet} dont={detail.whatYouDont} />
         <VariantMiniTree variants={detail.variants} clonesOfYours={detail.clonesOfYours} />
 
         {/* RECENT BUYERS + MORE FROM CREATOR — inline grid-cols-2, full-width

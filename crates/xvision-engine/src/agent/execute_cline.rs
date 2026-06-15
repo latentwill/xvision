@@ -34,7 +34,7 @@
 //!   lands record/replay, this executor must compare the live trajectory
 //!   against the recorded one and surface divergence as a typed error.
 
-use crate::agent::llm::{ContentBlock, LlmResponse, ResponseSchema, StopReason};
+use crate::agent::llm::{ContentBlock, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason};
 use crate::eval::executor::trader_output::extract_first_json_object;
 use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
@@ -313,6 +313,16 @@ pub struct ClineSlotInput<'a> {
     /// obs emitter wired). The successful path does NOT call this — the
     /// sidecar's `completed` status is correct and should be preserved.
     pub obs: Option<crate::agent::observability::ObsEmitter>,
+    /// Parent span id for the WS-17 `model.reasoning` span. When the Cline
+    /// dispatch is wrapped by a `model.call` span, the caller threads that
+    /// span id here so the captured chain-of-thought (extracted from a CoT
+    /// model's `<think>` block at the recovery strip site) nests under the
+    /// model call. `None` ⇒ the reasoning span is emitted top-level (the
+    /// chain-of-thought still reaches the trace). The Cline trader path
+    /// does not currently own a `model.call` span, so production callers
+    /// pass `None` today; the field is the seam for a future WS that adds
+    /// one.
+    pub model_call_span_id: Option<String>,
     /// Reasoning effort hint forwarded to the sidecar for CoT reasoning
     /// models (deepseek-r1, qwq, etc.) via `StartRunParams::reasoning_effort`.
     /// Derived at the Cline dispatch site via
@@ -369,6 +379,36 @@ impl ClineSlotInput<'_> {
 pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<LlmResponse> {
     let role = input.role().to_string();
     let run_id = input.run_id.clone();
+
+    // Observability: provider / model / span for the model-call lifecycle
+    // written on the success path below. The backtest executor opens the
+    // `decision.model` span (`emit_model_call_started`) and threads its id
+    // here as `model_call_span_id`; we close it with `emit_model_call_finished`
+    // so a `model_calls` row lands with the sidecar's reported token usage.
+    // Mirrors `trader_provider` / `trader_model_id` in the backtest executor
+    // (slot.provider, slot.effective_model) so the finish event keys the same
+    // provider/model the started span recorded. Captured before `input` is
+    // partially consumed below.
+    let obs_provider = input
+        .slot
+        .provider
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| input.provider_entry.name.clone());
+    let obs_model = input.slot.effective_model();
+    let obs_model_call_span_id = input.model_call_span_id.clone();
+    // Render the first user turn ONCE and reuse it for (a) the prompt hash,
+    // (b) the sidecar `step`, and (c) the persisted prompt blob built below —
+    // so the `model_calls.prompt_hash` digests exactly the bytes the operator
+    // sees in the FullDebug blob (no drift between hash and stored body). A
+    // render error short-circuits the whole slot via `?` (same `anyhow`
+    // propagation the `step` call previously used) rather than silently
+    // logging a hash for a prompt that never shipped.
+    let obs_rendered_prompt = input.render_prompt()?;
+    // `model_calls.prompt_hash` is a real digest of the rendered request
+    // rather than a placeholder. `compute_response_hash` is a generic
+    // `sha256:<hex>` of a string; reuse it for the prompt text.
+    let obs_prompt_hash = crate::agent::observability::compute_response_hash(&obs_rendered_prompt);
 
     // Item 5: map provider → Cline gateway selection. An unmapped provider
     // (e.g. local-candle) aborts with a typed error — NO silent fallback.
@@ -440,7 +480,10 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         .cline_client
         .step(StepParams {
             run_id: run_id.clone(),
-            prompt: input.render_prompt()?,
+            // Reuse the prompt rendered above so the bytes shipped to the
+            // sidecar are byte-identical to the hash input AND the FullDebug
+            // prompt blob built at the success-path emit below.
+            prompt: obs_rendered_prompt.clone(),
         })
         .await;
 
@@ -448,7 +491,15 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // a weak tool-caller that emitted end_turn without calling submit_decision.
     // The session is still open, so a second step attempt is valid.
     let step_result = match step_result {
-        Ok(step) => Ok(try_nodecision_recovery(step, &input.cline_client, &run_id, &role).await),
+        Ok(step) => Ok(try_nodecision_recovery(
+            step,
+            &input.cline_client,
+            &run_id,
+            &role,
+            input.obs.as_ref(),
+            input.model_call_span_id.as_deref(),
+        )
+        .await),
         Err(e) => Err(e),
     };
 
@@ -564,6 +615,76 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         }
     };
 
+    let input_tokens = u32::try_from(step.usage.input_tokens).unwrap_or(u32::MAX);
+    let output_tokens = u32::try_from(step.usage.output_tokens).unwrap_or(u32::MAX);
+
+    // Observability: the Cline trader path is the only trader runtime now, and
+    // it previously emitted no model-call lifecycle on success — so even with
+    // the obs bus wired, `model_calls` stayed empty (a `model_calls` row is
+    // written ONLY by `RunEvent::ModelCallFinished`). Emit it here with the
+    // sidecar's reported token usage, keyed on the `decision.model` span the
+    // backtest executor opened (`emit_model_call_started`) and threaded down
+    // as `model_call_span_id`. When the caller did NOT thread a span id (e.g.
+    // legacy/unit callers), there is no span to attach to and we skip the
+    // emit rather than fabricate one — the span-finished close stays the
+    // caller's responsibility. The response_hash digests the decision JSON;
+    // `cost_usd: None` lets the emitter fall back to catalog-based pricing.
+    //
+    // PAYLOAD CAPTURE (fix/cline-model-call-payloads): use the PAYLOAD-aware
+    // emit variant — the hash-only `emit_model_call_finished` hard-codes
+    // `prompt_text: None` / `response_text: None`, so under `full_debug` the
+    // trace inspector had no body to show and fell back to `prompt.hash` /
+    // `response.hash`. Mirror the standalone path (`execute.rs`): build an
+    // `LlmRequest` faithfully representing the prompt the sidecar ran, pass it
+    // as `prompt_request`, and pass the decision JSON as `response_text`. The
+    // emitter gates internally on retention (HashOnly → no bodies; Redacted →
+    // redacted bodies; FullDebug → raw), so this NEVER weakens redaction.
+    //
+    // The `LlmRequest` reuses `obs_rendered_prompt` (the exact bytes the hash
+    // digested and the sidecar `step` shipped), so the persisted blob stays
+    // consistent with `prompt_hash`. `tools` is left empty: the Cline path
+    // only has tool *names* (`allowed_tools_plus_submit_decision`), not full
+    // `ToolDefinition`s (those live in the retired LlmDispatch registry), and
+    // the sidecar receives the names + the `response_schema` it splices into
+    // the prompt. The operator-visible prompt — system prompt + rendered user
+    // turn + response contract — is captured faithfully; the tool-definition
+    // JSON bodies are the only omission vs. the true wire request.
+    if let (Some(obs), Some(span_id)) = (input.obs.as_ref(), obs_model_call_span_id.as_deref()) {
+        let response_hash = if decision_json.is_empty() {
+            None
+        } else {
+            Some(crate::agent::observability::compute_response_hash(&decision_json))
+        };
+        let prompt_request = LlmRequest {
+            model: obs_model.clone(),
+            system_prompt: input.system_prompt.clone(),
+            messages: vec![Message::user_text(obs_rendered_prompt.clone())],
+            max_tokens: input.max_tokens,
+            tools: Vec::new(),
+            temperature: None,
+            response_schema: Some(input.response_schema.clone()),
+            cache_control: None,
+            force_json: false,
+        };
+        obs.emit_model_call_finished_with_payloads(
+            span_id,
+            &obs_provider,
+            &obs_model,
+            Some(input_tokens),
+            Some(output_tokens),
+            None,
+            obs_prompt_hash,
+            response_hash,
+            Some(&prompt_request),
+            if decision_json.is_empty() {
+                None
+            } else {
+                Some(decision_json.as_str())
+            },
+        )
+        .await;
+    }
+
     Ok(LlmResponse {
         // The existing decision parser (`dispatch_capability::parse_*` and
         // `TraderOutput::parse_response`) reads `resp.text()`, which
@@ -571,8 +692,8 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         // Text block so the parser is byte-identical to the LlmDispatch path.
         content: vec![ContentBlock::Text { text: decision_json }],
         stop_reason: StopReason::EndTurn,
-        input_tokens: u32::try_from(step.usage.input_tokens).unwrap_or(u32::MAX),
-        output_tokens: u32::try_from(step.usage.output_tokens).unwrap_or(u32::MAX),
+        input_tokens,
+        output_tokens,
     })
 }
 
@@ -615,6 +736,8 @@ async fn try_nodecision_recovery(
     client: &AgentClient,
     run_id: &str,
     role: &str,
+    obs: Option<&crate::agent::observability::ObsEmitter>,
+    model_call_span_id: Option<&str>,
 ) -> StepResult {
     if step.status != "completed" || step.decision_json.is_some() {
         return step;
@@ -624,7 +747,18 @@ async fn try_nodecision_recovery(
     // Reasoning models (deepseek-r1, Fino1, etc.) emit chain-of-thought prose or
     // <think>…</think> wrappers before — or instead of — a submit_decision call.
     // Stripping think blocks prevents false-positive {…} matches inside reasoning traces.
-    let cleaned = strip_think_blocks(&step.output_text);
+    //
+    // WS-17 (reasoning capture): the captured `<think>` text is the
+    // highest-signal "why" for the flywheel — emit it as a `model.reasoning`
+    // span BEFORE it would otherwise be discarded. The clean body fed to the
+    // JSON extractor is unchanged (byte-identical), so parsing is unaffected.
+    let (cleaned, reasoning) = strip_and_capture_think_blocks(&step.output_text);
+    if let Some(obs) = obs {
+        if let Some(reasoning_text) = reasoning.as_deref() {
+            obs.emit_model_reasoning(model_call_span_id.map(str::to_string), reasoning_text)
+                .await;
+        }
+    }
     if let Some(json_str) = extract_first_json_object(&cleaned) {
         if serde_json::from_str::<serde_json::Value>(&json_str).is_ok() {
             tracing::info!(
@@ -650,11 +784,22 @@ async fn try_nodecision_recovery(
         .await;
 
     if let Ok(repair_step) = repair {
-        // Accept either a tool call or raw JSON in output_text from the repair step.
-        let found = repair_step.decision_json.or_else(|| {
-            let c = strip_think_blocks(&repair_step.output_text);
-            extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
-        });
+        // WS-17: capture+emit the repair step's reasoning too. `decision_json`
+        // short-circuits the strip (tool call already gave us JSON), so only
+        // capture when we fall through to the output_text scan.
+        let found = match repair_step.decision_json {
+            Some(json) => Some(json),
+            None => {
+                let (c, reasoning) = strip_and_capture_think_blocks(&repair_step.output_text);
+                if let Some(obs) = obs {
+                    if let Some(reasoning_text) = reasoning.as_deref() {
+                        obs.emit_model_reasoning(model_call_span_id.map(str::to_string), reasoning_text)
+                            .await;
+                    }
+                }
+                extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
+            }
+        };
         if found.is_some() {
             tracing::info!(
                 event = "nodecision_recovery_succeeded",
@@ -669,27 +814,56 @@ async fn try_nodecision_recovery(
     step
 }
 
-/// Strip `<think>…</think>` blocks from model output (case-insensitive).
-/// Called before JSON extraction so reasoning traces don't shadow the decision object.
-fn strip_think_blocks(s: &str) -> String {
+/// Strip `<think>…</think>` blocks (case-insensitive) AND return the
+/// captured chain-of-thought (WS-17 reasoning capture).
+///
+/// Called before JSON extraction so reasoning traces don't shadow the
+/// decision object. Returns `(clean_body, Option<reasoning>)`:
+/// - `clean_body` is byte-identical to the historic strip output (think
+///   block removed, trimmed) — the trader still parses the same clean
+///   JSON.
+/// - `reasoning` is the concatenation of every captured `<think>` inner
+///   text (joined with `\n` when a model emits more than one block),
+///   trimmed; `None` when no `<think>` block was present.
+///
+/// The inner text of an UNCLOSED `<think>` (no matching `</think>`) is
+/// captured too — the engine treats everything from the tag to end of
+/// string as reasoning, so it's surfaced rather than silently dropped.
+pub fn strip_and_capture_think_blocks(s: &str) -> (String, Option<String>) {
     let mut result = s.to_string();
+    let mut captured: Vec<String> = Vec::new();
     loop {
         let lower = result.to_ascii_lowercase();
         let Some(start) = lower.find("<think>") else { break };
         let after_open = start + "<think>".len();
         match lower[after_open..].find("</think>") {
             Some(rel) => {
-                let end = after_open + rel + "</think>".len();
+                let inner_end = after_open + rel;
+                let end = inner_end + "</think>".len();
+                let inner = result[after_open..inner_end].trim();
+                if !inner.is_empty() {
+                    captured.push(inner.to_string());
+                }
                 result = format!("{}{}", &result[..start], result[end..].trim_start());
             }
             None => {
-                // Unclosed <think> — strip everything from the tag to end of string.
+                // Unclosed <think> — strip everything from the tag to end
+                // of string, capturing the partial reasoning.
+                let inner = result[after_open..].trim();
+                if !inner.is_empty() {
+                    captured.push(inner.to_string());
+                }
                 result = result[..start].trim_end().to_string();
                 break;
             }
         }
     }
-    result.trim().to_string()
+    let reasoning = if captured.is_empty() {
+        None
+    } else {
+        Some(captured.join("\n"))
+    };
+    (result.trim().to_string(), reasoning)
 }
 
 /// Read the recorded frames for this slot's first step, validate they are
@@ -890,6 +1064,7 @@ mod tests {
             trajectory_mode: TrajectoryMode::default(),
             record_slot_role: None,
             obs: None,
+            model_call_span_id: None,
             reasoning_effort: None,
         }
     }

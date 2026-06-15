@@ -9,10 +9,9 @@
  * Scope is deliberately narrow: only the four operator-editable
  * top-level manifest fields a typo in the create wizard could land
  * on. The strategy `id`, `creator`, `template`, `published_at`,
- * `risk_preset_or_config`, `agents`, `pipeline`, `risk`, and
- * `mechanical_params` are out of scope — they either have dedicated
- * sub-routes (slot/agents/pipeline/risk) or are immutable
- * post-create.
+ * `risk_preset_or_config`, `agents`, `pipeline`, and `risk` are out
+ * of scope — they either have dedicated sub-routes
+ * (slot/agents/pipeline/risk) or are immutable post-create.
  *
  * # Color clear convention
  *
@@ -31,4 +30,10 @@ export type StrategyMetadataPatch = { display_name: string | null, plain_summary
  * (maps to `manifest.color = None`). `None` leaves the existing
  * color untouched. `Some("#D4A547")` sets the color.
  */
-color: string | null, };
+color: string | null,
+/**
+ * Optional strategy author/owner handle. `Some(non-empty)` sets the
+ * `creator` (e.g. the operator's profile handle); `Some("")`/whitespace
+ * and `None` both leave the existing creator untouched.
+ */
+creator: string | null, };

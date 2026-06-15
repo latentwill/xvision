@@ -49,7 +49,6 @@ fn fixture_strategy() -> Strategy {
             model: None,
         }),
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -150,6 +149,7 @@ async fn two_slot_pipeline_chains_outputs() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -204,6 +204,7 @@ async fn skips_missing_optional_slots() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -286,6 +287,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -372,6 +374,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();

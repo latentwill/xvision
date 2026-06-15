@@ -58,13 +58,13 @@ and the reproducibility story.
 Read paths (`xvn show-decision`, `xvn show-briefing`, `xvn store stats`) are
 fine. Write paths happen only inside the harness, never as a CLI primitive.
 
-### Direct `RiskLayer` config edits
+### Direct risk config edits
 
 **Reason:** risk thresholds are committed in `config/risk.toml` and
 `config/whitelist.toml`. Editing them per-run via CLI defeats the audit trail.
 
-`xvn risk show-config` exposes the *effective* values for inspection; mutation
-goes through git on those TOML files.
+Mutation goes through git on those TOML files. (The `xvn risk` command was
+retired in 2026-06 when `xvision-risk` was deleted.)
 
 ---
 
@@ -103,7 +103,6 @@ See `crates/xvision-cli/src/lib.rs` for the live list. The current set, in
 addition to the pre-existing commands, exposes:
 
 - `xvn trader run` / `xvn trader preview` — Agent dispatch in isolation
-- `xvn risk evaluate` / `xvn risk show-config` — Stage 3 deterministic gate
 - `xvn portfolio --venue {alpaca,orderly}` — read live venue state
 - `xvn close-position --venue {alpaca,orderly} --asset BTC` — flatten one symbol
 - `xvn fire-trade --venue {alpaca,orderly}` — extends the Alpaca-only path

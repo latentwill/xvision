@@ -709,6 +709,10 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
     fn signing_scheme(&self) -> &str {
         "cli"
     }
+
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

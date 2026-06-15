@@ -22,6 +22,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    getStrategyRequirements: vi.fn(),
     patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     setRiskConfig: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/api/strategies", async () => {
     addStrategyAgent: vi.fn(),
     renameStrategyAgentRole: vi.fn(),
     removeStrategyAgent: vi.fn(),
+    cloneStrategy: vi.fn(),
   };
 });
 
@@ -58,8 +60,10 @@ vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],
+    profile: () => ["settings", "profile"],
   },
   listProviders: vi.fn(),
+  getProfile: vi.fn().mockResolvedValue({ display_name: null, persisted: false }),
 }));
 
 const baseStrategy = {
@@ -88,7 +92,6 @@ const baseStrategy = {
     stop_loss_atr_multiple: 2,
     daily_loss_kill_pct: 0.05,
   },
-  mechanical_params: {},
 };
 
 const baseAgent = {
@@ -138,6 +141,7 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
+  vi.mocked(strategyApi.cloneStrategy).mockReset();
   vi.mocked(chartApi.getStrategyChart).mockReset();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
       default_model: null,
@@ -145,6 +149,10 @@ beforeEach(() => {
 
   vi.mocked(agentApi.listAgents).mockResolvedValue([baseAgent]);
   vi.mocked(strategyApi.getStrategy).mockResolvedValue(baseStrategy);
+  vi.mocked(strategyApi.getStrategyRequirements).mockResolvedValue({
+    requirements: [],
+    all_models_satisfied: true,
+  });
   vi.mocked(chartApi.getStrategyChart).mockResolvedValue({
     strategy_id: "01TEST",
     run_series: [],
@@ -159,6 +167,47 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe("AuthoringRoute — clone strategy", () => {
+  it("renders a Clone strategy button between Delete and Run eval", async () => {
+    renderRoute();
+    const clone = await screen.findByTestId("inspector-clone");
+    expect(clone).toHaveTextContent("Clone strategy");
+
+    const del = screen.getByRole("button", { name: /delete strategy/i });
+    const runEval = screen.getByRole("link", { name: /run eval/i });
+
+    // DOM order is Delete → Clone → Run eval.
+    expect(
+      del.compareDocumentPosition(clone) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      clone.compareDocumentPosition(runEval) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("clones via the engine endpoint with a (clone) name", async () => {
+    vi.mocked(strategyApi.cloneStrategy).mockResolvedValue({
+      ...baseStrategy,
+      manifest: {
+        ...baseStrategy.manifest,
+        id: "01CLONE",
+        display_name: "Agent Stack (clone)",
+      },
+    });
+
+    renderRoute();
+    const clone = await screen.findByTestId("inspector-clone");
+    fireEvent.click(clone);
+
+    await waitFor(() =>
+      expect(vi.mocked(strategyApi.cloneStrategy)).toHaveBeenCalledWith(
+        "01TEST",
+        { display_name: "Agent Stack (clone)" },
+      ),
+    );
+  });
 });
 
 describe("AuthoringRoute attached-agent row collapse + inline detail", () => {

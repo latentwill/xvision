@@ -282,7 +282,6 @@ async fn list_returns_summaries_for_existing_strategys() {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -687,6 +686,7 @@ async fn update_metadata_audits_and_refreshes_search_index() {
         asset_universe: None,
         decision_cadence_minutes: None,
         color: None,
+        creator: None,
     };
     let updated = strategy::update_metadata(&ctx, &id, patch)
         .await
@@ -735,6 +735,7 @@ async fn update_metadata_failed_validation_records_error_outcome_and_skips_index
         asset_universe: None,
         decision_cadence_minutes: None,
         color: None,
+        creator: None,
     };
     let err = strategy::update_metadata(&ctx, &id, patch)
         .await

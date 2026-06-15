@@ -45,10 +45,18 @@ function renderDock() {
 
 describe("TraceDock", () => {
   beforeEach(() => {
+    localStorage.clear();
+    // useSpanFilter persists the active filter to BOTH localStorage and the
+    // URL (`?q=kind:model` etc.) — reset the URL too so a kind filter set by
+    // an earlier test can't leak in and hide spans the next test asserts on.
+    window.history.replaceState({}, "", "/");
     useTraceDock.setState({
       height: "collapsed",
       lastOpenHeight: "working",
     });
+    // WS-16: collapse state is a SHARED store slice (persisted) — reset it
+    // so tree-collapse state can't leak between tests in this file.
+    useTraceDock.getState().expandAllSpans();
     setEvalScope({ activeRunId: null, selectedSpanId: null, costOverrideUsd: null });
   });
 
@@ -110,6 +118,9 @@ describe("TraceDock", () => {
     useTraceDock.setState({ height: "working", advanced_view: false });
     renderDock();
     await screen.findByTestId("trace-dock-body");
+    // WS-16: the tree is the default structured view; this test asserts
+    // flame-graph rendering, so switch to the FLAME view first.
+    await userEvent.click(screen.getByRole("button", { name: /flame/i }));
     await screen.findByTestId("flame-bar-s1");
 
     // The Simple-mode inspector summary embeds the span_id inside a
@@ -169,5 +180,85 @@ describe("TraceDock", () => {
     const cost = await screen.findByTestId("trace-dock-cost");
     // MOCK_RUN_COMPLETED.summary.total_cost_usd === 0.0624.
     expect(cost.textContent).toBe("$0.0624");
+  });
+
+  test("WS-16: renders the collapsible span tree as the default structured view", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    // The span tree is the default structured view (parents + children).
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+    expect(screen.getByTestId("span-tree-row-s3")).toBeInTheDocument();
+    // FlameGraph is not the default — but its toggle exists.
+    expect(screen.queryByTestId("flame-bar-s1")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /flame/i }),
+    ).toBeInTheDocument();
+  });
+
+  test("WS-16: the view toggle swaps the tree for the flame graph", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("span-tree-row-s1");
+    await userEvent.click(screen.getByRole("button", { name: /flame/i }));
+    expect(await screen.findByTestId("flame-bar-s1")).toBeInTheDocument();
+    expect(screen.queryByTestId("span-tree-row-s1")).not.toBeInTheDocument();
+    // And back to the tree.
+    await userEvent.click(screen.getByRole("button", { name: /^tree$/i }));
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+  });
+
+  test("WS-16: collapsing a DECISION in the tree hides its subtree", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: true });
+    useTraceDock.getState().expandAllSpans();
+    renderDock();
+    await screen.findByTestId("span-tree-row-s3");
+    // s3 (model.call) has a child s4 (tool.call) in the fixture.
+    expect(screen.getByTestId("span-tree-row-s4")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("span-tree-caret-s3"));
+    expect(screen.queryByTestId("span-tree-row-s4")).not.toBeInTheDocument();
+    // Collapsed parent shows its one-line rollup.
+    expect(screen.getByTestId("span-tree-rollup-s3")).toBeInTheDocument();
+  });
+
+  test("a sticky filter that hides every span shows Clear filters, and clicking it reveals the spans", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: true });
+    // Reproduce the real bug: a sticky URL filter (the `?q=` useSpanFilter
+    // persists + reloads) matching no span in this run.
+    window.history.replaceState({}, "", "/?q=zzz_no_such_span");
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+
+    // Honest empty state — names the filter as the cause and offers recovery,
+    // instead of dead-ending the operator with an unexplained "no spans".
+    expect(
+      await screen.findByText(/no spans match the current filter/i),
+    ).toBeInTheDocument();
+    // The spans were NOT lost — they're hidden, not absent.
+    expect(screen.queryByTestId("span-tree-row-s1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear filters/i }));
+
+    // One click brings the run's spans back.
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+    expect(screen.queryByText(/no spans match the current filter/i)).toBeNull();
+  });
+
+  test("filter bar is the first row — above the TRACE header and the TREE/FLAME view toggle", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    const filterInput = screen.getByPlaceholderText(/^filter/i);
+    const viewToggle = screen.getByTestId("trace-dock-view-toggle");
+    // Filter-first layout: the filter must precede the view toggle (and the
+    // TRACE header it sits in) in document order.
+    expect(
+      filterInput.compareDocumentPosition(viewToggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

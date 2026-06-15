@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { formatRelativeTime, formatUntil } from "./time";
+import { formatRelativeTime, formatUntil, formatElapsed } from "./time";
 
 afterEach(() => vi.useRealTimers());
 
@@ -62,5 +62,29 @@ describe("formatUntil", () => {
 
   it("returns null for an unparseable input", () => {
     expect(formatUntil("not-a-date")).toBeNull();
+  });
+});
+
+describe("formatElapsed", () => {
+  it("returns null for a negative or non-finite duration", () => {
+    expect(formatElapsed(-1)).toBeNull();
+    expect(formatElapsed(Number.NaN)).toBeNull();
+  });
+
+  it("formats seconds-only durations", () => {
+    expect(formatElapsed(0)).toBe("0s");
+    expect(formatElapsed(7_000)).toBe("7s");
+    expect(formatElapsed(59_000)).toBe("59s");
+  });
+
+  it("formats minutes with zero-padded seconds", () => {
+    expect(formatElapsed(60_000)).toBe("1m 00s");
+    expect(formatElapsed(4 * 60_000 + 3_000)).toBe("4m 03s");
+    expect(formatElapsed(59 * 60_000 + 59_000)).toBe("59m 59s");
+  });
+
+  it("formats hours with zero-padded minutes (drops seconds)", () => {
+    expect(formatElapsed(60 * 60_000)).toBe("1h 00m");
+    expect(formatElapsed(72 * 60_000 + 30_000)).toBe("1h 12m");
   });
 });

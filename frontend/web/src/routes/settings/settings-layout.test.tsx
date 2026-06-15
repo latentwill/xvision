@@ -58,10 +58,10 @@ describe("SettingsLayout", () => {
     );
 
     expect(screen.queryByRole("link", { name: "Identity" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Marketplace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Wallet" })).toBeInTheDocument();
   });
 
-  it("exposes the Marketplace opt-in tab (C8)", () => {
+  it("does not expose Marketplace as a settings tab (QA: tab removed)", () => {
     render(
       <MemoryRouter initialEntries={["/settings/providers"]}>
         <QueryClientProvider client={new QueryClient()}>
@@ -75,7 +75,10 @@ describe("SettingsLayout", () => {
     );
 
     expect(
-      screen.getByRole("link", { name: "Marketplace" }),
-    ).toHaveAttribute("href", "/settings/marketplace");
+      screen.queryByRole("link", { name: "Marketplace" }),
+    ).not.toBeInTheDocument();
+    // The remaining tabs still render.
+    expect(screen.getByRole("link", { name: "Brokers" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Danger zone" })).toBeInTheDocument();
   });
 });

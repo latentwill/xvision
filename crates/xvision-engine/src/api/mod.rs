@@ -363,6 +363,11 @@ pub struct ApiContext {
     /// dispatcher treats `None` the same as a slot whose
     /// `memory_mode == Off` — no recall, no write, no events.
     pub memory_recorder: Option<Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// Broker-submit pause gate. Defaults to `SafetyGate::allow_all()` in
+    /// `ApiContext::new` so existing callers and tests are unaffected.
+    /// `AppState::api_context()` overrides this with the real gate backed
+    /// by the `SafetyManager` singleton via `with_safety_gate`.
+    pub safety_gate: crate::safety::SafetyGate,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -569,7 +574,17 @@ impl ApiContext {
             launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
             finalize_writer,
             memory_recorder: None,
+            safety_gate: crate::safety::SafetyGate::allow_all(),
         }
+    }
+
+    /// Builder override for the broker-submit safety gate. `AppState::api_context()`
+    /// calls this with a gate backed by the real `SafetyManager` so the gate
+    /// is enforcing in production. Tests and CLI paths that call `ApiContext::new`
+    /// directly keep the default `allow_all` gate and are unaffected.
+    pub fn with_safety_gate(mut self, gate: crate::safety::SafetyGate) -> Self {
+        self.safety_gate = gate;
+        self
     }
 
     /// Builder override for the V2D memory recorder. Production paths

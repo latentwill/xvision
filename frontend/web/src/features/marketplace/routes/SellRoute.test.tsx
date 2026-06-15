@@ -241,54 +241,22 @@ describe("SellRoute", () => {
     expect(screen.getByTestId("sell-step-3-body")).toBeInTheDocument();
   });
 
-  it("step 3: successful submitListing navigates to /marketplace/lineage/<listing_id>", async () => {
+  it("step 3: successful submitListing shows a success panel linking to the listing", async () => {
     const client = new FixtureMarketplaceData();
     vi.spyOn(client, "submitListing").mockResolvedValue({
       txHash: "42",
       network: "mantle-sepolia",
     });
 
-    // Render with an extra route so we can assert navigation landed on lineage detail.
-    const { render } = await import("@testing-library/react");
-    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
-    const { MarketplaceDataProvider } = await import("@/features/marketplace/data/provider");
-    const { MemoryRouter, Routes, Route, useParams } = await import("react-router-dom");
-    const { default: React } = await import("react");
-
-    function LineageSpy() {
-      const { id } = useParams<{ id: string }>();
-      return React.createElement("div", { "data-testid": "lineage-page" }, `lineage:${id}`);
-    }
-
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      React.createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        React.createElement(MarketplaceDataProvider, {
-          client,
-          children: React.createElement(
-            MemoryRouter,
-            { initialEntries: ["/marketplace/sell"] },
-            React.createElement(
-              Routes,
-              null,
-              React.createElement(Route, { path: "/marketplace/sell", element: React.createElement(SellRoute) }),
-              React.createElement(Route, { path: "/marketplace/lineage/:id", element: React.createElement(LineageSpy) }),
-            ),
-          ),
-        }),
-      ),
-    );
-
-    await userEvent.click(await screen.findByRole("button", { name: /btc-momentum/ }));
-    await screen.findByTestId("sell-step-2-body");
-    await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
-    await screen.findByTestId("sell-step-3-body");
+    await advanceToStep3(client);
     await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
 
-    // Navigated to the real listing page — txHash is listing_id (see publish.ts Phase-2 wart)
-    const lineagePage = await screen.findByTestId("lineage-page");
-    expect(lineagePage.textContent).toBe("lineage:42");
+    // Explicit success state instead of a silent redirect — the seller gets
+    // feedback and a link to the new listing (txHash is the listing_id; see
+    // publish.ts Phase-2 wart).
+    const success = await screen.findByTestId("mint-success");
+    expect(success).toBeInTheDocument();
+    const viewLink = screen.getByRole("link", { name: /View your listing/ });
+    expect(viewLink).toHaveAttribute("href", "/marketplace/lineage/42");
   });
 });

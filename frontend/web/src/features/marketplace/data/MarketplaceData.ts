@@ -1,4 +1,5 @@
 // src/features/marketplace/data/MarketplaceData.ts
+import { ApiError } from "@/api/client";
 import { applyFilter, defaultFilterState } from "./filter";
 import { DEMO_LISTINGS, getDemoDetail } from "./fixtures/listings";
 import { CREATORS } from "./fixtures/creators";
@@ -6,6 +7,7 @@ import { SLICES } from "./fixtures/slices";
 import { RECEIPTS } from "./fixtures/receipts";
 import { LISTABLE_STRATEGIES, buildPublishDraft } from "./fixtures/seller";
 import { VIEWER } from "./fixtures/viewer";
+import { fetchListableStrategies, fetchPublishDraft } from "./listable";
 import { publishListing } from "./publish";
 import type {
   CreatorProfile, FilterState, Id, ListableStrategy, ListingDetail, ListingRow,
@@ -34,8 +36,14 @@ export interface MarketplaceData {
   // deployed and `useWallet` exposes a signer) signs the authorization and
   // submits it here. Callers MUST treat this as testnet/simulated until then.
   purchaseIntent(listingId: Id): Promise<TxRef>;
-  cloneIntent(listingId: Id): Promise<TxRef>;
   setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef>;
+  // SEALED-tier finalize: decrypt the bundle (Lit-gated) and materialize the
+  // referenced agents server-side, resolving to the new local strategy ULID.
+  importSealed(listingId: Id): Promise<{ agent_id: string }>;
+  // OPEN/free-tier finalize: import + materialize the referenced agents
+  // server-side (no decrypt), resolving to the new local strategy ULID. The
+  // open/free buy path imports for real — there is no fake-tx clone receipt.
+  importListing(listingId: Id): Promise<{ agent_id: string }>;
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void;
 }
 
@@ -43,6 +51,11 @@ const fakeTx = (): TxRef => ({
   txHash: `0x${Math.random().toString(16).slice(2).padEnd(8, "0")}`,
   network: "mantle-sepolia",
 });
+
+// Deterministic fake local strategy ULID for fixture imports — same listing id
+// always yields the same agent_id so callers (and tests) can rely on a stable
+// landing target without an on-chain materialize.
+const fakeAgentId = (listingId: Id): string => `demo-agent-${listingId}`;
 
 export class FixtureMarketplaceData implements MarketplaceData {
   readonly dataSource = "fixture" as const;
@@ -102,10 +115,32 @@ export class FixtureMarketplaceData implements MarketplaceData {
     return VIEWER;
   }
   async listListableStrategies() {
-    return LISTABLE_STRATEGIES;
+    // Listing your OWN strategies is operator-local — always served by the real
+    // `/api/strategies`, never placeholder rows, even when the on-chain
+    // marketplace indexer is inactive (so the sell picker is never gated behind
+    // it). Falls back to the offline demo fixtures ONLY when there is genuinely
+    // no backend (network error / storybook / unit tests). A backend that
+    // RESPONDED with an error (ApiError) surfaces honestly instead — presenting
+    // placeholder demo strategies that can't actually be listed (their fixture
+    // ids 404 at save/publish) was the QA loose end.
+    try {
+      return await fetchListableStrategies();
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      return LISTABLE_STRATEGIES;
+    }
   }
   async createPublishDraft(strategyId: string) {
-    return buildPublishDraft(strategyId);
+    // Mirror listListableStrategies: build the draft from the operator's real
+    // stored strategy. Fixture fallback only when there's no backend; a real
+    // backend error (ApiError) propagates so the UI shows an honest failure
+    // rather than a fixture draft that dead-ends at publish.
+    try {
+      return await fetchPublishDraft(strategyId);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      return buildPublishDraft(strategyId);
+    }
   }
   async submitListing(d: PublishDraft): Promise<TxRef> {
     return publishListing(d);
@@ -113,8 +148,11 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async purchaseIntent(_listingId: Id): Promise<TxRef> {
     return fakeTx();
   }
-  async cloneIntent(_listingId: Id): Promise<TxRef> {
-    return fakeTx();
+  async importSealed(listingId: Id): Promise<{ agent_id: string }> {
+    return { agent_id: fakeAgentId(listingId) };
+  }
+  async importListing(listingId: Id): Promise<{ agent_id: string }> {
+    return { agent_id: fakeAgentId(listingId) };
   }
   async setListingPrice(_listingId: Id, _priceUsdc: number): Promise<TxRef> {
     return fakeTx();
@@ -130,4 +168,3 @@ export class FixtureMarketplaceData implements MarketplaceData {
     return () => clearInterval(id);
   }
 }
-

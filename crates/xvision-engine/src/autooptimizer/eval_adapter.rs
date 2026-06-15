@@ -28,6 +28,28 @@ use xvision_core::config::AgentRuntime;
 pub trait PaperTestRunner: Send + Sync {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary>;
 
+    /// WS-11b: like [`run`](Self::run) but additionally surfaces the persisted
+    /// eval `Run.id` for this evaluation, so the optimizer cycle can nest a
+    /// navigable eval-run node under the candidate's experiment row
+    /// (cycle → experiment → that candidate's eval-run trace).
+    ///
+    /// The default delegates to [`run`](Self::run) and returns `None` for the
+    /// run id — test stubs and non-persisting implementors are unaffected. Only
+    /// the production [`CachedBacktestPaperTester`] (and the wrapping
+    /// [`BudgetCappedPaperTester`], which forwards) override it to return the
+    /// real run id created at backtest time. The cycle calls this ONLY for the
+    /// candidate's primary day-window eval; every other paper-test call site
+    /// (parent baselines, untouched window, regime, inversion) keeps using
+    /// [`run`](Self::run) so the hot path is unchanged.
+    async fn run_with_run_id(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+    ) -> Result<(MetricsSummary, Option<String>)> {
+        let metrics = self.run(strategy, scenario).await?;
+        Ok((metrics, None))
+    }
+
     /// F9: run a deliberately-sabotaged honesty-check (canary) strategy,
     /// tagging the run with the sabotage variant so the backtest executor
     /// relabels broker-rule rejections produced *by design* (e.g. the
@@ -274,17 +296,22 @@ impl CachedBacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
+        // Discard the run id on the bare `run`/`run_canary` paths.
         self.run_inner_with_dispatch(strategy, scenario, canary, None)
             .await
+            .map(|(metrics, _run_id)| metrics)
     }
 
+    /// WS-11b: like [`run_inner`](Self::run_inner) but also returns the
+    /// persisted eval `Run.id` so `run_with_run_id` can surface it for the
+    /// optimizer experiment → eval-run nesting.
     async fn run_inner_with_dispatch(
         &self,
         strategy: &Strategy,
         scenario: &Scenario,
         canary: Option<&str>,
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
-    ) -> Result<MetricsSummary> {
+    ) -> Result<(MetricsSummary, String)> {
         ensure_scenario_persisted(&self.ctx, scenario).await?;
         let executor = build_cached_backtest_executor(
             &self.ctx,
@@ -308,6 +335,9 @@ impl CachedBacktestPaperTester {
         store
             .ensure_agent_run_baseline(&run.id, self.ctx.obs_config.retention.mode.as_db_str())
             .await?;
+        // WS-11b: capture the persisted run id before `executor.run` borrows
+        // `&mut run` so we can hand it back to the cycle for experiment nesting.
+        let run_id = run.id.clone();
         let dispatch: Arc<dyn LlmDispatch> = dispatch_override.unwrap_or_else(|| self.dispatch.clone());
         // Resolve the candidate strategy's agent slots (trader model/prompt
         // binding). The production CLI/dashboard optimizer adapter previously
@@ -326,7 +356,7 @@ impl CachedBacktestPaperTester {
                 &store,
             )
             .await?;
-        Ok(metrics)
+        Ok((metrics, run_id))
     }
 }
 
@@ -334,6 +364,18 @@ impl CachedBacktestPaperTester {
 impl PaperTestRunner for CachedBacktestPaperTester {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
         self.run_inner(strategy, scenario, None).await
+    }
+
+    async fn run_with_run_id(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+    ) -> Result<(MetricsSummary, Option<String>)> {
+        // WS-11b: surface the candidate's persisted eval run id so the cycle
+        // can nest a navigable eval-run node under the experiment row.
+        self.run_inner_with_dispatch(strategy, scenario, None, None)
+            .await
+            .map(|(metrics, run_id)| (metrics, Some(run_id)))
     }
 
     async fn run_canary(
@@ -364,6 +406,7 @@ impl PaperTestRunner for CachedBacktestPaperTester {
         );
         self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch))
             .await
+            .map(|(metrics, _run_id)| metrics)
     }
 }
 
@@ -479,6 +522,28 @@ impl BudgetCappedPaperTester {
 impl PaperTestRunner for BudgetCappedPaperTester {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
         self.run_budgeted(strategy, scenario, None).await
+    }
+
+    async fn run_with_run_id(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+    ) -> Result<(MetricsSummary, Option<String>)> {
+        // WS-11b: forward to the inner tester so the wrapped
+        // CachedBacktestPaperTester's real run id reaches the cycle. The budget
+        // pre-check still applies (same path as `run_budgeted` with no canary).
+        {
+            let spent = self.meter.lock().expect("budget mutex poisoned").spent_usd;
+            if spent >= self.budget_usd {
+                anyhow::bail!(
+                    "optimizer cycle --budget of ${:.4} reached (spent ${:.4} on paper-test \
+                     inference); stopping before the next backtest",
+                    self.budget_usd,
+                    spent,
+                );
+            }
+        }
+        self.inner.run_with_run_id(strategy, scenario).await
     }
 
     async fn run_canary(

@@ -125,4 +125,36 @@ describe("PhaseRibbon", () => {
     expect(active.length).toBe(1);
     expect(active[0]).toHaveTextContent(label);
   });
+
+  describe("running state", () => {
+    it("running with no telemetry yet (phase=idle) shows a 'Starting' caption, not 'No cycle running'", () => {
+      renderWithProviders(<PhaseRibbon phase="idle" running />);
+      expect(screen.getByText(/starting/i)).toBeInTheDocument();
+      expect(screen.queryByText("No cycle running")).not.toBeInTheDocument();
+      expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    });
+
+    it("running mid-cycle pulses the active step (and still marks it current)", () => {
+      renderWithProviders(<PhaseRibbon phase="eval" running />);
+      const active = document.querySelectorAll("[aria-current='step']");
+      expect(active.length).toBe(1);
+      expect(active[0]).toHaveTextContent("Eval");
+      expect(active[0]?.className).toMatch(/animate-pulse/);
+    });
+
+    it("a frozen (paused) mid-cycle ribbon marks the step current WITHOUT pulsing", () => {
+      renderWithProviders(<PhaseRibbon phase="eval" running={false} />);
+      const active = document.querySelectorAll("[aria-current='step']");
+      expect(active.length).toBe(1);
+      expect(active[0]?.className).not.toMatch(/animate-pulse/);
+      // Not finished, so no completion caption.
+      expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    });
+
+    it("running never renders the all-done ✓ / 'Cycle complete' chrome", () => {
+      renderWithProviders(<PhaseRibbon phase="gate" running />);
+      expect(screen.queryByText(/✓/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    });
+  });
 });

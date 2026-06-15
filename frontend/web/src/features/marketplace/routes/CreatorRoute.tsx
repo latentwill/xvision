@@ -12,7 +12,6 @@ import type { IndexedListing } from "@/features/marketplace/data/ApiMarketplaceD
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
-import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { relativeTime } from "@/features/marketplace/lib/time";
 import { formatUsd } from "@/lib/format";
@@ -310,7 +309,6 @@ function CreatorStrategyCard({
               <AssetPill key={a} asset={a} />
             ))}
             {strategy.verification === "verified" && <VerifiedBadge />}
-            {strategy.acceptsX402 && <X402Badge />}
           </div>
         </div>
       </div>

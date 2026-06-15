@@ -6,13 +6,17 @@ import type { TraceScope } from "@/stores/trace-dock";
  * Map a router pathname onto its {@link TraceScope}.
  *
  * Pure + exported so the mapping is unit-testable without a Router.
- * Rule (locked by WS-2): anything under `/live` is the live surface;
- * everything else — including `/eval-runs/*` and the standalone
- * `/agent-runs/:runId` — is the eval surface. The floating capsule and
- * the trace dock derive which per-scope run slice to read from this.
+ * Rule (locked by WS-2, extended by WS-11a): anything under `/live` is the
+ * live surface; anything under `/optimizer` is the `opti` surface (the
+ * autooptimizer cycle trace); everything else — including `/eval-runs/*`
+ * and the standalone `/agent-runs/:runId` — is the eval surface. The floating
+ * capsule and the trace dock derive which per-scope run slice to read from
+ * this.
  */
 export function scopeForPath(pathname: string): TraceScope {
-  return pathname.startsWith("/live") ? "live" : "eval";
+  if (pathname.startsWith("/live")) return "live";
+  if (pathname.startsWith("/optimizer")) return "opti";
+  return "eval";
 }
 
 /**

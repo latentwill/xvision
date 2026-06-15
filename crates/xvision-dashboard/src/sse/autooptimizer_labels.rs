@@ -103,6 +103,7 @@ mod tests {
             passed: true,
             outcome: "kept".into(),
             delta_day: None,
+            eval_run_id: None,
         }
     }
     fn mutation_gated_suspect() -> CycleProgressEvent {
@@ -113,6 +114,7 @@ mod tests {
             passed: false,
             outcome: "suspect".into(),
             delta_day: None,
+            eval_run_id: None,
         }
     }
     fn mutation_gated_dropped() -> CycleProgressEvent {
@@ -123,6 +125,7 @@ mod tests {
             passed: false,
             outcome: "dropped".into(),
             delta_day: None,
+            eval_run_id: None,
         }
     }
     fn honesty_check_run() -> CycleProgressEvent {
