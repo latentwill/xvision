@@ -800,6 +800,14 @@ fn mutating_router(state: AppState) -> Router {
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
         )
+        .route(
+            "/api/settings/brokers/hyperliquid",
+            post(settings::brokers::set_hyperliquid).delete(settings::brokers::delete_hyperliquid),
+        )
+        .route(
+            "/api/settings/brokers/orderly",
+            post(settings::brokers::set_orderly).delete(settings::brokers::delete_orderly),
+        )
         // ── Live deploy: Degen Arena key ingest ───────────────────────────
         // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet
         // credentials (apiKey, accountAddress, network) for the Virtuals Degen

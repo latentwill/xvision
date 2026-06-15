@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card } from "@/components/primitives/Card";
 import { useWallet } from "@/features/marketplace/lib/wallet";
 import { isMainnetNetwork } from "@/features/marketplace/lib/chain";
+import { ProfileSettingsCard } from "./ProfileSettingsCard";
 
 function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -22,6 +23,8 @@ export function SettingsWalletRoute() {
 
   return (
     <div className="space-y-5">
+      <ProfileSettingsCard />
+
       <Card className="p-5">
         <div className="mb-4">
           <h3 className="m-0 font-sans font-semibold text-[18px] tracking-tight">

@@ -182,13 +182,13 @@ export function getBrokers(): Promise<BrokersReport> {
     });
 }
 
-// ─── Brokers (Alpaca, Byreal) CRUD ────────────────────────────────────────
-
-// Byreal is a report-only broker surface — credentials are env-var-only
-// (BYREAL_PRIVATE_KEY / BYREAL_NETWORK / BYREAL_ACCOUNT). The frontend
-// surfaces a read-only BrokerCard for it (mirroring the Orderly treatment);
-// there is no `setByrealCredentials` because the backend exposes no store
-// endpoint for Byreal at this revision.
+// ─── Brokers (Alpaca, Byreal, Hyperliquid, Orderly, Degen Arena) CRUD ──────
+//
+// Each editable broker has a stored-credential store under
+// `$XVN_HOME/secrets/brokers.toml` (stored creds win over env at runtime).
+// Request/response types are hand-written here because the engine structs
+// don't carry `derive(TS)` — secrets must never leak into the generated
+// type surface.
 
 // Hand-written wire shapes for the Alpaca-credentials surface. The
 // engine-side `AlpacaStored` and `SetAlpacaReq` types don't carry
@@ -285,6 +285,109 @@ export function setByrealCredentials(
 
 export function clearByrealCredentials(): Promise<void> {
   return apiFetch<void>("/api/settings/brokers/byreal", {
+    method: "DELETE",
+  });
+}
+
+// Hyperliquid (direct perps) stored creds. `api_key` MUST be a Hyperliquid
+// trade-only agent key (`0x` + 64 hex, cannot withdraw); `account_address` is
+// the master account (`0x` + 40 hex). Mirrors the engine `SetHyperliquidReq` /
+// `HyperliquidStored` (no `derive(TS)` so the secret never leaks into the
+// generated surface).
+export type SetHyperliquidRequest = {
+  api_key: string;
+  account_address: string;
+  network: string;
+};
+
+export type HyperliquidStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  network: string | null;
+};
+
+export function setHyperliquidCredentials(
+  body: SetHyperliquidRequest,
+): Promise<HyperliquidStored> {
+  const trace = createTrace("settings", {
+    broker: "hyperliquid",
+    network: body.network,
+  });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<HyperliquidStored>("/api/settings/brokers/hyperliquid", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearHyperliquidCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/hyperliquid", {
+    method: "DELETE",
+  });
+}
+
+// Orderly Network stored creds (API key / secret / account id, optional base
+// URL). Mirrors the engine `SetOrderlyReq` / `OrderlyStored` (no `derive(TS)`
+// so the secret never leaks into the generated surface).
+export type SetOrderlyRequest = {
+  api_key: string;
+  api_secret: string;
+  account_id: string;
+  base_url: string | null;
+};
+
+export type OrderlyStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  base_url: string | null;
+};
+
+export function setOrderlyCredentials(
+  body: SetOrderlyRequest,
+): Promise<OrderlyStored> {
+  const trace = createTrace("settings", {
+    broker: "orderly",
+    base_url_host: safeUrlHost(body.base_url),
+  });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<OrderlyStored>("/api/settings/brokers/orderly", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearOrderlyCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/orderly", {
     method: "DELETE",
   });
 }
