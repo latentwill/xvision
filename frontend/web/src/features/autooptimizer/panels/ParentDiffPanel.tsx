@@ -57,10 +57,10 @@ export function ParentDiffPanel({
       ) : changed.length === 0 ? (
         <p className="m-0 mt-3 text-[12px] text-text-3">No field-level differences from the parent.</p>
       ) : (
-        <table className="mt-3 w-full border-collapse text-left font-mono text-[11.5px]">
+        <table className="mt-3 w-full table-fixed border-collapse text-left font-mono text-[11.5px]">
           <thead>
             <tr className="text-left text-text-3">
-              <th className="py-1.5 pr-3 font-medium">Field</th>
+              <th className="w-[120px] py-1.5 pr-3 font-medium">Field</th>
               <th className="py-1.5 pr-3 font-medium">− before</th>
               <th className="py-1.5 font-medium">+ after</th>
             </tr>
@@ -68,9 +68,15 @@ export function ParentDiffPanel({
           <tbody>
             {changed.map((r) => (
               <tr key={r.key} className="border-t border-border-soft align-top">
-                <td className="py-1.5 pr-3 text-text-2">{r.key}</td>
-                <td className="py-1.5 pr-3 text-danger">{cell(r.before)}</td>
-                <td className="py-1.5 text-gold">{cell(r.after)}</td>
+                <td className="py-1.5 pr-3 text-text-2 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {r.key}
+                </td>
+                <td className="py-1.5 pr-3 text-danger whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {cell(r.before)}
+                </td>
+                <td className="py-1.5 text-gold whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {cell(r.after)}
+                </td>
               </tr>
             ))}
           </tbody>

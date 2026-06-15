@@ -49,7 +49,7 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 18px 18px 14px;
-  max-width: 322px;
+  max-width: 360px;
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.03) inset,
     0 24px 60px -16px rgba(0, 0, 0, 0.8);
@@ -143,6 +143,10 @@ body.tour-glow .xvn-tour.driver-popover {
 .xvn-tour .driver-popover-navigation-btns {
   display: flex;
   gap: 8px;
+  /* QA: never let the Back/Next buttons shrink or get pushed out of the
+     popover by a wide progress bar — they stay full-size; the progress
+     block (below) is the flexible element that yields/clips space. */
+  flex: none;
 }
 
 .xvn-tour .driver-popover-footer button {
@@ -195,19 +199,27 @@ body.tour-glow .xvn-tour.driver-popover {
 .xvn-tour-progress {
   display: flex;
   align-items: center;
-  gap: 11px;
-  flex: none;
+  gap: 9px;
+  /* QA: the progress block is the flexible element in the footer — it may
+     shrink and clip its trailing segments so the Back/Next buttons always
+     stay inside the popover, even on the longer (9-step) tour. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
 }
 
 .xvn-tour-segs {
   display: flex;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .xvn-tour-seg {
-  width: 18px;
+  width: 14px;
   height: 3px;
+  flex: none;
   border-radius: 2px;
   background: var(--border);
   transition:
@@ -220,7 +232,7 @@ body.tour-glow .xvn-tour.driver-popover {
 }
 
 .xvn-tour-seg.is-current {
-  width: 24px;
+  width: 20px;
   background: var(--tour-accent);
 }
 

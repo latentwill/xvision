@@ -104,6 +104,7 @@ async fn update_metadata_applies_in_scope_fields_and_preserves_others() {
                 asset_universe: Some(vec!["BTC/USD".into(), "eth/usd".into()]),
                 decision_cadence_minutes: None,
                 color: None,
+                creator: None,
             },
         )
         .await
@@ -148,6 +149,7 @@ async fn update_metadata_validation_failure_does_not_partially_mutate_disk() {
                 asset_universe: None,
                 decision_cadence_minutes: None,
                 color: None,
+                creator: None,
             },
         )
         .await
@@ -186,6 +188,7 @@ async fn update_metadata_keeps_strategy_id_stable_across_completed_run_history()
                 asset_universe: Some(vec!["BTC/USD".into()]),
                 decision_cadence_minutes: None,
                 color: None,
+                creator: None,
             },
         )
         .await

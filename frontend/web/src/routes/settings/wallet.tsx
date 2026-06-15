@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card } from "@/components/primitives/Card";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { isMainnetNetwork } from "@/features/marketplace/lib/chain";
 
 function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -38,7 +39,7 @@ export function SettingsWalletRoute() {
               {truncateAddress(address)}
             </code>
             <span className="px-2 py-0.5 rounded border border-border-strong font-mono text-[11px] text-text-3">
-              Testnet (Mantle Sepolia)
+              {isMainnetNetwork() ? "Mantle mainnet" : "Testnet (Mantle Sepolia)"}
             </span>
             <button
               type="button"

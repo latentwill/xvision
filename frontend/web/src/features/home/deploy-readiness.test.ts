@@ -58,6 +58,7 @@ function brokers(over: Partial<BrokersReport> = {}): BrokersReport {
     orderly: broker({ name: "Orderly Network", kind: "orderly", configured: false }),
     byreal: broker({ name: "Byreal", kind: "byreal", configured: false }),
     degen_arena: broker({ name: "Degen Arena", kind: "degen_arena", configured: false }),
+    hyperliquid: broker({ name: "Hyperliquid", kind: "hyperliquid", configured: false }),
     ...over,
   };
 }

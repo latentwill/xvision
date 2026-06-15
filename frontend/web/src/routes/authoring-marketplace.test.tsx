@@ -63,8 +63,10 @@ vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],
+    profile: () => ["settings", "profile"],
   },
   listProviders: vi.fn(),
+  getProfile: vi.fn().mockResolvedValue({ display_name: null, persisted: false }),
 }));
 
 const baseStrategy: strategyApi.Strategy = {

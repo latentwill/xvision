@@ -19,6 +19,7 @@ import type {
   MemoryReport,
   MemoryStatus,
   ObservabilityReport,
+  ProfileReport,
   ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
@@ -27,6 +28,7 @@ import type {
   RetentionModeDto,
   TestConnectionReport,
   UpdateMemoryRequest,
+  UpdateProfileRequest,
   UpdateProviderRequest,
 } from "./types.gen";
 
@@ -56,6 +58,7 @@ export const settingsKeys = {
   observability: () => [...settingsKeys.all, "observability"] as const,
   memory: () => [...settingsKeys.all, "memory"] as const,
   memoryStatus: () => [...settingsKeys.all, "memory", "status"] as const,
+  profile: () => [...settingsKeys.all, "profile"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
   providerModels: (name: string) =>
     [...settingsKeys.all, "providers", name, "models"] as const,
@@ -137,6 +140,21 @@ export function updateMemorySettings(
       });
       throw err;
     });
+}
+
+// ─── Profile (operator display name / handle) ─────────────────────────────
+
+export function getProfile(): Promise<ProfileReport> {
+  return apiFetch<ProfileReport>("/api/settings/profile");
+}
+
+export function updateProfile(
+  req: UpdateProfileRequest,
+): Promise<ProfileReport> {
+  return apiFetch<ProfileReport>("/api/settings/profile", {
+    method: "PUT",
+    body: JSON.stringify(req),
+  });
 }
 
 export function getMemoryStatus(): Promise<MemoryStatus> {

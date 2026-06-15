@@ -213,6 +213,15 @@ function mockReady({
       base_url: null,
       note: null,
     }),
+    hyperliquid: broker({
+      name: "Hyperliquid",
+      kind: "hyperliquid",
+      configured: false,
+      stored: false,
+      stored_key_id_suffix: null,
+      base_url: null,
+      note: null,
+    }),
   });
   vi.mocked(strategyApi.listStrategies).mockResolvedValue([
     {

@@ -69,6 +69,7 @@ function mockBrokers(degenOverrides: Partial<BrokerEntry> = {}) {
       note: "Virtuals Degen Arena (Hyperliquid perps).",
       ...degenOverrides,
     }),
+    hyperliquid: broker({ name: "Hyperliquid", kind: "hyperliquid" }),
   };
   vi.mocked(settingsApi.getBrokers).mockResolvedValue(report);
 }
