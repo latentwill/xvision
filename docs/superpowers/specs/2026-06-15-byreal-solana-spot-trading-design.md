@@ -1,6 +1,10 @@
 # Byreal Solana Spot Trading — Design Spec (first slice)
 
-**Status:** Design approved (brainstorm + web validation, 2026-06-15). Ready for an implementation plan.
+**Status:** Implemented (Phase C + Phase A), 2026-06-15. Built per
+`docs/superpowers/plans/2026-06-15-byreal-solana-spot-trading.md`; CLI surface
+grounded in `docs/superpowers/specs/2026-06-15-byreal-spot-cli-grounding.md`
+(byreal-cli v0.3.6). Follow-up: surface a "Byreal — Solana ecosystem" venue in
+Settings → Brokers on top of PR #1074 (BrokersReport rework) once it merges.
 **Scope of this spec:** the FIRST slice only — agent-driven spot trading of a **curated SPL + xStocks set**, **live/forward-test only**, **gated**, built **C → A**. Long-tail discovery, LP/yield, and backtest integration are explicitly out of scope (separate future tracks).
 
 ---
