@@ -67,6 +67,21 @@ describe("applyFilter", () => {
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "zzz" }).rows).toHaveLength(0);
   });
 
+  it("matches search over the display name, model, style and assets", () => {
+    // Operator report: searching "test" returned nothing for a listing named
+    // "test" because the old query only looked at id + handle.
+    const named = [
+      row({ id: "abc123", name: "Test Strategy", model: "Claude", style: "Swing", assets: ["DOGE"] }),
+    ];
+    const search = (q: string) =>
+      applyFilter(named, { ...defaultFilterState(), search: q }).rows;
+    expect(search("test")).toHaveLength(1); // display name
+    expect(search("claude")).toHaveLength(1); // model
+    expect(search("swing")).toHaveLength(1); // style
+    expect(search("doge")).toHaveLength(1); // asset
+    expect(search("nope")).toHaveLength(0);
+  });
+
   it("filters by tier: open returns only open-tier rows", () => {
     const mixed = [
       row({ id: "a", tier: "open" }),
