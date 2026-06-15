@@ -433,6 +433,75 @@ pub async fn post_revoke(
     }))
 }
 
+/// Request body for an in-place reprice.
+#[derive(Debug, Deserialize)]
+pub struct SetPriceBody {
+    /// New whole-USDC price. `0` makes the listing free (open/clone path).
+    pub price_usdc: f64,
+}
+
+/// Response for a successful reprice.
+#[derive(Debug, Serialize)]
+pub struct SetPriceOut {
+    pub listing_id: u64,
+    pub price_usdc: f64,
+    pub tx_hash: String,
+}
+
+/// `POST /api/marketplace/listings/:id/price` — seller-initiated in-place
+/// repricing (mirrors the revoke path: server signer + on-chain seller check).
+///
+/// Returns 200 `{"listing_id", "price_usdc", "tx_hash"}` on success.
+/// 400 for a bad price or any chain error from `updatePrice` (contract reverts:
+/// NotSeller, UnknownListing, AlreadyRevoked, FreeTransferableForbidden).
+/// 503 when chain env is not configured.
+pub async fn post_set_price(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+    Json(body): Json<SetPriceBody>,
+) -> Result<Json<SetPriceOut>, DashboardError> {
+    // a. Validate the price before touching the chain.
+    let price6 = usdc6(body.price_usdc)?;
+
+    // b. Chain gate — startup-resolved config validated before any chain write.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
+        )
+    })?;
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
+        DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
+    })?;
+
+    // c. Build a signing driver and call updatePrice.
+    let driver = Erc8004MantleDriver::with_signer(
+        marketplace_addresses,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+        chain.signer.clone(),
+    );
+    let tx_hash =
+        with_chain_timeout(chain_call_timeout(mp), driver.update_price(U256::from(id), price6))
+            .await?
+            .map_err(|e| {
+                // Contract reverts (NotSeller, UnknownListing, AlreadyRevoked,
+                // FreeTransferableForbidden) and RPC failures map to 400. Testnet
+                // posture, same as revoke.
+                let msg = e.to_string();
+                DashboardError::Validation {
+                    field: "listing_id".into(),
+                    msg: format!("reprice failed: {msg}"),
+                }
+            })?;
+
+    Ok(Json(SetPriceOut {
+        listing_id: id,
+        price_usdc: body.price_usdc,
+        tx_hash: format!("0x{tx_hash:x}"),
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/marketplace/buy — gasless x402 relay (buyWithAuthorization)
 // ---------------------------------------------------------------------------
