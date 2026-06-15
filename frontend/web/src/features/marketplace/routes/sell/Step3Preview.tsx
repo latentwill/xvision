@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublishDraft } from "@/features/marketplace/data/types";
 import { getStrategy } from "@/api/strategies";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
-import { isMainnetNetwork } from "@/features/marketplace/lib/chain";
+import { useMarketplaceNetwork } from "@/features/marketplace/lib/useMarketplaceNetwork";
 import { ListingPreviewCard } from "./ListingPreviewCard";
 
 /** What the operator wants published as the listing's public description.
@@ -29,7 +29,7 @@ export function Step3Preview({
 }) {
   const allPass = draft.listable.every((c) => c.ok);
   const mintDisabled = !allPass || minting;
-  const mainnet = isMainnetNetwork();
+  const { isMainnet: mainnet } = useMarketplaceNetwork();
   // Bind the preview to the LIVE draft (name/price/tier the seller edited in
   // step 2) rather than the snapshot captured when the draft was created — so
   // the card never shows a stale name or the default 49 USDC.
