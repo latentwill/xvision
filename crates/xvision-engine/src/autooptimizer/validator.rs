@@ -133,7 +133,7 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
 /// when the key matches no tunable surface (the validator then reports
 /// `unknown_param`). Resolution must stay in sync with
 /// [`crate::autooptimizer::mutator::tunable_param_keys`].
-fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
+pub(crate) fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
     if let Some(field) = crate::autooptimizer::mutator::risk_field_for_key(base, key) {
         let risk = serde_json::to_value(&base.risk).ok()?;
         return risk.get(&field).cloned();
@@ -184,16 +184,15 @@ fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut 
             ));
             continue;
         }
-        if change.before != current_val {
-            errors.push(ValidationError::with_path(
-                "stale_param_baseline",
-                format!(
-                    "Param '{}' baseline is stale: 'before' must match the current value.",
-                    change.key
-                ),
-                format!("params[{i}].before"),
-            ));
-        }
+        // R4: NO stale-baseline reject (mirrors the filter B4 fix). A wrong
+        // `before` is not fatal — `apply_to` writes `after` and never reads
+        // `before`, so the forward child is unaffected. Consumers of `before`
+        // (the inversion honesty-check AND `describe_mutation_outcome`'s memory
+        // write-back) are kept truthful by normalizing the diff to the parent's
+        // live values up-front in `gate_and_classify` (via the inversion
+        // `normalize_*_baseline` helpers). Rejecting a stale baseline here only
+        // burned mutator attempts on an auto-fixable nit.
+        let _ = current_val;
         validate_param_after_value(&change.key, &change.after, i, errors);
     }
 }
@@ -294,12 +293,19 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
     for (i, edit) in edits.iter().enumerate() {
         // Path must be one of the enumerated tunable paths.
         let Some(current) = tunable.get(&edit.path) else {
+            // R4: echo the allowed paths INLINE so the retry feedback is
+            // prescriptive — the list lands in `last_errors` and survives into
+            // the next attempt's prompt even if the model ignored the user
+            // message, letting it self-correct instead of burning the budget.
+            let mut allowed: Vec<&str> = tunable.keys().map(String::as_str).collect();
+            allowed.sort_unstable();
             errors.push(ValidationError::with_path(
                 "unknown_filter_path",
                 format!(
                     "Filter path '{}' is not a tunable path on this strategy's filter. \
-                     Use the paths listed in the user message.",
-                    edit.path
+                     Use EXACTLY one of these tunable paths: [{}].",
+                    edit.path,
+                    allowed.join(", ")
                 ),
                 format!("filter[{i}].path"),
             ));
@@ -444,11 +450,25 @@ fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors:
     }
     for name in added.iter() {
         if !is_valid_tool_name(name) {
+            // R4: prescriptive feedback — include a sanitized suggestion so the
+            // retry can self-correct instead of re-emitting the same bad name.
+            // (We suggest, not auto-rename: there is no validator-side tool
+            // catalog to confirm a sanitized name is a real registered tool.)
+            let suggestion: String = name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(64)
+                .collect();
+            let hint = if suggestion.is_empty() {
+                String::new()
+            } else {
+                format!(" Use a valid name such as '{suggestion}'.")
+            };
             errors.push(ValidationError::with_path(
                 "invalid_tool_name",
                 format!(
                     "Tool name '{name}' is invalid \
-                     (only letters, digits, underscores allowed; max 64 chars)."
+                     (only ASCII letters, digits, underscores allowed; max 64 chars).{hint}"
                 ),
                 "tools.added",
             ));
