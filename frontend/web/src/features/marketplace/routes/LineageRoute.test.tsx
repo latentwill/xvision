@@ -501,3 +501,45 @@ describe("LineageRoute bundle enrichment", () => {
     expect(screen.queryByTestId("creator-link")).not.toBeInTheDocument();
   });
 });
+
+// ── Owner strip ──────────────────────────────────────────────────────────────
+describe("LineageRoute owner strip", () => {
+  it("shows owner strip when viewer.createdListingIds includes the listing id", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xowner",
+      createdListingIds: ["btc-momentum-v3"],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    expect(await screen.findByTestId("owner-strip")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit price/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^revoke$/i })).toBeInTheDocument();
+  });
+
+  it("does NOT show owner strip when viewer does not own the listing", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xstranger",
+      createdListingIds: [],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.queryByTestId("owner-strip")).not.toBeInTheDocument();
+  });
+
+  it("does NOT show owner strip when viewer is not connected", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: false,
+      createdListingIds: [],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.queryByTestId("owner-strip")).not.toBeInTheDocument();
+  });
+});

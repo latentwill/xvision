@@ -35,6 +35,7 @@ export interface MarketplaceData {
   // submits it here. Callers MUST treat this as testnet/simulated until then.
   purchaseIntent(listingId: Id): Promise<TxRef>;
   cloneIntent(listingId: Id): Promise<TxRef>;
+  setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef>;
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void;
 }
 
@@ -113,6 +114,9 @@ export class FixtureMarketplaceData implements MarketplaceData {
     return fakeTx();
   }
   async cloneIntent(_listingId: Id): Promise<TxRef> {
+    return fakeTx();
+  }
+  async setListingPrice(_listingId: Id, _priceUsdc: number): Promise<TxRef> {
     return fakeTx();
   }
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void {

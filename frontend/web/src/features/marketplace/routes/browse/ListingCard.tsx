@@ -6,6 +6,7 @@ import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { isFreeListing } from "@/features/marketplace/data/pricing";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
 interface ListingCardProps {
@@ -19,7 +20,7 @@ interface ListingCardProps {
 export function ListingCard({ row, onBuy }: ListingCardProps) {
   const positive = row.return30dPct >= 0;
   const retSign = positive ? "+" : "";
-  const isFree = row.priceUsdc === null || row.tier === "open";
+  const isFree = isFreeListing(row);
 
   return (
     <div

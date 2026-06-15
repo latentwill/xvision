@@ -74,6 +74,13 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
         <div className="flex gap-2 items-center shrink-0 flex-wrap">
         <TestnetBadge size="sm" />
         <Link
+          to="/marketplace/mine"
+          aria-label="my listings"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-transparent text-text-2 text-[12px] font-medium hover:text-text hover:border-border-strong"
+        >
+          My Listings
+        </Link>
+        <Link
           to="/marketplace/wallet"
           aria-label="wallet"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-transparent text-text-2 text-[12px] font-medium hover:text-text hover:border-border-strong"

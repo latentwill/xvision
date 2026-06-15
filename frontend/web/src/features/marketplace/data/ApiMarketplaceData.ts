@@ -651,6 +651,13 @@ export class ApiMarketplaceData implements MarketplaceData {
   cloneIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.cloneIntent(listingId);
   }
+  async setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    const out = await apiFetch<{ listing_id: number; price_usdc: number; tx_hash: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/price`,
+      { method: "POST", body: JSON.stringify({ price_usdc: priceUsdc }) },
+    );
+    return { txHash: out.tx_hash, network: "mantle-sepolia" };
+  }
 }
 
 /// Pick the marketplace client based on the indexer status endpoint.

@@ -186,6 +186,9 @@ export class SubgraphMarketplaceData implements MarketplaceData {
   cloneIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.cloneIntent(listingId);
   }
+  setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    return this.fallback.setListingPrice(listingId, priceUsdc);
+  }
 
   // --- helpers -----------------------------------------------------------
 

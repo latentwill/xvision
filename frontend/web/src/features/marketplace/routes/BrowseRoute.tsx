@@ -17,6 +17,7 @@ import { AppliedChips } from "./browse/AppliedChips";
 import { SliceChips } from "./browse/SliceChips";
 import { ListingEntry, humanize } from "./browse/ListingEntry";
 import { FilterDrawerContent } from "./browse/FilterDrawerContent";
+import { isFreeListing } from "@/features/marketplace/data/pricing";
 import type { FilterState, ListingRow, Slice, SliceId } from "@/features/marketplace/data/types";
 
 function countActiveFilters(filter: FilterState): number {
@@ -214,7 +215,7 @@ function IndexTable({ rows }: { rows: ListingRow[] }) {
       </thead>
       <tbody>
         {rows.map((row) => {
-          const isOpen = row.priceUsdc === null || row.tier === "open";
+          const isOpen = isFreeListing(row);
           return (
             <tr key={row.id} className="border-b border-border-soft hover:bg-surface-hover">
               <td className="px-4 sm:px-7 py-2">
