@@ -2,7 +2,7 @@
 
 **Non-custodial AI trading agents.** xvision runs LLM-driven trading strategies
 against your own broker account, with explicit scope enforcement so xvision
-itself never holds your funds. An overnight autoresearcher mutates and
+itself never holds your funds. An overnight optimizer mutates and
 evaluates new strategy variants automatically.
 
 > ⚠️ **This is alpha software. Use at your own risk.** xvision executes real
@@ -22,7 +22,7 @@ evaluates new strategy variants automatically.
 - Logs every order's full lifecycle (emit → risk → simulate → sign → submit →
   fill → close) to an append-only audit log; positions can be reconstructed
   from the log alone.
-- Runs an overnight autoresearcher that mutates seed strategies, evaluates
+- Runs an overnight optimizer that mutates seed strategies, evaluates
   variants on held-out backtests, and seals survivors as immutable lineage
   artifacts.
 
@@ -99,16 +99,18 @@ STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --n
 ./target/release/xvn eval list
 ```
 
-Or pull the Docker image — see `docker/README.md` for the full mount/env-var
-reference:
+Or pull the Docker image. The current release is **`0.36.0`**, published to
+GHCR as `ghcr.io/latentwill/xvision:0.36.0` on each `vX.Y.Z` tag. The image is
+private (inherits repo visibility) — run `docker login ghcr.io` first. See
+`docker/README.md` for the full mount/env-var reference and tag list.
 
 ```bash
-docker pull ghcr.io/latentwill/xvision:latest
+docker pull ghcr.io/latentwill/xvision:0.36.0
 docker run --rm \
   -e XVN_AUTOMIGRATE=1 \
   -v xvision-data:/data \
   --env-file .env \
-  ghcr.io/latentwill/xvision:latest \
+  ghcr.io/latentwill/xvision:0.36.0 \
   doctor
 ```
 
@@ -123,10 +125,10 @@ so `xvn dashboard serve` boots a full UI with no separate frontend process.
 xvn dashboard serve --bind 127.0.0.1:8788
 # open http://localhost:8788
 
-# in the docker image (the published `:latest` defaults to this)
+# in the docker image (dashboard serve is the default CMD)
 docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
   -v xvision-data:/data \
-  ghcr.io/latentwill/xvision:latest
+  ghcr.io/latentwill/xvision:0.36.0
 ```
 
 V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/strategies/:id`,
