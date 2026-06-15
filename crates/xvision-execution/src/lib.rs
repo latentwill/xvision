@@ -25,6 +25,9 @@ pub use bybit::{BybitPaperSurface, BybitTestnetClient, MockBybitClient};
 pub use byreal::{
     ByrealLiveSurface, ByrealPerpsApi, ByrealPerpsExecutor, ByrealPosition, ByrealSide, SubprocessByrealApi,
 };
+pub use byreal_spot::{
+    ByrealSpotApi, ByrealSpotMode, ByrealSpotSurface, SubprocessByrealSpotApi, SwapResult,
+};
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use hyperliquid::HyperliquidSurface;
 pub use orderly::{OrderlyExecutor, OrderlyPosition, VenueSnapshot};
