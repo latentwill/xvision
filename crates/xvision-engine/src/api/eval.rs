@@ -2295,6 +2295,14 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str)
 struct ToolRegistryDispatch {
     tools: Arc<ToolRegistry>,
     current_asset: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// The run's mode. Drives the forward-only guard + the Nansen backtest
+    /// `as_of_date` injection in `invoke` (later tasks). `Copy`.
+    run_mode: crate::eval::run::RunMode,
+    /// Simulated-clock anchor for the current decision, written by the
+    /// executor per cycle (Task 1.4). `None` until the first decision.
+    as_of: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+    /// Backtest lookahead lag (days). Default `DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS`.
+    nansen_lag_days: i64,
 }
 
 fn normalize_callback_asset_for_compare(asset: &str) -> String {
@@ -2367,6 +2375,7 @@ async fn spawn_cline_ctx(
     entry: ProviderEntry,
     tools: Arc<ToolRegistry>,
     recording_request: Option<RecordingRequest>,
+    run_mode: crate::eval::run::RunMode,
 ) -> ApiResult<(
     crate::agent::dispatch_capability::ClineDispatchCtx,
     Option<crate::agent::cline_recording::RunRecording>,
@@ -2427,9 +2436,14 @@ async fn spawn_cline_ctx(
     let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
 
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
+    let as_of_guard: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>> =
+        Arc::new(tokio::sync::RwLock::new(None));
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
         current_asset: tool_asset_guard.clone(),
+        run_mode,
+        as_of: as_of_guard.clone(),
+        nansen_lag_days: crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS,
     });
     let bus = ctx
         .obs_event_bus
@@ -2506,6 +2520,8 @@ async fn spawn_cline_ctx(
             api_key,
             recording_slot_role,
             tool_asset_guard: Some(tool_asset_guard),
+            as_of_guard: Some(as_of_guard),
+            run_mode,
         },
         run_recording,
     ))
@@ -2890,7 +2906,7 @@ async fn run_inner(
         } else {
             None
         };
-        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
+        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request, req.mode).await?;
         (Some(cctx), rec)
     };
     // The recorder needs the spawned client's persist-failure flag at
@@ -4192,7 +4208,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                     u.hint
                 ))
             })?;
-        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
+        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None, req.mode).await?;
         Some(cctx)
     };
 
@@ -5020,6 +5036,7 @@ pub async fn spawn_optimizer_cline_ctx(
     ctx: &ApiContext,
     provider_name: &str,
     tools: Arc<ToolRegistry>,
+    run_mode: crate::eval::run::RunMode,
 ) -> ApiResult<Option<crate::agent::dispatch_capability::ClineDispatchCtx>> {
     let cfg_path = runtime_config_path(ctx);
     let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, provider_name, None)
@@ -5034,7 +5051,7 @@ pub async fn spawn_optimizer_cline_ctx(
                 u.hint
             ))
         })?;
-    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None).await?;
+    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None, run_mode).await?;
     Ok(Some(cctx))
 }
 
@@ -5761,7 +5778,7 @@ mod tests {
         std::env::remove_var("XVN_AGENTD_BIN");
 
         let tools = Arc::new(crate::tools::ToolRegistry::empty());
-        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools).await;
+        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools, crate::eval::run::RunMode::Backtest).await;
         // ClineDispatchCtx has no Debug, so report only the Ok/Err shape.
         assert!(
             result.is_err(),

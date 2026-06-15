@@ -78,6 +78,13 @@ pub struct ClineDispatchCtx {
     /// current decision asset. Updated by the executor per decision cycle.
     /// `None` for single-asset and non-sidecar runs.
     pub tool_asset_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>>,
+    /// Simulated-clock anchor write handle, shared with `ToolRegistryDispatch`.
+    /// The executor writes the current decision's timestamp here each cycle
+    /// (Task 1.4). `None` for non-sidecar runs.
+    pub as_of_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>>,
+    /// The run's mode — used to filter `allowed_tools` by forward-only policy
+    /// before advertising to the sidecar (Task 1.6).
+    pub run_mode: crate::eval::run::RunMode,
 }
 
 /// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset

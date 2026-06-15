@@ -718,7 +718,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
         // always returns Some on success and Err on failure — never Ok(None).
         let cline_ctx =
-            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools))
+            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools), xvision_engine::eval::run::RunMode::Backtest)
                 .await
                 .map_err(|e| {
                     CliError::upstream(anyhow::anyhow!(
