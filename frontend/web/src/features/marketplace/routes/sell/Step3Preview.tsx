@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublishDraft } from "@/features/marketplace/data/types";
 import { getStrategy } from "@/api/strategies";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { isMainnetNetwork } from "@/features/marketplace/lib/chain";
 import { ListingPreviewCard } from "./ListingPreviewCard";
 
 /** What the operator wants published as the listing's public description.
@@ -18,14 +19,27 @@ export interface PublicDescription {
 export function Step3Preview({
   draft,
   onMint,
+  onBack,
   minting,
 }: {
   draft: PublishDraft;
   onMint: (description: PublicDescription) => void;
+  onBack?: () => void;
   minting: boolean;
 }) {
   const allPass = draft.listable.every((c) => c.ok);
   const mintDisabled = !allPass || minting;
+  const mainnet = isMainnetNetwork();
+  // Bind the preview to the LIVE draft (name/price/tier the seller edited in
+  // step 2) rather than the snapshot captured when the draft was created — so
+  // the card never shows a stale name or the default 49 USDC.
+  const livePreview = {
+    ...draft.preview,
+    name: draft.name,
+    priceUsdc: draft.priceUsdc,
+    tier: draft.tier,
+  };
+  const networkLabel = mainnet ? "Mantle mainnet" : "the Mantle Sepolia testnet";
 
   // Prefill from the stored strategy's manifest.plain_summary. Errors (local
   // engine unreachable, unknown id) leave the textarea empty but editable.
@@ -98,7 +112,7 @@ export function Step3Preview({
         <p className="text-[11px] font-mono uppercase tracking-wide text-text-3 mb-2">
           Listing preview
         </p>
-        <ListingPreviewCard listing={draft.preview} />
+        <ListingPreviewCard listing={livePreview} />
       </div>
 
       {/* Failed checks warning (when minting is blocked) */}
@@ -124,7 +138,7 @@ export function Step3Preview({
       )}
 
       {/* Mint action */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <button
           onClick={() => onMint({ value: description, dirty })}
           disabled={mintDisabled}
@@ -133,13 +147,27 @@ export function Step3Preview({
               ? "bg-surface-elev border border-border text-text-3 cursor-not-allowed"
               : "bg-gold text-black hover:bg-gold/90"
           }`}
-          aria-label={minting ? "Minting…" : "Mint on testnet"}
+          aria-label={
+            minting
+              ? "Minting…"
+              : mainnet
+                ? "Mint on Mantle mainnet"
+                : "Mint on testnet"
+          }
         >
           {minting ? "Minting…" : "Mint"}
           {!minting ? <TestnetBadge /> : null}
         </button>
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={minting}
+          className="text-[12px] text-text-3 hover:text-text-2 disabled:opacity-50"
+        >
+          ← Back
+        </button>
         <p className="text-[11px] text-text-3">
-          Submits listing to the Mantle Sepolia testnet · one-time fee
+          Submits listing to {networkLabel} · one-time fee
         </p>
       </div>
     </div>

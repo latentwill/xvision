@@ -1,11 +1,11 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
+import { useLiveActivity } from "../hooks/useLiveActivity";
 import {
   useCycleEvents,
   useCycleRuns,
   useCycleRun,
-  useOptimizerStatus,
   autooptimizerKeys,
 } from "../api";
 import { normalizePersisted } from "../selectors/narrateEvent";
@@ -45,14 +45,36 @@ export function ConsoleModule({
   feedMaxItems?: number;
 }) {
   const stream = useCycleEventStream();
+  const activity = useLiveActivity();
   const cycles = useCycleRuns();
   const queryClient = useQueryClient();
 
-  const live = stream.isRunning && !cycleId;
-  // explicit cycleId (CycleDetail) > live cycle > most recent completed cycle
-  const replayId =
-    cycleId ?? (!stream.isRunning ? (cycles.data?.[0]?.cycle_id ?? null) : null);
-  const persisted = useCycleEvents(live ? null : replayId);
+  // Live whenever the unified signal says a run is active (and we're not pinned
+  // to a historic cycle). Crucially this no longer hinges on the SSE buffer
+  // alone: a CLI run with no IPC bridge — or a tab that joined mid-cycle — still
+  // reads as live via the server-status / persisted-event signals.
+  const live = !cycleId && activity.activity !== "idle";
+  const liveCycleId = activity.activeCycleId;
+
+  // explicit cycleId (CycleDetail) > most recent completed cycle (when idle).
+  const replayId = cycleId ?? (!live ? (cycles.data?.[0]?.cycle_id ?? null) : null);
+
+  // Persisted log for whichever cycle we're showing. While live we poll it so a
+  // run with no live SSE still streams straight from the DB.
+  const persisted = useCycleEvents(
+    live ? liveCycleId : replayId,
+    live ? { pollMs: 4_000 } : undefined,
+  );
+
+  // The live SSE buffer is the freshest source ONLY when it holds this cycle
+  // from its cycle_started; otherwise we fall back to the polled persisted log.
+  const streamHasLiveCycle = useMemo(() => {
+    if (!live || !liveCycleId) return false;
+    return stream.events.some((e) => {
+      const et = e.event_type ?? e.type ?? e.kind ?? "";
+      return et === "cycle_started" && e.cycle_id === liveCycleId;
+    });
+  }, [live, liveCycleId, stream.events]);
 
   // Persistence-worker race: when cycle_finished arrives on the stream, the
   // backend's event-persister task may not have drained its queue yet — a
@@ -98,13 +120,23 @@ export function ConsoleModule({
   // shares the key) and gives the header its strategy identity; it doubles as
   // the node-derived board fallback when the event log is unavailable.
   const replayRun = useCycleRun(replayId ?? undefined);
-  const status = useOptimizerStatus();
 
   const events = useMemo(() => {
-    if (live) return stream.events;
+    if (live) {
+      return streamHasLiveCycle
+        ? stream.events
+        : (persisted.data ?? []).map(normalizePersisted);
+    }
     if (useStreamBuffer) return streamReplayEvents;
     return (persisted.data ?? []).map(normalizePersisted);
-  }, [live, useStreamBuffer, streamReplayEvents, stream.events, persisted.data]);
+  }, [
+    live,
+    streamHasLiveCycle,
+    useStreamBuffer,
+    streamReplayEvents,
+    stream.events,
+    persisted.data,
+  ]);
 
   const board = useMemo(() => {
     const fromEvents = buildBoardState(events);
@@ -142,18 +174,46 @@ export function ConsoleModule({
 
   const replaySummary = cycles.data?.find((c) => c.cycle_id === replayId);
   const lastCycleAgo = formatRelativeTime(replaySummary?.last_created_at);
-  const liveCycleId = board.cycleId ?? stream.activeCycleId;
-  const liveStrategyId = status?.active_session?.strategy_id;
+  const headerCycleId = board.cycleId ?? activity.activeCycleId ?? stream.activeCycleId;
+  const liveStrategyId = activity.session?.strategy_id;
   const replayId8 = replayId ? replayId.slice(0, 8) : null;
 
+  // The header label tracks the real activity so a paused/cancelling run never
+  // reads "Live".
+  const liveLabel =
+    activity.activity === "paused"
+      ? "Paused"
+      : activity.activity === "cancelling"
+        ? "Cancelling"
+        : "Live";
+  const liveTone =
+    activity.activity === "running"
+      ? "text-gold"
+      : activity.activity === "paused"
+        ? "text-warn"
+        : "text-danger";
+
   return (
-    <section className="space-y-4 rounded-md border border-border bg-surface-card p-5">
+    <section
+      className={[
+        "space-y-4 rounded-md border bg-surface-card p-5 transition-colors",
+        live && activity.activity === "running"
+          ? "border-gold/30"
+          : live && activity.activity === "paused"
+            ? "border-warn/30"
+            : live
+              ? "border-danger/30"
+              : "border-border",
+      ].join(" ")}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="text-[11px] uppercase tracking-widest text-text-4">
           {live ? (
-            <span className="text-gold">
-              Live · cycle{" "}
-              <span className="font-mono">{liveCycleId ? liveCycleId.slice(0, 8) : "…"}</span>
+            <span className={liveTone}>
+              {liveLabel} · cycle{" "}
+              <span className="font-mono">
+                {headerCycleId ? headerCycleId.slice(0, 8) : "…"}
+              </span>
               {liveStrategyId ? (
                 <>
                   {" · "}
@@ -183,7 +243,10 @@ export function ConsoleModule({
         {/* Intentional extension point — CycleDetail / home may populate this in the live/replay header. */}
         {launchAction}
       </div>
-      <PhaseRibbon phase={live ? board.phase : "done"} />
+      <PhaseRibbon
+        phase={live ? board.phase : "done"}
+        running={live && activity.activity === "running"}
+      />
       <ExperimentBoard
         cards={board.cards}
         defaultOpenHash={defaultOpenHash}

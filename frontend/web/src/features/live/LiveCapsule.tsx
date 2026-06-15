@@ -46,8 +46,8 @@ export type LiveCapsuleProps = {
   testId?: string;
   /**
    * The run's retention/fidelity (`AgentRunSummary.retention_mode`).
-   * Forwarded to `CapsuleShell` so the operator sees whether bodies are
-   * present. Optional — omitted on legacy call sites.
+   * Forwarded to the focused `CapsuleRow` so the operator sees whether bodies
+   * are present. Optional — omitted on legacy call sites.
    */
   retentionMode?: RetentionMode;
 };
@@ -148,14 +148,18 @@ export function LiveCapsule({
       borderColor={borderColor}
       // Live capsule is always boxed (it has a body), never a bare pill.
       expanded={true}
-      retentionMode={retentionMode}
     >
       {/* Focused live run row (single run — no sibling stack). */}
       <div
         className="flex items-stretch"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <CapsuleRow run={run} focused={true} currentSpan={run.currentSpan ?? null} />
+        <CapsuleRow
+          run={run}
+          focused={true}
+          currentSpan={run.currentSpan ?? null}
+          retentionMode={retentionMode}
+        />
 
         {/* Trailing controls — expand-dock + pop-out (no sibling toggle). */}
         <div className="flex items-center gap-0.5 pr-1 shrink-0">

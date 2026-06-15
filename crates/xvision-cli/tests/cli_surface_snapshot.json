@@ -343,7 +343,9 @@
       "long_flags": [
         "--asset",
         "--help",
-        "--venue"
+        "--i-understand-real-money",
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -1296,12 +1298,14 @@
       "long_flags": [
         "--asset",
         "--help",
+        "--i-understand-real-money",
         "--side",
         "--size-bps",
         "--stop-loss-pct",
         "--summary",
         "--take-profit-pct",
-        "--venue"
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -2113,6 +2117,16 @@
       "path": [
         "help",
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "live"
       ]
     },
     {
@@ -3563,6 +3577,30 @@
       "mutates": false,
       "path": [
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--bar-limit",
+        "--capital",
+        "--decision-limit",
+        "--display-name",
+        "--help",
+        "--i-understand-real-money",
+        "--json",
+        "--network",
+        "--strategy",
+        "--time-limit-secs",
+        "--venue",
+        "--warmup-bars",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "live"
       ]
     },
     {

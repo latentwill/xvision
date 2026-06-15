@@ -103,6 +103,13 @@ impl SafetyGate {
         }
     }
 
+    /// Returns `true` when this gate is backed by a real `SafetyManager`
+    /// (i.e. constructed via `SafetyGate::new`). Returns `false` for the
+    /// no-op `allow_all` gate used in tests and CLI paths.
+    pub fn is_enforcing(&self) -> bool {
+        self.manager.is_some()
+    }
+
     /// Check whether a broker submit is allowed.
     ///
     /// Checks (in order):
@@ -154,7 +161,12 @@ impl SafetyGate {
         }
 
         // 2. Venue-label mismatch.
-        if run_venue_label == VenueLabel::Paper && broker_venue_label == VenueLabel::Live {
+        //
+        // Reject any non-Live run (Paper, Testnet, …) attempting to reach a
+        // Live (real-money) broker.  The original Paper-only check missed the
+        // case where BYREAL_NETWORK defaults to mainnet but the run is labeled
+        // Testnet — both are non-Live and must never reach a Live broker.
+        if run_venue_label != VenueLabel::Live && broker_venue_label == VenueLabel::Live {
             self.write_audit(auth, &action, AuditResult::DeniedVenueMismatch, pause_state)
                 .await;
             return Err(SafetyGateError::VenueLabelMismatch {

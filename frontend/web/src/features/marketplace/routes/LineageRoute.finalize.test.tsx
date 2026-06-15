@@ -42,6 +42,7 @@ vi.mock("uplot", () => ({
 }));
 
 vi.mock("@/features/marketplace/lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   faucetUsdc: vi.fn(async () => "0xfaucet-tx"),
 }));
 

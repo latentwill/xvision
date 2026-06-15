@@ -279,6 +279,61 @@ describe("OptimizerHome — running", () => {
   });
 });
 
+describe("OptimizerHome — live indication", () => {
+  it("shows a prominent RUNNING status bar (with a live pulse) while a session runs", async () => {
+    setupRunning();
+    renderWithProviders(<OptimizerHome />);
+
+    const bar = await screen.findByRole("status", { name: /optimizer running/i });
+    expect(bar).toHaveTextContent(/running/i);
+    // Reuses the shared in-flight Pill animation.
+    expect(bar.querySelector(".xvn-pill-animated")).not.toBeNull();
+  });
+
+  it("infers a running run from the latest cycle's event log even without a session row, hiding Launch", async () => {
+    // The operator's exact case: /status has no active_session and the SSE
+    // buffer is empty, but the latest cycle is in-flight in the DB.
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
+    vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+    vi.spyOn(apiModule, "useCycleEvents").mockReturnValue(
+      q([
+        {
+          seq: 1,
+          session_id: "s",
+          cycle_id: lastCycle.cycle_id,
+          kind: "cycle_started",
+          payload_json: JSON.stringify({ type: "cycle_started", cycle_id: lastCycle.cycle_id }),
+          ts: new Date().toISOString(),
+        },
+        {
+          seq: 2,
+          session_id: "s",
+          cycle_id: lastCycle.cycle_id,
+          kind: "mutation_proposed",
+          payload_json: JSON.stringify({
+            type: "mutation_proposed",
+            cycle_id: lastCycle.cycle_id,
+            child_hash: "abcd1234ef",
+            mutator_model: "gpt-5.2",
+          }),
+          ts: new Date().toISOString(),
+        },
+      ]),
+    );
+    mockMutations();
+
+    renderWithProviders(<OptimizerHome />);
+
+    // Running is announced…
+    expect(await screen.findByRole("status", { name: /optimizer running/i })).toBeInTheDocument();
+    // …Launch is hidden (no implying the optimizer is idle)…
+    expect(screen.queryByRole("button", { name: /launch run/i })).toBeNull();
+    // …and no controls, since an inferred run isn't a controllable session.
+    expect(screen.queryByRole("button", { name: /^pause$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
+  });
+});
+
 describe("OptimizerHome — paused", () => {
   it("shows the paused headline with Resume + Cancel and no Launch", async () => {
     const { resumeMutateMock, cancelMutateMock } = setupPaused();

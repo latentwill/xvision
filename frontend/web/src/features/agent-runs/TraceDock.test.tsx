@@ -247,4 +247,18 @@ describe("TraceDock", () => {
     expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
     expect(screen.queryByText(/no spans match the current filter/i)).toBeNull();
   });
+
+  test("filter bar is the first row — above the TRACE header and the TREE/FLAME view toggle", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+    const filterInput = screen.getByPlaceholderText(/^filter/i);
+    const viewToggle = screen.getByTestId("trace-dock-view-toggle");
+    // Filter-first layout: the filter must precede the view toggle (and the
+    // TRACE header it sits in) in document order.
+    expect(
+      filterInput.compareDocumentPosition(viewToggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

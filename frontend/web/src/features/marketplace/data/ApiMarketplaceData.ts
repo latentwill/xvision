@@ -11,6 +11,7 @@ import {
   fetchPublishDraft,
 } from "./listable";
 import {
+  activeNetworkSlug,
   approveUsdc,
   buyDirect,
   currentAddress,
@@ -248,7 +249,7 @@ function toDetail(l: IndexedListing): ListingDetail {
         bornAt: "",
         operatorSig: "",
         contract: "",
-        network: "mantle-sepolia",
+        network: activeNetworkSlug,
       },
       attestations: [],
       anchors: [],
@@ -439,7 +440,7 @@ export class ApiMarketplaceData implements MarketplaceData {
     const buyers = { humans: 0, agents: 0 };
     return {
       txHash: r.tx_hash,
-      network: "mantle-sepolia",
+      network: activeNetworkSlug,
       at,
       buyer: r.buyer,
       listing: {
@@ -528,13 +529,13 @@ export class ApiMarketplaceData implements MarketplaceData {
           }),
         },
       );
-      return { txHash: out.tx_hash, network: "mantle-sepolia" };
+      return { txHash: out.tx_hash, network: activeNetworkSlug };
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 503) throw e;
       // Relay unavailable — approve + buy directly from the wallet.
       await approveUsdc(price6);
       const txHash = await buyDirect(BigInt(listingId), addr);
-      return { txHash, network: "mantle-sepolia" };
+      return { txHash, network: activeNetworkSlug };
     }
   }
   /**
