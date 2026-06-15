@@ -83,6 +83,54 @@ Three facts make adding price-edit clean rather than a redeploy nightmare:
 - Editing a listing's **name, gen-art, or assets** (separate from price/content).
 - **Un-revoke** (the contract has no un-revoke; delete stays one-way).
 
+## 5a. Pricing model validation (industry research, 2026-06-15)
+
+Checked our model against how production NFT marketplaces handle listing/repricing.
+There are two dominant architectures:
+
+- **Off-chain signed orders** (Seaport/OpenSea, Blur, Reservoir): a listing is a *signed
+  message* stored off-chain — listing and repricing are **gasless**, settlement is
+  on-chain only when a buyer fulfills. This is why big marketplaces show millions of
+  listings without per-seller gas. **Its core hazard is the stale-order problem:** old
+  signed listings remain fulfillable on-chain even after they're hidden in the UI —
+  this is the exact class of bug behind OpenSea's ~$1.8M refund (buyers bought at old,
+  far-below-market prices from listings sellers thought were gone). Sellers must pay gas
+  to truly cancel.
+- **On-chain listing registry** (what xvision uses; also what "build an NFT
+  marketplace" contract guides teach): a listing is on-chain storage; `list` /
+  `update` / `cancel` are on-chain ops. "Update listing" (incl. price) is a **standard,
+  expected operation** in this model.
+
+**Verdict: our `updatePrice` design is the correct choice for xvision's architecture,
+and it side-steps the off-chain model's biggest footgun.**
+
+- `updatePrice` mutating the single on-chain record means price has **one source of
+  truth read at buy time** — there are **no stale orders** to exploit (the OpenSea
+  failure mode is structurally impossible here).
+- xvision signs the tx with the **server publisher key**, so the **user pays no gas** to
+  reprice — we get the "gasless to the user" benefit that off-chain orders are prized
+  for, without the stale-order risk (and Mantle gas is negligible regardless).
+- **Buyer-overpay protection is already best-practice:** buys are EIP-3009
+  `TransferWithAuthorization` where the buyer signs an exact `value` (their max spend).
+  A price *increase* between view and purchase makes a stale authorization fail rather
+  than overpay — matching the industry rule that "the value paid is never more than the
+  buyer agreed to." **Implementation must confirm** `Marketplace.buy*` charges the
+  *current* price and rejects an authorization whose `value` is below it (verify in
+  `Marketplace.sol`); this is the slippage guard.
+- **"free = price 0" is intentional and xvision-specific.** In NFT-land "free" is
+  usually a primary-mint concept and open editions are *fixed-price*; xvision's free
+  path is "clone / run-free" (copy the strategy), which is a legitimate distinct intent.
+  Routing `price 0 → cloneIntent`, `price > 0 → purchaseIntent` is internally
+  consistent.
+
+**Future (non-goal):** if xvision ever wants OpenSea-scale gasless listing/repricing,
+that's a bigger pivot to a Seaport-style off-chain signed-order model — out of scope for
+this feature.
+
+Sources: OpenSea Help (lower/cancel listing & gas), OpenSea Seaport (off-chain orders /
+gas savings), Reservoir off-chain cancellation, paintswap marketplace mechanics
+(buyer-overpay protection), reporting on the OpenSea stale-listing exploit.
+
 ## 6. Architecture, by layer
 
 ### 6.1 Contract — `contracts/src/ListingRegistry.sol` (+ interface)
