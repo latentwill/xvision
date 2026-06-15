@@ -10,8 +10,9 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored, SetAlpacaReq,
-    SetByrealReq, SetDegenArenaReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored,
+    HyperliquidStored, OrderlyStored, SetAlpacaReq, SetByrealReq, SetDegenArenaReq,
+    SetHyperliquidReq, SetOrderlyReq,
 };
 
 use crate::error::DashboardError;
@@ -80,4 +81,40 @@ pub async fn delete_degen_arena(
 ) -> Result<axum::http::StatusCode, DashboardError> {
     brokers::clear_degen_arena(&state.api_context()).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// POST `/api/settings/brokers/hyperliquid` — persist Hyperliquid trade-only
+/// agent-wallet credentials. The key is never echoed back.
+pub async fn set_hyperliquid(
+    State(state): State<AppState>,
+    Json(req): Json<SetHyperliquidReq>,
+) -> Result<(StatusCode, Json<HyperliquidStored>), DashboardError> {
+    let stored = brokers::set_hyperliquid(&state.api_context(), req).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
+}
+
+/// DELETE `/api/settings/brokers/hyperliquid` — drop stored Hyperliquid creds.
+pub async fn delete_hyperliquid(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, DashboardError> {
+    brokers::clear_hyperliquid(&state.api_context()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST `/api/settings/brokers/orderly` — persist Orderly credentials.
+/// The api_secret is never echoed back.
+pub async fn set_orderly(
+    State(state): State<AppState>,
+    Json(req): Json<SetOrderlyReq>,
+) -> Result<(StatusCode, Json<OrderlyStored>), DashboardError> {
+    let stored = brokers::set_orderly(&state.api_context(), req).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
+}
+
+/// DELETE `/api/settings/brokers/orderly` — drop stored Orderly creds.
+pub async fn delete_orderly(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, DashboardError> {
+    brokers::clear_orderly(&state.api_context()).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

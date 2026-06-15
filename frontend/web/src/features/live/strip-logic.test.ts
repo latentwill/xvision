@@ -13,6 +13,7 @@ import {
   deriveStripStatus,
   filterRunsForStrip,
   isLiveRun,
+  isLiveLineage,
   isStaleRun,
   livenessCounts,
   pickDefaultRun,
@@ -200,6 +201,28 @@ describe("livenessCounts", () => {
       paper: 0,
       stale: 0,
     });
+  });
+});
+
+describe("isLiveLineage", () => {
+  test("live-deployment run (eval_mode=live) qualifies in any state", () => {
+    expect(isLiveLineage(mkLiveRun({ status: "running" }))).toBe(true);
+    expect(isLiveLineage(mkLiveRun({ status: "completed" }))).toBe(true);
+    expect(
+      isLiveLineage(
+        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+      ),
+    ).toBe(true); // stale orphan of a live run still belongs on the live page
+  });
+  test("backtest/paper eval runs are NOT live lineage", () => {
+    expect(isLiveLineage(mkRun({ eval_mode: "backtest" }))).toBe(false);
+    expect(isLiveLineage(mkRun({ status: "completed", eval_mode: "backtest" }))).toBe(
+      false,
+    );
+  });
+  test("parentless run (no eval_mode) is NOT live lineage", () => {
+    expect(isLiveLineage(mkRun({ eval_mode: null }))).toBe(false);
+    expect(isLiveLineage(mkRun())).toBe(false);
   });
 });
 

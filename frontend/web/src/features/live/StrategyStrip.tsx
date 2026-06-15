@@ -21,6 +21,7 @@ import { TransportControls } from "./TransportControls";
 import {
   filterRunsForStrip,
   isLiveRun,
+  isLiveLineage,
   STRIP_FILTERS,
   stripFilterCounts,
   deriveStripStatus,
@@ -71,8 +72,12 @@ export function StrategyStrip({
   // Status filter — LIVE by default so dead/backtest rows never greet
   // the operator. Local state only; the chart selection is independent.
   const [filter, setFilter] = useState<StripFilter>("LIVE");
-  const counts = stripFilterCounts(runs);
-  const visible = filterRunsForStrip(runs, filter);
+  // Only LIVE-deployment-lineage runs may appear on the Live page. This drops
+  // the backtest/paper eval runs that would otherwise flood the STOPPED bucket
+  // as bogus "stopped live strategies" — they live on the eval-runs page.
+  const liveLineageRuns = runs.filter(isLiveLineage);
+  const counts = stripFilterCounts(liveLineageRuns);
+  const visible = filterRunsForStrip(liveLineageRuns, filter);
 
   return (
     <div

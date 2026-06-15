@@ -1,16 +1,22 @@
 // Venue account panel — the REAL execution-venue account behind live runs.
 //
 // Where `LiveAccountStrip` derives stats from the selected run's eval
-// stream, this panel reports the venue's own ledger (Orderly Network:
-// equity, USDC holding, unrealized PnL, open positions) plus the connected
-// browser wallet address. Full-width inline band (NO right-side box; no
-// popups). Disconnected venue renders a quiet one-line state, never an
-// error surface.
+// stream, this panel reports a venue's own ledger (equity, USDC holding,
+// unrealized PnL, open positions) plus the connected browser wallet
+// address. The venue is chosen from a dropdown listing ONLY the brokers
+// configured in Settings → Brokers (design-standard `SignalSelectMenu`).
+// Full-width inline band (NO right-side box; no popups). A venue whose live
+// ledger isn't wired yet (or that's disconnected) renders a quiet one-line
+// state, never an error surface.
 
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import { getVenueAccount, liveKeys } from "@/api/live";
+import { getBrokers, settingsKeys } from "@/api/settings";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 import { DASH, fmtUsdPlain, fmtUsdSigned, pnlTone } from "./live-format";
 
@@ -18,11 +24,40 @@ function shortAddr(addr: string): string {
   return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
+// Live execution venues that can back a live run (paper-only Alpaca is
+// excluded — it isn't a live venue account). Order = dropdown order.
+const LIVE_VENUE_KINDS = ["orderly", "byreal", "degen_arena", "hyperliquid"] as const;
+
 export function VenueAccountPanel() {
   const { address } = useWallet();
+
+  // Which venues are actually configured in Settings → Brokers.
+  const brokersQuery = useQuery({
+    queryKey: settingsKeys.brokers(),
+    queryFn: getBrokers,
+  });
+
+  const options = useMemo(() => {
+    const report = brokersQuery.data;
+    if (!report) return [] as { value: string; label: string }[];
+    return LIVE_VENUE_KINDS.filter((k) => report[k]?.configured).map((k) => ({
+      value: k,
+      label: report[k].name,
+    }));
+  }, [brokersQuery.data]);
+
+  // Selection: user pick wins while it stays valid; otherwise the first
+  // configured venue. Null when nothing is configured.
+  const [picked, setPicked] = useState<string | null>(null);
+  const venue =
+    picked && options.some((o) => o.value === picked)
+      ? picked
+      : (options[0]?.value ?? null);
+
   const query = useQuery({
-    queryKey: liveKeys.venueAccount(),
-    queryFn: getVenueAccount,
+    queryKey: liveKeys.venueAccount(venue ?? undefined),
+    queryFn: () => getVenueAccount(venue ?? undefined),
+    enabled: venue != null,
     refetchInterval: 15_000,
   });
   const acct = query.data;
@@ -36,17 +71,28 @@ export function VenueAccountPanel() {
         <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-text-3">
           Venue account
         </span>
+
+        {options.length > 0 && venue ? (
+          <SignalSelectMenu
+            value={venue}
+            options={options}
+            onChange={setPicked}
+            minWidth={180}
+          />
+        ) : null}
+
         {acct?.connected ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.12em] text-gold">
             <span className="h-1.5 w-1.5 rounded-full bg-gold" />
             {acct.venue} · {acct.network ?? "?"}
           </span>
-        ) : (
+        ) : options.length > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.12em] text-text-3">
             <span className="h-1.5 w-1.5 rounded-full bg-text-3/50" />
             not connected
           </span>
-        )}
+        ) : null}
+
         {address != null && (
           <span
             className="text-[11px] font-mono text-text-3"
@@ -56,10 +102,23 @@ export function VenueAccountPanel() {
             wallet {shortAddr(address)}
           </span>
         )}
-        {!acct?.connected && acct?.reason != null && (
+        {options.length > 0 && !acct?.connected && acct?.reason != null && (
           <span className="text-[11px] text-text-3">{acct.reason}</span>
         )}
       </header>
+
+      {options.length === 0 ? (
+        <div className="px-4 py-3 text-[12px] text-text-3">
+          No brokers configured —{" "}
+          <Link
+            to="/settings/brokers"
+            className="text-text-2 underline-offset-2 hover:text-text hover:underline"
+          >
+            set one up in Settings
+          </Link>
+          .
+        </div>
+      ) : null}
 
       {acct?.connected && (
         <>

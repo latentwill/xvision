@@ -68,6 +68,22 @@ export function isLiveRun(run: AgentRunSummary): boolean {
 }
 
 /**
+ * True when a run belongs to a LIVE deployment lineage (its parent eval run
+ * was started in `mode = live`), regardless of its current state. This is the
+ * gate for what may appear ANYWHERE on the Live Trading page: active, paused,
+ * stopped, and stale-orphan live runs all qualify; backtest/paper eval runs
+ * and parentless runs do NOT. It exists so the strip never lists the dozens of
+ * finished backtest evals as "STOPPED live strategies" — those have a home on
+ * the eval-runs page, not here.
+ *
+ * `eval_mode` is populated by the agent-runs list endpoint from the parent
+ * eval run's mode ("live" | "backtest"); absent ⇒ not a live deployment.
+ */
+export function isLiveLineage(run: AgentRunSummary): boolean {
+  return run.eval_mode === "live";
+}
+
+/**
  * Classify a run for honest counts:
  *   done  — agent run reached a terminal status.
  *   stale — non-terminal agent run whose parent eval run is terminal.
