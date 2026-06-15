@@ -1068,4 +1068,21 @@ describe("EvalRunsRoute", () => {
     expect(screen.getByLabelText("Forward-test bar limit")).toBeVisible();
     expect(screen.getByLabelText("Forward-test warmup bars")).toBeVisible();
   });
+
+  it("offers Degen Arena as a selectable forward-test venue", async () => {
+    mockReady();
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.click(screen.getByLabelText("forward test"));
+
+    // The venue button was entirely absent before this change.
+    const degenBtn = screen.getByRole("button", { name: "Degen Arena" });
+    expect(degenBtn).toBeInTheDocument();
+
+    fireEvent.click(degenBtn);
+    expect(degenBtn).toHaveAttribute("aria-pressed", "true");
+  });
 });

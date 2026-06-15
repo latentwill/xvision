@@ -281,14 +281,17 @@ async fn run_honesty_check_total_return_zero_trade_canary_passes() {
     assert_eq!(result.sabotage_variant, "kill-trades");
 }
 
-/// B28 (narrowed): the neutral fallback is zero-trade-ONLY. A GENUINE canary
-/// backtest error (provider outage, panic, malformed scenario) must PROPAGATE
-/// out of `run_honesty_check` rather than be silently scored as a passed honesty
-/// check. Masking real faults as "honesty check passed" would hide broken
-/// infrastructure; the cycle lock is still released because `run_cycle_cmd`
-/// releases it unconditionally before propagating the error.
+/// R2 (overrides the B28 narrowing): a GENUINE canary backtest error (provider
+/// outage, panic, malformed scenario) must NOT be fatal. `run_honesty_check`
+/// degrades it to a NEUTRAL failed-canary result — `passed_check = true`,
+/// `sabotage_variant = "errored"`, the fault recorded in the verdict/message —
+/// so the cycle and the optimizer session keep running. The fault is surfaced
+/// (WARN + the `errored` marker + the verdict reason), not hidden as a clean
+/// "honesty check passed". This replaces the earlier decision to propagate:
+/// a canary INFRA failure killing the whole `run_session` was the exact
+/// crash class this resilience work removes.
 #[tokio::test]
-async fn run_honesty_check_propagates_genuine_canary_error() {
+async fn run_honesty_check_degrades_genuine_canary_error_to_neutral() {
     let base = make_strategy();
     let mutator = make_mutator();
     let scenario = make_scenario();
@@ -307,16 +310,25 @@ async fn run_honesty_check_propagates_genuine_canary_error() {
         &config,
         0,
     )
-    .await;
+    .await
+    .expect("a canary error must degrade to a neutral result, not be fatal (R2)");
 
     assert!(
-        result.is_err(),
-        "a genuine canary error must propagate, not be masked as a passed honesty check"
+        result.passed_check,
+        "an errored canary is a non-event (could not run), not a 'gate too lax' failure"
     );
-    let msg = format!("{:#}", result.unwrap_err());
+    assert_eq!(
+        result.sabotage_variant, "errored",
+        "the errored canary must be marked so the fault is visible, not hidden"
+    );
     assert!(
-        msg.contains("provider_outage"),
-        "propagated error should be the genuine fault; got: {msg}"
+        matches!(result.gate_verdict, GateVerdict::Fail { .. }),
+        "errored canary records a Fail verdict carrying the fault reason"
+    );
+    assert!(
+        result.message.contains("provider_outage"),
+        "the genuine fault must be surfaced in the message; got: {}",
+        result.message
     );
 }
 

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCadence, formatCostUsd, formatCostUsdPrecise, formatSpendUsd } from "./format";
+import {
+  formatCadence,
+  formatCostUsd,
+  formatCostUsdPrecise,
+  formatPercent,
+  formatSharpe,
+  formatSpendUsd,
+} from "./format";
 
 describe("formatCostUsd", () => {
   it("renders zero as $0.00", () => {
@@ -109,5 +116,51 @@ describe("formatCostUsdPrecise", () => {
 describe("formatCadence (smoke)", () => {
   it("formats minutes-only durations", () => {
     expect(formatCadence(15)).toBe("15m");
+  });
+});
+
+describe("formatPercent", () => {
+  it("rounds full-precision floats to 2dp so they fit the stat boxes", () => {
+    // The operator-reported overflow: "+0.19077721054834548%".
+    expect(formatPercent(0.19077721054834548)).toBe("+0.19%");
+  });
+
+  it("strips trailing zeros (47.2 stays 47.2, not 47.20)", () => {
+    expect(formatPercent(47.2)).toBe("+47.2%");
+    expect(formatPercent(47)).toBe("+47%");
+  });
+
+  it("prefixes a + on positive values by default and keeps the native minus", () => {
+    expect(formatPercent(12.5)).toBe("+12.5%");
+    expect(formatPercent(-8.3)).toBe("-8.3%");
+  });
+
+  it("omits the + when signed:false (win rate / drawdown)", () => {
+    expect(formatPercent(63.4, { signed: false })).toBe("63.4%");
+    expect(formatPercent(-12.55, { signed: false })).toBe("-12.55%");
+  });
+
+  it("renders null / undefined / non-finite as em-dash", () => {
+    expect(formatPercent(null)).toBe("—");
+    expect(formatPercent(undefined)).toBe("—");
+    expect(formatPercent(Number.NaN)).toBe("—");
+    expect(formatPercent(Number.POSITIVE_INFINITY)).toBe("—");
+  });
+});
+
+describe("formatSharpe", () => {
+  it("rounds full-precision ratios to 2dp (operator overflow case)", () => {
+    // The operator-reported overflow: "4.062559453920121".
+    expect(formatSharpe(4.062559453920121)).toBe("+4.06");
+  });
+
+  it("strips trailing zeros and signs positive ratios", () => {
+    expect(formatSharpe(2.1)).toBe("+2.1");
+    expect(formatSharpe(-0.5)).toBe("-0.5");
+  });
+
+  it("renders null / non-finite as em-dash", () => {
+    expect(formatSharpe(null)).toBe("—");
+    expect(formatSharpe(Number.NaN)).toBe("—");
   });
 });

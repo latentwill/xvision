@@ -41,7 +41,23 @@ export function applyFilter(
     if (totalBuyers(r) < f.minBuyers) return false;
     const price = r.priceUsdc ?? 0;
     if (price < f.priceUsdc.from || price > f.priceUsdc.to) return false;
-    if (q && !`${r.id} ${r.creator.handle ?? ""}`.toLowerCase().includes(q)) return false;
+    // Search across every human-meaningful field, not just id + handle —
+    // searching "test" must surface a listing named "test" (operator report:
+    // the display name lives in `name`, which the old query never looked at).
+    if (q) {
+      const hay = [
+        r.id,
+        r.name ?? "",
+        r.lineageId,
+        r.creator.handle ?? "",
+        r.model,
+        r.style,
+        ...r.assets,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
   // Segment is a pure FILTER — it never overrides the sort chosen by the user

@@ -12,6 +12,7 @@ import type { ListingDetail } from "./types";
 // Mock chain so getViewer tests don't need real wallet state.
 vi.mock("../lib/chain", () => ({
   activeNetworkSlug: "mantle-sepolia",
+  getActiveNetworkConfigOrDefault: vi.fn(async () => ({ slug: "mantle-sepolia" })),
   currentAddress: vi.fn(async () => null),
   ensureMantleSepolia: vi.fn(),
   usdcBalance: vi.fn(),

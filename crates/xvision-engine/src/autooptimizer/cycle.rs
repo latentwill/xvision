@@ -165,25 +165,25 @@ struct GateScores {
 /// `true` when the trip threshold is reached. A successful eval resets the
 /// consecutive counter via `record_success()`. `max == 0` disables the breaker
 /// (never trips). 2026-06-13 trader-failure resilience.
-struct ConsecutiveErrors {
+pub(crate) struct ConsecutiveErrors {
     count: u32,
     max: u32,
 }
 
 impl ConsecutiveErrors {
-    fn new(max: u32) -> Self {
+    pub(crate) fn new(max: u32) -> Self {
         Self { count: 0, max }
     }
 
     /// Increment the consecutive-failure counter.
     /// Returns `true` when the circuit trips (`count >= max` and `max > 0`).
-    fn record_failure(&mut self) -> bool {
+    pub(crate) fn record_failure(&mut self) -> bool {
         self.count += 1;
         self.max > 0 && self.count >= self.max
     }
 
     /// Reset the consecutive-failure counter (a success breaks the streak).
-    fn record_success(&mut self) {
+    pub(crate) fn record_success(&mut self) {
         self.count = 0;
     }
 }
@@ -506,6 +506,10 @@ where
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
     let obj = cycle_config.objective;
+    // R2: `run_honesty_check` itself degrades a canary eval/trader error to a
+    // neutral failed-canary result (it never errors on canary eval), so this
+    // `?` only ever propagates a genuine internal bug (e.g. strategy
+    // serialization) — which cycle-level isolation (R3) then seals.
     let check = run_honesty_check(
         s,
         mutator,
@@ -1300,6 +1304,18 @@ async fn gate_and_classify<F>(
 where
     F: Fn(CycleProgressEvent),
 {
+    // R4: normalize the diff's stale `before` baselines to the parent's live
+    // values BEFORE the candidate is gated and stored. Beyond the inversion
+    // honesty-check, the stored diff feeds `describe_mutation_outcome` → the
+    // optimizer-memory write-back; an un-normalized (model-hallucinated)
+    // `before` would persist a fictitious baseline later recalled into the
+    // experiment-writer prompt. `after` is never touched, so the forward child
+    // and the lineage hash are unaffected.
+    let mut diff = diff;
+    crate::autooptimizer::inversion::normalize_prose_baseline(&mut diff, parent_strategy);
+    crate::autooptimizer::inversion::normalize_filter_baseline(&mut diff, parent_strategy);
+    crate::autooptimizer::inversion::normalize_param_baseline(&mut diff, parent_strategy);
+
     let child = diff.apply_to(parent_strategy);
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 

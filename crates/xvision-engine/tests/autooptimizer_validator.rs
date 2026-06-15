@@ -229,20 +229,28 @@ fn composite_mechanistic_key_rejected_as_unknown_param() {
 }
 
 #[test]
-fn stale_param_baseline_wrong_before() {
+fn stale_param_baseline_now_accepted() {
+    // R4 (mirrors the filter B4 fix): a wrong `before` with a valid `after` must
+    // be ACCEPTED, not rejected. `apply_to` writes `after` and never reads
+    // `before`, so a stale baseline is harmless to the forward child; the reverse
+    // honesty-check baseline is repaired by `normalize_param_baseline`. Rejecting
+    // it only burned mutator attempts on an auto-fixable nit.
     let base = make_strategy();
     let diff = make_diff(
         vec![],
         vec![ParamChange {
             key: "risk.stop_loss_atr_multiple".into(),
-            before: json!(99.0),
-            after: json!(3.0),
+            before: json!(99.0), // deliberately wrong baseline
+            after: json!(3.0),   // valid target
         }],
         vec![],
         vec![],
     );
-    let errs = validate_mutation_diff(&diff, &base).unwrap_err();
-    assert!(codes(&errs).contains(&"stale_param_baseline"), "{errs:?}");
+    let result = validate_mutation_diff(&diff, &base);
+    assert!(
+        result.is_ok(),
+        "a stale `before` with a valid `after` must now be accepted (R4): {result:?}"
+    );
 }
 
 #[test]

@@ -8,6 +8,7 @@ import * as searchApi from "@/api/search";
 import { useUi } from "@/stores/ui";
 
 import { CommandPalette, STATIC_ACTIONS } from "./CommandPalette";
+import { PRIMARY_NAV } from "./nav";
 
 vi.mock("@/api/search", async () => {
   const actual = await vi.importActual<typeof import("@/api/search")>(
@@ -119,13 +120,47 @@ describe("CommandPalette a11y roles", () => {
 
 describe("CommandPalette static actions", () => {
   it("names the root route as Dashboard", () => {
-    const home = STATIC_ACTIONS.find((a) => a.artifact_id === "nav:home");
+    const home = STATIC_ACTIONS.find((a) => a.href === "/");
 
     expect(home).toMatchObject({
       title: "Dashboard",
       summary: "Workspace status at a glance",
       href: "/",
     });
+  });
+
+  // Operator QA: the palette had drifted out of sync with the sidebar — it was
+  // missing Agents / Charts / Live / Marketplace / Optimizer / Docs, so the
+  // Optimizer page could not be reached from ⌘K at all. These pin the palette
+  // to the shared PRIMARY_NAV so it can't silently drift again.
+  it("exposes every sidebar page as a palette action (no drift)", () => {
+    const hrefs = new Set(STATIC_ACTIONS.map((a) => a.href));
+    for (const item of PRIMARY_NAV) {
+      expect(hrefs.has(item.to)).toBe(true);
+    }
+  });
+
+  it("includes the Optimizer page (operator could not load it from ⌘K)", () => {
+    const optimizer = STATIC_ACTIONS.find((a) => a.href === "/optimizer");
+    expect(optimizer).toBeDefined();
+    expect(optimizer?.title).toMatch(/optimizer/i);
+  });
+
+  it("keeps the create + settings deep-links", () => {
+    const hrefs = new Set(STATIC_ACTIONS.map((a) => a.href));
+    for (const href of [
+      "/strategies/new",
+      "/settings/providers",
+      "/settings/brokers",
+      "/settings/danger",
+    ]) {
+      expect(hrefs.has(href)).toBe(true);
+    }
+  });
+
+  it("has no duplicate hrefs", () => {
+    const hrefs = STATIC_ACTIONS.map((a) => a.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
   it("resets selection and clears stale backend hits on query change", async () => {

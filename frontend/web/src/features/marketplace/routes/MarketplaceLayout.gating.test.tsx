@@ -33,8 +33,9 @@ describe("MarketplaceLayout", () => {
     expect(await screen.findByText("browse-content")).toBeInTheDocument();
   });
 
-  it("renders the testnet banner", async () => {
+  it("renders the runtime-network testnet banner", async () => {
     renderAt("/marketplace");
+    await screen.findByText("browse-content");
     expect(screen.getByText(/Mantle Sepolia testnet/i)).toBeInTheDocument();
   });
 });

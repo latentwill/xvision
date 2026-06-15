@@ -210,6 +210,50 @@ mod tests {
     }
 
     #[test]
+    fn normalize_param_baseline_restores_parent_live_value_on_reverse() {
+        // R4: dropping the validator's `stale_param_baseline` reject must NOT
+        // corrupt the reverse honesty-check. The writer may guess a wrong param
+        // `before`; normalizing overwrites it with the parent's live value so the
+        // reverse restores the parent exactly. `after` must stay untouched.
+        let parent = parent_with_filter(); // risk.stop_loss_atr_multiple = 2.0
+        let mut forward = MutationDiff {
+            kind: MutationKind::Param,
+            prose: vec![],
+            params: vec![ParamChange {
+                key: "risk.stop_loss_atr_multiple".into(),
+                before: serde_json::json!(99.0), // WRONG: live value is 2.0
+                after: serde_json::json!(3.0),
+            }],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![],
+            create_filter: None,
+            rationale: "t".into(),
+        };
+        let after_before = forward.params[0].after.clone();
+        normalize_param_baseline(&mut forward, &parent);
+        assert_eq!(
+            forward.params[0].before,
+            serde_json::json!(2.0),
+            "before normalized to parent live value"
+        );
+        assert_eq!(
+            forward.params[0].after, after_before,
+            "after must be untouched (lineage byte-identity)"
+        );
+
+        // The reverse restores the parent's live value (2.0), not the wrong 99.0.
+        let reverse = invert_mutation(&forward);
+        assert_eq!(
+            reverse.params[0].after,
+            serde_json::json!(2.0),
+            "reverse must restore the parent's live param value (2.0)"
+        );
+    }
+
+    #[test]
     fn invert_invert_prose_roundtrips() {
         // invert(invert(d)) == d — prose inversion is symmetric.
         let d = make_prose_diff();
@@ -237,7 +281,7 @@ mod tests {
 /// `before` to the parent's current override (or `""` when the parent has none,
 /// which the resolver already treats as "run the shared-library prompt" — i.e.
 /// the parent's behavior) makes `reverse_child` behave exactly like the parent.
-fn normalize_prose_baseline(forward: &mut MutationDiff, parent: &Strategy) {
+pub(crate) fn normalize_prose_baseline(forward: &mut MutationDiff, parent: &Strategy) {
     for edit in &mut forward.prose {
         let role = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
         if let Some(parent_ref) = parent.agents.iter().find(|a| a.canonical_role() == role) {
@@ -262,7 +306,7 @@ fn normalize_prose_baseline(forward: &mut MutationDiff, parent: &Strategy) {
 ///
 /// Paths not present in the parent's live tunable-path set (e.g. an unknown
 /// path) are left as-is; the validator already governs path validity.
-fn normalize_filter_baseline(forward: &mut MutationDiff, parent: &Strategy) {
+pub(crate) fn normalize_filter_baseline(forward: &mut MutationDiff, parent: &Strategy) {
     let Some(ref filter) = parent.filter else {
         return;
     };
@@ -273,6 +317,24 @@ fn normalize_filter_baseline(forward: &mut MutationDiff, parent: &Strategy) {
     for edit in &mut forward.filter {
         if let Some(current) = live.get(&edit.path) {
             edit.before = current.clone();
+        }
+    }
+}
+
+/// Param analogue of [`normalize_filter_baseline`] (R4). Since the validator no
+/// longer rejects a stale param `before` (`apply_to` writes `after` and never
+/// reads `before`, so the forward child is unaffected), a wrong `before` would
+/// otherwise make the reverse honesty-check invert against the wrong baseline.
+/// Rewrite each param edit's `before` to the parent's CURRENT live value via the
+/// validator's single source of truth. `after` is NEVER touched, so the forward
+/// child stays byte-identical (lineage hashing is unaffected). Keys that resolve
+/// to no live value (e.g. an unknown param) are left as-is.
+pub(crate) fn normalize_param_baseline(forward: &mut MutationDiff, parent: &Strategy) {
+    for change in &mut forward.params {
+        if let Some(current) =
+            crate::autooptimizer::validator::resolve_param_current_value(parent, &change.key)
+        {
+            change.before = current;
         }
     }
 }
@@ -366,6 +428,11 @@ pub async fn run_inversion_pair(
     // correct baseline (a nullable field skipped from the markdown otherwise
     // leaves the writer's `before` wrong). `after` is untouched.
     normalize_filter_baseline(&mut forward_diff, parent);
+    // R4: param analogue. The validator no longer rejects a stale param `before`
+    // (it burned mutator attempts on an auto-fixable nit), so repair it to the
+    // parent's live value here — otherwise the reverse honesty-check would invert
+    // against the wrong param baseline. `after` is untouched.
+    normalize_param_baseline(&mut forward_diff, parent);
     let reverse_diff = invert_mutation(&forward_diff);
     let forward_child = forward_diff.apply_to(parent);
     let reverse_child = reverse_diff.apply_to(parent);
