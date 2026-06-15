@@ -265,6 +265,10 @@ const UNDOCUMENTED_VERBS: &[&str] = &[
     "fire-trade",
     "portfolio",
     "close-position",
+    // Gated one-shot Solana-spot swap (byreal-cli). Same "know what you're
+    // doing" caveat as the other manual trade verbs; defaults to a no-funds
+    // dry-run and requires --i-understand-real-money for a real swap.
+    "spot",
     // Stage-isolation commands — intended for developers probing a single
     // pipeline stage, not for routine operator use.
     "trader",
