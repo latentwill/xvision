@@ -40,7 +40,7 @@ import { StrategyStrip } from "./StrategyStrip";
 import { useDeployDegenArena } from "./useDeployDegenArena";
 import { WalletBanner } from "./WalletBanner";
 import { dailyPnl } from "./live-account";
-import { pickDefaultRun } from "./strip-status";
+import { pickDefaultLiveRun } from "./strip-status";
 import { useTransport } from "./useTransport";
 
 export interface LiveConsoleProps {
@@ -101,7 +101,12 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
     if (userPicked && runs.some((r) => r.run_id === userPicked)) {
       return userPicked;
     }
-    return pickDefaultRun(runs)?.run_id ?? null;
+    // Bare `/live`: only auto-load a genuinely-live run. With nothing trading
+    // live we leave the viewport empty (→ "No active live deployments")
+    // instead of auto-selecting a stale backtest and rendering its equity
+    // curve / chart as if it were live. Deep links + row clicks still view any
+    // run (handled above via `runId` / `userPicked`).
+    return pickDefaultLiveRun(runs)?.run_id ?? null;
   }, [runId, userPicked, runs]);
 
   // Keep the trace dock pointed at the selected run (parity with the old

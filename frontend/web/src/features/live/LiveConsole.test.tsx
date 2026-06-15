@@ -59,6 +59,16 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   };
 }
 
+/** A genuinely-live-money run (backend live signal + non-terminal parent). */
+function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
+  return mkRun({
+    is_live_money: true,
+    eval_mode: "live",
+    eval_run_status: "running",
+    ...over,
+  });
+}
+
 function renderConsole(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -99,13 +109,32 @@ describe("LiveConsole", () => {
 
   test("/live auto-selects most recently started live run into viewport", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([
-      mkRun({ run_id: "old", started_at: "2026-06-09T08:00:00Z" }),
-      mkRun({ run_id: "newest", started_at: "2026-06-09T12:00:00Z" }),
+      mkLiveRun({ run_id: "old", started_at: "2026-06-09T08:00:00Z" }),
+      mkLiveRun({ run_id: "newest", started_at: "2026-06-09T12:00:00Z" }),
     ]);
     renderConsole("/live");
     await waitFor(() =>
       expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest"),
     );
+  });
+
+  test("/live does NOT auto-select a non-live (backtest/paper) run", async () => {
+    // Regression: with no genuinely-live run, the bare /live viewport must
+    // stay on the empty state instead of loading a stale eval run's chart +
+    // equity as if it were live.
+    vi.mocked(listAgentRuns).mockResolvedValue([
+      mkRun({ run_id: "paper", started_at: "2026-06-09T12:00:00Z" }),
+    ]);
+    renderConsole("/live");
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No active live deployments/i),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("live-chart-stub")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("live-stats-positions-slot"),
+    ).not.toBeInTheDocument();
   });
 
   test("/live/:id preselects the given run", async () => {
@@ -152,7 +181,7 @@ describe("LiveConsole", () => {
   });
 
   test("B-II slot seam is present under the chart", async () => {
-    vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
+    vi.mocked(listAgentRuns).mockResolvedValue([mkLiveRun()]);
     renderConsole("/live");
     await waitFor(() =>
       expect(
@@ -162,7 +191,7 @@ describe("LiveConsole", () => {
   });
 
   test("ArenaStandingIndicator renders inline when a run is selected", async () => {
-    vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
+    vi.mocked(listAgentRuns).mockResolvedValue([mkLiveRun()]);
     renderConsole("/live");
     await waitFor(() =>
       expect(screen.getByTestId("arena-standing-indicator")).toBeInTheDocument(),

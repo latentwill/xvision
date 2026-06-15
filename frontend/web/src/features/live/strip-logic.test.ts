@@ -16,6 +16,7 @@ import {
   isStaleRun,
   livenessCounts,
   pickDefaultRun,
+  pickDefaultLiveRun,
   stripFilterBucket,
   stripFilterCounts,
 } from "./strip-status";
@@ -263,6 +264,47 @@ describe("pickDefaultRun", () => {
       started_at: "2026-06-09T12:00:00Z",
     });
     expect(pickDefaultRun([older, newer])?.run_id).toBe("newer");
+  });
+});
+
+describe("pickDefaultLiveRun", () => {
+  test("empty list -> null", () => {
+    expect(pickDefaultLiveRun([])).toBeNull();
+  });
+  test("picks most recently started LIVE-MONEY run", () => {
+    const a = mkLiveRun({ run_id: "a", started_at: "2026-06-09T09:00:00Z" });
+    const b = mkLiveRun({ run_id: "b", started_at: "2026-06-09T11:00:00Z" });
+    expect(pickDefaultLiveRun([a, b])?.run_id).toBe("b");
+  });
+  test("returns null when only paper/backtest runs exist (no live fallback)", () => {
+    const paper = mkRun({
+      run_id: "paper",
+      status: "running",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    expect(pickDefaultLiveRun([paper])).toBeNull();
+  });
+  test("returns null when only stale orphans exist", () => {
+    const stale = mkRun({
+      run_id: "stale",
+      status: "running",
+      eval_run_status: "completed",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    expect(pickDefaultLiveRun([stale])).toBeNull();
+  });
+  test("returns null when only terminal runs exist", () => {
+    const done = mkRun({
+      run_id: "done",
+      status: "completed",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    const cancelled = mkRun({
+      run_id: "cancelled",
+      status: "cancelled",
+      started_at: "2026-06-09T13:00:00Z",
+    });
+    expect(pickDefaultLiveRun([done, cancelled])).toBeNull();
   });
 });
 

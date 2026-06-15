@@ -220,3 +220,25 @@ export function pickDefaultRun(runs: AgentRunSummary[]): AgentRunSummary | null 
   if (paper.length > 0) return paper[0]!;
   return [...runs].sort(byStartedDesc)[0]!;
 }
+
+/**
+ * Strict live-only auto-selection for the bare `/live` route's VIEWPORT.
+ *
+ * Returns the most recently started genuinely-live-money run, or null when
+ * none exists. Unlike `pickDefaultRun`, this NEVER falls back to a
+ * backtest/paper/stale/terminal run — so when nothing is actually trading
+ * live, the viewport shows the honest "No active live deployments" empty
+ * state instead of auto-loading some old eval run's equity curve and chart.
+ *
+ * Deep links (`/live/:id`) and explicit row clicks still view any run; this
+ * only governs what loads automatically with no selection.
+ */
+export function pickDefaultLiveRun(
+  runs: AgentRunSummary[],
+): AgentRunSummary | null {
+  if (runs.length === 0) return null;
+  const byStartedDesc = (a: AgentRunSummary, b: AgentRunSummary) =>
+    new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+  const live = runs.filter(isLiveRun).sort(byStartedDesc);
+  return live[0] ?? null;
+}
