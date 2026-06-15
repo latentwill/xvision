@@ -1,29 +1,36 @@
 # Curated Byreal Solana-spot universe (first slice).
 # symbol → { mint, kind, decimals }. xStocks (Backed Finance) are plain SPL
 # mints; kind = "xstock" is a display tag only. Out-of-set symbols are refused.
-# Mints below are placeholders — confirm each against an explorer before live use.
+#
+# Only mints VERIFIED against an explorer are enabled below. To add an asset,
+# confirm its SPL mint (e.g. on solscan.io / birdeye.so), then uncomment a
+# template and paste the real mint. Mints are validated on load (length 32–64);
+# a wrong/placeholder mint fails closed rather than routing a swap to it.
 usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
+# SOL — verified (used in the byreal-cli grounding dry-run).
 [[assets]]
 symbol = "SOL"
 mint = "So11111111111111111111111111111111111111112"
 kind = "spl"
 decimals = 9
 
-[[assets]]
-symbol = "JUP"
-mint = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
-kind = "spl"
-decimals = 6
-
-[[assets]]
-symbol = "AAPLx"
-mint = "PLACEHOLDER_AAPLx_MINT_confirm_on_explorer"
-kind = "xstock"
-decimals = 8
-
-[[assets]]
-symbol = "NVDAx"
-mint = "PLACEHOLDER_NVDAx_MINT_confirm_on_explorer"
-kind = "xstock"
-decimals = 8
+# --- Templates: confirm the mint on an explorer, then uncomment ---
+#
+# [[assets]]
+# symbol = "JUP"
+# mint = "<JUP_SPL_mint>"
+# kind = "spl"
+# decimals = 6
+#
+# [[assets]]
+# symbol = "AAPLx"          # Backed Finance tokenized AAPL (xStock)
+# mint = "<AAPLx_SPL_mint>"
+# kind = "xstock"
+# decimals = 8
+#
+# [[assets]]
+# symbol = "NVDAx"          # Backed Finance tokenized NVDA (xStock)
+# mint = "<NVDAx_SPL_mint>"
+# kind = "xstock"
+# decimals = 8

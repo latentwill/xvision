@@ -137,14 +137,26 @@ impl SubprocessByrealSpotApi {
         verb_args: &[String],
     ) -> Result<Option<T>, ExecutorError> {
         use tokio::process::Command;
-        let mut args: Vec<String> = vec!["-y".into(), "@byreal-io/byreal-cli@latest".into()];
+        // Pin the grounded CLI version — every JSON shape and flag in this file
+        // was grounded against byreal-cli 0.3.6 (see the grounding spec). An
+        // unpinned `@latest` could silently change field names or swap
+        // semantics on the money path. `BYREAL_SPOT_CLI_VERSION` overrides.
+        let version = std::env::var("BYREAL_SPOT_CLI_VERSION")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "0.3.6".to_string());
+        let mut args: Vec<String> = vec!["-y".into(), format!("@byreal-io/byreal-cli@{version}")];
         args.extend(verb_args.iter().cloned());
         args.extend(self.base_args.iter().cloned());
+        // Never prompt: this is a non-TTY daemon subprocess, so a `--confirm`
+        // confirmation prompt would otherwise block on stdin until the timeout.
+        args.push("--non-interactive".into());
         args.push("-o".into());
         args.push("json".into());
 
         let child = Command::new("npx")
             .args(&args)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
