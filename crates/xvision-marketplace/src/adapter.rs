@@ -96,6 +96,13 @@ pub trait AnchorDriver: Send + Sync {
     async fn buy_listing(&self, req: BuyRequest) -> Result<SaleReceipt, MarketplaceError>;
     async fn attest_eval(&self, req: AttestRequest) -> Result<TxHash, MarketplaceError>;
     async fn revoke_listing(&self, listing_id: U256) -> Result<TxHash, MarketplaceError>;
+    /// Reprice a listing in place (seller-only on-chain). `new_price_usdc` is
+    /// 6-decimal USDC and must fit `uint96`; `0` makes the listing free.
+    async fn update_price(
+        &self,
+        listing_id: U256,
+        new_price_usdc: U256,
+    ) -> Result<TxHash, MarketplaceError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +181,25 @@ impl AnchorDriver for MockDriver {
             return Err(MarketplaceError::UnknownListing(id));
         }
         st.revoked.insert(id);
+        st.tx_counter += 1;
+        Ok(fake_tx(st.tx_counter))
+    }
+
+    async fn update_price(
+        &self,
+        listing_id: U256,
+        new_price_usdc: U256,
+    ) -> Result<TxHash, MarketplaceError> {
+        let mut st = self.state.lock().expect("mock lock");
+        let id = listing_id_u64(listing_id)?;
+        if id == 0 || id as usize > st.listings.len() {
+            return Err(MarketplaceError::UnknownListing(id));
+        }
+        if st.revoked.contains(&id) {
+            return Err(MarketplaceError::ListingRevoked(id));
+        }
+        // Reflect the new price so tests can observe the change.
+        st.listings[(id - 1) as usize].price_usdc = new_price_usdc;
         st.tx_counter += 1;
         Ok(fake_tx(st.tx_counter))
     }
@@ -432,6 +458,30 @@ impl AnchorDriver for Erc8004MantleDriver {
 
         Ok(TxHash::from(receipt.transaction_hash))
     }
+
+    /// Reprice a listing in place on `ListingRegistry` (seller-only on-chain;
+    /// the contract reverts `NotSeller`/`AlreadyRevoked`/`FreeTransferableForbidden`).
+    async fn update_price(
+        &self,
+        listing_id: U256,
+        new_price_usdc: U256,
+    ) -> Result<TxHash, MarketplaceError> {
+        let registry = require_addr(self.addresses.listing_registry, "listing_registry address")?;
+        let provider = self.wallet_provider().await?;
+        let contract = IListingRegistry::new(registry, &provider);
+
+        let price = u96_from_u256(new_price_usdc)?;
+        let receipt = contract
+            .updatePrice(listing_id, price)
+            .send()
+            .await
+            .map_err(|e| MarketplaceError::Contract(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| MarketplaceError::Contract(e.to_string()))?;
+
+        Ok(TxHash::from(receipt.transaction_hash))
+    }
 }
 
 /// `priceUSDC` is `uint96` on-chain; narrow checked, rejecting overflow.
@@ -507,6 +557,37 @@ mod tests {
                 recipient: Address::ZERO,
                 authorization: None,
             })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MarketplaceError::ListingRevoked(1)));
+    }
+
+    #[tokio::test]
+    async fn mock_update_price_ok() {
+        let d = MockDriver::new();
+        let lref = d.publish_listing(publish_req()).await.unwrap();
+        d.update_price(lref.listing_id, U256::from(9_000_000u64))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn mock_update_price_unknown_errs() {
+        let d = MockDriver::new();
+        let err = d
+            .update_price(U256::from(99u64), U256::from(1u64))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MarketplaceError::UnknownListing(99)));
+    }
+
+    #[tokio::test]
+    async fn mock_update_price_after_revoke_errs() {
+        let d = MockDriver::new();
+        let lref = d.publish_listing(publish_req()).await.unwrap();
+        d.revoke_listing(lref.listing_id).await.unwrap();
+        let err = d
+            .update_price(lref.listing_id, U256::from(1u64))
             .await
             .unwrap_err();
         assert!(matches!(err, MarketplaceError::ListingRevoked(1)));
@@ -601,6 +682,16 @@ mod tests {
     async fn revoke_without_signer_is_not_configured() {
         let d = Erc8004MantleDriver::new(configured_addresses(), "http://127.0.0.1:8545", 31337);
         let err = d.revoke_listing(U256::from(1u64)).await.unwrap_err();
+        assert!(matches!(err, MarketplaceError::NotConfigured(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn update_price_without_signer_is_not_configured() {
+        let d = Erc8004MantleDriver::new(configured_addresses(), "http://127.0.0.1:8545", 31337);
+        let err = d
+            .update_price(U256::from(1u64), U256::from(1u64))
+            .await
+            .unwrap_err();
         assert!(matches!(err, MarketplaceError::NotConfigured(_)), "{err:?}");
     }
 
