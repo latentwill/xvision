@@ -20,6 +20,7 @@ Two Dockerfiles live in the repo root:
 
 | Tag | Description |
 |---|---|
+| `ghcr.io/latentwill/xvision:0.36.0` | **Pinned release.** Published automatically from the `v0.36.0` git tag via `docker.yml` (semver pattern). Use a pinned `X.Y.Z` tag for reproducible deploys; the running container's `GET /api/version` must match the tag. Note: a tag push publishes `X.Y.Z` + `sha-<short>` but does **not** move `:latest` (that only refreshes on a default-branch dispatch). |
 | `ghcr.io/latentwill/xvision:latest` | Default. SPA baked in. Built from `Dockerfile.deploy` on `workflow_dispatch`. Includes the on-chain identity/marketplace (alloy v2) stack via the dashboard's marketplace routes — env-gated at runtime (dormant/503 without `XVN_RPC_URL` etc.). |
 | `ghcr.io/latentwill/xvision:main`   | Same as `:latest`, refreshed on every main-branch dispatch. |
 | `ghcr.io/latentwill/xvision:sha-<short>` | Immutable per-build tag (e.g. `sha-0d09363`). |
