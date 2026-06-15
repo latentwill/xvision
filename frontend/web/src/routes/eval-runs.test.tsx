@@ -204,6 +204,15 @@ function mockReady({
       base_url: null,
       note: null,
     }),
+    degen_arena: broker({
+      name: "Degen Arena",
+      kind: "degen_arena",
+      configured: false,
+      stored: false,
+      stored_key_id_suffix: null,
+      base_url: null,
+      note: null,
+    }),
   });
   vi.mocked(strategyApi.listStrategies).mockResolvedValue([
     {
@@ -1049,5 +1058,22 @@ describe("EvalRunsRoute", () => {
     expect(screen.getByLabelText("Forward-test capital")).toBeVisible();
     expect(screen.getByLabelText("Forward-test bar limit")).toBeVisible();
     expect(screen.getByLabelText("Forward-test warmup bars")).toBeVisible();
+  });
+
+  it("offers Degen Arena as a selectable forward-test venue", async () => {
+    mockReady();
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.click(screen.getByLabelText("forward test"));
+
+    // The venue button was entirely absent before this change.
+    const degenBtn = screen.getByRole("button", { name: "Degen Arena" });
+    expect(degenBtn).toBeInTheDocument();
+
+    fireEvent.click(degenBtn);
+    expect(degenBtn).toHaveAttribute("aria-pressed", "true");
   });
 });

@@ -8,9 +8,11 @@ import { ApiError } from "@/api/client";
 import {
   clearAlpacaCredentials,
   clearByrealCredentials,
+  clearDegenArenaCredentials,
   getBrokers,
   setAlpacaCredentials,
   setByrealCredentials,
+  setDegenArenaCredentials,
   settingsKeys,
   testAlpacaConnection,
 } from "@/api/settings";
@@ -91,6 +93,7 @@ export function SettingsBrokersRoute() {
           <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
           <ByrealBrokerCard entry={data.byreal} />
+          <DegenArenaBrokerCard entry={data.degen_arena} />
           <MarketsRefreshCard />
         </div>
       )}
@@ -674,6 +677,239 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
               placeholder=""
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
             />
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
+          ) : null}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={save.isPending}
+              className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {save.isPending ? "Saving…" : entry.stored ? "Save replacement" : "Save"}
+            </button>
+            {entry.stored ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setErrorMsg(null);
+                }}
+                className="px-3 py-1.5 rounded text-[13px] text-text-2 hover:text-text"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+    </Card>
+  );
+}
+
+// Virtuals Degen Arena (Hyperliquid perps via native EIP-712 signing). Mirrors
+// the Byreal card, but the wire contract carries an explicit master-account
+// address alongside the trade-only key, and the ingest route is shared with the
+// /live deploy strip (POST/DELETE /api/live/deploy/degen-arena). The displayed
+// state (`stored`, `stored_key_id_suffix`, `configured`, `note`) comes from the
+// brokers snapshot; save/clear only trigger a refetch.
+const HL_KEY_RE = /^0x[0-9a-fA-F]{64}$/;
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+function DegenArenaBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [apiKey, setApiKey] = useState("");
+  const [accountAddress, setAccountAddress] = useState("");
+  const [network, setNetwork] = useState("testnet");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setDegenArenaCredentials({
+        apiKey: apiKey.trim(),
+        accountAddress: accountAddress.trim(),
+        network: network.trim() || "testnet",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setApiKey("");
+      setAccountAddress("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const clear = useMutation({
+    mutationFn: clearDegenArenaCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!HL_KEY_RE.test(apiKey.trim())) {
+      setErrorMsg("Trade-only HL key must be 0x + 64 hex (66 characters total)");
+      return;
+    }
+    if (!ADDR_RE.test(accountAddress.trim())) {
+      setErrorMsg("Account address must be 0x + 40 hex (42 characters total)");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
+            {entry.name}
+          </h3>
+          {entry.note ? (
+            <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
+          ) : null}
+        </div>
+        {entry.configured ? (
+          <Pill tone="gold">
+            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
+          </Pill>
+        ) : (
+          <Pill tone="warn">
+            <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
+          </Pill>
+        )}
+      </div>
+
+      {showStored ? (
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-3 px-3 py-2 bg-surface-elev border border-border-soft rounded">
+            <div className="text-[13px] text-text-2">
+              Stored agent key ending in{" "}
+              <code className="font-mono text-text">
+                ••••{entry.stored_key_id_suffix ?? "····"}
+              </code>
+              {entry.base_url ? (
+                <span className="ml-2 text-text-3">({entry.base_url})</span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(true);
+                  setErrorMsg(null);
+                }}
+                className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
+              >
+                Edit replacement
+              </button>
+              <button
+                type="button"
+                onClick={() => clear.mutate()}
+                disabled={clear.isPending}
+                className="text-[12px] text-danger hover:underline disabled:opacity-50"
+              >
+                {clear.isPending ? "clearing…" : "clear"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          <p className="m-0 text-[12px] text-text-3 leading-snug">
+            Use a Hyperliquid{" "}
+            <strong className="text-text-2">trade-only agent key</strong> (cannot
+            withdraw). New here?{" "}
+            <a
+              href="https://degen.virtuals.io/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-info underline-offset-2 hover:underline"
+            >
+              Set up your agent on Virtuals
+            </a>
+            .
+          </p>
+          <div>
+            <label
+              htmlFor="degen-hl-api-key"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Trade-only HL API key
+            </label>
+            <input
+              id="degen-hl-api-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="degen-account-address"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Account address
+            </label>
+            <input
+              id="degen-account-address"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={accountAddress}
+              onChange={(e) => setAccountAddress(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="degen-network"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Network
+            </label>
+            <select
+              id="degen-network"
+              value={network}
+              onChange={(e) => setNetwork(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
+            >
+              <option value="testnet">testnet</option>
+              <option value="mainnet">mainnet</option>
+            </select>
           </div>
           {errorMsg ? (
             <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>

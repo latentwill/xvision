@@ -2,7 +2,7 @@
 // identity are read-only snapshots; providers is the only CRUD surface
 // in this module.
 
-import { apiFetch } from "./client";
+import { ApiError, apiFetch } from "./client";
 import {
   createTrace,
   durationSince,
@@ -269,6 +269,82 @@ export function clearByrealCredentials(): Promise<void> {
   return apiFetch<void>("/api/settings/brokers/byreal", {
     method: "DELETE",
   });
+}
+
+// Degen Arena (Virtuals) stored creds. The `apiKey` MUST be a Hyperliquid
+// trade-only agent key (`0x` + 64 hex, cannot withdraw); `accountAddress` is
+// the master account (`0x` + 40 hex). Mirrors the engine `SetDegenArenaReq` /
+// `DegenArenaStored` (no `derive(TS)` so the secret never leaks into the
+// generated surface). The backend ingest route is shared with the /live deploy
+// strip: POST/DELETE /api/live/deploy/degen-arena.
+export type SetDegenArenaRequest = {
+  apiKey: string;
+  accountAddress: string;
+  network: string;
+};
+
+export type DegenArenaStored = {
+  ok: boolean;
+  stored_key_suffix?: string | null;
+  network?: string | null;
+};
+
+// Deliberately uses a RAW `fetch` (not `apiFetch`, which logs body summaries)
+// so the trade-only HL private key in the body is never passed through the
+// shared logging helper — same cred-safety posture as `useDeployDegenArena`.
+// Only the non-secret `network` and the redacted `ok` summary are traced.
+export function setDegenArenaCredentials(
+  body: SetDegenArenaRequest,
+): Promise<DegenArenaStored> {
+  const trace = createTrace("settings", { broker: "degen_arena", network: body.network });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return fetch("/api/live/deploy/degen-arena", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      apiKey: body.apiKey,
+      accountAddress: body.accountAddress,
+      network: body.network,
+    }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const errBody = (await res.json()) as { message?: string };
+          if (typeof errBody.message === "string" && errBody.message.length > 0) {
+            message = errBody.message;
+          }
+        } catch {
+          // Non-JSON error body — keep the HTTP-status fallback message.
+        }
+        throw new ApiError(res.status, String(res.status), message);
+      }
+      const stored = (await res.json()) as DegenArenaStored;
+      trace.info("settings.broker.save.ok", {
+        stored: stored.ok,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearDegenArenaCredentials(): Promise<void> {
+  return fetch("/api/live/deploy/degen-arena", { method: "DELETE" }).then(
+    (res) => {
+      if (!res.ok) {
+        throw new ApiError(res.status, String(res.status), `HTTP ${res.status}`);
+      }
+    },
+  );
 }
 
 /// Connectivity probe for Alpaca — calls `/v2/account` with the stored
