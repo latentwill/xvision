@@ -1,0 +1,29 @@
+# Curated Byreal Solana-spot universe (first slice).
+# symbol → { mint, kind, decimals }. xStocks (Backed Finance) are plain SPL
+# mints; kind = "xstock" is a display tag only. Out-of-set symbols are refused.
+# Mints below are placeholders — confirm each against an explorer before live use.
+usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[assets]]
+symbol = "SOL"
+mint = "So11111111111111111111111111111111111111112"
+kind = "spl"
+decimals = 9
+
+[[assets]]
+symbol = "JUP"
+mint = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
+kind = "spl"
+decimals = 6
+
+[[assets]]
+symbol = "AAPLx"
+mint = "PLACEHOLDER_AAPLx_MINT_confirm_on_explorer"
+kind = "xstock"
+decimals = 8
+
+[[assets]]
+symbol = "NVDAx"
+mint = "PLACEHOLDER_NVDAx_MINT_confirm_on_explorer"
+kind = "xstock"
+decimals = 8
