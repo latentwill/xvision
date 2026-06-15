@@ -5,6 +5,20 @@
 //! the advertisement filter (execute path) and the dispatch chokepoint guard
 //! (`ToolRegistryDispatch::invoke`).
 
+use chrono::{DateTime, Duration, NaiveDate, Utc};
+
+/// Default lookahead lag (days). `as_of_date` is day-granular; same-day data
+/// can leak post-decision flows, so we anchor to a completed UTC day.
+pub const DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS: i64 = 1;
+
+/// Backtest anchor date for a Nansen historical call: floor the simulated
+/// clock to its UTC calendar day, then subtract `lag_days`. The model cannot
+/// influence this — it is computed from the framework clock and overwrites any
+/// model-supplied `as_of_date` (lookahead-safety invariant, D4).
+pub fn nansen_as_of_date(sim_now: DateTime<Utc>, lag_days: i64) -> NaiveDate {
+    sim_now.date_naive() - Duration::days(lag_days)
+}
+
 /// Whether a signal tool is advertised + callable in each run mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolModePolicy {
@@ -58,6 +72,7 @@ pub fn is_nansen_tool(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
 
     #[test]
     fn nansen_tools_allowed_in_both_modes() {
@@ -94,5 +109,24 @@ mod tests {
         assert!(is_nansen_tool("nansen_smart_money_flow"));
         assert!(!is_nansen_tool("elfa_smart_mentions"));
         assert!(!is_nansen_tool("ohlcv"));
+    }
+
+    #[test]
+    fn as_of_floors_to_completed_utc_day_minus_lag() {
+        // Decision mid-day 2024-03-15T14:00Z, lag 1 ⇒ anchor 2024-03-14.
+        let sim_now = Utc.with_ymd_and_hms(2024, 3, 15, 14, 0, 0).unwrap();
+        assert_eq!(nansen_as_of_date(sim_now, 1).to_string(), "2024-03-14");
+    }
+
+    #[test]
+    fn as_of_lag_zero_is_same_day_floor() {
+        let sim_now = Utc.with_ymd_and_hms(2024, 3, 15, 23, 59, 0).unwrap();
+        assert_eq!(nansen_as_of_date(sim_now, 0).to_string(), "2024-03-15");
+    }
+
+    #[test]
+    fn as_of_handles_month_boundary() {
+        let sim_now = Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap();
+        assert_eq!(nansen_as_of_date(sim_now, 1).to_string(), "2024-02-29"); // leap year
     }
 }
