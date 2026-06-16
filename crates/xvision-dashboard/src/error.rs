@@ -50,7 +50,22 @@ pub enum DashboardError {
 
 impl From<xvision_marketplace::error::MarketplaceError> for DashboardError {
     fn from(e: xvision_marketplace::error::MarketplaceError) -> Self {
-        DashboardError::BadRequest(format!("marketplace: {e}"))
+        use xvision_marketplace::error::MarketplaceError as M;
+        // Discriminate so x402 clients get retry-meaningful status codes:
+        // transient/infra → 503, missing/gone → 404/409, client/payload → 400.
+        let msg = format!("marketplace: {e}");
+        match e {
+            M::NotConfigured(_)
+            | M::Rpc(_)
+            | M::Chain(_)
+            | M::Ipfs(_)
+            | M::Sealed(_)
+            | M::NotImplemented(_)
+            | M::Identity(_) => DashboardError::ServiceUnavailable(msg),
+            M::UnknownListing(_) => DashboardError::NotFound(msg),
+            M::ListingRevoked(_) => DashboardError::Conflict(msg),
+            M::Contract(_) | M::Signing(_) => DashboardError::BadRequest(msg),
+        }
     }
 }
 
