@@ -2348,6 +2348,23 @@ impl ToolDispatch for ToolRegistryDispatch {
             return Err(ToolDispatchError::Failed(message));
         }
 
+        // Forward-only gate (defense in depth — the advertisement filter (Task 1.6)
+        // already strips mode-forbidden tools, but a hand-crafted call must also fail).
+        if let Some(policy) = crate::tools::signal_policy::signal_tool_policy(name) {
+            let allowed = match self.run_mode {
+                crate::eval::run::RunMode::Live => policy.live,
+                crate::eval::run::RunMode::Backtest => policy.backtest,
+            };
+            if !allowed {
+                return Err(ToolDispatchError::Failed(format!(
+                    "{name} is forward-only; unavailable in backtest"
+                )));
+            }
+        }
+        // Anchor Nansen backtest calls to the simulated clock (overwrites any
+        // model-supplied as_of_date — the lookahead-safety invariant).
+        let input = self.inject_backtest_as_of_async(name, input).await?;
+
         match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
             Ok(s) => {
                 // Tool outputs are JSON-shaped strings; pass parsed JSON
@@ -2356,6 +2373,37 @@ impl ToolDispatch for ToolRegistryDispatch {
             }
             Err(e) => Err(ToolDispatchError::Failed(format!("{e:#}"))),
         }
+    }
+}
+
+impl ToolRegistryDispatch {
+    /// For a Nansen tool under `RunMode::Backtest`, overwrite `as_of_date` with
+    /// the framework-computed anchor (the model cannot influence the backtest
+    /// anchor — lookahead-safety invariant). Live / non-Nansen pass through.
+    /// Errors if a Nansen backtest call has no clock anchor set.
+    async fn inject_backtest_as_of_async(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolDispatchError> {
+        use crate::eval::run::RunMode;
+        use crate::tools::signal_policy::{is_nansen_tool, nansen_as_of_date};
+        if self.run_mode != RunMode::Backtest || !is_nansen_tool(name) {
+            return Ok(input);
+        }
+        // Copy the Copy DateTime out of the read guard before consuming it.
+        let anchor: Option<chrono::DateTime<chrono::Utc>> = { *self.as_of.read().await };
+        let anchor = anchor.ok_or_else(|| {
+            ToolDispatchError::Failed(format!(
+                "{name}: no simulated-clock anchor set for backtest (executor did not publish as_of)"
+            ))
+        })?;
+        let date = nansen_as_of_date(anchor, self.nansen_lag_days);
+        let mut input = input;
+        if let Some(obj) = input.as_object_mut() {
+            obj.insert("as_of_date".into(), serde_json::Value::String(date.to_string()));
+        }
+        Ok(input)
     }
 }
 
@@ -5778,7 +5826,8 @@ mod tests {
         std::env::remove_var("XVN_AGENTD_BIN");
 
         let tools = Arc::new(crate::tools::ToolRegistry::empty());
-        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools, crate::eval::run::RunMode::Backtest).await;
+        let result =
+            spawn_optimizer_cline_ctx(&ctx, "anthropic", tools, crate::eval::run::RunMode::Backtest).await;
         // ClineDispatchCtx has no Debug, so report only the Ok/Err shape.
         assert!(
             result.is_err(),
@@ -5929,6 +5978,80 @@ pub async fn get_live_deployment(
         .fetch_optional(&ctx.db)
         .await?;
     Ok(row.map(Into::into))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — ToolRegistryDispatch forward-only guard + Nansen as_of injection
+// (Task 1.5)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tool_registry_dispatch_tests {
+    use super::ToolRegistryDispatch;
+
+    fn test_dispatch(
+        mode: crate::eval::run::RunMode,
+        as_of: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ToolRegistryDispatch {
+        ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: mode,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(as_of)),
+            nansen_lag_days: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn elfa_tool_rejected_in_backtest() {
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, None);
+        let err = d
+            .invoke("elfa_smart_mentions", serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("forward-only"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn nansen_backtest_injects_floored_as_of_overwriting_model_value() {
+        use chrono::{TimeZone, Utc};
+        let anchor = Utc.with_ymd_and_hms(2024, 3, 15, 14, 0, 0).unwrap();
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, Some(anchor));
+        // The model supplies a future date; the framework MUST overwrite it.
+        let injected = d
+            .inject_backtest_as_of_async(
+                "nansen_smart_money_flow",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(injected["as_of_date"], "2024-03-14");
+    }
+
+    #[tokio::test]
+    async fn nansen_backtest_without_anchor_is_error() {
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, None);
+        let err = d
+            .invoke("nansen_smart_money_flow", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("anchor"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn nansen_live_does_not_inject_as_of() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async("nansen_smart_money_flow", serde_json::json!({"asset": "BTC"}))
+            .await
+            .unwrap();
+        assert!(
+            out.get("as_of_date").is_none(),
+            "live must not inject a backtest anchor"
+        );
+    }
+
+    use xvision_agent_client::ToolDispatch as _;
 }
 
 // ---------------------------------------------------------------------------
