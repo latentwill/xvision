@@ -5,6 +5,7 @@
 //! the advertisement filter (execute path) and the dispatch chokepoint guard
 //! (`ToolRegistryDispatch::invoke`).
 
+use crate::eval::run::RunMode;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 /// Default lookahead lag (days). `as_of_date` is day-granular; same-day data
@@ -69,9 +70,27 @@ pub fn is_nansen_tool(name: &str) -> bool {
     NANSEN_TOOLS.contains(&name)
 }
 
+/// Drop any tool whose forward-only policy forbids it in `mode`. Unrestricted
+/// built-ins (policy `None`) always pass. This is the advertisement filter:
+/// the trader never even sees a tool it isn't allowed to call this run.
+pub fn filter_tools_for_mode(tools: &[String], mode: RunMode) -> Vec<String> {
+    tools
+        .iter()
+        .filter(|name| match signal_tool_policy(name) {
+            Some(p) => match mode {
+                RunMode::Live => p.live,
+                RunMode::Backtest => p.backtest,
+            },
+            None => true,
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::run::RunMode;
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -128,5 +147,29 @@ mod tests {
     fn as_of_handles_month_boundary() {
         let sim_now = Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap();
         assert_eq!(nansen_as_of_date(sim_now, 1).to_string(), "2024-02-29"); // leap year
+    }
+
+    #[test]
+    fn backtest_strips_elfa_keeps_nansen_and_builtins() {
+        let tools = vec![
+            "ohlcv".to_string(),
+            "nansen_smart_money_flow".to_string(),
+            "elfa_smart_mentions".to_string(),
+            "submit_decision".to_string(),
+        ];
+        let out = filter_tools_for_mode(&tools, RunMode::Backtest);
+        assert!(out.contains(&"ohlcv".to_string()));
+        assert!(out.contains(&"nansen_smart_money_flow".to_string()));
+        assert!(out.contains(&"submit_decision".to_string()));
+        assert!(
+            !out.contains(&"elfa_smart_mentions".to_string()),
+            "elfa stripped in backtest"
+        );
+    }
+
+    #[test]
+    fn live_keeps_everything() {
+        let tools = vec!["elfa_smart_mentions".to_string(), "nansen_flow_intel".to_string()];
+        assert_eq!(filter_tools_for_mode(&tools, RunMode::Live), tools);
     }
 }

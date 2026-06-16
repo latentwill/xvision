@@ -466,7 +466,10 @@ async fn execute_slot_for_runtime(
             system_prompt: input.system_prompt.clone(),
             upstream_inputs: input.upstream_inputs.clone(),
             response_schema,
-            allowed_tools: input.slot.allowed_tools.clone(),
+            allowed_tools: crate::tools::signal_policy::filter_tools_for_mode(
+                &input.slot.allowed_tools,
+                ctx.run_mode,
+            ),
             max_tokens: input.max_tokens,
             max_wall_ms: input.max_wall_ms,
             run_id,
