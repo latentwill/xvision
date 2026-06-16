@@ -75,6 +75,8 @@ fn trader_strategy() -> Strategy {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,

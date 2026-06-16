@@ -182,6 +182,8 @@ async fn bar_granularity_reevaluates_every_cycle() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "t".into(),
@@ -189,6 +191,8 @@ async fn bar_granularity_reevaluates_every_cycle() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents, 5);
@@ -226,6 +230,8 @@ async fn minute_granularity_caches_within_same_minute() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "t".into(),
@@ -233,6 +239,8 @@ async fn minute_granularity_caches_within_same_minute() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     // 1-minute bars so Minute-granularity does NOT trigger fallback.
@@ -276,6 +284,8 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "t".into(),
@@ -283,6 +293,8 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents, 60);
@@ -314,6 +326,8 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
         activates: Some(Capability::Filter),
         prompt_override: None,
         model_override: None,
+        checkpoint: None,
+        veto: None,
     }];
     let strategy = fixture_strategy(agents, 60);
     let slots = vec![resolved("regime_filter")];
@@ -352,6 +366,8 @@ async fn minute_filter_on_multi_minute_bar_degrades_to_bar_and_emits_fallback() 
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "t".into(),
@@ -359,6 +375,8 @@ async fn minute_filter_on_multi_minute_bar_degrades_to_bar_and_emits_fallback() 
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents, 5);

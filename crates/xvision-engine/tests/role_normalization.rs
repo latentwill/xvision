@@ -98,6 +98,8 @@ async fn pipeline_output_assigned_for_role_variants() {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             PipelineDef {
                 kind: PipelineKind::Single,
@@ -161,6 +163,8 @@ fn graph_edge_validation_uses_canonical_form() {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "01HZTRADER".into(),
@@ -168,6 +172,8 @@ fn graph_edge_validation_uses_canonical_form() {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
         ],
         PipelineDef {
@@ -197,6 +203,8 @@ fn whitespace_only_role_is_rejected() {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         PipelineDef {
             kind: PipelineKind::Single,
@@ -221,6 +229,8 @@ fn duplicate_role_detected_across_variants() {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "01HZB".into(),
@@ -228,6 +238,8 @@ fn duplicate_role_detected_across_variants() {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
         ],
         PipelineDef {

@@ -1695,6 +1695,8 @@ async fn clone_strategy_full_inner(
             } else {
                 agent_ref.model_override.clone()
             },
+            checkpoint: agent_ref.checkpoint.clone(),
+            veto: agent_ref.veto,
         });
     }
 

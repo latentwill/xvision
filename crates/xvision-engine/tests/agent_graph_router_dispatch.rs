@@ -133,6 +133,8 @@ async fn router_jumps_pipeline_forward_to_target_index() {
             activates: Some(Capability::Router),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZC".into(),
@@ -140,6 +142,8 @@ async fn router_jumps_pipeline_forward_to_target_index() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -147,6 +151,8 @@ async fn router_jumps_pipeline_forward_to_target_index() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents, PipelineKind::Sequential, Vec::new());
@@ -317,6 +323,8 @@ fn validate_strategy_rejects_backward_edge_in_graph_pipeline() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -324,6 +332,8 @@ fn validate_strategy_rejects_backward_edge_in_graph_pipeline() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let edges = vec![PipelineEdge {
@@ -357,6 +367,8 @@ fn validate_strategy_rejects_predicate_without_upstream_filter() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT2".into(),
@@ -364,6 +376,8 @@ fn validate_strategy_rejects_predicate_without_upstream_filter() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let edges = vec![PipelineEdge {
@@ -396,6 +410,8 @@ fn validate_strategy_accepts_forward_edge_with_upstream_filter() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -403,6 +419,8 @@ fn validate_strategy_accepts_forward_edge_with_upstream_filter() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let edges = vec![PipelineEdge {
@@ -428,6 +446,8 @@ fn validate_strategy_accepts_unconditional_edge() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT2".into(),
@@ -435,6 +455,8 @@ fn validate_strategy_accepts_unconditional_edge() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let edges = vec![PipelineEdge {

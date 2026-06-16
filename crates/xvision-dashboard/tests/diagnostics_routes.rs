@@ -89,6 +89,8 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: Default::default(),
             regime_slot: None,

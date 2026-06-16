@@ -209,6 +209,8 @@ fn two_filter_strategy(cadence: u32) -> (Strategy, Vec<ResolvedAgentSlot>) {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "f2".into(),
@@ -216,6 +218,8 @@ fn two_filter_strategy(cadence: u32) -> (Strategy, Vec<ResolvedAgentSlot>) {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "t".into(),
@@ -223,6 +227,8 @@ fn two_filter_strategy(cadence: u32) -> (Strategy, Vec<ResolvedAgentSlot>) {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let slots = vec![

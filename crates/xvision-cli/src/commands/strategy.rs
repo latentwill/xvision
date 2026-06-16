@@ -1331,6 +1331,8 @@ async fn new_atomic(
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
@@ -2054,6 +2056,8 @@ async fn add_filter(
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     );
 
@@ -2735,6 +2739,8 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             });
         }
 
@@ -3722,6 +3728,8 @@ pub mod atomic_create {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: Default::default(),
             regime_slot: None,
@@ -3796,6 +3804,8 @@ pub mod atomic_create {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: Default::default(),
             regime_slot: None,

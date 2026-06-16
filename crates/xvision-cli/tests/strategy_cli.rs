@@ -203,6 +203,8 @@ fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id:
         activates: Some(Capability::Trader),
         prompt_override: None,
         model_override: None,
+        checkpoint: None,
+        veto: None,
     }];
     strategy.regime_slot = None;
     strategy.trader_slot = None;

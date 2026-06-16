@@ -984,6 +984,8 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             };
             (vec![placeholder], PipelineDef::default())
         }
@@ -1027,6 +1029,8 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             };
             let fallback = Strategy {
                 manifest: make_scaffold_manifest(title),
