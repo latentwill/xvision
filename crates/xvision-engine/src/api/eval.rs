@@ -2381,10 +2381,10 @@ struct ToolRegistryDispatch {
     /// Tool-response cache for deterministic backtest re-runs. `None` => no
     /// recording/replay (live/forward runs always fetch).
     tool_cache: Option<ToolHttpCacheHandle>,
-    /// Per-run signal-tool credit budget (D8). `None` => uncapped. Decremented
-    /// on each real signal-tool fetch; when it reaches 0, further signal calls
-    /// short-circuit with a `{available:false,reason:"budget exhausted"}` value.
-    budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Per-run Nansen credit budget (D8/im2r.4). `None` => uncapped.
+    nansen_budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Per-run Elfa credit budget (im2r.4). `None` => uncapped.
+    elfa_budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
 }
 
 /// Return a degrade value matching the signal tools' `Ok(json!({"available":false,...}))` shape.
@@ -2471,24 +2471,36 @@ impl ToolDispatch for ToolRegistryDispatch {
         // model-supplied as_of_date — the lookahead-safety invariant).
         let input = self.inject_backtest_as_of_async(name, input).await?;
 
-        // D8: per-run credit budget for signal tools. Replay is free.
-        if crate::tools::signal_policy::signal_tool_policy(name).is_some() {
-            if let Some(budget) = &self.budget {
-                let is_replay = self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false);
-                if !is_replay {
-                    // Atomic check-and-decrement: consume one credit; if there was
-                    // none, degrade. saturating_sub keeps it >= 0.
-                    let prev = budget
-                        .fetch_update(
-                            std::sync::atomic::Ordering::Relaxed,
-                            std::sync::atomic::Ordering::Relaxed,
-                            |v| Some(v.saturating_sub(1)),
-                        )
-                        .unwrap_or(0);
-                    if prev == 0 {
-                        return Ok(signal_degrade("budget exhausted"));
-                    }
+        // D8 / im2r.4: per-provider per-run credit budget for signal tools.
+        // Replay is free. Credits are refunded if the downstream fetch Errors
+        // (im2r.5) so a failed/unknown-tool call doesn't permanently burn one.
+        let budget_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU32>> =
+            match crate::tools::signal_policy::tool_provider(name) {
+                Some(crate::tools::signal_policy::SignalProvider::Nansen) => {
+                    self.nansen_budget.clone()
                 }
+                Some(crate::tools::signal_policy::SignalProvider::Elfa) => {
+                    self.elfa_budget.clone()
+                }
+                None => None,
+            };
+        let mut credit_consumed = false;
+        if let Some(budget) = &budget_arc {
+            let is_replay = self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false);
+            if !is_replay {
+                // Atomic check-and-decrement: consume one credit; if there was
+                // none, degrade. saturating_sub keeps it >= 0.
+                let prev = budget
+                    .fetch_update(
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                        |v| Some(v.saturating_sub(1)),
+                    )
+                    .unwrap_or(0);
+                if prev == 0 {
+                    return Ok(signal_degrade("budget exhausted"));
+                }
+                credit_consumed = true;
             }
         }
 
@@ -2519,7 +2531,19 @@ impl ToolDispatch for ToolRegistryDispatch {
                 // Do NOT cache degrade responses: they are transient (budget
                 // exhausted, provider unavailable) and should not be replayed as
                 // authoritative results in future backtest re-runs (xvision-im2r.3).
-                let result = self.dispatch_inner(name, input.clone()).await?;
+                let result = match self.dispatch_inner(name, input.clone()).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // im2r.5: refund the credit on a failed fetch so a network
+                        // error or unknown-tool call doesn't permanently burn one.
+                        if credit_consumed {
+                            if let Some(budget) = &budget_arc {
+                                budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        return Err(e);
+                    }
+                };
                 if !is_degrade(&result) {
                     let _ = cache
                         .store
@@ -2529,7 +2553,20 @@ impl ToolDispatch for ToolRegistryDispatch {
                 return Ok(result);
             }
         }
-        self.dispatch_inner(name, input).await
+
+        // Uncached path (live run or non-signal tool).
+        match self.dispatch_inner(name, input).await {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // im2r.5: refund on error (no wasted credit for transient failures).
+                if credit_consumed {
+                    if let Some(budget) = &budget_arc {
+                        budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 }
 
@@ -2690,29 +2727,32 @@ async fn spawn_cline_ctx(
         recording_id: rid.clone(),
         replay: false,
     });
-    // Resolve signal-tool config (lag + budget) from the enabled Nansen entry.
-    let (nansen_lag_days, signal_budget) = {
-        let resolved = std::fs::read_to_string(runtime_config_path(ctx))
+    // Resolve signal-tool config (lag + budgets) from enabled data-tool entries.
+    let (nansen_lag_days, nansen_budget_arc, elfa_budget_arc) = {
+        let data_tools: Vec<xvision_core::config::DataToolEntry> = std::fs::read_to_string(runtime_config_path(ctx))
             .ok()
             .and_then(|s| toml::from_str::<xvision_core::config::RuntimeConfig>(&s).ok())
-            .and_then(|cfg| {
-                cfg.data_tools
-                    .into_iter()
-                    .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled)
-            });
-        match resolved {
-            Some(e) => (
-                e.nansen_lookahead_lag_days
-                    .map(|d| d as i64)
-                    .unwrap_or(crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS),
-                e.budget_credits_per_run
-                    .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
-            ),
-            None => (
-                crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS,
-                None,
-            ),
-        }
+            .map(|cfg| cfg.data_tools)
+            .unwrap_or_default();
+
+        let nansen_entry = data_tools
+            .iter()
+            .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled);
+        let elfa_entry = data_tools
+            .iter()
+            .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled);
+
+        let lag = nansen_entry
+            .and_then(|e| e.nansen_lookahead_lag_days)
+            .map(|d| d as i64)
+            .unwrap_or(crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS);
+        let nansen_b = nansen_entry
+            .and_then(|e| e.budget_credits_per_run)
+            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)));
+        let elfa_b = elfa_entry
+            .and_then(|e| e.budget_credits_per_run)
+            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)));
+        (lag, nansen_b, elfa_b)
     };
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
@@ -2721,7 +2761,8 @@ async fn spawn_cline_ctx(
         as_of: as_of_guard.clone(),
         nansen_lag_days,
         tool_cache,
-        budget: signal_budget,
+        nansen_budget: nansen_budget_arc,
+        elfa_budget: elfa_budget_arc,
     });
     let bus = ctx
         .obs_event_bus
@@ -6290,7 +6331,8 @@ mod tool_registry_dispatch_tests {
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(as_of)),
             nansen_lag_days: 1,
             tool_cache: None,
-            budget: None,
+            nansen_budget: None,
+            elfa_budget: None,
         }
     }
 
@@ -6302,7 +6344,8 @@ mod tool_registry_dispatch_tests {
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             nansen_lag_days: 1,
             tool_cache: None,
-            budget: budget.map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
+            nansen_budget: budget.map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
+            elfa_budget: None,
         }
     }
 
@@ -6431,6 +6474,70 @@ mod tool_registry_dispatch_tests {
         assert!(
             res.is_err(),
             "built-in must bypass the budget gate and hit dispatch"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FIX D — xvision-im2r.4: per-provider budget (Elfa ≠ Nansen pool)
+    // -----------------------------------------------------------------------
+
+    /// An Elfa call must NOT decrement the Nansen budget (and vice-versa).
+    #[tokio::test]
+    async fn elfa_call_does_not_consume_nansen_budget() {
+        // nansen_budget=1, elfa_budget=1. An Elfa call with zero elfa_budget
+        // degrades. But the nansen_budget must remain 1 after the Elfa call.
+        let nansen_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1));
+        let elfa_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: Some(nansen_b.clone()),
+            elfa_budget: Some(elfa_b),
+        };
+        // Elfa call with zero elfa_budget → degrade.
+        let out = d
+            .invoke("elfa_smart_mentions", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap();
+        assert_eq!(out["available"], false, "elfa call with zero elfa_budget must degrade");
+        // Nansen budget must still be 1 — the Elfa call must not have touched it.
+        assert_eq!(
+            nansen_b.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "nansen_budget must be untouched by an Elfa call"
+        );
+    }
+
+    /// A failing signal fetch must refund the credit (im2r.5).
+    /// An empty registry causes dispatch_inner to Err (unknown tool), which
+    /// exercises the refund path. We set nansen_budget=5 and verify it's still
+    /// 5 after the error (not 4).
+    #[tokio::test]
+    async fn failing_signal_fetch_refunds_credit() {
+        let nansen_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(5));
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: Some(nansen_b.clone()),
+            elfa_budget: None,
+        };
+        // Empty registry → dispatch_inner Errs → credit must be refunded.
+        let res = d
+            .invoke("nansen_smart_money_flow", serde_json::json!({"asset":"BTC"}))
+            .await;
+        assert!(res.is_err(), "must error with empty registry");
+        assert_eq!(
+            nansen_b.load(std::sync::atomic::Ordering::Relaxed),
+            5,
+            "credit must be refunded after a failed fetch"
         );
     }
 
@@ -6578,7 +6685,8 @@ mod tool_registry_dispatch_tests {
                 recording_id: rec.clone(),
                 replay: true,
             }),
-            budget: None,
+            nansen_budget: None,
+            elfa_budget: None,
         };
 
         let out = d.invoke("nansen_token_screener", input).await.unwrap();

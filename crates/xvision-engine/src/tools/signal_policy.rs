@@ -53,6 +53,25 @@ pub const ELFA_TOOLS: [&str; 3] = [
     "elfa_trending_narratives",
 ];
 
+/// Which external signal provider owns a given tool. Used to route per-provider
+/// credit budget accounting (xvision-im2r.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalProvider {
+    Nansen,
+    Elfa,
+}
+
+/// Return the provider that owns `name`, or `None` for builtins / unknown tools.
+pub fn tool_provider(name: &str) -> Option<SignalProvider> {
+    if NANSEN_TOOLS.contains(&name) {
+        Some(SignalProvider::Nansen)
+    } else if ELFA_TOOLS.contains(&name) {
+        Some(SignalProvider::Elfa)
+    } else {
+        None
+    }
+}
+
 /// Policy for a signal tool, or `None` for an unrestricted built-in.
 pub fn signal_tool_policy(name: &str) -> Option<&'static ToolModePolicy> {
     if NANSEN_TOOLS.contains(&name) {
@@ -147,6 +166,20 @@ mod tests {
     fn as_of_handles_month_boundary() {
         let sim_now = Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap();
         assert_eq!(nansen_as_of_date(sim_now, 1).to_string(), "2024-02-29"); // leap year
+    }
+
+    #[test]
+    fn tool_provider_maps_correctly() {
+        use super::{tool_provider, SignalProvider};
+        assert_eq!(tool_provider("nansen_smart_money_flow"), Some(SignalProvider::Nansen));
+        assert_eq!(tool_provider("nansen_token_screener"), Some(SignalProvider::Nansen));
+        assert_eq!(tool_provider("nansen_flow_intel"), Some(SignalProvider::Nansen));
+        assert_eq!(tool_provider("elfa_smart_mentions"), Some(SignalProvider::Elfa));
+        assert_eq!(tool_provider("elfa_trending_tokens"), Some(SignalProvider::Elfa));
+        assert_eq!(tool_provider("elfa_trending_narratives"), Some(SignalProvider::Elfa));
+        assert_eq!(tool_provider("ohlcv"), None);
+        assert_eq!(tool_provider("submit_decision"), None);
+        assert_eq!(tool_provider("unknown_tool"), None);
     }
 
     #[test]
