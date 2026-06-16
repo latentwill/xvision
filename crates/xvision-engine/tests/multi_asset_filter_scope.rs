@@ -361,6 +361,7 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: false,
+            nano: None,
         }
     }
     vec![

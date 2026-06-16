@@ -230,6 +230,7 @@ async fn agent_loop_dispatch_advertises_indicator_panel_tool_when_strategy_requi
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
         noop_skip: true,
+        nano: None,
     };
 
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
@@ -298,6 +299,7 @@ async fn agent_loop_routes_tool_use_to_indicator_panel_and_feeds_result_back() {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
         noop_skip: true,
+        nano: None,
     };
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
     let (registry, invocations) = registry_with_mock();
@@ -388,6 +390,7 @@ async fn agent_loop_rejects_unadvertised_indicator_panel_tool_use() {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
         noop_skip: true,
+        nano: None,
     };
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
     let (registry, invocations) = registry_with_mock();
@@ -476,6 +479,7 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
         noop_skip: true,
+        nano: None,
     };
 
     let recorder: Arc<NoopRecorder> = Arc::new(NoopRecorder::new());

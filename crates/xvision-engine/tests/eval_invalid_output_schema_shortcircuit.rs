@@ -137,6 +137,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-invalid-schema-trader".into(),
         noop_skip: true,
+        nano: None,
     }
 }
 

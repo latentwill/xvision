@@ -13,6 +13,17 @@ use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
 use xvision_core::providers::{lookup_model, Catalog};
 
+/// Nanochat slot configuration resolved at pipeline-build time from
+/// `trained_models`. Bundled as a single Option so existing
+/// `ResolvedAgentSlot { … }` literals only need `nano: None,` added.
+#[derive(Debug, Clone)]
+pub struct NanoSlotConfig {
+    pub checkpoint: crate::strategies::agent_ref::CheckpointRef,
+    pub veto: Option<bool>,
+    pub input_spec: crate::agent::nano_dispatch::NanoInputSpec,
+    pub weights_sha256: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentSlot {
     pub role: String,
@@ -78,6 +89,10 @@ pub struct ResolvedAgentSlot {
     /// `false` disables it so the LLM runs even in a corner.
     /// Non-trader roles always run regardless of this flag.
     pub noop_skip: bool,
+    /// Nanochat slot configuration, populated from `trained_models` at
+    /// strategy-resolution time when `AgentRef.checkpoint` is set.
+    /// `None` (the default) leaves the slot on the normal LLM path.
+    pub nano: Option<NanoSlotConfig>,
 }
 
 pub struct PipelineInputs<'a> {
@@ -999,6 +1014,9 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
         // `None` and `Some(true)` both enable the skip; `Some(false)`
         // explicitly disables it so the LLM runs even in a corner.
         noop_skip: slot.noop_skip.unwrap_or(true),
+        // Nanochat config is populated asynchronously by the resolver when
+        // AgentRef.checkpoint is set; defaults to None (LLM path).
+        nano: None,
     }
 }
 
@@ -1065,6 +1083,32 @@ pub async fn resolve_agent_slots_for_strategy(
         // Per-AgentRef overrides win over the shared library slot (centralized so
         // this resolver and the API eval resolver stay identical).
         apply_agent_ref_overrides(&mut resolved, agent_ref);
+        // Nano DB lookup — only when AgentRef carries a CheckpointRef.
+        if let Some(checkpoint_ref) = agent_ref.checkpoint.as_ref() {
+            let nano_store = crate::nanochat::store::NanochatStore::new(pool.clone());
+            let model = nano_store
+                .get_model(&checkpoint_ref.model_id)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "nanochat checkpoint {} not found in trained_models",
+                        checkpoint_ref.model_id
+                    )
+                })?;
+            let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
+                serde_json::from_str(&model.input_spec).map_err(|e| {
+                    anyhow::anyhow!(
+                        "bad input_spec JSON for {}: {e}",
+                        checkpoint_ref.model_id
+                    )
+                })?;
+            resolved.nano = Some(NanoSlotConfig {
+                checkpoint: checkpoint_ref.clone(),
+                veto: agent_ref.veto,
+                input_spec,
+                weights_sha256: model.weights_sha256,
+            });
+        }
         out.push(resolved);
     }
     Ok(out)

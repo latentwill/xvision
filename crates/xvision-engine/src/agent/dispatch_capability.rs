@@ -26,6 +26,8 @@
 //! See `team/contracts/agent-graph-capability-dispatch.md` and
 //! `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -36,6 +38,9 @@ use xvision_core::trading::AssetSymbol;
 use crate::agent::execute_cline::{execute_slot_cline, ClineSlotInput};
 use crate::agent::llm::{LlmDispatch, LlmResponse, ResponseSchema};
 use crate::agent::memory_recorder::MemoryRecorder;
+use crate::agent::nano_dispatch::{
+    build_nano_request, resolve_nano_filter, run_nano_inference, NanoDirection, NanoInferenceResult,
+};
 use crate::agent::observability::ObsEmitter;
 use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::agents::Capability;
@@ -297,6 +302,123 @@ pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<Dis
 }
 
 /// Phase C — Filter dispatcher. DSL-backed slots (slot `provider ==
+/// Public entry point for the nanochat filter branch, callable directly
+/// from integration tests without building a full `DispatchInput`.
+///
+/// `llm_dir`: the upstream LLM filter's direction (conditioning token).
+/// `veto`: true = hard gate; false = advisory.
+/// Returns a `FilterSignal` whose `payload` is `Value::Null` when the gate
+/// blocks, or `{ direction, confidence }` when it passes.
+///
+/// All nanochat fields (`weights_sha256`, `input_spec`, `veto`) come from the
+/// caller (resolved from `NanoSlotConfig`). `CheckpointRef` carries only the
+/// `model_id` for identity/logging — it does NOT carry `weights_sha256` or
+/// `input_spec`.
+pub async fn dispatch_filter_with_checkpoint(
+    role: &str,
+    llm_dir: NanoDirection,
+    spec: &crate::agent::nano_dispatch::NanoInputSpec,
+    ohlcv: &[[f64; 5]],
+    indicator_values: &BTreeMap<String, f64>,
+    worker_path: &std::path::Path,
+    expected_sha256: &str,
+    veto: bool,
+    timeout_ms: u64,
+) -> anyhow::Result<FilterSignal> {
+    let request = build_nano_request(spec, llm_dir, ohlcv, indicator_values);
+    let inference = run_nano_inference(worker_path, expected_sha256, &request, timeout_ms).await?;
+
+    let payload = match inference {
+        NanoInferenceResult::Ok {
+            direction,
+            confidence,
+        } => resolve_nano_filter(llm_dir, direction, confidence, veto)
+            .unwrap_or(serde_json::Value::Null),
+        NanoInferenceResult::FailSafe { reason } => {
+            tracing::warn!(
+                event = "nanochat_fail_safe",
+                role,
+                reason,
+                "nanochat inference failed; treating as NEUTRAL under veto"
+            );
+            // Fail-safe: same as NEUTRAL under veto.
+            if veto {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!({"direction": "NEUTRAL", "confidence": 0.0})
+            }
+        }
+    };
+
+    Ok(FilterSignal {
+        name: role.to_string(),
+        payload,
+        granularity: FilterGranularity::Bar,
+        ts: Utc::now(),
+        scope: SignalScope::Global,
+    })
+}
+
+/// Walk `upstream_inputs["filter_signals"] → any entry → payload → direction`
+/// to extract the upstream LLM filter's direction for nanochat conditioning.
+/// Defaults to `Neutral` when absent (conservative fail-safe).
+fn extract_llm_direction(upstream: &serde_json::Value) -> NanoDirection {
+    upstream
+        .get("filter_signals")
+        .and_then(|fs| fs.as_object())
+        .and_then(|obj| obj.values().next())
+        .and_then(|sig| sig.get("payload"))
+        .and_then(|p| p.get("direction"))
+        .and_then(|d| d.as_str())
+        .and_then(|s| serde_json::from_value::<NanoDirection>(serde_json::json!(s)).ok())
+        .unwrap_or(NanoDirection::Neutral)
+}
+
+/// Extract OHLCV bars from `upstream_inputs["market_data"]["ohlcv"]`.
+/// Returns an empty vec when absent.
+fn extract_ohlcv(upstream: &serde_json::Value) -> Vec<[f64; 5]> {
+    upstream
+        .get("market_data")
+        .and_then(|md| md.get("ohlcv"))
+        .and_then(|arr| arr.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let arr = row.as_array()?;
+                    if arr.len() < 5 {
+                        return None;
+                    }
+                    Some([
+                        arr[0].as_f64().unwrap_or(0.0),
+                        arr[1].as_f64().unwrap_or(0.0),
+                        arr[2].as_f64().unwrap_or(0.0),
+                        arr[3].as_f64().unwrap_or(0.0),
+                        arr[4].as_f64().unwrap_or(0.0),
+                    ])
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Extract named indicator values from `upstream_inputs["market_data"]["indicator_panel"]`.
+/// Values absent in the panel default to 0.0.
+fn extract_indicators(upstream: &serde_json::Value, names: &[String]) -> BTreeMap<String, f64> {
+    let panel = upstream
+        .get("market_data")
+        .and_then(|md| md.get("indicator_panel"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    names
+        .iter()
+        .map(|name| {
+            let val = panel.get(name).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            (name.clone(), val)
+        })
+        .collect()
+}
+
 /// "dsl"`) route through the `xvision-filters` bridge for a thin
 /// `RuntimeFilter → FilterSignal` adapter; everything else runs the
 /// LLM Filter dispatcher in `filter_dispatch::run_llm_filter`.
@@ -311,6 +433,55 @@ pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<Dis
 /// per the contract — edges do not fire, the cycle falls through.
 async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let role = input.resolved.role.clone();
+
+    // Nanochat branch: ResolvedAgentSlot carries a NanoSlotConfig → local model dispatch.
+    // `nano` is populated by the async resolvers (resolve_agent_slots_for_strategy /
+    // HTTP eval resolver) when AgentRef.checkpoint is set. No LLM path is entered;
+    // token counts are 0/0.
+    //
+    // NOTE: ALL nanochat fields (weights_sha256, input_spec, veto) are read from
+    // `input.resolved.nano` (a NanoSlotConfig). CheckpointRef carries ONLY `model_id`
+    // (identity); it does NOT carry weights_sha256 or input_spec.
+    if let Some(nano) = input.resolved.nano.as_ref() {
+        let worker_path = std::env::var("XVN_NANOCHAT_WORKER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("nanochat/infer.py"));
+
+        // The upstream FilterSignal conditioning direction is read from
+        // `input.upstream_inputs["filter_signals"][<prev_role>]["payload"]["direction"]`.
+        // Default to NEUTRAL when absent (conservative fail-safe).
+        let llm_dir = extract_llm_direction(&input.upstream_inputs);
+
+        // veto and input_spec come from nano (NanoSlotConfig), not from CheckpointRef.
+        let veto = nano.veto.unwrap_or(true);
+        let spec = &nano.input_spec;
+
+        let ohlcv = extract_ohlcv(&input.upstream_inputs);
+        let indicator_values = extract_indicators(&input.upstream_inputs, &spec.indicators);
+
+        // weights_sha256 comes from nano (loaded from trained_models at resolve time).
+        // nano.checkpoint.model_id is used only for identity/logging.
+        let signal = dispatch_filter_with_checkpoint(
+            &role,
+            llm_dir,
+            spec,
+            &ohlcv,
+            &indicator_values,
+            &worker_path,
+            &nano.weights_sha256,
+            veto,
+            input.max_wall_ms.unwrap_or(10_000) as u64,
+        )
+        .await?;
+
+        return Ok(DispatchOutcome {
+            output: AgentOutput::Filter(signal),
+            input_tokens: 0,
+            output_tokens: 0,
+            raw_response: None,
+        });
+    }
+
     if slot_is_dsl(input.slot) {
         // The DSL bridge runs synchronously — no LLM call, no token
         // accounting. The eval executor populates the bridge via

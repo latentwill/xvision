@@ -2188,6 +2188,38 @@ async fn resolve_agent_slots(
         // (identical ΔSharpe to the parent → always rejected). Centralized in
         // `apply_agent_ref_overrides` so both resolvers behave identically.
         crate::agent::pipeline::apply_agent_ref_overrides(&mut resolved, agent_ref);
+        // Nano DB lookup — only when AgentRef carries a CheckpointRef.
+        if let Some(checkpoint_ref) = agent_ref.checkpoint.as_ref() {
+            let nano_store = crate::nanochat::store::NanochatStore::new(ctx.db.clone());
+            let model = nano_store
+                .get_model(&checkpoint_ref.model_id)
+                .await
+                .map_err(|e| {
+                    ApiError::Internal(format!(
+                        "nanochat store error for {}: {e}",
+                        checkpoint_ref.model_id
+                    ))
+                })?
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!(
+                        "nanochat checkpoint {} not found in trained_models",
+                        checkpoint_ref.model_id
+                    ))
+                })?;
+            let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
+                serde_json::from_str(&model.input_spec).map_err(|e| {
+                    ApiError::Validation(format!(
+                        "bad input_spec JSON for {}: {e}",
+                        checkpoint_ref.model_id
+                    ))
+                })?;
+            resolved.nano = Some(crate::agent::pipeline::NanoSlotConfig {
+                checkpoint: checkpoint_ref.clone(),
+                veto: agent_ref.veto,
+                input_spec,
+                weights_sha256: model.weights_sha256,
+            });
+        }
         out.push(resolved);
     }
     Ok(out)
@@ -5598,6 +5630,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -5642,6 +5675,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -5677,6 +5711,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();

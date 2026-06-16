@@ -824,6 +824,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         memory_mode: MemoryMode::AgentScoped,
         agent_id: "agent-pipeline-fixture".into(),
         noop_skip: true,
+        nano: None,
     }];
 
     // Use "long_open" not "hold" — flat/hold are skipped by the memory write

@@ -3015,6 +3015,7 @@ async fn resolve_agent_slots_for_cli(
             memory_mode: slot.memory_mode,
             agent_id: agent.agent_id.clone(),
             noop_skip: slot.noop_skip.unwrap_or(true),
+            nano: None,
         });
     }
     Ok(out)

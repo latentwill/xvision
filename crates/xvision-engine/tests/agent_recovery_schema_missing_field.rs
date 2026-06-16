@@ -209,6 +209,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-schema-patch-trader".into(),
         noop_skip: true,
+        nano: None,
     }
 }
 
