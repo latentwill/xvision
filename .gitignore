@@ -171,3 +171,46 @@ tools/agent-conductor/dist/
 # Build hygiene — stale npm lockfile (pnpm-lock.yaml is canonical) + generated research scratch
 /frontend/web/package-lock.json
 /docs/research/.gen/
+
+# ──────────────────────────────────────────────────────────────────────────
+# Ship only the in-app wiki + app runtime — exclude ALL internal documentation.
+# Untracked via `git rm --cached` (history preserved); working copies stay local.
+# KEPT (build/runtime, not ignored): docs/strategies/ (include_dir!),
+# crates/**/prompts/** + data/examples/README.md (include_str!), the in-app wiki
+# crates/xvision-dashboard/wiki/, README.md, CHANGELOG.md, CREDITS.md, LICENSE.
+# ──────────────────────────────────────────────────────────────────────────
+/docs/*
+!/docs/strategies
+/team/
+/decisions/
+/strategies/
+/qa/
+
+# Internal planning/process docs + agent config at repo root
+/AGENTS.md
+/CLAUDE.md
+/MANUAL.md
+/PRODUCT.md
+/architecture.md
+/implementation-plan.md
+/BACKEND_AUDIT_2026-05-13.md
+/FOLLOWUPS.md
+/QA_TRACKER.md
+/SERVICE-INVENTORY.md
+/qa-xvision-30day-eval.md
+/v1-build-steps.md
+/v1-shipping-plan.md
+
+# Crate & tooling READMEs (data/examples/README.md stays — it's include_str!'d)
+/crates/xvision-dashboard/README.md
+/crates/xvision-dashboard/src/auth/README.md
+/crates/xvision-engine/README.md
+/crates/xvision-engine/src/api/README.md
+/crates/xvision-eval/src/baselines/AUDIT.md
+/crates/xvision-filters/tests/fixtures/README.md
+/crates/xvision-marketplace/subgraph/README.md
+/scripts/README.md
+/docker/README.md
+/contracts/README.md
+/.beads/README.md
+/.github/projects/agent-cicd-board.md
