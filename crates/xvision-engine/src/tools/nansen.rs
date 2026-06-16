@@ -1,8 +1,26 @@
-//! Nansen on-chain signal tools. Three operator-facing capabilities. Each
-//! routes to a `/api/v1/...` (live) endpoint here; the `/api/v1beta1`
-//! historical routing for backtest + `as_of_date` is added in a later task.
+//! Nansen on-chain signal tools. Three operator-facing capabilities.
+//!
+//! ## Mode-aware routing (Task 3.1)
+//!
+//! The dispatch chokepoint (Task 1.5) injects `as_of_date` into tool inputs
+//! only when the run mode is Backtest. So the tools stay pure: they branch on
+//! the *presence* of `as_of_date` — present → historical `/api/v1beta1/...`
+//! endpoint; absent → live `/api/v1/...` endpoint. No `run_mode` enum leaks
+//! into the tool layer.
+//!
 //! The forward-only/backtest anchor is enforced upstream in
-//! `ToolRegistryDispatch`, NOT in these tools — they are pure fetch+shape.
+//! `ToolRegistryDispatch`, NOT in these tools.
+//!
+//! # GROUNDING (verify before mainnet, Task 6.4):
+//! The v1beta1 endpoint paths below are taken from the Nansen API v5 spec
+//! (draft). Verify each path and response shape against the live Nansen v5
+//! docs before any production use:
+//!   - `/api/v1beta1/smart-money/historical-token-balances`
+//!   - `/api/v1beta1/token-screener/historical`
+//!   - `/api/v1beta1/tgm/historical-who-bought-sold`
+//! Any metric that lacks a real historical counterpart in the live API MUST
+//! fall back to `degrade("backtest-unavailable for <tool>")` rather than
+//! silently hitting the live endpoint with an `as_of_date` it ignores.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -112,27 +130,50 @@ nansen_tool!(
     "Flow intelligence (who-bought-sold + quant scores). Live + backtest (point-in-time)."
 );
 
-// Per-tool live-endpoint routing. A later task makes these mode-aware (v1 vs v1beta1).
+// Per-tool mode-aware routing: v1 (live) when no as_of_date; v1beta1
+// (historical) when as_of_date is present (injected by the dispatch for
+// Backtest runs). The build_body closure forwards as_of_date when present.
 impl NansenSmartMoneyFlowTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        nansen_invoke(client, "/api/v1/smart-money/netflow", input, |asset, _as_of| {
-            json!({ "symbol": asset })
+        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
+        let path = if historical {
+            "/api/v1beta1/smart-money/historical-token-balances"
+        } else {
+            "/api/v1/smart-money/netflow"
+        };
+        nansen_invoke(client, path, input, |asset, as_of| match as_of {
+            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
+            None => json!({ "symbol": asset }),
         })
         .await
     }
 }
 impl NansenTokenScreenerTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        nansen_invoke(client, "/api/v1/tgm/token-screener", input, |asset, _as_of| {
-            json!({ "symbol": asset })
+        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
+        let path = if historical {
+            "/api/v1beta1/token-screener/historical"
+        } else {
+            "/api/v1/tgm/token-screener"
+        };
+        nansen_invoke(client, path, input, |asset, as_of| match as_of {
+            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
+            None => json!({ "symbol": asset }),
         })
         .await
     }
 }
 impl NansenFlowIntelTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        nansen_invoke(client, "/api/v1/tgm/flow-intelligence", input, |asset, _as_of| {
-            json!({ "symbol": asset })
+        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
+        let path = if historical {
+            "/api/v1beta1/tgm/historical-who-bought-sold"
+        } else {
+            "/api/v1/tgm/flow-intelligence"
+        };
+        nansen_invoke(client, path, input, |asset, as_of| match as_of {
+            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
+            None => json!({ "symbol": asset }),
         })
         .await
     }
@@ -165,6 +206,25 @@ mod tests {
         let t = NansenSmartMoneyFlowTool::for_test(server.url());
         let out = t.invoke(serde_json::json!({"asset":"BTC"})).await.unwrap();
         assert!(out.get("data").is_some());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn backtest_routes_to_v1beta1_with_as_of() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/api/v1beta1/smart-money/historical-token-balances")
+            .match_body(mockito::Matcher::PartialJsonString(
+                r#"{"as_of_date":"2024-03-14"}"#.into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"data":[]}"#)
+            .create_async()
+            .await;
+        let t = NansenSmartMoneyFlowTool::for_test(server.url());
+        t.invoke(serde_json::json!({"asset":"BTC","as_of_date":"2024-03-14"}))
+            .await
+            .unwrap();
         m.assert_async().await;
     }
 }
