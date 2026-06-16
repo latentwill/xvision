@@ -79,6 +79,64 @@ fn normalize_path_lexical(p: &Path) -> PathBuf {
     out
 }
 
+// ── Task 4.2 / 4.3: nanochat checkpoint validation ──────────────────────────
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error(
+        "slot '{role}' checkpoint requires indicators {missing:?} \
+         that are not in the strategy's tool registry; \
+         add them to the strategy's tools, pick a different checkpoint, \
+         or remove the nanochat slot"
+    )]
+    MissingCheckpointIndicators { role: String, missing: Vec<String> },
+
+    #[error(
+        "slot '{role}' checkpoint '{model_id}' has not been live-approved; \
+         run the backtest comparison in the strategy builder and confirm \
+         it before attaching"
+    )]
+    CheckpointNotLiveApproved { role: String, model_id: String },
+}
+
+/// Returns the list of indicators required by the checkpoint that are NOT
+/// present in the strategy's tool registry. An empty return = compatible.
+pub fn validate_checkpoint_indicators(
+    role: &str,
+    checkpoint_indicators: &[String],
+    registered_tools: &[String],
+) -> Result<(), ValidationError> {
+    let missing: Vec<String> = checkpoint_indicators
+        .iter()
+        .filter(|ind| !registered_tools.contains(ind))
+        .cloned()
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationError::MissingCheckpointIndicators {
+            role: role.to_string(),
+            missing,
+        })
+    }
+}
+
+/// Returns Err if `live_approved` is false (checkpoint still a candidate).
+pub fn validate_checkpoint_live_approved(
+    role: &str,
+    model_id: &str,
+    live_approved: bool,
+) -> Result<(), ValidationError> {
+    if live_approved {
+        Ok(())
+    } else {
+        Err(ValidationError::CheckpointNotLiveApproved {
+            role: role.to_string(),
+            model_id: model_id.to_string(),
+        })
+    }
+}
+
 /// Configuration for the promotion gate.
 #[derive(Debug, Clone, Copy)]
 pub struct PromotionGateCfg {
@@ -290,5 +348,61 @@ mod tests {
             300,
             PromotionGateCfg { epsilon: 0.0, acc_floor: 0.52, min_holdout: 200 },
         ));
+    }
+
+    // ── Task 4.2: validate_checkpoint_indicators ────────────────────────────
+
+    #[test]
+    fn missing_indicators_produce_structured_error() {
+        let err = validate_checkpoint_indicators(
+            "filter",
+            &["rsi_14".to_string(), "atr_20".to_string()],
+            &["rsi_14".to_string()], // atr_20 not registered
+        ).expect_err("missing indicators must be rejected");
+        match err {
+            ValidationError::MissingCheckpointIndicators { role, missing } => {
+                assert_eq!(role, "filter");
+                assert_eq!(missing, vec!["atr_20".to_string()]);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn all_indicators_registered_passes_compatibility_check() {
+        assert!(validate_checkpoint_indicators(
+            "filter",
+            &["rsi_14".to_string(), "atr_20".to_string()],
+            &["rsi_14".to_string(), "atr_20".to_string()],
+        ).is_ok());
+    }
+
+    #[test]
+    fn empty_indicators_always_passes() {
+        assert!(validate_checkpoint_indicators(
+            "filter",
+            &[],
+            &[],
+        ).is_ok());
+    }
+
+    // ── Task 4.3: validate_checkpoint_live_approved ─────────────────────────
+
+    #[test]
+    fn checkpoint_not_live_approved_returns_error() {
+        let err = validate_checkpoint_live_approved("filter", "01HZMODEL", false)
+            .expect_err("live_approved=false must return error");
+        match err {
+            ValidationError::CheckpointNotLiveApproved { role, model_id } => {
+                assert_eq!(role, "filter");
+                assert_eq!(model_id, "01HZMODEL");
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_live_approved_passes() {
+        assert!(validate_checkpoint_live_approved("filter", "01HZMODEL", true).is_ok());
     }
 }
