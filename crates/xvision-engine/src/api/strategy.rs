@@ -2023,6 +2023,15 @@ fn strategy_agents_out(strategy: Strategy) -> StrategyAgentsOut {
 /// failure, since the id only exists on success).
 pub async fn create_strategy(ctx: &ApiContext, req: CreateStrategyReq) -> ApiResult<CreateStrategyOut> {
     let started = Instant::now();
+    // Default the creator to the operator's profile handle when the request
+    // didn't supply one (QA: "creator field updated with user profile"). Falls
+    // through to authoring's "@anonymous" default when no profile is set.
+    let mut req = req;
+    if req.creator.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        if let Some(handle) = crate::api::settings::profile::load(&ctx.xvn_home).handle() {
+            req.creator = Some(handle);
+        }
+    }
     let args_json = serde_json::to_string(&req).ok();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let result = authoring::create_strategy(&store, req)

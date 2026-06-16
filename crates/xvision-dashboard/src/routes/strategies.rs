@@ -518,6 +518,10 @@ pub struct StrategyInspectorPatchBody {
     pub decision_cadence_minutes: Option<u32>,
     #[serde(default)]
     pub color: Option<String>,
+    /// Strategy author/owner handle. Non-empty sets the creator (e.g. the
+    /// operator's profile handle); omitted/empty leaves it untouched (QA).
+    #[serde(default)]
+    pub creator: Option<String>,
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 }
@@ -530,6 +534,7 @@ impl StrategyInspectorPatchBody {
             asset_universe: self.asset_universe.clone(),
             decision_cadence_minutes: self.decision_cadence_minutes,
             color: self.color.clone(),
+            creator: self.creator.clone(),
         }
     }
 }

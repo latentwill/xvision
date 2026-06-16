@@ -38,6 +38,7 @@ pub struct BrokersReport {
     pub orderly: BrokerEntry,
     pub byreal: BrokerEntry,
     pub degen_arena: BrokerEntry,
+    pub hyperliquid: BrokerEntry,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -49,7 +50,8 @@ pub struct BrokersReport {
 pub struct BrokerEntry {
     /// Display name ("Alpaca", "Orderly Network", "Byreal").
     pub name: String,
-    /// Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal").
+    /// Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal" |
+    /// "degen_arena" | "hyperliquid").
     pub kind: String,
     /// Per-required-env-var presence; values are never returned.
     pub credentials: Vec<CredentialRef>,
@@ -151,6 +153,47 @@ pub struct DegenArenaStored {
     pub network: Option<String>,
 }
 
+/// Request body for `set_hyperliquid`. Mirrors `HyperliquidCredentials`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetHyperliquidReq {
+    /// Hyperliquid trade-only agent-wallet private key: `0x` + 64 hex.
+    pub api_key: String,
+    /// Master account address: `0x` + 40 hex.
+    pub account_address: String,
+    /// `"testnet"` or `"mainnet"`.
+    pub network: String,
+}
+
+/// Successful set/clear response for Hyperliquid — redacted summary only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HyperliquidStored {
+    pub stored: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_key_id_suffix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+}
+
+/// Request body for `set_orderly`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetOrderlyReq {
+    pub api_key: String,
+    pub api_secret: String,
+    pub account_id: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+/// Successful set/clear response for Orderly — redacted summary only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderlyStored {
+    pub stored: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_key_id_suffix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
 /// Persisted Hyperliquid credentials (plain `hyperliquid` venue, distinct from
 /// Degen Arena). Lives in `$XVN_HOME/secrets/brokers.toml` under the
 /// `[hyperliquid]` table. The `api_key` is a Hyperliquid trade-only HL
@@ -167,8 +210,20 @@ pub struct HyperliquidCredentials {
     pub network: String,
 }
 
+/// Persisted Orderly credentials. Lives in `$XVN_HOME/secrets/brokers.toml`
+/// under the `[orderly]` table. Never returned through the read API; only a
+/// `last4` suffix surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderlyCredentials {
+    pub api_key: String,
+    pub api_secret: String,
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
 /// On-disk file containing optional `[alpaca]` / `[byreal]` / `[degen_arena]`
-/// / `[hyperliquid]` sections.
+/// / `[hyperliquid]` / `[orderly]` sections.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BrokersSecretsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +234,8 @@ struct BrokersSecretsFile {
     degen_arena: Option<DegenArenaCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hyperliquid: Option<HyperliquidCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    orderly: Option<OrderlyCredentials>,
 }
 
 /// Request body for `set_alpaca`. Mirrors `AlpacaCredentials` but is
@@ -268,9 +325,10 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
     let stored = load_brokers_secrets(xvn_home).await?;
     Ok(BrokersReport {
         alpaca: alpaca_entry(stored.alpaca.as_ref()),
-        orderly: orderly_entry(),
+        orderly: orderly_entry(stored.orderly.as_ref()),
         byreal: byreal_entry(stored.byreal.as_ref()),
         degen_arena: degen_arena_entry(stored.degen_arena.as_ref()),
+        hyperliquid: hyperliquid_entry(stored.hyperliquid.as_ref()),
     })
 }
 
@@ -294,21 +352,26 @@ fn alpaca_entry(stored: Option<&AlpacaCredentials>) -> BrokerEntry {
     }
 }
 
-fn orderly_entry() -> BrokerEntry {
+fn orderly_entry(stored: Option<&OrderlyCredentials>) -> BrokerEntry {
     let credentials = vec![
         cred("ORDERLY_KEY"),
         cred("ORDERLY_SECRET"),
         cred("ORDERLY_ACCOUNT_ID"),
     ];
-    let configured = credentials.iter().all(|c| c.is_set);
+    let env_all_set = credentials.iter().all(|c| c.is_set);
+    let stored_present = stored.is_some();
+    let stored_key_id_suffix = stored.map(|c| last4(&c.api_key));
+    let base_url = stored
+        .and_then(|c| c.base_url.clone())
+        .or_else(|| env::var("ORDERLY_BASE_URL").ok().filter(|s| !s.is_empty()));
     BrokerEntry {
         name: "Orderly Network".into(),
         kind: "orderly".into(),
         credentials,
-        configured,
-        stored: false,
-        stored_key_id_suffix: None,
-        base_url: env::var("ORDERLY_BASE_URL").ok().filter(|s| !s.is_empty()),
+        configured: env_all_set || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix,
+        base_url,
         note: Some("live only — disabled in v1 paper mode".into()),
     }
 }
@@ -375,6 +438,31 @@ fn degen_arena_entry(stored: Option<&DegenArenaCredentials>) -> BrokerEntry {
         note: Some(
             "Virtuals Degen Arena (Hyperliquid perps) — live execution via native EIP-712 \
              signing. Use a trade-only HL agent key (cannot withdraw). testnet supported."
+                .into(),
+        ),
+    }
+}
+
+fn hyperliquid_entry(stored: Option<&HyperliquidCredentials>) -> BrokerEntry {
+    let credentials = vec![cred("HL_API_KEY"), cred("HL_ACCOUNT_ADDRESS"), cred("HL_NETWORK")];
+    let env_configured = credentials
+        .iter()
+        .find(|c| c.env_var == "HL_API_KEY")
+        .map(|c| c.is_set)
+        .unwrap_or(false);
+    let stored_present = stored.is_some();
+    let stored_key_suffix = stored.map(|c| last4(&c.api_key));
+    BrokerEntry {
+        name: "Hyperliquid".into(),
+        kind: "hyperliquid".into(),
+        credentials,
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix: stored_key_suffix,
+        base_url: stored.map(|c| c.network.clone()),
+        note: Some(
+            "Hyperliquid perps (direct) — live execution via native EIP-712 signing. \
+             Use a trade-only HL agent key (cannot withdraw). testnet supported."
                 .into(),
         ),
     }
@@ -1064,6 +1152,250 @@ pub async fn resolve_hyperliquid_credentials(
     Ok(None)
 }
 
+/// Persist Hyperliquid credentials, overwriting any existing entry. The key
+/// MUST be a Hyperliquid trading-only agent key (cannot withdraw).
+pub async fn set_hyperliquid(ctx: &ApiContext, req: SetHyperliquidReq) -> ApiResult<HyperliquidStored> {
+    let started = Instant::now();
+    let result = set_hyperliquid_inner(&ctx.xvn_home, req.clone()).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log WITHOUT the key — only the redacted suffix + network.
+    let args_json = serde_json::json!({
+        "api_key_suffix": last4(&req.api_key),
+        "account_address_suffix": last4(&req.account_address),
+        "network": req.network,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_hyperliquid",
+        Some("hyperliquid"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_hyperliquid_inner(xvn_home: &Path, req: SetHyperliquidReq) -> ApiResult<HyperliquidStored> {
+    if !is_valid_api_key(&req.api_key) {
+        return Err(ApiError::Validation(
+            "api_key must be 0x followed by 64 hex characters".into(),
+        ));
+    }
+    if !is_valid_account_address(&req.account_address) {
+        return Err(ApiError::Validation(
+            "account_address must be 0x followed by 40 hex characters".into(),
+        ));
+    }
+    let network = req.network.trim().to_ascii_lowercase();
+    if network != "testnet" && network != "mainnet" {
+        return Err(ApiError::Validation(
+            "network must be \"testnet\" or \"mainnet\"".into(),
+        ));
+    }
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = HyperliquidCredentials {
+        api_key: req.api_key.trim().to_string(),
+        account_address: req.account_address.trim().to_string(),
+        network: network.clone(),
+    };
+    let suffix = last4(&creds.api_key);
+    file.hyperliquid = Some(creds);
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(HyperliquidStored {
+        stored: true,
+        stored_key_id_suffix: Some(suffix),
+        network: Some(network),
+    })
+}
+
+/// Remove the stored Hyperliquid credentials. No-op if none were stored.
+pub async fn clear_hyperliquid(ctx: &ApiContext) -> ApiResult<HyperliquidStored> {
+    let started = Instant::now();
+    let result = clear_hyperliquid_inner(&ctx.xvn_home).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_hyperliquid",
+        Some("hyperliquid"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_hyperliquid_inner(xvn_home: &Path) -> ApiResult<HyperliquidStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.hyperliquid = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(HyperliquidStored {
+        stored: false,
+        stored_key_id_suffix: None,
+        network: None,
+    })
+}
+
+// ── Orderly credential store ──────────────────────────────────────────────────
+
+/// Read the persisted Orderly credentials, if any.
+pub async fn load_orderly_credentials(xvn_home: &Path) -> ApiResult<Option<OrderlyCredentials>> {
+    let file = load_brokers_secrets(xvn_home).await?;
+    Ok(file.orderly)
+}
+
+/// Fully-resolved Orderly credentials plus the source they came from.
+#[derive(Debug, Clone)]
+pub struct ResolvedOrderlyCredentials {
+    pub api_key: String,
+    pub api_secret: String,
+    pub account_id: String,
+    pub base_url: Option<String>,
+    /// `"store"` from `brokers.toml`, `"env"` from `ORDERLY_*`.
+    pub source: &'static str,
+}
+
+/// Resolve Orderly credentials: stored (Settings → Brokers) win over env.
+/// `None` when neither is configured.
+pub async fn resolve_orderly_credentials(
+    xvn_home: &Path,
+) -> ApiResult<Option<ResolvedOrderlyCredentials>> {
+    // 1. Stored creds win.
+    if let Some(c) = load_orderly_credentials(xvn_home).await? {
+        if !c.api_key.trim().is_empty() {
+            return Ok(Some(ResolvedOrderlyCredentials {
+                api_key: c.api_key,
+                api_secret: c.api_secret,
+                account_id: c.account_id,
+                base_url: c.base_url.filter(|s| !s.trim().is_empty()),
+                source: "store",
+            }));
+        }
+    }
+    // 2. Env fallback.
+    if let Some(api_key) = env::var("ORDERLY_KEY").ok().filter(|s| !s.trim().is_empty()) {
+        let api_secret = env::var("ORDERLY_SECRET")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_default();
+        let account_id = env::var("ORDERLY_ACCOUNT_ID")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_default();
+        let base_url = env::var("ORDERLY_BASE_URL").ok().filter(|s| !s.trim().is_empty());
+        return Ok(Some(ResolvedOrderlyCredentials {
+            api_key,
+            api_secret,
+            account_id,
+            base_url,
+            source: "env",
+        }));
+    }
+    Ok(None)
+}
+
+/// Persist Orderly credentials, overwriting any existing entry.
+pub async fn set_orderly(ctx: &ApiContext, req: SetOrderlyReq) -> ApiResult<OrderlyStored> {
+    let started = Instant::now();
+    let result = set_orderly_inner(&ctx.xvn_home, req.clone()).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log WITHOUT the secret — only the redacted suffix + base_url.
+    let args_json = serde_json::json!({
+        "api_key_suffix": last4(&req.api_key),
+        "account_id": req.account_id,
+        "base_url": req.base_url,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_orderly",
+        Some("orderly"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_orderly_inner(xvn_home: &Path, req: SetOrderlyReq) -> ApiResult<OrderlyStored> {
+    if req.api_key.trim().is_empty() {
+        return Err(ApiError::Validation("api_key is empty".into()));
+    }
+    if req.api_secret.trim().is_empty() {
+        return Err(ApiError::Validation("api_secret is empty".into()));
+    }
+    if req.account_id.trim().is_empty() {
+        return Err(ApiError::Validation("account_id is empty".into()));
+    }
+    let base_url = req
+        .base_url
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = OrderlyCredentials {
+        api_key: req.api_key.trim().to_string(),
+        api_secret: req.api_secret.trim().to_string(),
+        account_id: req.account_id.trim().to_string(),
+        base_url: base_url.clone(),
+    };
+    let suffix = last4(&creds.api_key);
+    file.orderly = Some(creds);
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(OrderlyStored {
+        stored: true,
+        stored_key_id_suffix: Some(suffix),
+        base_url,
+    })
+}
+
+/// Remove the stored Orderly credentials. No-op if none were stored.
+pub async fn clear_orderly(ctx: &ApiContext) -> ApiResult<OrderlyStored> {
+    let started = Instant::now();
+    let result = clear_orderly_inner(&ctx.xvn_home).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_orderly",
+        Some("orderly"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_orderly_inner(xvn_home: &Path) -> ApiResult<OrderlyStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.orderly = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(OrderlyStored {
+        stored: false,
+        stored_key_id_suffix: None,
+        base_url: None,
+    })
+}
+
 /// Connectivity probe — calls Alpaca `/v2/account` with the stored (or
 /// env-var fallback) credentials and reports whether it responded. The
 /// outer function always returns `Ok(report)`; network/auth failures
@@ -1458,5 +1790,170 @@ mod tests {
         let file = result.unwrap();
         assert!(file.alpaca.is_none(), "alpaca must be None on fresh home");
         assert!(file.byreal.is_none(), "byreal must be None on fresh home");
+    }
+
+    // ── Hyperliquid credential store ─────────────────────────────────────────
+
+    fn hl_req(api_key: &str, account_address: &str, network: &str) -> SetHyperliquidReq {
+        SetHyperliquidReq {
+            api_key: api_key.into(),
+            account_address: account_address.into(),
+            network: network.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_and_load_hyperliquid_round_trips() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let key = "0x".to_string() + &"a".repeat(64);
+        let addr = "0x".to_string() + &"b".repeat(40);
+        let out = set_hyperliquid(&ctx, hl_req(&key, &addr, "testnet"))
+            .await
+            .unwrap();
+        assert!(out.stored);
+        assert_eq!(out.stored_key_id_suffix.as_deref(), Some("aaaa"));
+        assert_eq!(out.network.as_deref(), Some("testnet"));
+
+        let creds = load_hyperliquid_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .expect("credentials must load");
+        assert_eq!(creds.api_key, key);
+        assert_eq!(creds.account_address, addr);
+        assert_eq!(creds.network, "testnet");
+    }
+
+    #[tokio::test]
+    async fn set_hyperliquid_rejects_bad_key_format() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let addr = "0x".to_string() + &"b".repeat(40);
+        let bad = set_hyperliquid(&ctx, hl_req("notahexkey", &addr, "mainnet")).await;
+        assert!(matches!(bad, Err(ApiError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn set_hyperliquid_rejects_bad_network() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let key = "0x".to_string() + &"a".repeat(64);
+        let addr = "0x".to_string() + &"b".repeat(40);
+        let bad = set_hyperliquid(&ctx, hl_req(&key, &addr, "devnet")).await;
+        assert!(matches!(bad, Err(ApiError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn clear_hyperliquid_removes_stored_creds() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let key = "0x".to_string() + &"a".repeat(64);
+        let addr = "0x".to_string() + &"b".repeat(40);
+        set_hyperliquid(&ctx, hl_req(&key, &addr, "mainnet"))
+            .await
+            .unwrap();
+        let cleared = clear_hyperliquid(&ctx).await.unwrap();
+        assert!(!cleared.stored);
+        assert!(load_hyperliquid_credentials(&ctx.xvn_home).await.unwrap().is_none());
+    }
+
+    // ── Orderly credential store ──────────────────────────────────────────────
+
+    fn orderly_req(api_key: &str, api_secret: &str, account_id: &str, base_url: Option<&str>) -> SetOrderlyReq {
+        SetOrderlyReq {
+            api_key: api_key.into(),
+            api_secret: api_secret.into(),
+            account_id: account_id.into(),
+            base_url: base_url.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_and_load_orderly_round_trips() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let out = set_orderly(
+            &ctx,
+            orderly_req("ed25519:TESTKEY0001", "supersecret", "0xACCOUNT001", None),
+        )
+        .await
+        .unwrap();
+        assert!(out.stored);
+        assert_eq!(out.stored_key_id_suffix.as_deref(), Some("0001"));
+        assert_eq!(out.base_url, None);
+
+        let creds = load_orderly_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .expect("credentials must load");
+        assert_eq!(creds.api_key, "ed25519:TESTKEY0001");
+        assert_eq!(creds.api_secret, "supersecret");
+        assert_eq!(creds.account_id, "0xACCOUNT001");
+    }
+
+    #[tokio::test]
+    async fn set_orderly_rejects_empty_fields() {
+        let (ctx, _dir) = fresh_ctx().await;
+        assert!(matches!(
+            set_orderly(&ctx, orderly_req("", "secret", "acct", None)).await,
+            Err(ApiError::Validation(_))
+        ));
+        assert!(matches!(
+            set_orderly(&ctx, orderly_req("key", "", "acct", None)).await,
+            Err(ApiError::Validation(_))
+        ));
+        assert!(matches!(
+            set_orderly(&ctx, orderly_req("key", "secret", "", None)).await,
+            Err(ApiError::Validation(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_orderly_stores_base_url() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let out = set_orderly(
+            &ctx,
+            orderly_req("ed25519:KEY", "sec", "0xACCT", Some("https://testnet-api-evm.orderly.org")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.base_url.as_deref(), Some("https://testnet-api-evm.orderly.org"));
+        let creds = load_orderly_credentials(&ctx.xvn_home).await.unwrap().unwrap();
+        assert_eq!(creds.base_url.as_deref(), Some("https://testnet-api-evm.orderly.org"));
+    }
+
+    #[tokio::test]
+    async fn clear_orderly_removes_stored_creds() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_orderly(&ctx, orderly_req("ed25519:KEY", "sec", "0xACCT", None))
+            .await
+            .unwrap();
+        let cleared = clear_orderly(&ctx).await.unwrap();
+        assert!(!cleared.stored);
+        assert!(load_orderly_credentials(&ctx.xvn_home).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_orderly_prefers_stored() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_orderly(
+            &ctx,
+            orderly_req("ed25519:STOREDKEY", "storedsec", "0xSTOREDACCT", None),
+        )
+        .await
+        .unwrap();
+        let resolved = resolve_orderly_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .expect("resolves from store");
+        assert_eq!(resolved.source, "store");
+        assert_eq!(resolved.api_key, "ed25519:STOREDKEY");
+    }
+
+    #[tokio::test]
+    async fn get_reports_stored_orderly() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_orderly(&ctx, orderly_req("ed25519:KEYWITHABCD", "sec", "0xACCT", None))
+            .await
+            .unwrap();
+        let report = get(&ctx).await.unwrap();
+        assert!(report.orderly.stored, "stored creds => stored=true");
+        assert!(report.orderly.configured, "stored creds => configured=true");
+        assert_eq!(report.orderly.stored_key_id_suffix.as_deref(), Some("ABCD"));
     }
 }

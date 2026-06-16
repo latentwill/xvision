@@ -57,6 +57,12 @@ fn is_legal_transition(from: &str, to: &str) -> bool {
             | ("paused", "failed")
             | ("cancelling", "cancelled")
             | ("cancelling", "failed")
+            // R5: a session that recorded a `failed` may still be sealed
+            // terminal — exit 0 with the error preserved — instead of an
+            // illegal-transition crash (the cosmetic EXIT=5). Covers a SIGTERM
+            // or a healthy teardown arriving after a `failed` was recorded.
+            | ("failed", "finished")
+            | ("failed", "cancelling")
             | (_, "failed") // crash recovery: any -> failed
     )
 }
@@ -337,6 +343,8 @@ pub async fn run_session<F, Fut>(
     cycles_planned: Option<i64>,
     budget_cap: Option<f64>,
     loosening_thresholds: Vec<f64>,
+    max_consecutive_errors: u32,
+    cost_so_far: Arc<dyn Fn() -> f64 + Send + Sync>,
     cancel_flag: Arc<AtomicBool>,
     pause_flag: Arc<AtomicBool>,
     run_cycle_fn: F,
@@ -346,6 +354,12 @@ where
     Fut: Future<Output = Result<CycleRunOutcome>> + Send,
 {
     let budget = budget_cap.unwrap_or(f64::INFINITY);
+
+    // R3: session-level breaker. Each cycle that errors counts; `max == 0`
+    // disables it (never trips). A one-off cycle error is sealed `errored` and
+    // the loop continues; only `max_consecutive_errors` consecutive cycle
+    // failures stop the run (transition `failed` + a halt error).
+    let mut session_breaker = crate::autooptimizer::cycle::ConsecutiveErrors::new(max_consecutive_errors);
 
     loop {
         // 1. Check cancel flag.
@@ -369,11 +383,51 @@ where
             return Ok(());
         }
 
-        // 3. Run one cycle.
-        let outcome = run_cycle_fn().await?;
+        // 3. Run one cycle — isolate ANY cycle-level failure (trader, mutator,
+        //    judge, dispatch, DB) so one bad cycle never kills the session.
+        let cycle_result = run_cycle_fn().await;
 
-        // 4. Increment counters.
-        increment_cycle_completed(pool, session_id, &outcome.outcome).await?;
+        // 4. Account for the cycle and update the session breaker. On error:
+        //    seal this cycle as `errored`; if that trips the breaker (sustained
+        //    failure) transition `failed` and bail with a halt error (the CLI
+        //    maps it to a distinct exit code). A one-off error falls through to
+        //    the normal mode/budget/floor exit checks (so e.g. `once` still
+        //    stops after its single — errored — cycle) and exits 0.
+        let (outcome_bucket, cum_cost_usd, sustained_no_pass) = match &cycle_result {
+            Ok(o) => {
+                session_breaker.record_success();
+                (o.outcome.clone(), o.cum_cost_usd, o.sustained_no_pass_cycles)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "xvision::autooptimizer",
+                    session_id,
+                    error = %e,
+                    "optimizer cycle errored; sealing as errored and continuing"
+                );
+                increment_cycle_completed(pool, session_id, "errored").await?;
+                if session_breaker.record_failure() {
+                    let msg = format!(
+                        "optimizer halted: {max_consecutive_errors} consecutive cycle failures; \
+                         last error: {e:#}"
+                    );
+                    transition_state(pool, session_id, "failed", Some(&msg)).await?;
+                    anyhow::bail!(msg);
+                }
+                // Errored cycle already counted above. It produced no honest
+                // no-pass signal (0), but it MAY have spent real money before
+                // failing — read the live cumulative spend so the `--budget`
+                // hard ceiling still trips even on a run where every cycle
+                // errors (otherwise zeroing cost here defeats the cap and an
+                // error loop with the breaker disabled spends unbounded).
+                ("errored".to_string(), cost_so_far(), 0u32)
+            }
+        };
+
+        // Count a *successful* cycle (the errored branch already incremented).
+        if cycle_result.is_ok() {
+            increment_cycle_completed(pool, session_id, &outcome_bucket).await?;
+        }
 
         // 5. Fetch updated cycles_completed.
         let cycles_completed: i64 = sqlx::query_scalar(
@@ -385,7 +439,7 @@ where
 
         // 6. Budget is a hard ceiling in EVERY mode (GH #965). When no cap is
         //    set, `budget` is `f64::INFINITY` so this is never true.
-        let budget_exceeded = outcome.cum_cost_usd >= budget;
+        let budget_exceeded = cum_cost_usd >= budget;
 
         // 7. Check mode-specific exit conditions.
         let mode_done = match mode {
@@ -401,7 +455,7 @@ where
         };
 
         // 8. Check sustained-no-pass floor.
-        let floor_hit = loosening_floor_reached(&loosening_thresholds, outcome.sustained_no_pass_cycles);
+        let floor_hit = loosening_floor_reached(&loosening_thresholds, sustained_no_pass);
 
         if mode_done || budget_exceeded || floor_hit {
             break;
@@ -735,6 +789,8 @@ mod tests {
             None,
             None,
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -764,6 +820,212 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // R3: cycle isolation + session-level breaker
+    // -----------------------------------------------------------------------
+    /// R3: a single cycle error must NOT crash the session. With the breaker
+    /// disabled, `once` mode seals the cycle `errored`, finishes cleanly, and
+    /// `run_session` returns Ok (the CLI then exits 0).
+    #[tokio::test]
+    async fn test_one_off_cycle_error_seals_errored_and_exits_clean() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-err1", "{}", "once", None)
+            .await
+            .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        let result = run_session(
+            &pool,
+            &sid,
+            "once",
+            None,
+            None,
+            vec![],
+            0,                // breaker disabled
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || async move {
+                Err::<CycleRunOutcome, anyhow::Error>(anyhow::anyhow!("simulated cycle failure"))
+            },
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "a one-off cycle error must not crash the session: {result:?}"
+        );
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.state, "finished",
+            "session sealed cleanly despite the errored cycle"
+        );
+        assert_eq!(row.cycles_completed, 1);
+        assert_eq!(row.errored_count, 1, "the cycle is counted as errored");
+    }
+
+    /// R3: sustained cycle failure trips the session-level breaker, transitions
+    /// the session to `failed`, and returns Err (the CLI maps it to the distinct
+    /// `OptHalted` exit code). With the breaker at 2, the 2nd consecutive error
+    /// halts the run.
+    #[tokio::test]
+    async fn test_sustained_cycle_errors_trip_breaker_and_fail() {
+        let pool = test_pool().await;
+        // High cycle plan so the loop keeps running until the breaker trips
+        // first (mode is constrained to once|n_experiments|until_budget).
+        let sid = create_session(&pool, "strat-err2", "{}", "n_experiments", Some(10))
+            .await
+            .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+
+        let result = run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(10),
+            None,
+            vec![],
+            2,                // trips on the 2nd consecutive error
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                async move { Err::<CycleRunOutcome, anyhow::Error>(anyhow::anyhow!("boom")) }
+            },
+        )
+        .await;
+
+        assert!(result.is_err(), "sustained failure must halt the run");
+        assert!(
+            format!("{:#}", result.unwrap_err()).contains("consecutive cycle failures"),
+            "halt error must name the breaker reason"
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "the breaker trips exactly on the 2nd consecutive error"
+        );
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "failed");
+        assert_eq!(row.errored_count, 2);
+        assert!(row.error.is_some(), "the failure reason is persisted");
+    }
+
+    /// R3 regression (adversarial review): an errored cycle must still honor the
+    /// `--budget` hard ceiling. With the breaker disabled and every cycle
+    /// erroring, the loop must terminate once the live cumulative spend crosses
+    /// the cap — it must NOT spin forever (the cost is read from `cost_so_far`,
+    /// not fabricated as 0).
+    #[tokio::test]
+    async fn test_budget_ceiling_trips_on_errored_cycles() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-budget", "{}", "n_experiments", Some(1_000_000))
+            .await
+            .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+
+        let result = run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(1_000_000),
+            Some(5.0), // budget cap $5
+            vec![],
+            0,                 // breaker DISABLED — only the budget can stop this
+            Arc::new(|| 10.0), // live cumulative spend already over the cap
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                async move { Err::<CycleRunOutcome, anyhow::Error>(anyhow::anyhow!("boom")) }
+            },
+        )
+        .await;
+
+        assert!(result.is_ok(), "budget-capped run must seal cleanly, not crash");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "the budget ceiling must stop the run after the first over-budget errored cycle"
+        );
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "finished");
+        assert_eq!(row.errored_count, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // R5: terminal seal transitions out of `failed`
+    // -----------------------------------------------------------------------
+    /// R5: a session that recorded `failed` may still be sealed `finished`
+    /// (seal-with-errors → exit 0) instead of an illegal-transition crash.
+    #[tokio::test]
+    async fn test_failed_to_finished_is_legal_terminal_seal() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-r5a", "{}", "once", None)
+            .await
+            .unwrap();
+        transition_state(&pool, &sid, "failed", Some("boom"))
+            .await
+            .unwrap();
+        transition_state(&pool, &sid, "finished", None)
+            .await
+            .expect("failed -> finished must be a legal terminal seal (R5)");
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "finished");
+        assert!(row.finished_at.is_some(), "finished_at must be set");
+    }
+
+    /// R5: a SIGTERM/cancel arriving after a recorded `failed` can still seal.
+    #[tokio::test]
+    async fn test_failed_to_cancelling_is_legal() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-r5b", "{}", "once", None)
+            .await
+            .unwrap();
+        transition_state(&pool, &sid, "failed", Some("boom"))
+            .await
+            .unwrap();
+        transition_state(&pool, &sid, "cancelling", None)
+            .await
+            .expect("failed -> cancelling must be legal (R5)");
+        transition_state(&pool, &sid, "cancelled", None).await.unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "cancelled");
+    }
+
+    // -----------------------------------------------------------------------
     // test_n_experiments_mode
     // -----------------------------------------------------------------------
     /// `n_experiments` mode with `cycles_planned=3` must run exactly 3 cycles.
@@ -787,6 +1049,8 @@ mod tests {
             Some(3),
             None,
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -844,6 +1108,8 @@ mod tests {
             None,
             Some(0.12),
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -902,6 +1168,8 @@ mod tests {
             Some(10),
             None,
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -960,6 +1228,8 @@ mod tests {
             None,
             None,
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -1014,6 +1284,8 @@ mod tests {
             Some(100),
             None,
             vec![0.05, 0.02], // 2-step loosening schedule
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -1202,6 +1474,8 @@ mod tests {
             None, // unlimited
             None,
             vec![],
+            0,                // max_consecutive_errors: session breaker disabled in this test
+            Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
             move || {
@@ -1262,6 +1536,8 @@ mod tests {
                 planned,
                 Some(0.12),
                 vec![],
+                0,                // max_consecutive_errors: session breaker disabled in this test
+                Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
                 Arc::clone(&cancel),
                 Arc::clone(&pause),
                 move || {

@@ -1071,6 +1071,9 @@ impl Mutator {
         let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
         let program_md = program_view::to_markdown_with_resolved_prompts(base, resolved);
         let mut last_errors: Option<Vec<ValidationError>> = None;
+        // R4: retain the most recent raw model output so a no_candidate failure
+        // is debuggable (it was previously discarded after parsing).
+        let mut last_raw: Option<String> = None;
         let max_attempts = self.max_retries.saturating_add(1);
 
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
@@ -1147,12 +1150,30 @@ impl Mutator {
                 force_json: true,
             };
 
-            let resp = self
-                .dispatch
-                .complete(req)
-                .await
-                .with_context(|| format!("mutator dispatch failed on attempt {attempt}"))?;
+            // R3: a dispatch error (transient reset / 5xx / timeout) is treated
+            // like a parse/validation error — counted against the attempt budget
+            // and retried — instead of propagating immediately and aborting the
+            // experiment. On exhaustion the loop bails and the cycle absorbs it
+            // as `no_candidate`; cycle-level isolation (R3) then seals the cycle.
+            let resp = match self.dispatch.complete(req).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "xvision::autooptimizer",
+                        attempt,
+                        error = %e,
+                        "mutator dispatch errored; retrying within the attempt budget (R3)"
+                    );
+                    last_errors = Some(vec![ValidationError {
+                        code: "dispatch_error".into(),
+                        message: format!("experiment-writer dispatch failed: {e:#}"),
+                        path: None,
+                    }]);
+                    continue;
+                }
+            };
             let raw_text = resp.text();
+            last_raw = Some(raw_text.clone());
 
             let parse_result = extract_and_parse(&raw_text);
             match parse_result {
@@ -1212,7 +1233,30 @@ impl Mutator {
             .map(format_validation_errors)
             .unwrap_or_else(|| "unknown error".into());
 
-        anyhow::bail!("mutator failed after {} attempt(s): {}", max_attempts, error_text)
+        // R4: log the full-ish raw output (the model's actual response) so an
+        // operator can diagnose WHY every attempt failed, and append a truncated
+        // snippet to the error so it flows into the cycle's `no_candidate`
+        // reason. Previously the raw text was discarded entirely.
+        if let Some(raw) = last_raw.as_deref() {
+            tracing::warn!(
+                target: "xvision::autooptimizer",
+                mutation_idx,
+                attempts = max_attempts,
+                raw = %raw.chars().take(2000).collect::<String>(),
+                "experiment writer produced no usable candidate; last raw output captured"
+            );
+        }
+        let raw_tail = last_raw
+            .as_deref()
+            .map(|r| format!("; last raw output: {}", r.chars().take(800).collect::<String>()))
+            .unwrap_or_default();
+
+        anyhow::bail!(
+            "mutator failed after {} attempt(s): {}{}",
+            max_attempts,
+            error_text,
+            raw_tail
+        )
     }
 }
 

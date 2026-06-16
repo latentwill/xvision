@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
+import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { WalletRoute } from "./WalletRoute";
 
 // ── useWallet mock ───────────────────────────────────────────────────────────
@@ -133,9 +135,11 @@ function renderRoute() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/marketplace/wallet"]}>
-        <WalletRoute />
-      </MemoryRouter>
+      <MarketplaceDataProvider client={new FixtureMarketplaceData()}>
+        <MemoryRouter initialEntries={["/marketplace/wallet"]}>
+          <WalletRoute />
+        </MemoryRouter>
+      </MarketplaceDataProvider>
     </QueryClientProvider>,
   );
 }

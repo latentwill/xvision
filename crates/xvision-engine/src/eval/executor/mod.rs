@@ -25,6 +25,7 @@ pub mod asset_set;
 pub mod attest_hook;
 pub mod backtest;
 pub mod book;
+pub mod byreal_spot_marks;
 pub mod gated_broker;
 pub mod live_session;
 pub mod live_source;
@@ -35,6 +36,7 @@ pub mod trader_output;
 pub mod traits;
 pub mod wall_clock;
 
+pub use byreal_spot_marks::ByrealSpotPriceFetcher;
 pub use gated_broker::GatedBrokerSurface;
 
 use std::sync::Arc;

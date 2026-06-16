@@ -79,6 +79,7 @@ sol! {
         ) external returns (uint256 listingId);
 
         function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI) external;
+        function updatePrice(uint256 listingId, uint96 newPriceUSDC) external;
         function revokeListing(uint256 listingId) external;
         function getListing(uint256 listingId) external view returns (Listing memory);
         function totalListings() external view returns (uint256);
@@ -94,6 +95,7 @@ sol! {
             uint96  priceUSDC
         );
         event ListingUpdated(uint256 indexed listingId, bytes32 contentHash, string contentURI);
+        event ListingPriceUpdated(uint256 indexed listingId, uint96 oldPriceUSDC, uint96 newPriceUSDC);
         event ListingRevoked(uint256 indexed listingId, address indexed seller);
     }
 

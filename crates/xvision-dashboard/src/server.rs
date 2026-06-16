@@ -42,6 +42,7 @@
 // 18f2. POST /api/marketplace/listings/:id/import-sealed marketplace_route::post_import_sealed
 // 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
 // 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
+// 18i. POST  /api/marketplace/listings/:id/price      marketplace_route::post_set_price
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -473,6 +474,10 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/data-tools", get(settings::data_tools::get))
         .route("/api/settings/memory", get(settings::memory::get))
         .route("/api/settings/memory/status", get(settings::memory::status))
+        .route(
+            "/api/settings/profile",
+            get(settings::profile::get).put(settings::profile::put),
+        )
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
         .route(
@@ -663,6 +668,13 @@ fn mutating_router(state: AppState) -> Router {
             "/api/marketplace/listings/:id/update",
             post(marketplace_route::post_update),
         )
+        // Seller in-place reprice (updatePrice). Env-gated: 503 without chain
+        // config; bad price → 400; NotSeller / AlreadyRevoked /
+        // FreeTransferableForbidden contract reverts → 400.
+        .route(
+            "/api/marketplace/listings/:id/price",
+            post(marketplace_route::post_set_price),
+        )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
             "/api/strategies-folder/import",
@@ -790,6 +802,14 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
+        )
+        .route(
+            "/api/settings/brokers/hyperliquid",
+            post(settings::brokers::set_hyperliquid).delete(settings::brokers::delete_hyperliquid),
+        )
+        .route(
+            "/api/settings/brokers/orderly",
+            post(settings::brokers::set_orderly).delete(settings::brokers::delete_orderly),
         )
         // ── Live deploy: Degen Arena key ingest ───────────────────────────
         // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet

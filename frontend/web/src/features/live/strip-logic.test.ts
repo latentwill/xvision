@@ -13,9 +13,11 @@ import {
   deriveStripStatus,
   filterRunsForStrip,
   isLiveRun,
+  isLiveLineage,
   isStaleRun,
   livenessCounts,
   pickDefaultRun,
+  pickDefaultLiveRun,
   stripFilterBucket,
   stripFilterCounts,
 } from "./strip-status";
@@ -202,6 +204,28 @@ describe("livenessCounts", () => {
   });
 });
 
+describe("isLiveLineage", () => {
+  test("live-deployment run (eval_mode=live) qualifies in any state", () => {
+    expect(isLiveLineage(mkLiveRun({ status: "running" }))).toBe(true);
+    expect(isLiveLineage(mkLiveRun({ status: "completed" }))).toBe(true);
+    expect(
+      isLiveLineage(
+        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+      ),
+    ).toBe(true); // stale orphan of a live run still belongs on the live page
+  });
+  test("backtest/paper eval runs are NOT live lineage", () => {
+    expect(isLiveLineage(mkRun({ eval_mode: "backtest" }))).toBe(false);
+    expect(isLiveLineage(mkRun({ status: "completed", eval_mode: "backtest" }))).toBe(
+      false,
+    );
+  });
+  test("parentless run (no eval_mode) is NOT live lineage", () => {
+    expect(isLiveLineage(mkRun({ eval_mode: null }))).toBe(false);
+    expect(isLiveLineage(mkRun())).toBe(false);
+  });
+});
+
 describe("pickDefaultRun", () => {
   test("empty list -> null", () => {
     expect(pickDefaultRun([])).toBeNull();
@@ -263,6 +287,47 @@ describe("pickDefaultRun", () => {
       started_at: "2026-06-09T12:00:00Z",
     });
     expect(pickDefaultRun([older, newer])?.run_id).toBe("newer");
+  });
+});
+
+describe("pickDefaultLiveRun", () => {
+  test("empty list -> null", () => {
+    expect(pickDefaultLiveRun([])).toBeNull();
+  });
+  test("picks most recently started LIVE-MONEY run", () => {
+    const a = mkLiveRun({ run_id: "a", started_at: "2026-06-09T09:00:00Z" });
+    const b = mkLiveRun({ run_id: "b", started_at: "2026-06-09T11:00:00Z" });
+    expect(pickDefaultLiveRun([a, b])?.run_id).toBe("b");
+  });
+  test("returns null when only paper/backtest runs exist (no live fallback)", () => {
+    const paper = mkRun({
+      run_id: "paper",
+      status: "running",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    expect(pickDefaultLiveRun([paper])).toBeNull();
+  });
+  test("returns null when only stale orphans exist", () => {
+    const stale = mkRun({
+      run_id: "stale",
+      status: "running",
+      eval_run_status: "completed",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    expect(pickDefaultLiveRun([stale])).toBeNull();
+  });
+  test("returns null when only terminal runs exist", () => {
+    const done = mkRun({
+      run_id: "done",
+      status: "completed",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    const cancelled = mkRun({
+      run_id: "cancelled",
+      status: "cancelled",
+      started_at: "2026-06-09T13:00:00Z",
+    });
+    expect(pickDefaultLiveRun([done, cancelled])).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ import type { ListingDetail } from "./types";
 // Mock chain so getViewer tests don't need real wallet state.
 vi.mock("../lib/chain", () => ({
   activeNetworkSlug: "mantle-sepolia",
+  getActiveNetworkConfigOrDefault: vi.fn(async () => ({ slug: "mantle-sepolia" })),
   currentAddress: vi.fn(async () => null),
   ensureMantleSepolia: vi.fn(),
   usdcBalance: vi.fn(),
@@ -650,5 +651,32 @@ describe("chooseMarketplaceData", () => {
     );
     const fallback = makeFallback();
     expect(await chooseMarketplaceData(fallback)).toBe(fallback);
+  });
+});
+
+describe("ApiMarketplaceData.setListingPrice", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("POSTs to /api/marketplace/listings/:id/price and returns a TxRef", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ listing_id: 7, price_usdc: 25, tx_hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab" }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const result = await api.setListingPrice("7", 25);
+    expect(result).toEqual({ txHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab", network: "mantle-sepolia" });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/marketplace/listings/7/price",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ price_usdc: 25 }) }),
+    );
+  });
+
+  it("setListingPrice with price 0 (free) works correctly", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ listing_id: 7, price_usdc: 0, tx_hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab" }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const result = await api.setListingPrice("7", 0);
+    expect(result.network).toBe("mantle-sepolia");
+    expect(result.txHash).toBeTruthy();
   });
 });

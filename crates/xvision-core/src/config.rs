@@ -467,6 +467,53 @@ impl WhitelistConfig {
     }
 }
 
+// --- byreal spot curated set ------------------------------------------------
+
+/// Token category for a curated Solana-spot asset. `xstock` (Backed Finance
+/// tokenized equities) is a plain SPL token; the tag drives display only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpotAssetKind {
+    Spl,
+    Xstock,
+}
+
+/// One operator-curated Solana-spot asset.
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct SpotAssetEntry {
+    /// Ticker symbol used by the agent and `xvn spot` (e.g. "SOL", "AAPLx").
+    #[garde(length(min = 1, max = 32))]
+    pub symbol: String,
+    /// SPL mint address (base58). xStocks are plain SPL mints.
+    #[garde(length(min = 32, max = 64))]
+    pub mint: String,
+    #[garde(skip)]
+    pub kind: SpotAssetKind,
+    /// On-chain decimals for the mint (informational; byreal-cli auto-resolves
+    /// decimals from UI amounts).
+    #[garde(range(min = 0, max = 18))]
+    pub decimals: u8,
+}
+
+/// Curated whitelist mapping `symbol → { mint, kind, decimals }`, plus the
+/// USDC mint used as the quote leg of every buy/sell swap. Out-of-set symbols
+/// are refused (whitelist, not a hint list).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct SpotAssetConfig {
+    /// USDC SPL mint used as the quote asset for buys (USDC→token) and sells.
+    #[garde(length(min = 32, max = 64))]
+    pub usdc_mint: String,
+    #[garde(dive)]
+    pub assets: Vec<SpotAssetEntry>,
+}
+
+impl SpotAssetConfig {
+    /// Case-insensitive ticker lookup. `None` for symbols outside the curated set.
+    pub fn resolve(&self, symbol: &str) -> Option<&SpotAssetEntry> {
+        self.assets.iter().find(|a| a.symbol.eq_ignore_ascii_case(symbol))
+    }
+}
+
 // --- risk -------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
@@ -756,6 +803,16 @@ pub fn load_runtime_lenient(path: &Path) -> Result<(RuntimeConfig, Vec<InvalidPr
 
 pub fn load_whitelist(path: &Path) -> Result<WhitelistConfig, ConfigError> {
     read_toml(path)
+}
+
+/// Load the curated Byreal-spot asset set from a TOML file. Validated via `garde`.
+pub fn load_spot_assets(path: &Path) -> Result<SpotAssetConfig, ConfigError> {
+    read_toml(path)
+}
+
+/// Default location of the curated spot-asset config under `xvn_home`.
+pub fn spot_assets_path(xvn_home: &Path) -> PathBuf {
+    xvn_home.join("config").join("byreal_spot_assets.toml")
 }
 
 pub fn load_risk(path: &Path) -> Result<RiskConfig, ConfigError> {
@@ -1860,4 +1917,55 @@ vectors = "data/vectors"
 probes = "data/probes"
 sqlite_url = "sqlite://x.db"
 "#;
+
+    // --- byreal spot asset config --------------------------------------------
+
+    #[test]
+    fn loads_byreal_spot_assets_and_resolves_mint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("byreal_spot_assets.toml");
+        std::fs::write(
+            &path,
+            r#"
+usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[assets]]
+symbol = "SOL"
+mint = "So11111111111111111111111111111111111111112"
+kind = "spl"
+decimals = 9
+
+[[assets]]
+symbol = "AAPLx"
+mint = "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp"
+kind = "xstock"
+decimals = 8
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_spot_assets(&path).expect("valid config loads");
+        assert_eq!(cfg.usdc_mint, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+        let sol = cfg.resolve("SOL").expect("SOL is curated");
+        assert_eq!(sol.mint, "So11111111111111111111111111111111111111112");
+        assert_eq!(sol.decimals, 9);
+        assert_eq!(sol.kind, SpotAssetKind::Spl);
+        assert!(cfg.resolve("aaplx").is_some()); // case-insensitive
+        assert!(cfg.resolve("DOGE").is_none()); // whitelist: unknown refused
+    }
+
+    #[test]
+    fn rejects_spot_assets_with_empty_mint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(
+            &path,
+            "usdc_mint = \"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v\"\n[[assets]]\nsymbol = \"SOL\"\nmint = \"\"\nkind = \"spl\"\ndecimals = 9\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            load_spot_assets(&path),
+            Err(ConfigError::Validation { .. })
+        ));
+    }
 }

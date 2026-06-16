@@ -16,6 +16,7 @@ import {
   buyDirect,
   currentAddress,
   ensureMantleSepolia,
+  getActiveNetworkConfigOrDefault,
   getContracts,
   signTransferAuthorization,
   usdcBalance,
@@ -189,7 +190,11 @@ function toRow(l: IndexedListing): ListingRow {
     name: l.name || undefined,
     creator: { address: l.seller },
     model: "",
-    style: l.symmetry,
+    // The indexer has no trading-style field; `symmetry` is a gen-art trait
+    // (e.g. "rot90", "mirror-x") and must NOT surface as the listing's style
+    // (operator QA: listings were displaying "rot90" as the style). The art
+    // itself keeps its symmetry — only this mislabeled text is dropped.
+    style: "",
     assets: [],
     // Part B: consume real perf metrics when the backend provides them.
     // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
@@ -214,7 +219,10 @@ function toRow(l: IndexedListing): ListingRow {
   };
 }
 
-function toDetail(l: IndexedListing): ListingDetail {
+function toDetail(
+  l: IndexedListing,
+  networkSlug: string = activeNetworkSlug,
+): ListingDetail {
   return {
     ...toRow(l),
     // Chain metadata name is the only human-readable copy we have; it renders
@@ -249,7 +257,7 @@ function toDetail(l: IndexedListing): ListingDetail {
         bornAt: "",
         operatorSig: "",
         contract: "",
-        network: activeNetworkSlug,
+        network: networkSlug,
       },
       attestations: [],
       anchors: [],
@@ -332,7 +340,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      const detail = toDetail(l);
+      const detail = toDetail(l, (await getActiveNetworkConfigOrDefault()).slug);
       // For OPEN-tier listings, enrich the detail with the verified bundle
       // manifest. Tolerate failure — manifest unavailable must not throw the
       // detail page down.
@@ -440,7 +448,7 @@ export class ApiMarketplaceData implements MarketplaceData {
     const buyers = { humans: 0, agents: 0 };
     return {
       txHash: r.tx_hash,
-      network: activeNetworkSlug,
+      network: (await getActiveNetworkConfigOrDefault()).slug,
       at,
       buyer: r.buyer,
       listing: {
@@ -529,13 +537,19 @@ export class ApiMarketplaceData implements MarketplaceData {
           }),
         },
       );
-      return { txHash: out.tx_hash, network: activeNetworkSlug };
+      return {
+        txHash: out.tx_hash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 503) throw e;
       // Relay unavailable — approve + buy directly from the wallet.
       await approveUsdc(price6);
       const txHash = await buyDirect(BigInt(listingId), addr);
-      return { txHash, network: activeNetworkSlug };
+      return {
+        txHash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     }
   }
   /**
@@ -569,6 +583,13 @@ export class ApiMarketplaceData implements MarketplaceData {
       `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import`,
       { method: "POST", body: JSON.stringify({ address }) },
     );
+  }
+  async setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    const out = await apiFetch<{ listing_id: number; price_usdc: number; tx_hash: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/price`,
+      { method: "POST", body: JSON.stringify({ price_usdc: priceUsdc }) },
+    );
+    return { txHash: out.tx_hash, network: "mantle-sepolia" };
   }
 }
 

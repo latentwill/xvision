@@ -86,6 +86,7 @@ const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRou
 const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
 const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
+const MyListingsRoute = lazy(() => import("./features/marketplace/routes/MyListingsRoute").then((m) => ({ default: m.MyListingsRoute })));
 const NotFoundRoute = lazy(() => import("./routes/not-found").then((m) => ({ default: m.NotFoundRoute })));
 
 /**
@@ -235,6 +236,7 @@ export const router = createBrowserRouter([
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
           { path: "wallet", element: page(<MarketplaceWalletRoute />) },
+          { path: "mine", element: page(<MyListingsRoute />) },
         ],
       },
       {

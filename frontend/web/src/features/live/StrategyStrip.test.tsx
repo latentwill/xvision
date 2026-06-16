@@ -96,9 +96,11 @@ describe("StrategyStrip", () => {
 
     fireEvent.click(screen.getByTestId("strip-filter-all"));
 
-    expect(screen.getByTestId("live-run-row-paper_1")).toHaveTextContent(
-      "Backtest-only strategy",
-    );
+    // Backtest eval runs are NOT live-deployment lineage, so they never appear
+    // on the Live page — not even under the ALL filter. (They live on the
+    // eval-runs page.) This is the fix for "20 non-live evals showing as
+    // STOPPED live strategies".
+    expect(screen.queryByTestId("live-run-row-paper_1")).not.toBeInTheDocument();
   });
 
   // QA item 3: the list endpoint omits model_call_count / tool_call_count, so

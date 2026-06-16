@@ -3925,6 +3925,11 @@ enum LiveVenue {
     /// product framing. Uses HL-native bars (no Alpaca data needed).
     /// Testnet always permitted; mainnet requires `HL_ALLOW_MAINNET=1`.
     Hyperliquid,
+    /// Byreal Solana spot (curated SPL + xStocks) via `byreal-cli`. Long/Flat
+    /// only (no shorting, no leverage); marks come from byreal-cli token price
+    /// (poll-only, no Alpaca data). Mainnet gated by `venue_label`=Live + the
+    /// SafetyGate + the `BYREAL_SPOT_NETWORK` consistency check, like ByrealLive.
+    ByrealSpot,
 }
 
 /// Gate `broker_creds_ref` to the supported live venues. For
@@ -3988,6 +3993,13 @@ fn resolve_live_venue(
             // SafetyGate + the venue_label<->network consistency check (WU-2.3),
             // NOT by refusing to resolve mainnet here.
             Ok(LiveVenue::ByrealLive)
+        }
+        "byreal_spot" => {
+            // Byreal Solana spot via byreal-cli. Like "byreal", the testnet/
+            // mainnet split is carried by the run's venue_label (Testnet vs Live),
+            // enforced by the SafetyGate + the BYREAL_SPOT_NETWORK consistency
+            // check, NOT by refusing to resolve mainnet here.
+            Ok(LiveVenue::ByrealSpot)
         }
         "degen_arena" => {
             // Gating policy for Degen Arena (AI Pot / Hyperliquid perps):
@@ -4054,6 +4066,8 @@ fn resolve_live_venue(
              (Orderly Network mainnet / real-money execution with Alpaca market data), \"byreal\" \
              (Byreal perps on Hyperliquid via the perps CLI with Alpaca market data; \
              network from BYREAL_NETWORK, mainnet gated by venue_label=Live), \
+             \"byreal_spot\" (Byreal Solana spot — curated SPL + xStocks via byreal-cli; \
+             Long/Flat only, marks from byreal-cli token price, mainnet gated by venue_label=Live), \
              \"degen_arena\" (Degen Arena / Hyperliquid perps with Alpaca market data; \
              testnet requires DEGEN_HL_NETWORK=testnet, mainnet requires DEGEN_ALLOW_MAINNET=1), \
              and \"hyperliquid\" (native Hyperliquid perps; \
@@ -4087,6 +4101,7 @@ fn check_venue_label_network(venue: LiveVenue, run: VenueLabel, broker: VenueLab
     // Alpaca (Paper) and Orderly testnet have a fixed non-mainnet label and are a no-op.
     let env_var = match venue {
         LiveVenue::ByrealLive => "BYREAL_NETWORK",
+        LiveVenue::ByrealSpot => "BYREAL_SPOT_NETWORK",
         LiveVenue::Hyperliquid => "HL_NETWORK",
         LiveVenue::DegenArena => "DEGEN_HL_NETWORK",
         LiveVenue::OrderlyMainnet => return Ok(()),
@@ -4123,6 +4138,9 @@ fn check_venue_label_network(venue: LiveVenue, run: VenueLabel, broker: VenueLab
 ///   label for real-money runs.
 fn broker_label_for(
     venue: LiveVenue,
+    // The active byreal-family network: BYREAL_NETWORK for `ByrealLive`,
+    // BYREAL_SPOT_NETWORK for `ByrealSpot` (the two are mutually exclusive per
+    // call, so they share this slot — the caller passes whichever applies).
     byreal_network: Option<&str>,
     degen_network: Option<&str>,
     hl_network: Option<&str>,
@@ -4144,6 +4162,7 @@ fn broker_label_for(
         LiveVenue::OrderlyTestnet => VenueLabel::Testnet,
         LiveVenue::OrderlyMainnet => VenueLabel::Live,
         LiveVenue::ByrealLive => label_from_network(byreal_network),
+        LiveVenue::ByrealSpot => label_from_network(byreal_network),
         LiveVenue::DegenArena => label_from_network(degen_network),
         LiveVenue::Hyperliquid => label_from_network(hl_network),
     }
@@ -4161,6 +4180,7 @@ async fn build_live_executor(
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
     let byreal_network = std::env::var("BYREAL_NETWORK").ok();
+    let byreal_spot_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
     // Resolve Degen Arena creds (stored via Settings → Brokers / deploy ingest
     // win over DEGEN_HL_* env) BEFORE gating, so the testnet/mainnet gate agrees
     // with the network the creds actually carry — not a possibly-unset env var.
@@ -4182,10 +4202,26 @@ async fn build_live_executor(
             "live_config.assets must contain at least one asset".into(),
         ));
     }
-    // Degen Arena and the plain Hyperliquid venue both source market-data bars
-    // from Hyperliquid (HL-native candles), not Alpaca — so they need no Alpaca
-    // credentials. Every other venue still uses the Alpaca bar stream.
-    let uses_alpaca_data = venue != LiveVenue::DegenArena && venue != LiveVenue::Hyperliquid;
+    // Byreal-spot needs the curated SPL/xStock set for symbol→mint resolution
+    // (both for the broker surface and the price-poll mark source). Load it once
+    // here so a misconfigured set fails fast with a clear error.
+    let byreal_spot_assets = if venue == LiveVenue::ByrealSpot {
+        let cfg_path = xvision_core::config::spot_assets_path(&ctx.xvn_home);
+        Some(xvision_core::config::load_spot_assets(&cfg_path).map_err(|e| {
+            ApiError::Validation(format!(
+                "byreal_spot requires a curated set at {}: {e}",
+                cfg_path.display()
+            ))
+        })?)
+    } else {
+        None
+    };
+    // Degen Arena, the plain Hyperliquid venue, and Byreal-spot all source
+    // market-data bars from their own venue (HL-native candles / byreal-cli
+    // token price), not Alpaca — so they need no Alpaca credentials. Every
+    // other venue still uses the Alpaca bar stream.
+    let uses_alpaca_data =
+        venue != LiveVenue::DegenArena && venue != LiveVenue::Hyperliquid && venue != LiveVenue::ByrealSpot;
     // Alpaca credentials supply the live bar stream for every venue EXCEPT
     // the HL-native venues (degen_arena, hyperliquid). This message is only
     // surfaced when `uses_alpaca_data` is true.
@@ -4221,6 +4257,11 @@ async fn build_live_executor(
             // Unreachable: plain Hyperliquid also uses HL-native candles
             // (uses_alpaca_data == false), so the Alpaca-creds requirement is skipped.
             "Hyperliquid sources bars from Hyperliquid and needs no Alpaca credentials.".to_string()
+        }
+        LiveVenue::ByrealSpot => {
+            // Unreachable: Byreal-spot uses byreal-cli token price for marks
+            // (uses_alpaca_data == false), so the Alpaca-creds requirement is skipped.
+            "Byreal spot sources marks from byreal-cli and needs no Alpaca credentials.".to_string()
         }
     }
     };
@@ -4281,6 +4322,25 @@ async fn build_live_executor(
                 ByrealLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
             ),
+            LiveVenue::ByrealSpot => {
+                // venue_label decides the swap mode: Live → real `--confirm`;
+                // Testnet/Paper → `--dry-run` preview (no-funds forward-test).
+                let mode = if cfg.venue_label == VenueLabel::Live {
+                    xvision_execution::ByrealSpotMode::Live
+                } else {
+                    xvision_execution::ByrealSpotMode::Preview
+                };
+                let assets = byreal_spot_assets
+                    .clone()
+                    .expect("byreal_spot_assets loaded above when venue == ByrealSpot");
+                Arc::new(
+                    xvision_execution::ByrealSpotSurface::new(
+                        xvision_execution::SubprocessByrealSpotApi::from_env(),
+                        assets,
+                    )
+                    .with_mode(mode),
+                )
+            }
             LiveVenue::DegenArena => {
                 let c = degen_creds.ok_or_else(|| {
                     ApiError::Validation(
@@ -4316,9 +4376,16 @@ async fn build_live_executor(
     // so the safety gate fires on every live submit, regardless of venue or
     // whether the broker came from a broker_override. The wrap happens AFTER
     // the override/venue match so even injected test brokers are gated.
+    // The byreal-family label uses BYREAL_SPOT_NETWORK for spot and
+    // BYREAL_NETWORK for perps (the two venues are mutually exclusive per run).
+    let byreal_family_network = if venue == LiveVenue::ByrealSpot {
+        byreal_spot_network.as_deref()
+    } else {
+        byreal_network.as_deref()
+    };
     let broker_lbl = broker_label_for(
         venue,
-        byreal_network.as_deref(),
+        byreal_family_network,
         degen_network.as_deref(),
         hl_network.as_deref(),
     );
@@ -4379,6 +4446,18 @@ async fn build_live_executor(
             )
             .await
             .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
+        } else if venue == LiveVenue::ByrealSpot {
+            // Byreal spot: poll byreal-cli token price → one synthetic bar per
+            // poll. No warmup history available in v1 (forward-test marks).
+            let assets = byreal_spot_assets
+                .clone()
+                .expect("byreal_spot_assets loaded above when venue == ByrealSpot");
+            let fetcher = std::sync::Arc::new(crate::eval::executor::ByrealSpotPriceFetcher::new(
+                xvision_execution::SubprocessByrealSpotApi::from_env(),
+                assets,
+            ));
+            let poll = AlpacaLivePoll::new(fetcher, asset.clone(), granularity);
+            crate::eval::executor::LiveStream::new_poll_only(Vec::new(), poll)
         } else {
             // HL-native venues (degen_arena, hyperliquid): Hyperliquid-native candles
             // via HlBarFetcher, poll-only (no Alpaca websocket). Warmup is fetched up
@@ -6762,8 +6841,9 @@ mod check_venue_label_network_tests {
     use super::{check_venue_label_network, LiveVenue};
     use crate::safety::VenueLabel;
 
-    const NETWORK_DERIVED: [LiveVenue; 3] = [
+    const NETWORK_DERIVED: [LiveVenue; 4] = [
         LiveVenue::ByrealLive,
+        LiveVenue::ByrealSpot,
         LiveVenue::Hyperliquid,
         LiveVenue::DegenArena,
     ];
@@ -7112,6 +7192,47 @@ budget_credits_per_run = 5
         assert!(
             names.iter().all(|n| !n.starts_with("nansen_") && !n.starts_with("elfa_")),
             "no signal tools expected without config: {names:?}"
+        );
+    }
+
+    // --- broker_label_for + resolve: Byreal spot (new venue) ----------------
+
+    #[test]
+    fn byreal_spot_unset_maps_to_live() {
+        // BYREAL_SPOT_NETWORK unset → fail-safe to Live. The spot network rides
+        // in the byreal-family slot (2nd arg), like ByrealLive.
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealSpot, None, None, None),
+            VenueLabel::Live,
+            "ByrealSpot + unset network → Live (fail-safe)"
+        );
+    }
+
+    #[test]
+    fn byreal_spot_mainnet_maps_to_live() {
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealSpot, Some("mainnet"), None, None),
+            VenueLabel::Live,
+            "ByrealSpot + 'mainnet' → Live"
+        );
+    }
+
+    #[test]
+    fn byreal_spot_testnet_maps_to_testnet() {
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealSpot, Some("testnet"), None, None),
+            VenueLabel::Testnet,
+            "ByrealSpot + 'testnet' → Testnet"
+        );
+    }
+
+    #[test]
+    fn resolve_byreal_spot_creds_ref_ok() {
+        use super::resolve_live_venue;
+        assert_eq!(
+            resolve_live_venue("byreal_spot", None, None, None, None).unwrap(),
+            LiveVenue::ByrealSpot,
+            "'byreal_spot' resolves to LiveVenue::ByrealSpot"
         );
     }
 }
