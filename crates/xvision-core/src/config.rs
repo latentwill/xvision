@@ -183,6 +183,11 @@ pub struct RuntimeConfig {
     #[serde(default)]
     #[garde(dive)]
     pub data: Data,
+    /// External data/signal providers (Nansen, Elfa, …). Omitting
+    /// `[[data_tools]]` from the TOML is valid — defaults to an empty vec.
+    #[serde(default)]
+    #[garde(dive)]
+    pub data_tools: Vec<DataToolEntry>,
 }
 
 /// Top-level `[data]` section. Holds per-fetcher knobs; today only Alpaca.
@@ -332,6 +337,40 @@ impl Backtest {
             Ok(())
         }
     }
+}
+
+// --- data tools -------------------------------------------------------------
+
+/// Data/signal providers (NOT LLM providers — kept separate from ProviderKind).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DataToolKind {
+    Nansen,
+    Elfa,
+}
+
+/// One external data-signal provider. Secrets stay in env — `api_key_env`
+/// is the env-var NAME, never the key (mirrors `ProviderEntry`).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct DataToolEntry {
+    #[garde(skip)]
+    pub kind: DataToolKind,
+    #[garde(length(max = 512))]
+    pub base_url: String,
+    #[garde(length(max = 64))]
+    pub api_key_env: String,
+    #[serde(default)]
+    #[garde(skip)]
+    pub enabled: bool,
+    /// Per-run credit budget cap (D8). `None` => uncapped.
+    #[serde(default)]
+    #[garde(skip)]
+    pub budget_credits_per_run: Option<u32>,
+    /// Nansen-only: backtest lookahead lag in days (D4). `None` => default 1.
+    /// garde does not support `range` on `Option<u32>`; validated at use-site.
+    #[serde(default)]
+    #[garde(skip)]
+    pub nansen_lookahead_lag_days: Option<u32>,
 }
 
 // --- whitelist --------------------------------------------------------------
@@ -1595,6 +1634,78 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(v.as_str(), Some("openai-compat"));
         let v = toml::Value::try_from(ProviderKind::Vllm).unwrap();
         assert_eq!(v.as_str(), Some("vllm"));
+    }
+
+    // --- data_tools (Task 2.1) -----------------------------------------------
+
+    #[test]
+    fn data_tool_entry_round_trips() {
+        let toml = r#"
+kind = "nansen"
+base_url = "https://api.nansen.ai"
+api_key_env = "NANSEN_API_KEY"
+enabled = true
+budget_credits_per_run = 500
+nansen_lookahead_lag_days = 1
+"#;
+        let dt: DataToolEntry = toml::from_str(toml).unwrap();
+        assert_eq!(dt.kind, DataToolKind::Nansen);
+        assert_eq!(dt.api_key_env, "NANSEN_API_KEY");
+        assert!(dt.enabled);
+        assert_eq!(dt.budget_credits_per_run, Some(500));
+        assert_eq!(dt.nansen_lookahead_lag_days, Some(1));
+        // garde validation passes for a well-formed entry
+        dt.validate().unwrap();
+    }
+
+    #[test]
+    fn data_tools_defaults_empty_and_optional_fields_absent() {
+        // kebab-case kind, minimal entry, optionals omitted
+        let dt: DataToolEntry = toml::from_str(
+            "kind = \"elfa\"\nbase_url = \"https://api.elfa.ai\"\napi_key_env = \"ELFA_API_KEY\"\n",
+        )
+        .unwrap();
+        assert_eq!(dt.kind, DataToolKind::Elfa);
+        assert!(!dt.enabled); // serde default false
+        assert_eq!(dt.budget_credits_per_run, None);
+        assert_eq!(dt.nansen_lookahead_lag_days, None);
+    }
+
+    #[test]
+    fn runtime_config_data_tools_defaults_empty() {
+        // A config without [[data_tools]] must load fine (serde default = empty vec).
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-data-tools.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert!(cfg.data_tools.is_empty(), "[[data_tools]] absent → empty vec");
     }
 
     const BAD_STEP_HORIZON: &str = r#"
