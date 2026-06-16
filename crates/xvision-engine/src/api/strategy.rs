@@ -2560,10 +2560,67 @@ async fn index_strategy_after_mutation(ctx: &ApiContext, store: &FilesystemStore
     }
 }
 
+// ── Nanochat checkpoint pre-save validation ──────────────────────────────────
+
+/// For every `AgentRef` in `strategy` that carries a `checkpoint`, verify:
+///   1. The `trained_models` row exists (NotFound otherwise).
+///   2. `input_spec.indicators` ⊆ `strategy.manifest.required_tools` (Validation otherwise).
+///   3. `live_approved = true` (Validation otherwise).
+///
+/// Called by `save_and_index` and `ApiContext::validate_and_save_strategy` so
+/// the gate is enforced on all write paths that receive a fully-constructed
+/// `Strategy` object.
+async fn validate_checkpoint_pre_save(
+    strategy: &Strategy,
+    db: &sqlx::SqlitePool,
+) -> ApiResult<()> {
+    let nano_store = crate::nanochat::store::NanochatStore::new(db.clone());
+    for agent in &strategy.agents {
+        let Some(cp_ref) = &agent.checkpoint else {
+            continue;
+        };
+        let model = nano_store
+            .get_model(&cp_ref.model_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "checkpoint '{}' referenced by role '{}' not found in trained_models",
+                    cp_ref.model_id, agent.role
+                ))
+            })?;
+        let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
+            serde_json::from_str(&model.input_spec).map_err(|e| {
+                ApiError::Validation(format!(
+                    "invalid input_spec in trained_models for model '{}': {e}",
+                    cp_ref.model_id
+                ))
+            })?;
+        crate::nanochat::validate::validate_checkpoint_indicators(
+            &agent.role,
+            &input_spec.indicators,
+            &strategy.manifest.required_tools,
+        )
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
+        crate::nanochat::validate::validate_checkpoint_live_approved(
+            &agent.role,
+            &cp_ref.model_id,
+            model.live_approved,
+        )
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
+    }
+    Ok(())
+}
+
 /// Save a strategy to disk and refresh the search index.
 /// Used by CLI paths that construct the `Strategy` object themselves
 /// rather than going through a write API (e.g. `xvn strategy new --from-file`).
+///
+/// Runs nanochat checkpoint pre-save validation before persisting, so any
+/// checkpoint that is not live-approved or that references missing indicators
+/// is rejected at the CLI boundary as well.
 pub async fn save_and_index(ctx: &ApiContext, strategy: &Strategy) -> ApiResult<()> {
+    validate_checkpoint_pre_save(strategy, &ctx.db).await?;
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     store
         .save(strategy)
@@ -2571,6 +2628,19 @@ pub async fn save_and_index(ctx: &ApiContext, strategy: &Strategy) -> ApiResult<
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
     Ok(())
+}
+
+impl ApiContext {
+    /// Validate nanochat checkpoint constraints then persist the strategy.
+    ///
+    /// This is the integration-test-facing entry point. It runs the same
+    /// checkpoint pre-save gate as `save_and_index` (live_approved check +
+    /// indicator-compatibility check) and then delegates to the normal
+    /// filesystem persist path.
+    pub async fn validate_and_save_strategy(&self, strategy: Strategy) -> ApiResult<()> {
+        validate_checkpoint_pre_save(&strategy, &self.db).await?;
+        save_and_index(self, &strategy).await
+    }
 }
 
 /// Run the strategy through the validator. The result type carries the
