@@ -190,23 +190,16 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // eval compare, eval cancel — all read-only or cancellable
     "example",
     "experiment", // bounded via STRICT_TEMPLATES (experiment run only)
-    "gate",
     "indicator",
-    "metrics",
-    // "init" is in DENYLIST_SUBCOMMANDS — intentionally absent here
+    // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
     "optimize", // bounded via STRICT_TEMPLATES (optimize run only)
     "portfolio",
     "provider",
-    "report",
-    // `risk` was retired from the CLI in #1038 (Byreal/perps risk unified onto
-    // the engine veto path); this stale allowlist entry pointed at a removed
-    // verb and tripped `remote_allowlist_paths_exist_in_clap_tree`.
     "run",
     "scenario", // scenario show, scenario select — read-only paths allowed
     "show-decision",
-    "show-metrics",
     "store",
     "strategy", // strategy show, strategy validate — read-only paths allowed
 ];

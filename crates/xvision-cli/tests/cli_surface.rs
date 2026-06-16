@@ -252,14 +252,8 @@ fn first_diff(a: &str, b: &str) -> String {
 /// `crates/xvision-dashboard/wiki/cli-reference.md` and remove it from this
 /// list.
 const UNDOCUMENTED_VERBS: &[&str] = &[
-    // Legacy inspection commands — low-level plumbing, not operator-facing.
-    "show-metrics",
+    // Legacy inspection command — low-level plumbing, not operator-facing.
     "show-decision",
-    "show-briefing",
-    // Legacy single-shot setup runner, superseded by eval run.
-    "run-setup",
-    // Internal report generator for the old BacktestResult format.
-    "report",
     // Live trading smoke tests — operator must know what they're doing;
     // deliberately kept out of the reference to reduce accidental use.
     "fire-trade",
@@ -267,8 +261,6 @@ const UNDOCUMENTED_VERBS: &[&str] = &[
     "close-position",
     // Stage-isolation commands — intended for developers probing a single
     // pipeline stage, not for routine operator use.
-    "trader",
-    "risk",
     // Single-indicator computation helper — developer/debug tool.
     "indicator",
     // Starts the embedded HTTP server; operators use docker compose, not this.

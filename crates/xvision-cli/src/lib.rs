@@ -69,50 +69,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Render a `BacktestResult` JSON's headline numbers per arm.
-    ShowMetrics {
-        #[arg(long)]
-        report: PathBuf,
-    },
     /// Pretty-print a cached `TraderDecision` by cycle_id (SQLite store).
     ShowDecision {
         #[arg(long)]
         cycle_id: Uuid,
         #[arg(long, default_value = "data/store.db")]
         db: PathBuf,
-    },
-    /// Render the headline Markdown report for a backtest run.
-    Report {
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    /// Compute pre-committed metrics (treatment vs baseline) and print as JSON.
-    Metrics {
-        #[arg(long)]
-        report: PathBuf,
-        #[arg(long)]
-        treatment: String,
-        #[arg(long, default_value = "buy_and_hold")]
-        baseline: String,
-        #[arg(long, default_value_t = 1000)]
-        n_resamples: usize,
-        #[arg(long)]
-        block_size: Option<usize>,
-    },
-    /// Print the anti-overfit gate verdict for a treatment vs baseline pair.
-    Gate {
-        #[arg(long)]
-        report: PathBuf,
-        #[arg(long)]
-        treatment: String,
-        #[arg(long, default_value = "buy_and_hold")]
-        baseline: String,
-        #[arg(long, default_value_t = 1000)]
-        n_resamples: usize,
-        #[arg(long)]
-        block_size: Option<usize>,
     },
     /// Manual single-trade smoke test against a live venue.
     /// Builds a synthetic `RiskDecision::Approved` from CLI args and submits
@@ -301,26 +263,8 @@ impl Cli {
         }
 
         match self.command {
-            Command::ShowMetrics { report } => commands::show_metrics::run(report).map_err(Into::into),
             Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
                 .await
-                .map_err(Into::into),
-            Command::Report { input, output } => commands::report::run(input, output).map_err(Into::into),
-            Command::Metrics {
-                report,
-                treatment,
-                baseline,
-                n_resamples,
-                block_size,
-            } => commands::metrics::run_metrics(report, treatment, baseline, n_resamples, block_size)
-                .map_err(Into::into),
-            Command::Gate {
-                report,
-                treatment,
-                baseline,
-                n_resamples,
-                block_size,
-            } => commands::metrics::run_gate(report, treatment, baseline, n_resamples, block_size)
                 .map_err(Into::into),
             Command::FireTrade {
                 venue,
