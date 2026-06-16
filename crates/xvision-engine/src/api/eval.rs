@@ -2286,6 +2286,27 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str)
     )
 }
 
+/// Tool-response cache handle. Enables deterministic backtest re-runs by
+/// serving cached external tool responses (Nansen/Elfa) from the trajectory
+/// store instead of hitting the live network.
+///
+/// `replay = true`  → serve from cache, return Err on miss (loud — never
+///                    silently re-fetches on a miss; missing cache = broken
+///                    recording).
+/// `replay = false` → record path: forward to live tool, then write to cache
+///                    (best-effort; a cache write failure does NOT fail the run).
+///
+/// Production replay wiring (engine-eval replay mode) is a follow-up that
+/// lands alongside `RunTrajectoryMode::Replay`; at present only `record`
+/// (`replay: false`) is built into the `spawn_cline_ctx` path.
+#[derive(Clone)]
+struct ToolHttpCacheHandle {
+    store: std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore>,
+    recording_id: xvision_observability::trajectory::key::RecordingId,
+    /// `true` => replay (serve from cache, no HTTP); `false` => record (fetch then cache).
+    replay: bool,
+}
+
 /// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
 /// Cline agent invokes registry-backed tools (indicators, ohlcv, …) over
 /// the callback socket; this adapter routes them to the same
@@ -2303,6 +2324,22 @@ struct ToolRegistryDispatch {
     as_of: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
     /// Backtest lookahead lag (days). Default `DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS`.
     nansen_lag_days: i64,
+    /// Tool-response cache for deterministic backtest re-runs. `None` => no
+    /// recording/replay (live/forward runs always fetch).
+    tool_cache: Option<ToolHttpCacheHandle>,
+}
+
+/// Compute a stable SHA-256 hash over the canonical JSON of `input`, keyed by
+/// `name`. The canonical form sorts object keys so that `{"b":1,"a":2}` and
+/// `{"a":2,"b":1}` produce the same hash (deterministic across model runs).
+fn canonical_input_hash(name: &str, input: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let canon = crate::autooptimizer::canonicalize_json(input);
+    let mut h = Sha256::new();
+    h.update(name.as_bytes());
+    h.update([0u8]); // NUL separator — prevents name from bleeding into payload
+    h.update(serde_json::to_vec(&canon).unwrap_or_default());
+    format!("{:x}", h.finalize())
 }
 
 fn normalize_callback_asset_for_compare(asset: &str) -> String {
@@ -2365,6 +2402,50 @@ impl ToolDispatch for ToolRegistryDispatch {
         // model-supplied as_of_date — the lookahead-safety invariant).
         let input = self.inject_backtest_as_of_async(name, input).await?;
 
+        // Deterministic replay / record of external (signal) tool responses.
+        if let Some(cache) = &self.tool_cache {
+            if crate::tools::signal_policy::signal_tool_policy(name).is_some() {
+                let hash = canonical_input_hash(name, &input);
+                let as_of_date = input
+                    .get("as_of_date")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if cache.replay {
+                    return match cache
+                        .store
+                        .get_cached_tool_response(&cache.recording_id, name, &hash)
+                        .await
+                    {
+                        Ok(Some(v)) => Ok(v),
+                        Ok(None) => Err(ToolDispatchError::Failed(format!(
+                            "replay: no cached response for {name} (hash {hash}) — \
+                             recording incomplete"
+                        ))),
+                        Err(e) => Err(ToolDispatchError::Failed(format!("replay store error: {e}"))),
+                    };
+                }
+                // Record path: fetch live, then cache before returning.
+                // Best-effort cache write — a write failure must NOT fail the run.
+                let result = self.dispatch_inner(name, input.clone()).await?;
+                let _ = cache
+                    .store
+                    .cache_tool_response(&cache.recording_id, name, &hash, as_of_date.as_deref(), &result)
+                    .await;
+                return Ok(result);
+            }
+        }
+        self.dispatch_inner(name, input).await
+    }
+}
+
+impl ToolRegistryDispatch {
+    /// Forward the call to the real tool registry. Shared by the cache record
+    /// path and the uncached live path.
+    async fn dispatch_inner(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolDispatchError> {
         match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
             Ok(s) => {
                 // Tool outputs are JSON-shaped strings; pass parsed JSON
@@ -2374,9 +2455,7 @@ impl ToolDispatch for ToolRegistryDispatch {
             Err(e) => Err(ToolDispatchError::Failed(format!("{e:#}"))),
         }
     }
-}
 
-impl ToolRegistryDispatch {
     /// For a Nansen tool under `RunMode::Backtest`, overwrite `as_of_date` with
     /// the framework-computed anchor (the model cannot influence the backtest
     /// anchor — lookahead-safety invariant). Live / non-Nansen pass through.
@@ -2486,12 +2565,22 @@ async fn spawn_cline_ctx(
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
     let as_of_guard: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>> =
         Arc::new(tokio::sync::RwLock::new(None));
+    // Build the record-mode cache handle from the minted recording (Task 3.3).
+    // Replay-mode wiring is intentionally deferred — production replay trigger
+    // (RunTrajectoryMode::Replay → replay: true) lands with the engine-eval
+    // replay follow-up; here we only wire the record path.
+    let tool_cache = recording.as_ref().map(|(store, rid, _)| ToolHttpCacheHandle {
+        store: store.clone(),
+        recording_id: rid.clone(),
+        replay: false,
+    });
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
         current_asset: tool_asset_guard.clone(),
         run_mode,
         as_of: as_of_guard.clone(),
         nansen_lag_days: crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS,
+        tool_cache,
     });
     let bus = ctx
         .obs_event_bus
@@ -6040,6 +6129,7 @@ mod tool_registry_dispatch_tests {
             run_mode: mode,
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(as_of)),
             nansen_lag_days: 1,
+            tool_cache: None,
         }
     }
 
@@ -6093,6 +6183,176 @@ mod tool_registry_dispatch_tests {
     }
 
     use xvision_agent_client::ToolDispatch as _;
+
+    // -----------------------------------------------------------------------
+    // Task 3.3 — replay + canonical_input_hash tests
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal in-memory TrajectoryStore suitable for unit tests.
+    /// Mirrors the DDL from `crates/xvision-observability/tests/tool_cache_round_trip.rs`.
+    async fn make_test_store(
+        tmp: &tempfile::TempDir,
+    ) -> std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore> {
+        use sqlx::sqlite::SqlitePoolOptions;
+        use xvision_observability::trajectory::store::TrajectoryStore;
+        use xvision_observability::{BlobStore, RetentionMode};
+
+        let db_path = tmp.path().join("tool_cache_test.db");
+        let url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .expect("open sqlite");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS trajectory_recordings (
+              recording_id       TEXT PRIMARY KEY,
+              schema_version     INTEGER NOT NULL,
+              status             TEXT NOT NULL DEFAULT 'open',
+              key_fingerprint    TEXT NOT NULL UNIQUE,
+              cycle_id           TEXT NOT NULL,
+              slot_role          TEXT NOT NULL,
+              arm_scope          TEXT,
+              simulation_id      TEXT,
+              provider           TEXT NOT NULL,
+              model              TEXT NOT NULL,
+              model_version      TEXT,
+              system_prompt_hash TEXT NOT NULL,
+              recovery_reason    TEXT,
+              created_at         INTEGER NOT NULL,
+              completed_at       INTEGER,
+              expires_at         INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS trajectory_frames (
+              recording_id  TEXT    NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE,
+              slot_role     TEXT    NOT NULL,
+              step_index    INTEGER NOT NULL,
+              frame_index   INTEGER NOT NULL,
+              frame_kind    TEXT    NOT NULL,
+              ts_ms         INTEGER NOT NULL,
+              payload_hash  TEXT    NOT NULL,
+              payload_ref   TEXT,
+              PRIMARY KEY (recording_id, slot_role, step_index, frame_index)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tool_http_cache (
+              recording_id  TEXT NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE,
+              tool_name     TEXT NOT NULL,
+              input_hash    TEXT NOT NULL,
+              as_of_date    TEXT,
+              response_json TEXT NOT NULL,
+              created_at    INTEGER NOT NULL,
+              PRIMARY KEY (recording_id, tool_name, input_hash)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let blob = BlobStore::new(tmp.path().join("blobs"));
+        std::sync::Arc::new(TrajectoryStore::new(pool, blob, RetentionMode::HashOnly))
+    }
+
+    fn make_test_key() -> xvision_observability::trajectory::key::TrajectoryKey {
+        use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
+        TrajectoryKey::builder()
+            .cycle_id(uuid::Uuid::new_v4())
+            .slot_role("trader")
+            .arm_scope(None::<String>)
+            .simulation_id(None::<String>)
+            .provider("anthropic")
+            .model("claude-opus-4-7")
+            .model_version("2026-05")
+            .schema_version(TRAJECTORY_SCHEMA_VERSION)
+            .system_prompt_hash("sys")
+            .user_prompt_hash("usr")
+            .build()
+    }
+
+    /// Replay path: a `ToolRegistryDispatch` with `replay: true` and a seeded
+    /// cache entry must serve the cached response over an EMPTY tool registry
+    /// (a live fetch would fail → proves no HTTP call was made).
+    ///
+    /// Uses `RunMode::Live` so that `inject_backtest_as_of_async` is a no-op
+    /// and the hash over the seed input matches the hash computed in `invoke`
+    /// (a Backtest run would inject an `as_of_date`, changing the hash).
+    /// `nansen_token_screener` is `live: true` so the forward-only gate passes.
+    #[tokio::test]
+    async fn replay_serves_cache_without_invoking_tool() {
+        use super::{canonical_input_hash, ToolHttpCacheHandle, ToolRegistryDispatch};
+        use xvision_agent_client::ToolDispatch as _;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = make_test_store(&tmp).await;
+        let key = make_test_key();
+        let rec = store.begin_recording(&key).await.unwrap();
+
+        let input = serde_json::json!({"asset": "BTC"});
+        let hash = canonical_input_hash("nansen_token_screener", &input);
+        store
+            .cache_tool_response(
+                &rec,
+                "nansen_token_screener",
+                &hash,
+                None,
+                &serde_json::json!({"cached": true}),
+            )
+            .await
+            .unwrap();
+
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            // Live mode: no as_of injection → hash of input is stable and
+            // matches what we seeded above.  nansen_token_screener is live:true
+            // so the forward-only gate passes.  The key claim under test is
+            // that the cached value is served without touching the empty
+            // registry (which would panic on a real dispatch attempt).
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: Some(ToolHttpCacheHandle {
+                store: store.clone(),
+                recording_id: rec.clone(),
+                replay: true,
+            }),
+        };
+
+        let out = d.invoke("nansen_token_screener", input).await.unwrap();
+        assert_eq!(out["cached"], true, "replay must serve the cached response");
+    }
+
+    /// `canonical_input_hash` must be key-order-independent: the same logical
+    /// object with shuffled keys must hash identically.
+    #[test]
+    fn canonical_input_hash_is_deterministic_across_key_order() {
+        use super::canonical_input_hash;
+        let a = serde_json::json!({"asset": "BTC", "limit": 10, "as_of_date": "2024-03-14"});
+        let b = serde_json::json!({"limit": 10, "as_of_date": "2024-03-14", "asset": "BTC"});
+        assert_eq!(
+            canonical_input_hash("nansen_token_screener", &a),
+            canonical_input_hash("nansen_token_screener", &b),
+            "key order must not affect the hash"
+        );
+        // Different tool name → different hash even for same payload.
+        assert_ne!(
+            canonical_input_hash("nansen_token_screener", &a),
+            canonical_input_hash("elfa_trending", &a),
+            "tool name must be part of the hash"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
