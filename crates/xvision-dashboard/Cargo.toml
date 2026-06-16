@@ -57,6 +57,9 @@ reqwest         = { workspace = true }
 alloy           = { workspace = true }
 base64          = "0.22"
 url             = "2"
+# Per-IP token-bucket rate limiter for the public x402 routes (axum 0.7 + governor 0.6 compat).
+tower_governor  = { version = "0.4", features = ["axum"] }
+governor        = "0.6"
 
 [dev-dependencies]
 axum-test = "16"

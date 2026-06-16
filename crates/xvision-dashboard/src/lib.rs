@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod chain_config;
+pub mod ratelimit;
 pub mod chat_unified;
 pub mod cli_jobs;
 pub mod embed;
