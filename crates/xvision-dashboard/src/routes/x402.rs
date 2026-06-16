@@ -315,6 +315,9 @@ pub async fn settle_from_header(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| DashboardError::BadRequest("missing X-PAYMENT header".into()))?;
     let decoded = decode_x_payment(hdr)?;
+    // Capture pre-flight check inputs before `decoded.authorization` is moved.
+    let payment_value = decoded.listing_value.clone();
+    let valid_before = decoded.authorization.valid_before;
 
     // Build the relay BuyBody: non-custodial — recipient == payer (M-2 guard).
     let body = crate::routes::marketplace::BuyBody {
@@ -333,6 +336,24 @@ pub async fn settle_from_header(
         .and_then(|c| c.marketplace_addresses.clone())
         .ok_or_else(|| DashboardError::ServiceUnavailable("marketplace not configured".into()))?;
     let net = format!("eip155:{}", chain.chain_id);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Pre-flight: fetch the on-chain listing price and reject underpayment/expiry
+    // BEFORE submitting (fail-fast 400, saves relayer gas). The contract enforces
+    // price on-chain too, but this gives x402 clients a clean pre-settle verdict.
+    let read_driver = xvision_marketplace::adapter::Erc8004MantleDriver::new(
+        addrs.clone(),
+        chain.rpc_url.clone(),
+        chain.chain_id,
+    );
+    let view = read_driver
+        .fetch_listing(alloy::primitives::U256::from(listing_id))
+        .await
+        .map_err(DashboardError::from)?;
+    check_terms(&payment_value, &view.price_usdc.to_string(), valid_before, now)?;
 
     // Build the signer-backed driver and settle.
     let driver = xvision_marketplace::adapter::Erc8004MantleDriver::with_signer(
@@ -345,10 +366,7 @@ pub async fn settle_from_header(
 
     // Build the response body.
     let tx = format!("0x{:x}", receipt.tx_hash);
-    let paid_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let paid_at = now;
 
     let mut resp = Json(crate::routes::marketplace::BuyOut {
         tx_hash: tx.clone(),
