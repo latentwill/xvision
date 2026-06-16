@@ -207,6 +207,32 @@ with the configured Alpaca paper account.
   export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # or stay on api.openai.com/v1
   ```
 
+### M9b. Nansen + Elfa data-tool API keys (optional — signal tools)
+
+- **What:** two external data providers the LLM trader can call as tools —
+  **Nansen** (on-chain smart-money flow / token screener / flow intel) and
+  **Elfa** (crypto-social smart mentions / trending tokens / trending narratives).
+- **Forward-only rule:** Elfa is **forbidden in backtest** (live/forward runs
+  only); Nansen runs in both modes but in backtest is anchored to the simulated
+  clock (lookahead-safe `/v1beta1` point-in-time API, `as_of_date` floored to the
+  last completed UTC day minus `nansen_lookahead_lag_days`, default 1 — the model
+  cannot override it). Enforced at the tool-dispatch chokepoint + the advertised
+  tool list.
+- **Save:** `op://Personal/xvision-nansen/api_key`, `op://Personal/xvision-elfa/api_key`.
+- **Export (add to `.op_env`):**
+  ```bash
+  export NANSEN_API_KEY=$(op read 'op://Personal/xvision-nansen/api_key')
+  export ELFA_API_KEY=$(op read 'op://Personal/xvision-elfa/api_key')
+  ```
+- **Configure:** Dashboard → **Settings → Tools** (or `PUT /api/settings/data-tools`).
+  Each entry stores the env-var *name* (`api_key_env`), never the secret, plus
+  `base_url`, `enabled`, optional `budget_credits_per_run` (per-run credit cap —
+  the tool degrades to `{available:false}` once exhausted, never blocking a cycle),
+  and `nansen_lookahead_lag_days`. Tools are opt-in per strategy via the slot's
+  `allowed_tools` (the starter trader/intern templates list them).
+- **Verify endpoints/addresses before live use:**
+  `docs/superpowers/specs/2026-06-16-nansen-elfa-grounding-todo.md`.
+
 ### M10. Download Qwen3-32B GGUF locally
 
 - **What:** download the Q4_K_M GGUF for the dev loop and Q8_0 for the headline.
