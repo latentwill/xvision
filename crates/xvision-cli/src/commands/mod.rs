@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod asset;
 pub mod bars;
+pub mod config;
 pub mod dashboard;
 pub mod doctor;
 pub mod eod;

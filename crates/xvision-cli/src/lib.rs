@@ -287,6 +287,12 @@ pub enum Command {
         #[arg(long, default_value_t = 1usize)]
         n: usize,
     },
+    /// Get or set operator config keys (`autoresearch.*`).
+    ///
+    /// Examples:
+    ///   xvn config get autoresearch.promotion_epsilon
+    ///   xvn config set autoresearch.promotion_epsilon 0.02
+    Config(commands::config::ConfigCmd),
 }
 
 impl Cli {
@@ -409,6 +415,7 @@ impl Cli {
             } => commands::last::run(xvn_home, strategy, json, n)
                 .await
                 .map_err(Into::into),
+            Command::Config(cmd) => commands::config::run(cmd).await.map_err(Into::into),
         }
     }
 }

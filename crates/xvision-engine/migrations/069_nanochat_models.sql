@@ -55,3 +55,11 @@ CREATE TABLE IF NOT EXISTS autoresearch_experiments (
     description      TEXT NOT NULL,
     created_at       TEXT NOT NULL
 );
+
+-- Global operator-settable key-value config.
+-- Keys are dot-namespaced strings (e.g. "autoresearch.promotion_epsilon").
+CREATE TABLE IF NOT EXISTS xvn_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

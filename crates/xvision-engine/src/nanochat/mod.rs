@@ -6,6 +6,7 @@
 //! Optimizer page). See the terminology lock in
 //! `docs/superpowers/specs/2026-06-13-nanochat-filter-agent.md`.
 
+pub mod config_store;
 pub mod label_config;
 pub mod store;
 pub mod validate;

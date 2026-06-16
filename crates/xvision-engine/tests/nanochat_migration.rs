@@ -9,7 +9,7 @@ async fn nanochat_tables_exist_after_migration() {
         .await
         .expect("open ApiContext must apply all migrations including 069");
 
-    for table in &["trained_models", "autoresearch_runs", "autoresearch_experiments"] {
+    for table in &["trained_models", "autoresearch_runs", "autoresearch_experiments", "xvn_config"] {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
         )
