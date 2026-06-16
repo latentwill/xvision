@@ -8326,8 +8326,12 @@ dependencies = [
 name = "xvision-mcp"
 version = "0.21.0"
 dependencies = [
+ "alloy",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
+ "getrandom 0.2.17",
+ "reqwest",
  "rmcp",
  "schemars 1.2.1",
  "serde",
@@ -8340,6 +8344,7 @@ dependencies = [
  "ulid",
  "xvision-data",
  "xvision-engine",
+ "xvision-marketplace",
  "xvision-memory",
 ]
 
