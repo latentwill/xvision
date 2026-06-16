@@ -1421,7 +1421,8 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let skip_preflight = req.skip_preflight;
     let (dispatch_arc, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools_arc = Arc::new(build_tool_registry(ctx));
+    let sig_cfg = resolve_signal_tool_config(ctx);
+    let tools_arc = Arc::new(build_tool_registry(ctx, &sig_cfg));
     let run = run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await?;
     let store = RunStore::new(ctx.db.clone());
     write_preflight_supervisor_notes(&store, &run.id, &provider_names, skip_preflight).await;
@@ -2727,32 +2728,15 @@ async fn spawn_cline_ctx(
         recording_id: rid.clone(),
         replay: false,
     });
-    // Resolve signal-tool config (lag + budgets) from enabled data-tool entries.
+    // Read lag + budgets from the SignalToolConfig already embedded in the
+    // registry by build_tool_registry — no second xvn.toml parse (im2r.6).
     let (nansen_lag_days, nansen_budget_arc, elfa_budget_arc) = {
-        let data_tools: Vec<xvision_core::config::DataToolEntry> = std::fs::read_to_string(runtime_config_path(ctx))
-            .ok()
-            .and_then(|s| toml::from_str::<xvision_core::config::RuntimeConfig>(&s).ok())
-            .map(|cfg| cfg.data_tools)
+        let sig = tools
+            .signal_cfg
+            .as_deref()
+            .cloned()
             .unwrap_or_default();
-
-        let nansen_entry = data_tools
-            .iter()
-            .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled);
-        let elfa_entry = data_tools
-            .iter()
-            .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled);
-
-        let lag = nansen_entry
-            .and_then(|e| e.nansen_lookahead_lag_days)
-            .map(|d| d as i64)
-            .unwrap_or(crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS);
-        let nansen_b = nansen_entry
-            .and_then(|e| e.budget_credits_per_run)
-            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)));
-        let elfa_b = elfa_entry
-            .and_then(|e| e.budget_credits_per_run)
-            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)));
-        (lag, nansen_b, elfa_b)
+        (sig.nansen_lag_days(), sig.nansen_budget_arc(), sig.elfa_budget_arc())
     };
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
@@ -2909,32 +2893,66 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     xvision_core::config::runtime_config_path(&ctx.xvn_home)
 }
 
-/// Build a `ToolRegistry` with builtins plus any enabled signal tools
-/// configured in `xvn.toml` (Nansen only for now; Elfa added in a later
-/// task). Best-effort: config-load failures fall back to builtins-only so
-/// a missing or malformed `xvn.toml` never prevents an eval run from
-/// starting. The Nansen API key is resolved from the env var named by
-/// `DataToolEntry.api_key_env`; an empty or missing var is silently skipped
-/// (the tool is simply not registered).
-fn build_tool_registry(ctx: &ApiContext) -> ToolRegistry {
-    let mut registry = ToolRegistry::default_with_builtins();
+/// Parse `xvn.toml` once and return the resolved signal-tool configuration
+/// (enabled Nansen + Elfa entries). Best-effort: returns an empty/default
+/// `SignalToolConfig` when the config file is missing or malformed so a
+/// missing `xvn.toml` never prevents a run from starting.
+///
+/// Callers must invoke this ONCE per run and pass the result to both
+/// `build_tool_registry` and `spawn_cline_ctx` so `xvn.toml` is parsed
+/// only once per run (xvision-im2r.6).
+fn resolve_signal_tool_config(ctx: &ApiContext) -> crate::tools::signal_policy::SignalToolConfig {
+    /// Minimal TOML-deserializable wrapper that only reads `data_tools`, so
+    /// the full `RuntimeConfig` (with its required `runtime`/`trader`/`backtest`
+    /// sections) doesn't have to be valid.  Used solely inside
+    /// `resolve_signal_tool_config`.
+    #[derive(serde::Deserialize, Default)]
+    struct DataToolsOnly {
+        #[serde(default)]
+        data_tools: Vec<xvision_core::config::DataToolEntry>,
+    }
 
     let cfg_path = runtime_config_path(ctx);
-    let cfg = match std::fs::read_to_string(&cfg_path)
+    let data_tools: Vec<xvision_core::config::DataToolEntry> = std::fs::read_to_string(&cfg_path)
         .ok()
-        .and_then(|s| toml::from_str::<xvision_core::config::RuntimeConfig>(&s).ok())
-    {
-        Some(c) => c,
-        None => return registry,
-    };
+        .and_then(|s| toml::from_str::<DataToolsOnly>(&s).ok())
+        .map(|c| c.data_tools)
+        .unwrap_or_default();
 
-    // Locate the first enabled Nansen entry.
-    let nansen_entry = cfg
-        .data_tools
+    let nansen_entry = data_tools
         .iter()
-        .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled);
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled)
+        .cloned();
+    let elfa_entry = data_tools
+        .iter()
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled)
+        .cloned();
 
-    let nansen_client = nansen_entry.and_then(|entry| {
+    crate::tools::signal_policy::SignalToolConfig {
+        nansen_entry,
+        elfa_entry,
+    }
+}
+
+/// Build a `ToolRegistry` with builtins plus any enabled signal tools
+/// configured in `xvn.toml`. Accepts a pre-resolved `SignalToolConfig` so the
+/// config file is not read again (xvision-im2r.6). Best-effort: a missing or
+/// malformed `xvn.toml` is handled upstream in `resolve_signal_tool_config`,
+/// which returns an empty config so no signal tools are registered. The Nansen
+/// and Elfa API keys are resolved from the env vars named by
+/// `DataToolEntry.api_key_env`; an empty or missing var silently skips the
+/// tool.
+///
+/// The resolved `SignalToolConfig` is stored on the returned `ToolRegistry` so
+/// `spawn_cline_ctx` can read lag/budgets without re-parsing the config.
+fn build_tool_registry(
+    ctx: &ApiContext,
+    sig_cfg: &crate::tools::signal_policy::SignalToolConfig,
+) -> ToolRegistry {
+    let _ = ctx; // retained for future per-workspace overrides
+    let mut registry = ToolRegistry::default_with_builtins();
+
+    let nansen_client = sig_cfg.nansen_entry.as_ref().and_then(|entry| {
         let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
         if api_key.is_empty() {
             return None;
@@ -2946,13 +2964,7 @@ fn build_tool_registry(ctx: &ApiContext) -> ToolRegistry {
         )))
     });
 
-    // Locate the first enabled Elfa entry.
-    let elfa_entry = cfg
-        .data_tools
-        .iter()
-        .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled);
-
-    let elfa_client = elfa_entry.and_then(|entry| {
+    let elfa_client = sig_cfg.elfa_entry.as_ref().and_then(|entry| {
         let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
         if api_key.is_empty() {
             return None;
@@ -2965,6 +2977,9 @@ fn build_tool_registry(ctx: &ApiContext) -> ToolRegistry {
     });
 
     registry.register_signal_tools(nansen_client, elfa_client);
+    // Store the resolved config on the registry so `spawn_cline_ctx` can read
+    // lag/budgets without re-parsing `xvn.toml` (xvision-im2r.6).
+    registry.signal_cfg = Some(std::sync::Arc::new(sig_cfg.clone()));
 
     registry
 }
@@ -4524,7 +4539,11 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
 
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools = Arc::new(build_tool_registry(ctx));
+    // Resolve signal-tool config once; pass to both build_tool_registry and
+    // spawn_cline_ctx (via the registry) so xvn.toml is parsed only once per
+    // run start (xvision-im2r.6).
+    let sig_cfg = resolve_signal_tool_config(ctx);
+    let tools = Arc::new(build_tool_registry(ctx, &sig_cfg));
 
     // Other entry point (`run_with_deps_in_progress`) — observability
     // wiring is opt-in via the same ApiContext bus. The emitter is
@@ -6993,6 +7012,104 @@ mod broker_label_for_tests {
                 "nansen_token_screener".to_string(),
             ]),
             "all six signal tools recognised and sorted"
+        );
+    }
+
+    // --- resolve_signal_tool_config (xvision-im2r.6) -------------------------
+
+    /// Verify `resolve_signal_tool_config` returns the enabled entries and that
+    /// the resolved config is stored in the registry so `spawn_cline_ctx` reads
+    /// from it rather than parsing `xvn.toml` a second time.
+    #[tokio::test]
+    async fn signal_tool_config_resolved_once_and_stored_in_registry() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Config lives at xvn_home/config/default.toml (see runtime_config_path).
+        std::fs::create_dir_all(dir.path().join("config")).unwrap();
+        let cfg_path = dir.path().join("config").join("default.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        write!(
+            f,
+            r#"
+[[data_tools]]
+kind = "nansen"
+enabled = true
+base_url = "https://api.nansen.ai"
+api_key_env = "NANSEN_API_KEY"
+budget_credits_per_run = 10
+nansen_lookahead_lag_days = 2
+
+[[data_tools]]
+kind = "elfa"
+enabled = true
+base_url = "https://api.elfa.ai"
+api_key_env = "ELFA_API_KEY"
+budget_credits_per_run = 5
+"#
+        )
+        .unwrap();
+
+        let ctx = crate::api::ApiContext::open(
+            dir.path(),
+            crate::api::Actor::Cli { user: "test".into() },
+        )
+        .await
+        .unwrap();
+
+        let sig_cfg = super::resolve_signal_tool_config(&ctx);
+
+        // Nansen entry parsed correctly.
+        assert!(sig_cfg.nansen_entry.is_some(), "nansen entry must be present");
+        let n = sig_cfg.nansen_entry.as_ref().unwrap();
+        assert_eq!(n.base_url, "https://api.nansen.ai");
+        assert_eq!(sig_cfg.nansen_lag_days(), 2);
+        assert!(sig_cfg.nansen_budget_arc().is_some());
+
+        // Elfa entry parsed correctly.
+        assert!(sig_cfg.elfa_entry.is_some(), "elfa entry must be present");
+        let e = sig_cfg.elfa_entry.as_ref().unwrap();
+        assert_eq!(e.base_url, "https://api.elfa.ai");
+        assert!(sig_cfg.elfa_budget_arc().is_some());
+
+        // The registry stores a clone of the SAME resolved config — spawn_cline_ctx
+        // reads from here instead of re-parsing xvn.toml.
+        let registry = super::build_tool_registry(&ctx, &sig_cfg);
+        let stored = registry
+            .signal_cfg
+            .as_ref()
+            .expect("signal_cfg must be stored in registry");
+        assert_eq!(stored.nansen_lag_days(), sig_cfg.nansen_lag_days());
+        assert_eq!(
+            stored.nansen_entry.as_ref().map(|e| e.base_url.as_str()),
+            sig_cfg.nansen_entry.as_ref().map(|e| e.base_url.as_str()),
+        );
+    }
+
+    /// When no xvn.toml exists, resolve_signal_tool_config returns an empty/default config
+    /// and build_tool_registry succeeds (builtins only, no signal tools).
+    #[tokio::test]
+    async fn signal_tool_config_empty_when_no_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::api::ApiContext::open(
+            dir.path(),
+            crate::api::Actor::Cli { user: "test".into() },
+        )
+        .await
+        .unwrap();
+        let sig_cfg = super::resolve_signal_tool_config(&ctx);
+        assert!(sig_cfg.nansen_entry.is_none());
+        assert!(sig_cfg.elfa_entry.is_none());
+        assert_eq!(
+            sig_cfg.nansen_lag_days(),
+            crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS
+        );
+        let registry = super::build_tool_registry(&ctx, &sig_cfg);
+        // No signal tools registered when config is absent.
+        let names: Vec<String> = registry.list().iter().map(|n| n.as_str().to_string()).collect();
+        assert!(
+            names.iter().all(|n| !n.starts_with("nansen_") && !n.starts_with("elfa_")),
+            "no signal tools expected without config: {names:?}"
         );
     }
 }

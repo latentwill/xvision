@@ -140,10 +140,7 @@ mod tests {
 
     #[test]
     fn built_in_tool_descriptors_does_not_include_nansen() {
-        let names: Vec<String> = built_in_tool_descriptors()
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
+        let names: Vec<String> = built_in_tool_descriptors().into_iter().map(|d| d.name).collect();
         assert!(
             !names.iter().any(|n| n.starts_with("nansen_")),
             "built_in_tool_descriptors must not include nansen tools, got: {names:?}"
@@ -156,12 +153,18 @@ mod tests {
 
 pub struct ToolRegistry {
     tools: HashMap<ToolName, Arc<dyn Tool>>,
+    /// Resolved signal-tool configuration, populated by `build_tool_registry`
+    /// once per run start and read by `spawn_cline_ctx` so that `xvn.toml` is
+    /// parsed exactly once per run (xvision-im2r.6). `None` in test registries
+    /// and the builtins-only registry.
+    pub signal_cfg: Option<Arc<signal_policy::SignalToolConfig>>,
 }
 
 impl ToolRegistry {
     pub fn empty() -> Self {
         Self {
             tools: HashMap::new(),
+            signal_cfg: None,
         }
     }
 

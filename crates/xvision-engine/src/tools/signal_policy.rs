@@ -89,6 +89,48 @@ pub fn is_nansen_tool(name: &str) -> bool {
     NANSEN_TOOLS.contains(&name)
 }
 
+/// Resolved per-run signal-tool configuration: the enabled Nansen and Elfa
+/// entries from `xvn.toml`, already parsed and ready to use.  Built once per
+/// run start by `build_tool_registry`; stored in the `ToolRegistry` so
+/// `spawn_cline_ctx` can read lag/budgets from the registry it already holds
+/// rather than re-parsing `xvn.toml` (xvision-im2r.6).
+#[derive(Debug, Clone, Default)]
+pub struct SignalToolConfig {
+    /// First enabled Nansen entry, or `None` when Nansen is not configured.
+    pub nansen_entry: Option<xvision_core::config::DataToolEntry>,
+    /// First enabled Elfa entry, or `None` when Elfa is not configured.
+    pub elfa_entry: Option<xvision_core::config::DataToolEntry>,
+}
+
+impl SignalToolConfig {
+    /// Lookahead lag from the Nansen entry, or the engine default.
+    pub fn nansen_lag_days(&self) -> i64 {
+        self.nansen_entry
+            .as_ref()
+            .and_then(|e| e.nansen_lookahead_lag_days)
+            .map(|d| d as i64)
+            .unwrap_or(DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS)
+    }
+
+    /// Per-run Nansen credit budget as a fresh `AtomicU32` Arc, or `None` if
+    /// uncapped.
+    pub fn nansen_budget_arc(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU32>> {
+        self.nansen_entry
+            .as_ref()
+            .and_then(|e| e.budget_credits_per_run)
+            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)))
+    }
+
+    /// Per-run Elfa credit budget as a fresh `AtomicU32` Arc, or `None` if
+    /// uncapped.
+    pub fn elfa_budget_arc(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU32>> {
+        self.elfa_entry
+            .as_ref()
+            .and_then(|e| e.budget_credits_per_run)
+            .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n)))
+    }
+}
+
 /// Drop any tool whose forward-only policy forbids it in `mode`. Unrestricted
 /// built-ins (policy `None`) always pass. This is the advertisement filter:
 /// the trader never even sees a tool it isn't allowed to call this run.
@@ -171,12 +213,21 @@ mod tests {
     #[test]
     fn tool_provider_maps_correctly() {
         use super::{tool_provider, SignalProvider};
-        assert_eq!(tool_provider("nansen_smart_money_flow"), Some(SignalProvider::Nansen));
-        assert_eq!(tool_provider("nansen_token_screener"), Some(SignalProvider::Nansen));
+        assert_eq!(
+            tool_provider("nansen_smart_money_flow"),
+            Some(SignalProvider::Nansen)
+        );
+        assert_eq!(
+            tool_provider("nansen_token_screener"),
+            Some(SignalProvider::Nansen)
+        );
         assert_eq!(tool_provider("nansen_flow_intel"), Some(SignalProvider::Nansen));
         assert_eq!(tool_provider("elfa_smart_mentions"), Some(SignalProvider::Elfa));
         assert_eq!(tool_provider("elfa_trending_tokens"), Some(SignalProvider::Elfa));
-        assert_eq!(tool_provider("elfa_trending_narratives"), Some(SignalProvider::Elfa));
+        assert_eq!(
+            tool_provider("elfa_trending_narratives"),
+            Some(SignalProvider::Elfa)
+        );
         assert_eq!(tool_provider("ohlcv"), None);
         assert_eq!(tool_provider("submit_decision"), None);
         assert_eq!(tool_provider("unknown_tool"), None);
