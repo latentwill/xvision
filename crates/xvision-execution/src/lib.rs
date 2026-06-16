@@ -10,6 +10,7 @@ pub mod broker_surface;
 pub mod bybit;
 pub mod byreal;
 pub mod byreal_clmm;
+pub mod byreal_spot;
 pub mod executor;
 pub mod hyperliquid;
 pub mod orderly;
@@ -23,6 +24,9 @@ pub use broker_surface::{
 pub use bybit::{BybitPaperSurface, BybitTestnetClient, MockBybitClient};
 pub use byreal::{
     ByrealLiveSurface, ByrealPerpsApi, ByrealPerpsExecutor, ByrealPosition, ByrealSide, SubprocessByrealApi,
+};
+pub use byreal_spot::{
+    ByrealSpotApi, ByrealSpotMode, ByrealSpotSurface, SubprocessByrealSpotApi, SwapResult,
 };
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use hyperliquid::HyperliquidSurface;

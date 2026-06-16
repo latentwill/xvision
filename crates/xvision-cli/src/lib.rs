@@ -179,6 +179,27 @@ pub enum Command {
         #[arg(long)]
         xvn_home: Option<PathBuf>,
     },
+    /// One-shot gated Solana-spot swap via byreal-cli (curated SPL + xStocks).
+    /// Defaults to a no-funds `--dry-run` preview; `--i-understand-real-money`
+    /// executes a real swap (kill-switch checked first).
+    Spot {
+        /// buy | sell
+        #[arg(long)]
+        side: String,
+        /// Curated ticker (e.g. SOL, JUP, AAPLx). Resolved via byreal_spot_assets.toml.
+        #[arg(long)]
+        symbol: String,
+        /// USD notional to swap.
+        #[arg(long)]
+        amount: f64,
+        /// Max slippage in basis points (capped at 200).
+        #[arg(long, default_value_t = 100)]
+        slippage: u32,
+        #[arg(long, default_value_t = false)]
+        i_understand_real_money: bool,
+        #[arg(long)]
+        xvn_home: Option<PathBuf>,
+    },
     // AbCompare removed — use `xvn eval run` instead.
     /// Strategy authoring (create / validate / ls / show / templates / run).
     Strategy(commands::strategy::StrategyCmd),
@@ -336,6 +357,22 @@ impl Cli {
             } => {
                 let home = commands::home::resolve_xvn_home(xvn_home).map_err(crate::exit::CliError::from)?;
                 commands::venue::close_position(venue, asset, i_understand_real_money, home)
+                    .await
+                    .map_err(Into::into)
+            }
+            Command::Spot {
+                side,
+                symbol,
+                amount,
+                slippage,
+                i_understand_real_money,
+                xvn_home,
+            } => {
+                let home = commands::home::resolve_xvn_home(xvn_home).map_err(crate::exit::CliError::from)?;
+                let side: commands::spot::SpotSide = side
+                    .parse()
+                    .map_err(|e: String| crate::exit::CliError::from(anyhow::anyhow!(e)))?;
+                commands::spot::run(side, symbol, amount, slippage, i_understand_real_money, home)
                     .await
                     .map_err(Into::into)
             }

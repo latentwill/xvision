@@ -28,6 +28,7 @@ pub mod run;
 pub mod scenario;
 pub mod show_decision;
 pub mod show_metrics;
+pub mod spot;
 pub mod store_cmd;
 pub mod strategies;
 pub mod strategy;

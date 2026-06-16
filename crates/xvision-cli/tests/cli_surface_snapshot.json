@@ -2894,6 +2894,16 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "spot"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -5607,6 +5617,23 @@
       "mutates": false,
       "path": [
         "show-metrics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--amount",
+        "--help",
+        "--i-understand-real-money",
+        "--side",
+        "--slippage",
+        "--symbol",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "spot"
       ]
     },
     {
