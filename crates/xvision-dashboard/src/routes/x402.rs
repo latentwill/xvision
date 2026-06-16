@@ -103,8 +103,14 @@ pub fn decode_x_payment(header: &str) -> Result<DecodedPayment, DashboardError> 
             from: a.from.clone(),
             to: a.to,
             value: a.value,
-            valid_after: a.valid_after.parse().unwrap_or(0),
-            valid_before: a.valid_before.parse().unwrap_or(0),
+            valid_after: a
+                .valid_after
+                .parse()
+                .map_err(|_| DashboardError::BadRequest("validAfter must be a u64 decimal".into()))?,
+            valid_before: a
+                .valid_before
+                .parse()
+                .map_err(|_| DashboardError::BadRequest("validBefore must be a u64 decimal".into()))?,
             nonce: a.nonce,
             v,
             r,
@@ -182,5 +188,32 @@ mod tests {
         let hdr = base64::engine::general_purpose::STANDARD.encode(json.to_string());
         let decoded = decode_x_payment(&hdr).unwrap();
         assert_eq!(decoded.listing_value, "49000000");
+        assert_eq!(decoded.from, "0x1111111111111111111111111111111111111111");
+        // 65-byte sig split: r=bytes[0..32], s=bytes[32..64], v=byte 64 (0x1b=27).
+        assert_eq!(decoded.authorization.v, 27);
+        assert_eq!(
+            decoded.authorization.r,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(decoded.authorization.s, format!("0x{}", "00".repeat(32)));
+        assert_eq!(decoded.authorization.valid_before, 9_999_999_999);
+    }
+
+    #[test]
+    fn decode_x_payment_rejects_bad_validbefore() {
+        let json = serde_json::json!({
+            "payload": {
+                "authorization": {
+                    "from":"0x1111111111111111111111111111111111111111",
+                    "to":"0x2222222222222222222222222222222222222222",
+                    "value":"49000000","validAfter":"0","validBefore":"notanumber",
+                    "nonce":"0x33"
+                },
+                "signature": format!("0x{}1b", "00".repeat(64))
+            }
+        });
+        use base64::Engine;
+        let hdr = base64::engine::general_purpose::STANDARD.encode(json.to_string());
+        assert!(decode_x_payment(&hdr).is_err());
     }
 }
