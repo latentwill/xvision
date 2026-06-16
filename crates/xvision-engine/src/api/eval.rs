@@ -334,6 +334,12 @@ pub struct RunDetail {
     pub filter_events: Vec<FilterEventV1>,
     #[serde(default)]
     pub filter_summaries: Vec<FilterSummary>,
+    /// Distinct signal tool names (Nansen + Elfa) actually called during this
+    /// run, sorted alphabetically. `None` when no signal tools were called or
+    /// when the trace data is unavailable (old runs, missing agent_runs rows).
+    /// Drives the "signals used" chip row in the cycle-detail UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signals_used: Option<Vec<String>>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1112,13 +1118,61 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     enrich_run_summary_metadata(ctx, &mut summary).await;
     summary.filter_summaries = filter_summaries.clone();
 
+    // Best-effort: load signal tools from the observability trace. Returns
+    // None if the run predates the agent_runs trace path or called no signals.
+    let signals_used = load_signals_used(&ctx.db, id).await;
+
     Ok(RunDetail {
         summary,
         decisions,
         equity_curve,
         filter_events,
         filter_summaries,
+        signals_used,
     })
+}
+
+/// Derive the distinct set of signal tool names (Nansen + Elfa) from a slice
+/// of raw tool names (as recorded in `tool_calls.tool_name`). Returns `None`
+/// when no signal tools are present so the field is omitted from the JSON.
+/// The result is sorted alphabetically so the output is deterministic.
+pub fn signals_used_from_tool_names(tool_names: &[String]) -> Option<Vec<String>> {
+    let mut seen: std::collections::HashSet<String> = tool_names
+        .iter()
+        .filter(|n| crate::tools::signal_policy::signal_tool_policy(n.as_str()).is_some())
+        .cloned()
+        .collect();
+    if seen.is_empty() {
+        return None;
+    }
+    let mut result: Vec<String> = seen.drain().collect();
+    result.sort();
+    Some(result)
+}
+
+/// Load the distinct signal tool names called for an eval run from the
+/// `tool_calls` table (via the `agent_runs → spans` join path).
+/// Returns `None` on any error or when no signal tools were called.
+/// Best-effort: a missing/empty trace is not an error.
+async fn load_signals_used(pool: &sqlx::SqlitePool, eval_run_id: &str) -> Option<Vec<String>> {
+    let rows: Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT DISTINCT tc.tool_name \
+         FROM tool_calls tc \
+         JOIN spans s ON s.id = tc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => {
+            let names: Vec<String> = rows.into_iter().map(|(n,)| n).collect();
+            signals_used_from_tool_names(&names)
+        }
+        Err(_) => None,
+    }
 }
 
 async fn enrich_run_summary_metadata(ctx: &ApiContext, summary: &mut RunSummary) {
@@ -6666,6 +6720,74 @@ mod broker_label_for_tests {
             broker_label_for(LiveVenue::Hyperliquid, None, None, Some("testnet")),
             VenueLabel::Testnet,
             "Hyperliquid + 'testnet' → Testnet"
+        );
+    }
+
+    // --- signals_used_from_tool_names (Task 6.3 backend) ---------------------
+
+    /// Signal tools are collected, deduplicated, and sorted. Non-signal tools
+    /// (ohlcv, submit_decision) are excluded.
+    #[test]
+    fn signals_used_collects_distinct_signal_tools() {
+        let names: Vec<String> = vec![
+            "ohlcv".into(),
+            "nansen_smart_money_flow".into(),
+            "nansen_smart_money_flow".into(), // duplicate → deduped
+            "elfa_smart_mentions".into(),
+            "submit_decision".into(),
+        ];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(
+            result,
+            Some(vec![
+                "elfa_smart_mentions".to_string(),
+                "nansen_smart_money_flow".to_string(),
+            ]),
+            "signal tools collected, deduped, sorted; non-signal tools excluded"
+        );
+    }
+
+    /// When only non-signal tools are present the result is `None`.
+    #[test]
+    fn signals_used_none_when_no_signal_tools() {
+        let names: Vec<String> = vec!["ohlcv".into(), "submit_decision".into()];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(
+            result, None,
+            "no signal tools → None (field omitted from JSON)"
+        );
+    }
+
+    /// Empty input also yields `None`.
+    #[test]
+    fn signals_used_none_when_empty() {
+        let result = super::signals_used_from_tool_names(&[]);
+        assert_eq!(result, None);
+    }
+
+    /// All six signal tools are recognised.
+    #[test]
+    fn signals_used_all_six_signal_tools_recognised() {
+        let names: Vec<String> = vec![
+            "nansen_smart_money_flow".into(),
+            "nansen_token_screener".into(),
+            "nansen_flow_intel".into(),
+            "elfa_smart_mentions".into(),
+            "elfa_trending_tokens".into(),
+            "elfa_trending_narratives".into(),
+        ];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(
+            result,
+            Some(vec![
+                "elfa_smart_mentions".to_string(),
+                "elfa_trending_narratives".to_string(),
+                "elfa_trending_tokens".to_string(),
+                "nansen_flow_intel".to_string(),
+                "nansen_smart_money_flow".to_string(),
+                "nansen_token_screener".to_string(),
+            ]),
+            "all six signal tools recognised and sorted"
         );
     }
 }
