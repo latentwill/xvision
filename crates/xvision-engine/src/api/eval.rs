@@ -2327,6 +2327,15 @@ struct ToolRegistryDispatch {
     /// Tool-response cache for deterministic backtest re-runs. `None` => no
     /// recording/replay (live/forward runs always fetch).
     tool_cache: Option<ToolHttpCacheHandle>,
+    /// Per-run signal-tool credit budget (D8). `None` => uncapped. Decremented
+    /// on each real signal-tool fetch; when it reaches 0, further signal calls
+    /// short-circuit with a `{available:false,reason:"budget exhausted"}` value.
+    budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+}
+
+/// Return a degrade value matching the signal tools' `Ok(json!({"available":false,...}))` shape.
+fn signal_degrade(reason: &str) -> serde_json::Value {
+    serde_json::json!({ "available": false, "reason": reason })
 }
 
 /// Compute a stable SHA-256 hash over the canonical JSON of `input`, keyed by
@@ -2401,6 +2410,24 @@ impl ToolDispatch for ToolRegistryDispatch {
         // Anchor Nansen backtest calls to the simulated clock (overwrites any
         // model-supplied as_of_date — the lookahead-safety invariant).
         let input = self.inject_backtest_as_of_async(name, input).await?;
+
+        // D8: per-run credit budget for signal tools.
+        let is_signal = crate::tools::signal_policy::signal_tool_policy(name).is_some();
+        if is_signal {
+            if let Some(budget) = &self.budget {
+                if budget.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                    return Ok(signal_degrade("budget exhausted"));
+                }
+                // Consume one credit for a live/record fetch (replay is free).
+                if !self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false) {
+                    let _ = budget.fetch_update(
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                        |v| Some(v.saturating_sub(1)),
+                    );
+                }
+            }
+        }
 
         // Deterministic replay / record of external (signal) tool responses.
         if let Some(cache) = &self.tool_cache {
@@ -2574,13 +2601,38 @@ async fn spawn_cline_ctx(
         recording_id: rid.clone(),
         replay: false,
     });
+    // Resolve signal-tool config (lag + budget) from the enabled Nansen entry.
+    let (nansen_lag_days, signal_budget) = {
+        let resolved = std::fs::read_to_string(runtime_config_path(ctx))
+            .ok()
+            .and_then(|s| toml::from_str::<xvision_core::config::RuntimeConfig>(&s).ok())
+            .and_then(|cfg| {
+                cfg.data_tools
+                    .into_iter()
+                    .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled)
+            });
+        match resolved {
+            Some(e) => (
+                e.nansen_lookahead_lag_days
+                    .map(|d| d as i64)
+                    .unwrap_or(crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS),
+                e.budget_credits_per_run
+                    .map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
+            ),
+            None => (
+                crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS,
+                None,
+            ),
+        }
+    };
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
         current_asset: tool_asset_guard.clone(),
         run_mode,
         as_of: as_of_guard.clone(),
-        nansen_lag_days: crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS,
+        nansen_lag_days,
         tool_cache,
+        budget: signal_budget,
     });
     let bus = ctx
         .obs_event_bus
@@ -6149,6 +6201,19 @@ mod tool_registry_dispatch_tests {
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(as_of)),
             nansen_lag_days: 1,
             tool_cache: None,
+            budget: None,
+        }
+    }
+
+    fn test_dispatch_budget(mode: crate::eval::run::RunMode, budget: Option<u32>) -> ToolRegistryDispatch {
+        ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: mode,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            budget: budget.map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
         }
     }
 
@@ -6202,6 +6267,35 @@ mod tool_registry_dispatch_tests {
     }
 
     use xvision_agent_client::ToolDispatch as _;
+
+    // -----------------------------------------------------------------------
+    // Task 5.2 — D8 per-run credit budget tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn zero_budget_short_circuits_signal_tool_with_degrade() {
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let out = d
+            .invoke("nansen_token_screener", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap();
+        assert_eq!(out["available"], false);
+        assert!(out["reason"].as_str().unwrap().contains("budget"), "got: {out}");
+    }
+
+    #[tokio::test]
+    async fn budget_does_not_affect_builtins() {
+        // ohlcv is a built-in (no policy); a zero budget must NOT short-circuit it.
+        // With an empty registry the dispatch errors (tool not found) — that's
+        // proof the budget gate did NOT intercept (it would have returned a
+        // degrade Ok-value instead of an Err).
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let res = d.invoke("ohlcv", serde_json::json!({"asset":"BTC"})).await;
+        assert!(
+            res.is_err(),
+            "built-in must bypass the budget gate and hit dispatch"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // Task 3.3 — replay + canonical_input_hash tests
@@ -6347,6 +6441,7 @@ mod tool_registry_dispatch_tests {
                 recording_id: rec.clone(),
                 replay: true,
             }),
+            budget: None,
         };
 
         let out = d.invoke("nansen_token_screener", input).await.unwrap();
