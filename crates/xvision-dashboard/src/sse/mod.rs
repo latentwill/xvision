@@ -10,6 +10,8 @@ pub mod autooptimizer_labels;
 
 pub mod autooptimizer_sse;
 
+pub mod autoresearch_sse;
+
 pub mod live_deployment_sse;
 
 use std::convert::Infallible;
