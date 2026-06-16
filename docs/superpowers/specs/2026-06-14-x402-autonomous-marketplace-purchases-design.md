@@ -14,10 +14,17 @@ xvision platform**.
 
 Two distinct wins, deliberately bundled:
 
-1. **Interoperability (primary):** xvision exposes a spec-compliant x402
-   resource server + facilitator. *Any* x402 client on the internet
-   (`x402-fetch`, `x402-axios`, third-party agent fleets, discovery "bazaars")
-   can pay for a listing with zero custom integration.
+1. **Interoperability (primary):** xvision exposes an x402-shaped resource
+   server + facilitator (`402` → `X-PAYMENT` → settle → `X-PAYMENT-RESPONSE`).
+   The `accepts` body uses CAIP-2 network ids (`eip155:5000`), i.e. the **x402
+   V2** form — so a V2-capable client (`@x402/evm`-based `x402-fetch`/`x402-axios`)
+   that supports Mantle can pay with zero custom integration. **Caveat
+   (verification gap):** legacy x402 clients validate `network` against a named
+   chain enum that does NOT include Mantle, and off-the-shelf interop has not yet
+   been demonstrated end-to-end against Mantle (the `x402-fetch` smoke needs a
+   pinned V2 version + a live testnet run — see `scripts/x402-interop-smoke.mjs`).
+   Until that smoke passes, the *verified* paying client is the first-party MCP
+   client (win #2); third-party interop is spec-shaped but unproven.
 2. **First-party autonomy (convenience):** xvision's own MCP surface ships a
    thin x402 client so agents already driving `xvn` can buy in one tool call.
 

@@ -7,6 +7,14 @@
 // Deps (ephemeral — do not add to any workspace package.json):
 //   npm i x402-fetch viem
 //
+// IMPORTANT (unproven against Mantle): the endpoint advertises network
+// "eip155:5000" (x402 V2 / CAIP-2). This smoke only passes with an x402-fetch
+// built on @x402/evm that (a) speaks V2 CAIP-2 network ids and (b) supports
+// Mantle. Legacy x402-fetch validates `network` against a named-chain enum that
+// does NOT include Mantle and will reject it. Pin a known-good version and
+// record it here once this passes green; until then, third-party interop is
+// spec-shaped but unverified (the first-party MCP client is the proven path).
+//
 // Run against a running testnet dashboard with a funded buyer key:
 //   XVN_MARKETPLACE_API=http://127.0.0.1:8080 \
 //   BUYER_PK=0x<buyer-key-with-test-USDC> \
