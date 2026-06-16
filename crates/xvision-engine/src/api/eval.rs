@@ -2951,16 +2951,19 @@ fn build_tool_registry(
     let _ = ctx; // retained for future per-workspace overrides
     let mut registry = ToolRegistry::default_with_builtins();
 
+    // Use the process-global client cache so identical config reuses the same
+    // Arc<NansenClient> / Arc<ElfaClient> (and thus the same in-memory rate
+    // limiter) across back-to-back runs (xvision-im2r.8).
     let nansen_client = sig_cfg.nansen_entry.as_ref().and_then(|entry| {
         let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
         if api_key.is_empty() {
             return None;
         }
-        Some(std::sync::Arc::new(xvision_data::nansen::NansenClient::new(
-            entry.base_url.clone(),
-            api_key,
+        Some(xvision_data::client_cache::get_or_create_nansen(
+            &entry.base_url,
+            &api_key,
             300u32,
-        )))
+        ))
     });
 
     let elfa_client = sig_cfg.elfa_entry.as_ref().and_then(|entry| {
@@ -2968,11 +2971,11 @@ fn build_tool_registry(
         if api_key.is_empty() {
             return None;
         }
-        Some(std::sync::Arc::new(xvision_data::elfa::ElfaClient::new(
-            entry.base_url.clone(),
-            api_key,
+        Some(xvision_data::client_cache::get_or_create_elfa(
+            &entry.base_url,
+            &api_key,
             60u32,
-        )))
+        ))
     });
 
     registry.register_signal_tools(nansen_client, elfa_client);

@@ -4,6 +4,8 @@ pub mod alpaca;
 pub mod alpaca_live;
 pub mod alpaca_live_poll;
 pub mod asset_whitelist;
+/// Process-global Nansen/Elfa client cache (xvision-im2r.8).
+pub mod client_cache;
 pub mod elfa;
 pub mod fixtures;
 pub mod hl_bars;
