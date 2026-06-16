@@ -21,26 +21,31 @@ use std::sync::Arc;
 use xvision_agent_client::protocol::{SideEffectLevel, ToolDescriptor};
 use xvision_data::elfa::{ElfaClient, ElfaError};
 
+use crate::tools::signal_policy::signal_unavailable;
 use crate::tools::{Tool, ToolName};
 
-/// Map an `ElfaError` to a structured degrade value — a *successful* tool
-/// result the Cline loop can read, never an `Err`.
-fn degrade(reason: impl Into<String>) -> serde_json::Value {
-    json!({ "available": false, "reason": reason.into() })
-}
-
-/// Shared GET fetch helper. Network/auth/rate failures all degrade gracefully.
+/// Shared GET fetch helper. Network/auth/rate failures all degrade gracefully,
+/// delegating to the canonical `signal_unavailable` (xvision-im2r.9).
 async fn elfa_invoke(client: &ElfaClient, path: &str, query: &[(&str, &str)]) -> serde_json::Value {
     match client.get(path, query).await {
         Ok(v) => v,
-        Err(ElfaError::RateLimited) => degrade("elfa rate limited"),
-        Err(ElfaError::CreditsExhausted) => degrade("elfa credits exhausted"),
-        Err(e) => degrade(format!("elfa unavailable: {e}")),
+        Err(ElfaError::RateLimited) => signal_unavailable("elfa rate limited"),
+        Err(ElfaError::CreditsExhausted) => signal_unavailable("elfa credits exhausted"),
+        Err(e) => signal_unavailable(format!("elfa unavailable: {e}")),
     }
 }
 
+/// Emit the struct, constructor, and full `impl Tool` for an Elfa tool.
+///
+/// Two forms (xvision-im2r.9):
+///   * `elfa_tool!($ty, $name, $desc, global: $endpoint)` — no input; calls
+///     `$endpoint` with no query params (TrendingTokens, TrendingNarratives).
+///   * `elfa_tool!($ty, $name, $desc, asset_ticker: $endpoint)` — expects an
+///     `asset` JSON field; strips the pair-suffix, uppercases to a bare ticker,
+///     calls `$endpoint?ticker=<TICKER>` (SmartMentions).
 macro_rules! elfa_tool {
-    ($ty:ident, $name:literal, $desc:literal) => {
+    // ── Global endpoint (no input) ──────────────────────────────────────────
+    ($ty:ident, $name:literal, $desc:literal, global: $endpoint:literal) => {
         pub struct $ty {
             client: Arc<ElfaClient>,
         }
@@ -55,6 +60,98 @@ macro_rules! elfa_tool {
                 }
             }
         }
+        #[async_trait]
+        impl Tool for $ty {
+            fn name(&self) -> ToolName {
+                ToolName::new($name)
+            }
+            fn description(&self) -> &'static str {
+                $desc
+            }
+            fn descriptor(&self) -> ToolDescriptor {
+                ToolDescriptor {
+                    name: $name.to_string(),
+                    version: "1".to_string(),
+                    description: $desc.to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                    }),
+                    output_schema: json!({ "type": "object", "additionalProperties": true }),
+                    timeout_ms: 15_000,
+                    side_effect_level: SideEffectLevel::ExternalRead,
+                    requires_approval: false,
+                }
+            }
+            async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(elfa_invoke(&self.client, $endpoint, &[]).await)
+            }
+        }
+    };
+
+    // ── Asset-ticker endpoint (expects `asset` field → bare ticker) ─────────
+    ($ty:ident, $name:literal, $desc:literal, asset_ticker: $endpoint:literal) => {
+        pub struct $ty {
+            client: Arc<ElfaClient>,
+        }
+        impl $ty {
+            pub fn new(client: Arc<ElfaClient>) -> Self {
+                Self { client }
+            }
+            #[cfg(test)]
+            pub fn for_test(base_url: String) -> Self {
+                Self {
+                    client: Arc::new(ElfaClient::new(base_url, "test".into(), 60)),
+                }
+            }
+        }
+        #[async_trait]
+        impl Tool for $ty {
+            fn name(&self) -> ToolName {
+                ToolName::new($name)
+            }
+            fn description(&self) -> &'static str {
+                $desc
+            }
+            fn descriptor(&self) -> ToolDescriptor {
+                ToolDescriptor {
+                    name: $name.to_string(),
+                    version: "1".to_string(),
+                    description: $desc.to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": { "asset": { "type": "string" } },
+                        "required": ["asset"],
+                        "additionalProperties": true
+                    }),
+                    output_schema: json!({ "type": "object", "additionalProperties": true }),
+                    timeout_ms: 15_000,
+                    side_effect_level: SideEffectLevel::ExternalRead,
+                    requires_approval: false,
+                }
+            }
+            async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                #[derive(Deserialize)]
+                struct AssetInput {
+                    asset: String,
+                }
+                let parsed: AssetInput = match serde_json::from_value(input) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(signal_unavailable(format!("bad input: {e}"))),
+                };
+                // Derive bare ticker: strip /USD or /USDT suffix, take part before '/',
+                // uppercase.
+                let ticker = parsed
+                    .asset
+                    .trim()
+                    .split('/')
+                    .next()
+                    .unwrap_or(&parsed.asset)
+                    .to_ascii_uppercase();
+                Ok(elfa_invoke(&self.client, $endpoint, &[("ticker", &ticker)]).await)
+            }
+        }
     };
 }
 
@@ -63,131 +160,27 @@ macro_rules! elfa_tool {
 elfa_tool!(
     ElfaSmartMentionsTool,
     "elfa_smart_mentions",
-    "Top social mentions for a token ticker (KOL/smart money). Live only."
+    "Top social mentions for a token ticker (KOL/smart money). Live only.",
+    asset_ticker: "/v2/data/top-mentions"
 );
-
-#[derive(Deserialize)]
-struct AssetInput {
-    asset: String,
-}
-
-#[async_trait]
-impl Tool for ElfaSmartMentionsTool {
-    fn name(&self) -> ToolName {
-        ToolName::new("elfa_smart_mentions")
-    }
-    fn description(&self) -> &'static str {
-        "Top social mentions for a token ticker (KOL/smart money). Live only."
-    }
-    fn descriptor(&self) -> ToolDescriptor {
-        ToolDescriptor {
-            name: "elfa_smart_mentions".to_string(),
-            version: "1".to_string(),
-            description: "Top social mentions for a token ticker (KOL/smart money). Live only.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "asset": { "type": "string" } },
-                "required": ["asset"],
-                "additionalProperties": true
-            }),
-            output_schema: json!({ "type": "object", "additionalProperties": true }),
-            timeout_ms: 15_000,
-            side_effect_level: SideEffectLevel::ExternalRead,
-            requires_approval: false,
-        }
-    }
-    async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let parsed: AssetInput = match serde_json::from_value(input) {
-            Ok(v) => v,
-            Err(e) => return Ok(degrade(format!("bad input: {e}"))),
-        };
-        // Derive bare ticker: strip /USD or /USDT suffix, take part before '/',
-        // uppercase.
-        let ticker = parsed
-            .asset
-            .trim()
-            .split('/')
-            .next()
-            .unwrap_or(&parsed.asset)
-            .to_ascii_uppercase();
-        Ok(elfa_invoke(&self.client, "/v2/data/top-mentions", &[("ticker", &ticker)]).await)
-    }
-}
 
 // ── ElfaTrendingTokensTool ────────────────────────────────────────────────
 
 elfa_tool!(
     ElfaTrendingTokensTool,
     "elfa_trending_tokens",
-    "Global trending tokens across social/KOL channels. Live only."
+    "Global trending tokens across social/KOL channels. Live only.",
+    global: "/v2/aggregations/trending-tokens"
 );
-
-#[async_trait]
-impl Tool for ElfaTrendingTokensTool {
-    fn name(&self) -> ToolName {
-        ToolName::new("elfa_trending_tokens")
-    }
-    fn description(&self) -> &'static str {
-        "Global trending tokens across social/KOL channels. Live only."
-    }
-    fn descriptor(&self) -> ToolDescriptor {
-        ToolDescriptor {
-            name: "elfa_trending_tokens".to_string(),
-            version: "1".to_string(),
-            description: "Global trending tokens across social/KOL channels. Live only.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
-            output_schema: json!({ "type": "object", "additionalProperties": true }),
-            timeout_ms: 15_000,
-            side_effect_level: SideEffectLevel::ExternalRead,
-            requires_approval: false,
-        }
-    }
-    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        Ok(elfa_invoke(&self.client, "/v2/aggregations/trending-tokens", &[]).await)
-    }
-}
 
 // ── ElfaTrendingNarrativesTool ────────────────────────────────────────────
 
 elfa_tool!(
     ElfaTrendingNarrativesTool,
     "elfa_trending_narratives",
-    "Trending narratives and themes across crypto social channels. Live only."
+    "Trending narratives and themes across crypto social channels. Live only.",
+    global: "/v2/data/trending-narratives"
 );
-
-#[async_trait]
-impl Tool for ElfaTrendingNarrativesTool {
-    fn name(&self) -> ToolName {
-        ToolName::new("elfa_trending_narratives")
-    }
-    fn description(&self) -> &'static str {
-        "Trending narratives and themes across crypto social channels. Live only."
-    }
-    fn descriptor(&self) -> ToolDescriptor {
-        ToolDescriptor {
-            name: "elfa_trending_narratives".to_string(),
-            version: "1".to_string(),
-            description: "Trending narratives and themes across crypto social channels. Live only."
-                .to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
-            output_schema: json!({ "type": "object", "additionalProperties": true }),
-            timeout_ms: 15_000,
-            side_effect_level: SideEffectLevel::ExternalRead,
-            requires_approval: false,
-        }
-    }
-    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        Ok(elfa_invoke(&self.client, "/v2/data/trending-narratives", &[]).await)
-    }
-}
 
 #[cfg(test)]
 mod tests {

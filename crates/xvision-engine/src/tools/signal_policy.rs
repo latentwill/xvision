@@ -131,6 +131,15 @@ impl SignalToolConfig {
     }
 }
 
+/// Build a structured degrade response: `{ "available": false, "reason": … }`.
+///
+/// This is the canonical, single definition.  The per-file `degrade()` helpers
+/// in `tools/nansen.rs` and `tools/elfa.rs` and the private `signal_degrade`
+/// in `api/eval.rs` all delegate here (xvision-im2r.9).
+pub fn signal_unavailable(reason: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({ "available": false, "reason": reason.into() })
+}
+
 /// Drop any tool whose forward-only policy forbids it in `mode`. Unrestricted
 /// built-ins (policy `None`) always pass. This is the advertisement filter:
 /// the trader never even sees a tool it isn't allowed to call this run.

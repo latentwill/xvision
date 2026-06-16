@@ -2388,11 +2388,6 @@ struct ToolRegistryDispatch {
     elfa_budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
 }
 
-/// Return a degrade value matching the signal tools' `Ok(json!({"available":false,...}))` shape.
-fn signal_degrade(reason: &str) -> serde_json::Value {
-    serde_json::json!({ "available": false, "reason": reason })
-}
-
 /// True when `v` is a signal-tool degrade response (`{available: false, …}`).
 /// Used to avoid caching transient degrade responses (xvision-im2r.3).
 fn is_degrade(v: &serde_json::Value) -> bool {
@@ -2455,12 +2450,16 @@ impl ToolDispatch for ToolRegistryDispatch {
             return Err(ToolDispatchError::Failed(message));
         }
 
+        // Compute the policy once — used for the forward-only gate below and
+        // for the cache gate later in this function (xvision-im2r.9).
+        let policy = crate::tools::signal_policy::signal_tool_policy(name);
+
         // Forward-only gate (defense in depth — the advertisement filter (Task 1.6)
         // already strips mode-forbidden tools, but a hand-crafted call must also fail).
-        if let Some(policy) = crate::tools::signal_policy::signal_tool_policy(name) {
+        if let Some(p) = policy {
             let allowed = match self.run_mode {
-                crate::eval::run::RunMode::Live => policy.live,
-                crate::eval::run::RunMode::Backtest => policy.backtest,
+                crate::eval::run::RunMode::Live => p.live,
+                crate::eval::run::RunMode::Backtest => p.backtest,
             };
             if !allowed {
                 return Err(ToolDispatchError::Failed(format!(
@@ -2499,7 +2498,7 @@ impl ToolDispatch for ToolRegistryDispatch {
                     )
                     .unwrap_or(0);
                 if prev == 0 {
-                    return Ok(signal_degrade("budget exhausted"));
+                    return Ok(crate::tools::signal_policy::signal_unavailable("budget exhausted"));
                 }
                 credit_consumed = true;
             }
@@ -2507,7 +2506,7 @@ impl ToolDispatch for ToolRegistryDispatch {
 
         // Deterministic replay / record of external (signal) tool responses.
         if let Some(cache) = &self.tool_cache {
-            if crate::tools::signal_policy::signal_tool_policy(name).is_some() {
+            if policy.is_some() {
                 let hash = canonical_input_hash(name, &input);
                 let as_of_date = input
                     .get("as_of_date")

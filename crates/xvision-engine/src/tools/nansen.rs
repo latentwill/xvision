@@ -38,12 +38,6 @@ struct AssetInput {
     as_of_date: Option<String>, // injected by the dispatch in backtest; unused in v1 live (Phase 3 uses it)
 }
 
-/// Map a `NansenError` to a structured degrade value (D8) — a *successful*
-/// tool result the Cline loop can read, never an `Err`.
-fn degrade(reason: impl Into<String>) -> serde_json::Value {
-    json!({ "available": false, "reason": reason.into() })
-}
-
 /// Shared fetch: parse input, resolve on-chain identity, POST via `build_body`,
 /// convert transport errors to the degrade shape.
 /// `build_body(identity, as_of_date) -> request JSON`.
@@ -55,19 +49,20 @@ async fn nansen_invoke(
     input: serde_json::Value,
     build_body: impl FnOnce(&xvision_core::asset_registry::SignalAssetIdentity, Option<&str>) -> serde_json::Value,
 ) -> serde_json::Value {
+    use crate::tools::signal_policy::signal_unavailable;
     let parsed: AssetInput = match serde_json::from_value(input) {
         Ok(v) => v,
-        Err(e) => return degrade(format!("bad input: {e}")),
+        Err(e) => return signal_unavailable(format!("bad input: {e}")),
     };
     let Some(id) = xvision_core::asset_registry::signal_asset_identity(&parsed.asset) else {
-        return degrade(format!("no on-chain identity mapped for {}", parsed.asset));
+        return signal_unavailable(format!("no on-chain identity mapped for {}", parsed.asset));
     };
     let body = build_body(&id, parsed.as_of_date.as_deref());
     match client.post(path, body).await {
         Ok(v) => v,
-        Err(NansenError::RateLimited) => degrade("nansen rate limited"),
-        Err(NansenError::CreditsExhausted) => degrade("nansen credits exhausted"),
-        Err(e) => degrade(format!("nansen unavailable: {e}")),
+        Err(NansenError::RateLimited) => signal_unavailable("nansen rate limited"),
+        Err(NansenError::CreditsExhausted) => signal_unavailable("nansen credits exhausted"),
+        Err(e) => signal_unavailable(format!("nansen unavailable: {e}")),
     }
 }
 
@@ -138,48 +133,59 @@ nansen_tool!(
 // Per-tool mode-aware routing: v1 (live) when no as_of_date; v1beta1
 // (historical) when as_of_date is present (injected by the dispatch for
 // Backtest runs). The build_body closure forwards as_of_date when present.
+//
+// Shared driver — each tool only specifies the live and historical endpoint
+// strings; the historical/live switch and body builder are identical.
+async fn nansen_route(
+    client: &NansenClient,
+    live_path: &str,
+    historical_path: &str,
+    input: serde_json::Value,
+) -> serde_json::Value {
+    let path = if input.get("as_of_date").and_then(|v| v.as_str()).is_some() {
+        historical_path
+    } else {
+        live_path
+    };
+    nansen_invoke(client, path, input, |id, as_of| match as_of {
+        Some(d) => {
+            json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d })
+        }
+        None => json!({ "chain": id.chain, "token_address": id.contract_address }),
+    })
+    .await
+}
+
 impl NansenSmartMoneyFlowTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
-        let path = if historical {
-            "/api/v1beta1/smart-money/historical-token-balances"
-        } else {
-            "/api/v1/smart-money/netflow"
-        };
-        nansen_invoke(client, path, input, |id, as_of| match as_of {
-            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
-            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
-        })
+        nansen_route(
+            client,
+            "/api/v1/smart-money/netflow",
+            "/api/v1beta1/smart-money/historical-token-balances",
+            input,
+        )
         .await
     }
 }
 impl NansenTokenScreenerTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
-        let path = if historical {
-            "/api/v1beta1/token-screener/historical"
-        } else {
-            "/api/v1/tgm/token-screener"
-        };
-        nansen_invoke(client, path, input, |id, as_of| match as_of {
-            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
-            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
-        })
+        nansen_route(
+            client,
+            "/api/v1/tgm/token-screener",
+            "/api/v1beta1/token-screener/historical",
+            input,
+        )
         .await
     }
 }
 impl NansenFlowIntelTool {
     async fn route(client: &NansenClient, input: serde_json::Value) -> serde_json::Value {
-        let historical = input.get("as_of_date").and_then(|v| v.as_str()).is_some();
-        let path = if historical {
-            "/api/v1beta1/tgm/historical-who-bought-sold"
-        } else {
-            "/api/v1/tgm/flow-intelligence"
-        };
-        nansen_invoke(client, path, input, |id, as_of| match as_of {
-            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
-            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
-        })
+        nansen_route(
+            client,
+            "/api/v1/tgm/flow-intelligence",
+            "/api/v1beta1/tgm/historical-who-bought-sold",
+            input,
+        )
         .await
     }
 }
