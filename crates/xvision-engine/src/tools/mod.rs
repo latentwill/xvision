@@ -1,4 +1,5 @@
 pub mod indicators;
+pub mod nansen;
 pub mod ohlcv;
 pub mod signal_policy;
 
@@ -133,5 +134,18 @@ impl ToolRegistry {
             self.tools.values().map(|tool| tool.descriptor()).collect();
         descriptors.sort_by(|a, b| a.name.cmp(&b.name));
         descriptors
+    }
+
+    /// Register the Nansen signal tools when a client is configured. Elfa tools
+    /// are added by a later task. No-op when `nansen` is `None`.
+    pub fn register_signal_tools(
+        &mut self,
+        nansen: Option<std::sync::Arc<xvision_data::nansen::NansenClient>>,
+    ) {
+        if let Some(c) = nansen {
+            self.register(std::sync::Arc::new(nansen::NansenSmartMoneyFlowTool::new(c.clone())));
+            self.register(std::sync::Arc::new(nansen::NansenTokenScreenerTool::new(c.clone())));
+            self.register(std::sync::Arc::new(nansen::NansenFlowIntelTool::new(c)));
+        }
     }
 }

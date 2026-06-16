@@ -1367,7 +1367,7 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let skip_preflight = req.skip_preflight;
     let (dispatch_arc, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
+    let tools_arc = Arc::new(build_tool_registry(ctx));
     let run = run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await?;
     let store = RunStore::new(ctx.db.clone());
     write_preflight_supervisor_notes(&store, &run.id, &provider_names, skip_preflight).await;
@@ -2636,6 +2636,47 @@ fn recording_persist_failed(client: &Option<Arc<AgentClient>>) -> bool {
 
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     xvision_core::config::runtime_config_path(&ctx.xvn_home)
+}
+
+/// Build a `ToolRegistry` with builtins plus any enabled signal tools
+/// configured in `xvn.toml` (Nansen only for now; Elfa added in a later
+/// task). Best-effort: config-load failures fall back to builtins-only so
+/// a missing or malformed `xvn.toml` never prevents an eval run from
+/// starting. The Nansen API key is resolved from the env var named by
+/// `DataToolEntry.api_key_env`; an empty or missing var is silently skipped
+/// (the tool is simply not registered).
+fn build_tool_registry(ctx: &ApiContext) -> ToolRegistry {
+    let mut registry = ToolRegistry::default_with_builtins();
+
+    let cfg_path = runtime_config_path(ctx);
+    let cfg = match std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|s| toml::from_str::<xvision_core::config::RuntimeConfig>(&s).ok())
+    {
+        Some(c) => c,
+        None => return registry,
+    };
+
+    // Locate the first enabled Nansen entry.
+    let nansen_entry = cfg
+        .data_tools
+        .iter()
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled);
+
+    if let Some(entry) = nansen_entry {
+        let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
+        if !api_key.is_empty() {
+            let rpm = 300u32;
+            let client = std::sync::Arc::new(xvision_data::nansen::NansenClient::new(
+                entry.base_url.clone(),
+                api_key,
+                rpm,
+            ));
+            registry.register_signal_tools(Some(client));
+        }
+    }
+
+    registry
 }
 
 /// Load every configured provider's cached catalog once per eval run.
@@ -4193,7 +4234,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
 
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let tools = Arc::new(build_tool_registry(ctx));
 
     // Other entry point (`run_with_deps_in_progress`) — observability
     // wiring is opt-in via the same ApiContext bus. The emitter is
