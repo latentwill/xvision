@@ -16,6 +16,7 @@ pub mod eval;
 pub mod focus;
 pub mod guardrails;
 pub mod mint;
+pub mod nanochat;
 pub mod optimization;
 pub mod providers;
 pub mod safety;
