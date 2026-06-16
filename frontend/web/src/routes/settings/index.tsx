@@ -41,6 +41,7 @@ const TABS = [
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
   { to: "marketplace", label: "Marketplace" },
+  { to: "tools", label: "Tools" },
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -102,6 +103,7 @@ export { SettingsDangerRoute } from "./danger";
 export { SettingsSkillsRoute } from "./skills";
 export { SettingsWalletRoute } from "./wallet";
 export { SettingsMarketplaceRoute } from "./marketplace";
+export { SettingsToolsRoute } from "./tools";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Markets refresh card
