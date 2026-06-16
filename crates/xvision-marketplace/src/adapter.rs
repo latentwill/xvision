@@ -79,6 +79,17 @@ pub struct SaleReceipt {
     pub license_token_id: U256,
 }
 
+/// Read-model of an on-chain listing (for building x402 payment requirements).
+#[derive(Debug, Clone, Copy)]
+pub struct ListingView {
+    pub listing_id: U256,
+    /// USDC price in 6-decimal base units.
+    pub price_usdc: U256,
+    /// Seller payout address (informational; funds route via the Marketplace).
+    pub seller: Address,
+    pub active: bool,
+}
+
 /// Inputs to `attest_eval` → `EvalAttestationRegistry.postAttestation`.
 #[derive(Debug, Clone)]
 pub struct AttestRequest {
@@ -245,6 +256,36 @@ impl Erc8004MantleDriver {
 
     pub fn chain_id(&self) -> u64 {
         self.chain_id
+    }
+
+    /// Read a single listing's price/seller/active flag from `IListingRegistry`.
+    ///
+    /// Uses a read-only provider (no signer required) — safe to call without
+    /// constructing a full wallet-backed driver. Returns
+    /// [`MarketplaceError::NotConfigured`] if `listing_registry` is the zero
+    /// address, [`MarketplaceError::Rpc`] on provider/connect failure, or
+    /// [`MarketplaceError::Contract`] on ABI decode or call revert.
+    pub async fn fetch_listing(&self, listing_id: U256) -> Result<ListingView, MarketplaceError> {
+        let registry = require_addr(self.addresses.listing_registry, "listing_registry address")?;
+        let provider = ProviderBuilder::new()
+            .connect(self.rpc_url.as_str())
+            .await
+            .map_err(|e| MarketplaceError::Rpc(e.to_string()))?;
+        let contract = IListingRegistry::new(registry, &provider);
+
+        let listing = contract
+            .getListing(listing_id)
+            .call()
+            .await
+            .map_err(|e| MarketplaceError::Contract(e.to_string()))?;
+
+        Ok(ListingView {
+            listing_id,
+            // priceUSDC is uint96 on-chain; widen to U256 for uniform handling.
+            price_usdc: U256::from(listing.priceUSDC),
+            seller: listing.seller,
+            active: !listing.revoked,
+        })
     }
 
     /// Build a wallet-backed alloy provider for the held signer, or return
@@ -739,6 +780,19 @@ mod tests {
                 "guard fired on a matching recipient: {msg}"
             );
         }
+    }
+
+    // --- ListingView shape --------------------------------------------------
+
+    #[test]
+    fn listing_view_shape() {
+        let v = ListingView {
+            listing_id: U256::from(1u64),
+            price_usdc: U256::from(49_000_000u64),
+            seller: Address::ZERO,
+            active: true,
+        };
+        assert_eq!(v.price_usdc, U256::from(49_000_000u64));
     }
 
     // --- price width guard --------------------------------------------------
