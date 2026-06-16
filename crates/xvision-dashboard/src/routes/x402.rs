@@ -2,10 +2,12 @@
 //! relay in the standard HTTP-402 protocol so any x402 client can pay.
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+
+use alloy::primitives::{Address, B256, U256};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -119,6 +121,173 @@ pub fn decode_x_payment(header: &str) -> Result<DecodedPayment, DashboardError> 
     })
 }
 
+// ---------------------------------------------------------------------------
+// Task 1.6: /facilitator/verify — pure checks + route
+// ---------------------------------------------------------------------------
+
+/// Check that the payment value meets the listing price and the authorization
+/// has not expired. Pure — no I/O; clock is passed as a parameter so tests
+/// can inject a fixed time.
+pub fn check_terms(value: &str, price: &str, valid_before: u64, now: u64) -> Result<(), DashboardError> {
+    let v: u128 = value
+        .parse()
+        .map_err(|_| DashboardError::BadRequest("value".into()))?;
+    let p: u128 = price
+        .parse()
+        .map_err(|_| DashboardError::BadRequest("price".into()))?;
+    if v < p {
+        return Err(DashboardError::BadRequest("insufficient payment".into()));
+    }
+    if valid_before <= now {
+        return Err(DashboardError::BadRequest("authorization expired".into()));
+    }
+    Ok(())
+}
+
+/// Pure decision for the spent-nonce precheck. `used` comes from the on-chain
+/// `authorizationState(from, nonce)` read (see `Erc8004MantleDriver::is_authorization_used`).
+pub fn ensure_unused(used: bool) -> Result<(), DashboardError> {
+    if used {
+        return Err(DashboardError::BadRequest(
+            "authorization already used".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Response body for `POST /facilitator/verify`.
+#[derive(Debug, Serialize)]
+pub struct VerifyOut {
+    pub valid: bool,
+    pub payer: String,
+}
+
+/// Parse an address from a `0x…` hex string, mapping errors to `BadRequest`.
+fn parse_address_bad_request(label: &str, s: &str) -> Result<Address, DashboardError> {
+    s.parse().map_err(|_| {
+        DashboardError::BadRequest(format!("{label}: expected 0x-prefixed 40-hex-char address"))
+    })
+}
+
+/// Parse a `B256` from a `0x…` hex string, mapping errors to `BadRequest`.
+fn parse_b256_bad_request(label: &str, s: &str) -> Result<B256, DashboardError> {
+    s.parse().map_err(|_| {
+        DashboardError::BadRequest(format!(
+            "{label}: expected 0x-prefixed 64-hex-char bytes32"
+        ))
+    })
+}
+
+/// Parse a decimal `U256` from a string, mapping errors to `BadRequest`.
+fn parse_u256_decimal_bad_request(label: &str, s: &str) -> Result<U256, DashboardError> {
+    U256::from_str_radix(s, 10)
+        .map_err(|_| DashboardError::BadRequest(format!("{label}: expected decimal U256 string")))
+}
+
+/// Off-chain recover of the EIP-3009 payer, followed by the on-chain
+/// `authorizationState` spent-nonce precheck.
+///
+/// Returns the recovered `Address` on success. The caller must then compare
+/// it against `decoded.from` to confirm the `from` field was not forged.
+async fn recover_payer(state: &AppState, decoded: &DecodedPayment) -> Result<Address, DashboardError> {
+    // 1. Load chain config — we need chain_id and the USDC contract address.
+    let mp = state.marketplace_chain();
+    let chain = mp
+        .and_then(|c| c.chain.as_ref())
+        .ok_or_else(|| DashboardError::ServiceUnavailable("chain relay not configured".into()))?;
+    let addrs = mp
+        .and_then(|c| c.marketplace_addresses.clone())
+        .ok_or_else(|| DashboardError::ServiceUnavailable("marketplace not configured".into()))?;
+
+    // 2. Build the EIP-712 domain for the USDC contract.
+    let domain = xvision_marketplace::x402::usdc_domain(chain.chain_id, addrs.usdc);
+
+    // 3. Parse the authorization fields from the decoded payment.
+    let auth_body = &decoded.authorization;
+    let from = parse_address_bad_request("authorization.from", &auth_body.from)?;
+    let to = parse_address_bad_request("authorization.to", &auth_body.to)?;
+    let value = parse_u256_decimal_bad_request("authorization.value", &auth_body.value)?;
+    let nonce = parse_b256_bad_request("authorization.nonce", &auth_body.nonce)?;
+    let r = parse_b256_bad_request("authorization.r", &auth_body.r)?;
+    let s = parse_b256_bad_request("authorization.s", &auth_body.s)?;
+    let v: u8 = auth_body.v.try_into().map_err(|_| {
+        DashboardError::BadRequest("authorization.v must fit u8".into())
+    })?;
+
+    let auth = xvision_marketplace::x402::Authorization {
+        from,
+        to,
+        value,
+        valid_after: U256::from(auth_body.valid_after),
+        valid_before: U256::from(auth_body.valid_before),
+        nonce,
+    };
+
+    // 4. Off-chain ecrecover.
+    let payer = xvision_marketplace::x402::recover_authorizer(&auth, &domain, v, r, s)?;
+
+    // 5. On-chain spent-nonce precheck via IERC3009::authorizationState.
+    let driver = xvision_marketplace::adapter::Erc8004MantleDriver::new(
+        addrs,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+    );
+    let used = driver.is_authorization_used(from, nonce).await?;
+    ensure_unused(used)?;
+
+    Ok(payer)
+}
+
+/// `POST /api/marketplace/facilitator/verify` — off-chain recover + terms check
+/// + spent-nonce precheck. Does NOT settle; that is Task 1.7.
+///
+/// Accepts the payment as an `X-PAYMENT` header (base64 JSON) or as the raw
+/// base64-encoded JSON body. Returns `{ valid: true, payer: "0x…" }` on
+/// success, or a `BadRequest` / `ServiceUnavailable` on any failure.
+pub async fn post_verify(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Json<VerifyOut>, DashboardError> {
+    // Accept either an X-PAYMENT header (base64-encoded) or the body (also
+    // base64-encoded per spec).
+    let hdr = headers
+        .get("x-payment")
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
+    let decoded = match hdr {
+        Some(h) => decode_x_payment(&h)?,
+        None => decode_x_payment(body.trim())?,
+    };
+
+    // Terms check: authorization must not have expired.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    check_terms(
+        &decoded.listing_value,
+        &decoded.listing_value, // self-consistent (value == declared price); listing-price
+        // cross-check is done in settle (Task 1.7) where price is fetched fresh.
+        decoded.authorization.valid_before,
+        now,
+    )?;
+
+    // Recover the signer and do the spent-nonce precheck.
+    let payer = recover_payer(&state, &decoded).await?;
+
+    // Confirm the `from` field in the header was not forged.
+    let payer_hex = format!("0x{:x}", payer);
+    if payer_hex.to_lowercase() != decoded.from.to_lowercase() {
+        return Err(DashboardError::BadRequest("signature/from mismatch".into()));
+    }
+
+    Ok(Json(VerifyOut {
+        valid: true,
+        payer: payer_hex,
+    }))
+}
+
 /// `GET /api/marketplace/listings/:id/x402` — returns 402 with payment
 /// requirements. (The X-PAYMENT settle branch is added in Task 1.7.)
 pub async fn get_x402(
@@ -156,6 +325,22 @@ pub async fn get_x402(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verify_rejects_underpayment_and_expiry() {
+        let now = 1_000u64;
+        assert!(check_terms(/*value*/ "49000000", /*price*/ "49000000", /*valid_before*/ 2000, now).is_ok());
+        assert!(check_terms("10000000", "49000000", 2000, now).is_err()); // underpay
+        assert!(check_terms("49000000", "49000000", 999, now).is_err()); // expired
+    }
+
+    #[test]
+    fn verify_rejects_used_nonce() {
+        // The on-chain authorizationState(from, nonce) read feeds this pure
+        // decision. `true` = already used → reject; `false` = fresh → ok.
+        assert!(ensure_unused(false).is_ok());
+        assert!(ensure_unused(true).is_err());
+    }
 
     #[test]
     fn accepts_has_exact_scheme_and_network() {

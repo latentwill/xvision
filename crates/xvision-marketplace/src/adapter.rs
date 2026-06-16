@@ -9,6 +9,7 @@ use alloy::network::EthereumWallet;
 use alloy::primitives::{keccak256, Address, TxHash, B256, U256};
 use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
+use alloy::sol;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -16,6 +17,13 @@ use std::sync::Mutex;
 use crate::error::MarketplaceError;
 use xvision_identity::contracts::{IEvalAttestationRegistry, IListingRegistry, IMarketplace};
 use xvision_identity::MarketplaceAddresses;
+
+sol! {
+    #[sol(rpc)]
+    interface IERC3009 {
+        function authorizationState(address authorizer, bytes32 nonce) external view returns (bool);
+    }
+}
 
 /// Inputs to `publish_listing` → `ListingRegistry.createListing`.
 #[derive(Debug, Clone)]
@@ -286,6 +294,28 @@ impl Erc8004MantleDriver {
             seller: listing.seller,
             active: !listing.revoked,
         })
+    }
+
+    /// Query the USDC contract's `authorizationState(from, nonce)` via the
+    /// ERC-3009 read interface.
+    ///
+    /// Returns `true` when the nonce has already been consumed by a prior
+    /// `transferWithAuthorization` call, `false` when it is still fresh.
+    /// Uses a read-only provider (no signer required). Returns
+    /// [`MarketplaceError::NotConfigured`] when `usdc` is the zero address.
+    pub async fn is_authorization_used(&self, from: Address, nonce: B256) -> Result<bool, MarketplaceError> {
+        let usdc = require_addr(self.addresses.usdc, "usdc address")?;
+        let provider = ProviderBuilder::new()
+            .connect(self.rpc_url.as_str())
+            .await
+            .map_err(|e| MarketplaceError::Rpc(e.to_string()))?;
+        let erc3009 = IERC3009::new(usdc, &provider);
+        let used = erc3009
+            .authorizationState(from, nonce)
+            .call()
+            .await
+            .map_err(|e| MarketplaceError::Contract(e.to_string()))?;
+        Ok(used)
     }
 
     /// Build a wallet-backed alloy provider for the held signer, or return
