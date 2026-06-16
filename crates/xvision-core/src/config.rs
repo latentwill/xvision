@@ -400,6 +400,19 @@ pub struct AssetEntry {
     #[garde(skip)]
     #[serde(default)]
     pub venues: AssetVenues,
+    /// On-chain network slug for Nansen, e.g. "ethereum" | "solana" | "base".
+    /// None for non-chain assets (equities, RWA). Typed source of truth for
+    /// wiring the registry OnceLock (Task 6.4 follow-up).
+    #[garde(skip)]
+    #[serde(default)]
+    pub chain: Option<String>,
+    /// Token contract address / mint for Nansen. None for non-chain assets.
+    /// Carries the same grounding caveat as `signal_asset_identity` in
+    /// `xvision_core::asset_registry` — verify against live Nansen docs before
+    /// mainnet (Task 6.4).
+    #[garde(skip)]
+    #[serde(default)]
+    pub contract_address: Option<String>,
 }
 
 /// Per-venue symbol mappings. Both fields are optional so that alpaca-only

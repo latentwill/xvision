@@ -44,20 +44,25 @@ fn degrade(reason: impl Into<String>) -> serde_json::Value {
     json!({ "available": false, "reason": reason.into() })
 }
 
-/// Shared fetch: parse input, POST via `build_body`, convert transport errors
-/// to the degrade shape. `build_body(asset, as_of_date) -> request JSON`.
+/// Shared fetch: parse input, resolve on-chain identity, POST via `build_body`,
+/// convert transport errors to the degrade shape.
+/// `build_body(identity, as_of_date) -> request JSON`.
+/// Degrades (D8) if the asset has no mapped on-chain identity — never panics,
+/// never hits the network for unmapped assets.
 async fn nansen_invoke(
     client: &NansenClient,
     path: &str,
     input: serde_json::Value,
-    build_body: impl FnOnce(&str, Option<&str>) -> serde_json::Value,
+    build_body: impl FnOnce(&xvision_core::asset_registry::SignalAssetIdentity, Option<&str>) -> serde_json::Value,
 ) -> serde_json::Value {
     let parsed: AssetInput = match serde_json::from_value(input) {
         Ok(v) => v,
         Err(e) => return degrade(format!("bad input: {e}")),
     };
-    // Phase-5 swap point: replace bare symbol with resolved chain/contract identity.
-    let body = build_body(&parsed.asset, parsed.as_of_date.as_deref());
+    let Some(id) = xvision_core::asset_registry::signal_asset_identity(&parsed.asset) else {
+        return degrade(format!("no on-chain identity mapped for {}", parsed.asset));
+    };
+    let body = build_body(&id, parsed.as_of_date.as_deref());
     match client.post(path, body).await {
         Ok(v) => v,
         Err(NansenError::RateLimited) => degrade("nansen rate limited"),
@@ -141,9 +146,9 @@ impl NansenSmartMoneyFlowTool {
         } else {
             "/api/v1/smart-money/netflow"
         };
-        nansen_invoke(client, path, input, |asset, as_of| match as_of {
-            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
-            None => json!({ "symbol": asset }),
+        nansen_invoke(client, path, input, |id, as_of| match as_of {
+            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
+            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
         })
         .await
     }
@@ -156,9 +161,9 @@ impl NansenTokenScreenerTool {
         } else {
             "/api/v1/tgm/token-screener"
         };
-        nansen_invoke(client, path, input, |asset, as_of| match as_of {
-            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
-            None => json!({ "symbol": asset }),
+        nansen_invoke(client, path, input, |id, as_of| match as_of {
+            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
+            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
         })
         .await
     }
@@ -171,9 +176,9 @@ impl NansenFlowIntelTool {
         } else {
             "/api/v1/tgm/flow-intelligence"
         };
-        nansen_invoke(client, path, input, |asset, as_of| match as_of {
-            Some(d) => json!({ "symbol": asset, "as_of_date": d }),
-            None => json!({ "symbol": asset }),
+        nansen_invoke(client, path, input, |id, as_of| match as_of {
+            Some(d) => json!({ "chain": id.chain, "token_address": id.contract_address, "as_of_date": d }),
+            None => json!({ "chain": id.chain, "token_address": id.contract_address }),
         })
         .await
     }
@@ -226,5 +231,14 @@ mod tests {
             .await
             .unwrap();
         m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn unmapped_asset_degrades_no_http() {
+        // No mock server needed — an unmapped asset must degrade before any HTTP.
+        let t = NansenSmartMoneyFlowTool::for_test("http://127.0.0.1:1".into());
+        let out = t.invoke(serde_json::json!({"asset":"NOTACOIN"})).await.unwrap();
+        assert_eq!(out["available"], false);
+        assert!(out["reason"].as_str().unwrap().contains("no on-chain identity"));
     }
 }
