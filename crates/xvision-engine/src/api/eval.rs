@@ -2392,6 +2392,12 @@ fn signal_degrade(reason: &str) -> serde_json::Value {
     serde_json::json!({ "available": false, "reason": reason })
 }
 
+/// True when `v` is a signal-tool degrade response (`{available: false, …}`).
+/// Used to avoid caching transient degrade responses (xvision-im2r.3).
+fn is_degrade(v: &serde_json::Value) -> bool {
+    v.get("available") == Some(&serde_json::Value::Bool(false))
+}
+
 /// Compute a stable SHA-256 hash over the canonical JSON of `input`, keyed by
 /// `name`. The canonical form sorts object keys so that `{"b":1,"a":2}` and
 /// `{"a":2,"b":1}` produce the same hash (deterministic across model runs).
@@ -2510,11 +2516,16 @@ impl ToolDispatch for ToolRegistryDispatch {
                 }
                 // Record path: fetch live, then cache before returning.
                 // Best-effort cache write — a write failure must NOT fail the run.
+                // Do NOT cache degrade responses: they are transient (budget
+                // exhausted, provider unavailable) and should not be replayed as
+                // authoritative results in future backtest re-runs (xvision-im2r.3).
                 let result = self.dispatch_inner(name, input.clone()).await?;
-                let _ = cache
-                    .store
-                    .cache_tool_response(&cache.recording_id, name, &hash, as_of_date.as_deref(), &result)
-                    .await;
+                if !is_degrade(&result) {
+                    let _ = cache
+                        .store
+                        .cache_tool_response(&cache.recording_id, name, &hash, as_of_date.as_deref(), &result)
+                        .await;
+                }
                 return Ok(result);
             }
         }
@@ -2542,7 +2553,13 @@ impl ToolRegistryDispatch {
 
     /// For a Nansen tool under `RunMode::Backtest`, overwrite `as_of_date` with
     /// the framework-computed anchor (the model cannot influence the backtest
-    /// anchor — lookahead-safety invariant). Live / non-Nansen pass through.
+    /// anchor — lookahead-safety invariant).
+    ///
+    /// For a Nansen tool under `RunMode::Live`, strip any model-supplied
+    /// `as_of_date` — a hallucinated date would silently route the call to the
+    /// historical endpoint (xvision-im2r.2).
+    ///
+    /// Non-Nansen tools pass through unchanged.
     /// Errors if a Nansen backtest call has no clock anchor set.
     async fn inject_backtest_as_of_async(
         &self,
@@ -2551,7 +2568,15 @@ impl ToolRegistryDispatch {
     ) -> Result<serde_json::Value, ToolDispatchError> {
         use crate::eval::run::RunMode;
         use crate::tools::signal_policy::{is_nansen_tool, nansen_as_of_date};
-        if self.run_mode != RunMode::Backtest || !is_nansen_tool(name) {
+        if !is_nansen_tool(name) {
+            return Ok(input);
+        }
+        // Nansen live: strip any model-supplied as_of_date (xvision-im2r.2).
+        if self.run_mode != RunMode::Backtest {
+            let mut input = input;
+            if let Some(obj) = input.as_object_mut() {
+                obj.remove("as_of_date");
+            }
             return Ok(input);
         }
         // Copy the Copy DateTime out of the read guard before consuming it.
@@ -2748,7 +2773,7 @@ async fn spawn_cline_ctx(
     }
 
     client
-        .register_tools(crate::tools::built_in_tool_descriptors())
+        .register_tools(crate::tools::sidecar_descriptors(&tools))
         .await
         .map_err(|e| ApiError::Internal(format!("register agentd tools: {e}")))?;
 
@@ -6330,6 +6355,43 @@ mod tool_registry_dispatch_tests {
         );
     }
 
+    // FIX B — xvision-im2r.2: a model-hallucinated as_of_date in a live run
+    // must be stripped before forwarding to Nansen (would hit the historical
+    // endpoint otherwise).
+    #[tokio::test]
+    async fn nansen_live_strips_model_supplied_as_of_date() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async(
+                "nansen_smart_money_flow",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.get("as_of_date").is_none(),
+            "live run must strip any model-supplied as_of_date; got: {out}"
+        );
+        // Other fields must be preserved.
+        assert_eq!(out["asset"], "BTC");
+    }
+
+    // FIX B — non-Nansen tool (elfa) in live mode: as_of_date is irrelevant
+    // and the field passes through unchanged (no stripping for non-Nansen).
+    #[tokio::test]
+    async fn non_nansen_live_preserves_as_of_date() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async(
+                "elfa_smart_mentions",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        // Not a Nansen tool → pass-through, field preserved.
+        assert_eq!(out["as_of_date"], "2099-01-01");
+    }
+
     #[tokio::test]
     async fn nansen_backtest_non_object_input_is_error() {
         use chrono::Utc;
@@ -6521,6 +6583,23 @@ mod tool_registry_dispatch_tests {
 
         let out = d.invoke("nansen_token_screener", input).await.unwrap();
         assert_eq!(out["cached"], true, "replay must serve the cached response");
+    }
+
+    // FIX C — xvision-im2r.3: is_degrade helper
+    #[test]
+    fn is_degrade_true_when_available_false() {
+        use super::is_degrade;
+        assert!(is_degrade(&serde_json::json!({"available": false, "reason": "budget exhausted"})));
+        assert!(is_degrade(&serde_json::json!({"available": false})));
+    }
+
+    #[test]
+    fn is_degrade_false_for_normal_responses() {
+        use super::is_degrade;
+        assert!(!is_degrade(&serde_json::json!({"data": []})));
+        assert!(!is_degrade(&serde_json::json!({"available": true})));
+        assert!(!is_degrade(&serde_json::json!({})));
+        assert!(!is_degrade(&serde_json::json!(null)));
     }
 
     /// `canonical_input_hash` must be key-order-independent: the same logical
