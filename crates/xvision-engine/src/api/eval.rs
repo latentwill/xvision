@@ -2752,18 +2752,37 @@ fn build_tool_registry(ctx: &ApiContext) -> ToolRegistry {
         .iter()
         .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled);
 
-    if let Some(entry) = nansen_entry {
+    let nansen_client = nansen_entry.and_then(|entry| {
         let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
-        if !api_key.is_empty() {
-            let rpm = 300u32;
-            let client = std::sync::Arc::new(xvision_data::nansen::NansenClient::new(
-                entry.base_url.clone(),
-                api_key,
-                rpm,
-            ));
-            registry.register_signal_tools(Some(client));
+        if api_key.is_empty() {
+            return None;
         }
-    }
+        Some(std::sync::Arc::new(xvision_data::nansen::NansenClient::new(
+            entry.base_url.clone(),
+            api_key,
+            300u32,
+        )))
+    });
+
+    // Locate the first enabled Elfa entry.
+    let elfa_entry = cfg
+        .data_tools
+        .iter()
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled);
+
+    let elfa_client = elfa_entry.and_then(|entry| {
+        let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
+        if api_key.is_empty() {
+            return None;
+        }
+        Some(std::sync::Arc::new(xvision_data::elfa::ElfaClient::new(
+            entry.base_url.clone(),
+            api_key,
+            60u32,
+        )))
+    });
+
+    registry.register_signal_tools(nansen_client, elfa_client);
 
     registry
 }

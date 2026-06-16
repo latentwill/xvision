@@ -1,3 +1,4 @@
+pub mod elfa;
 pub mod indicators;
 pub mod nansen;
 pub mod ohlcv;
@@ -136,16 +137,26 @@ impl ToolRegistry {
         descriptors
     }
 
-    /// Register the Nansen signal tools when a client is configured. Elfa tools
-    /// are added by a later task. No-op when `nansen` is `None`.
+    /// Register Nansen and/or Elfa signal tools when clients are configured.
+    /// No-op for either when the corresponding `Option` is `None`.
     pub fn register_signal_tools(
         &mut self,
         nansen: Option<std::sync::Arc<xvision_data::nansen::NansenClient>>,
+        elfa_client: Option<std::sync::Arc<xvision_data::elfa::ElfaClient>>,
     ) {
         if let Some(c) = nansen {
-            self.register(std::sync::Arc::new(nansen::NansenSmartMoneyFlowTool::new(c.clone())));
-            self.register(std::sync::Arc::new(nansen::NansenTokenScreenerTool::new(c.clone())));
+            self.register(std::sync::Arc::new(nansen::NansenSmartMoneyFlowTool::new(
+                c.clone(),
+            )));
+            self.register(std::sync::Arc::new(nansen::NansenTokenScreenerTool::new(
+                c.clone(),
+            )));
             self.register(std::sync::Arc::new(nansen::NansenFlowIntelTool::new(c)));
+        }
+        if let Some(c) = elfa_client {
+            self.register(std::sync::Arc::new(elfa::ElfaSmartMentionsTool::new(c.clone())));
+            self.register(std::sync::Arc::new(elfa::ElfaTrendingTokensTool::new(c.clone())));
+            self.register(std::sync::Arc::new(elfa::ElfaTrendingNarrativesTool::new(c)));
         }
     }
 }
