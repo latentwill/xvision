@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { SettingsToolsRoute } from "./tools";
 import * as toolsApi from "@/api/dataTools";
+import { settingsKeys } from "@/api/settings";
 
 // `<ResponsiveListCard>` reads `useViewportMode()` which calls
 // `window.matchMedia`. jsdom doesn't provide it; install a desktop
@@ -178,5 +179,13 @@ describe("SettingsToolsRoute", () => {
     renderRoute();
 
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
+  });
+
+  it("dataToolsKeys.all is prefixed by settingsKeys.all so settings invalidation busts the Tools cache", () => {
+    const base = settingsKeys.all;
+    const all = toolsApi.dataToolsKeys.all;
+    // The data-tools key must start with every element of settingsKeys.all
+    expect(all.slice(0, base.length)).toEqual([...base]);
+    expect(all[base.length]).toBe("data-tools");
   });
 });

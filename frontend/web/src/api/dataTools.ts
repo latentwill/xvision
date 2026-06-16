@@ -6,6 +6,7 @@
 // `crates/xvision-engine/src/api/settings/data_tools.rs`.
 
 import { apiFetch } from "./client";
+import { settingsKeys } from "./settings";
 
 // ── Wire types ───────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ export interface SetDataToolsRequest {
 // ── TanStack Query keys ──────────────────────────────────────────────────────
 
 export const dataToolsKeys = {
-  all: ["settings", "data-tools"] as const,
+  all: [...settingsKeys.all, "data-tools"] as const,
   list: () => [...dataToolsKeys.all] as const,
 };
 
