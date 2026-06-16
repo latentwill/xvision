@@ -4,6 +4,7 @@ pub mod alpaca;
 pub mod alpaca_live;
 pub mod alpaca_live_poll;
 pub mod asset_whitelist;
+pub mod elfa;
 pub mod fixtures;
 pub mod hl_bars;
 pub mod indicators;
