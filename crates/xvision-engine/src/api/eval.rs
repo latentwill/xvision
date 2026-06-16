@@ -2465,20 +2465,23 @@ impl ToolDispatch for ToolRegistryDispatch {
         // model-supplied as_of_date — the lookahead-safety invariant).
         let input = self.inject_backtest_as_of_async(name, input).await?;
 
-        // D8: per-run credit budget for signal tools.
-        let is_signal = crate::tools::signal_policy::signal_tool_policy(name).is_some();
-        if is_signal {
+        // D8: per-run credit budget for signal tools. Replay is free.
+        if crate::tools::signal_policy::signal_tool_policy(name).is_some() {
             if let Some(budget) = &self.budget {
-                if budget.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-                    return Ok(signal_degrade("budget exhausted"));
-                }
-                // Consume one credit for a live/record fetch (replay is free).
-                if !self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false) {
-                    let _ = budget.fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |v| Some(v.saturating_sub(1)),
-                    );
+                let is_replay = self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false);
+                if !is_replay {
+                    // Atomic check-and-decrement: consume one credit; if there was
+                    // none, degrade. saturating_sub keeps it >= 0.
+                    let prev = budget
+                        .fetch_update(
+                            std::sync::atomic::Ordering::Relaxed,
+                            std::sync::atomic::Ordering::Relaxed,
+                            |v| Some(v.saturating_sub(1)),
+                        )
+                        .unwrap_or(0);
+                    if prev == 0 {
+                        return Ok(signal_degrade("budget exhausted"));
+                    }
                 }
             }
         }
@@ -2560,8 +2563,15 @@ impl ToolRegistryDispatch {
         })?;
         let date = nansen_as_of_date(anchor, self.nansen_lag_days);
         let mut input = input;
-        if let Some(obj) = input.as_object_mut() {
-            obj.insert("as_of_date".into(), serde_json::Value::String(date.to_string()));
+        match input.as_object_mut() {
+            Some(obj) => {
+                obj.insert("as_of_date".into(), serde_json::Value::String(date.to_string()));
+            }
+            None => {
+                return Err(ToolDispatchError::Failed(format!(
+                    "{name}: backtest input must be a JSON object to anchor as_of_date"
+                )));
+            }
         }
         Ok(input)
     }
@@ -6320,6 +6330,17 @@ mod tool_registry_dispatch_tests {
         );
     }
 
+    #[tokio::test]
+    async fn nansen_backtest_non_object_input_is_error() {
+        use chrono::Utc;
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, Some(Utc::now()));
+        let err = d
+            .inject_backtest_as_of_async("nansen_smart_money_flow", serde_json::json!("not-an-object"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("JSON object"), "got: {err}");
+    }
+
     use xvision_agent_client::ToolDispatch as _;
 
     // -----------------------------------------------------------------------
@@ -6752,10 +6773,7 @@ mod broker_label_for_tests {
     fn signals_used_none_when_no_signal_tools() {
         let names: Vec<String> = vec!["ohlcv".into(), "submit_decision".into()];
         let result = super::signals_used_from_tool_names(&names);
-        assert_eq!(
-            result, None,
-            "no signal tools → None (field omitted from JSON)"
-        );
+        assert_eq!(result, None, "no signal tools → None (field omitted from JSON)");
     }
 
     /// Empty input also yields `None`.

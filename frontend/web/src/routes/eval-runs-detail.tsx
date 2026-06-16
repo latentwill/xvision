@@ -239,7 +239,7 @@ export function EvalRunDetailRoute() {
         agents={strategyDetail.data?.agents ?? []}
         agentsAll={agentsAll.data ?? []}
         totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
-        signalsUsed={(detail as RunDetail & { signals_used?: string[] }).signals_used}
+        signalsUsed={detail.signals_used}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -355,7 +355,7 @@ export function EvalRunDetailRoute() {
                 `signals_used` is an optional extension on RunDetail that the
                 backend does not yet populate; renders nothing when absent. */}
             <SignalsUsedChips
-              signals_used={(detail as RunDetail & { signals_used?: string[] }).signals_used}
+              signals_used={detail.signals_used}
             />
           </div>
 
