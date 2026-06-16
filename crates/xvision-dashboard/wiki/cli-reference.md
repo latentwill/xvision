@@ -431,6 +431,7 @@ id for per-user overrides.
 | `xvn store stats [--db <path>]` | Print row counts per table in the flight recorder. |
 | `xvn eod [--hours <n>]` | End-of-day operator report as markdown to stdout (default window: 24 h). |
 | `xvn doctor [--json]` | Config / DB / provider health check; lists paths, template registry, and secret-file presence. |
+| `xvn spot --side buy\|sell --symbol <ticker> --amount <usd> [--slippage <bps>] [--i-understand-real-money]` | Gated one-shot **Solana spot** swap via `byreal-cli` (curated SPL + xStocks; symbol→mint from `$XVN_HOME/config/byreal_spot_assets.toml`). **Defaults to a no-funds `--dry-run` preview**; `--i-understand-real-money` executes a real swap, with the global safety kill-switch checked first. Long/Flat only; custody is the byreal-cli keystore. |
 
 ---
 
