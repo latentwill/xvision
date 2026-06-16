@@ -36,6 +36,7 @@ import type {
 } from "@/api/types.gen";
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
+import { SignalsUsedChips } from "@/components/eval-detail/SignalsUsedChips";
 import { ActionPill } from "@/components/eval-detail/ActionPill";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
 import {
@@ -238,6 +239,7 @@ export function EvalRunDetailRoute() {
         agents={strategyDetail.data?.agents ?? []}
         agentsAll={agentsAll.data ?? []}
         totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
+        signalsUsed={detail.signals_used}
         onCancel={() => cancel.mutate(detail.summary.id)}
         cancelling={cancel.variables === detail.summary.id && cancel.isPending}
         onRetry={() => retry.mutate(detail.summary.id)}
@@ -348,6 +350,13 @@ export function EvalRunDetailRoute() {
                 }
               />
             </div>
+
+            {/* Signals used — full-width inline chip strip.
+                `signals_used` is an optional extension on RunDetail that the
+                backend does not yet populate; renders nothing when absent. */}
+            <SignalsUsedChips
+              signals_used={detail.signals_used}
+            />
           </div>
 
           {/*

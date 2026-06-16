@@ -1760,6 +1760,21 @@ impl Executor {
                     };
                 }
 
+                // Publish the current asset + bar timestamp into the shared
+                // dispatch handles so the tool chokepoint can (a) reject
+                // cross-asset market-data fetches (asset guard) and (b) anchor
+                // Nansen backtest calls to the simulated clock (`as_of`).
+                // No-op when `cline` is absent (non-sidecar run).
+                if let Some(cline) = self.cline.as_ref() {
+                    publish_decision_context(
+                        &cline.tool_asset_guard,
+                        &cline.as_of_guard,
+                        &asset,
+                        bar.timestamp,
+                    )
+                    .await;
+                }
+
                 // F-5 phase 2a: keep a copy of the seed so the
                 // malformed-json repair path (below) can rebuild the
                 // original user prompt byte-for-byte. The pipeline consumes
@@ -4186,6 +4201,18 @@ impl Executor {
             },
         )));
 
+        // Publish the current asset + bar timestamp into the shared dispatch
+        // handles (mirrors the backtest write at the top of `let parsed`).
+        if let Some(cline) = self.cline.as_ref() {
+            publish_decision_context(
+                &cline.tool_asset_guard,
+                &cline.as_of_guard,
+                &asset,
+                bar.timestamp,
+            )
+            .await;
+        }
+
         let outs = run_pipeline(PipelineInputs {
             strategy,
             agent_slots,
@@ -6523,6 +6550,26 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
         .and_then(|r| r.bar_history_limit)
 }
 
+/// Publish the current decision's asset + simulated-clock timestamp into the
+/// shared dispatch handles so the tool chokepoint can (a) reject cross-asset
+/// market-data fetches and (b) anchor Nansen backtest calls. No-op when a
+/// handle is `None` (non-sidecar run).
+async fn publish_decision_context(
+    asset_guard: &Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>>,
+    as_of_guard: &Option<
+        std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+    >,
+    asset: &str,
+    as_of: chrono::DateTime<chrono::Utc>,
+) {
+    if let Some(g) = asset_guard {
+        *g.write().await = Some(asset.to_string());
+    }
+    if let Some(g) = as_of_guard {
+        *g.write().await = Some(as_of);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6719,6 +6766,32 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
+    }
+
+    #[tokio::test]
+    async fn decision_context_write_populates_asset_and_clock() {
+        use chrono::{TimeZone, Utc};
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        let asset_guard = Some(Arc::new(RwLock::new(None)));
+        let as_of_guard = Some(Arc::new(RwLock::new(None)));
+        let ts = Utc.with_ymd_and_hms(2024, 3, 15, 14, 0, 0).unwrap();
+
+        publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", ts).await;
+
+        assert_eq!(asset_guard.as_ref().unwrap().read().await.as_deref(), Some("BTC/USD"));
+        assert_eq!(*as_of_guard.as_ref().unwrap().read().await, Some(ts));
+    }
+
+    #[tokio::test]
+    async fn decision_context_write_is_noop_when_guards_absent() {
+        use chrono::Utc;
+        let asset_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>> = None;
+        let as_of_guard: Option<
+            std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+        > = None;
+        // Both None (non-sidecar run) must not panic.
+        publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", Utc::now()).await;
     }
 }
 
