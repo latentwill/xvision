@@ -125,6 +125,38 @@ fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
     validate_provider_name_str(name).map_err(garde::Error::new)
 }
 
+/// Accept only `http://` or `https://` base URLs (defense-in-depth, xvision-im2r.11).
+/// Rejects other schemes (ftp://, file://, etc.) with a clear error.
+fn validate_data_tool_base_url(value: &str, _ctx: &()) -> garde::Result {
+    if value.starts_with("http://") || value.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(garde::Error::new("base_url must begin with http:// or https://"))
+    }
+}
+
+/// Accept only POSIX-style env-var names: `^[A-Z][A-Z0-9_]*$`, or empty
+/// (empty = no auth required, mirrors `ProviderEntry` convention).
+/// Rejects lowercase letters, shell-special chars, etc. (xvision-im2r.11).
+fn validate_api_key_env(value: &str, _ctx: &()) -> garde::Result {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_uppercase() {
+        return Err(garde::Error::new(
+            "api_key_env must start with an uppercase ASCII letter (A-Z)",
+        ));
+    }
+    if !chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return Err(garde::Error::new(
+            "api_key_env must match ^[A-Z][A-Z0-9_]*$ (uppercase letters, digits, underscores only)",
+        ));
+    }
+    Ok(())
+}
+
 // --- runtime ----------------------------------------------------------------
 
 /// Which agent runtime drives LLM-backed slots.
@@ -355,9 +387,9 @@ pub enum DataToolKind {
 pub struct DataToolEntry {
     #[garde(skip)]
     pub kind: DataToolKind,
-    #[garde(length(max = 512))]
+    #[garde(length(max = 512), custom(validate_data_tool_base_url))]
     pub base_url: String,
-    #[garde(length(max = 64))]
+    #[garde(length(max = 64), custom(validate_api_key_env))]
     pub api_key_env: String,
     #[serde(default)]
     #[garde(skip)]
@@ -1682,6 +1714,78 @@ nansen_lookahead_lag_days = 1
         assert!(!dt.enabled); // serde default false
         assert_eq!(dt.budget_credits_per_run, None);
         assert_eq!(dt.nansen_lookahead_lag_days, None);
+    }
+
+    // --- DataToolEntry garde validators (xvision-im2r.11) -------------------
+
+    fn minimal_data_tool_entry(base_url: &str, api_key_env: &str) -> DataToolEntry {
+        DataToolEntry {
+            kind: DataToolKind::Nansen,
+            base_url: base_url.to_string(),
+            api_key_env: api_key_env.to_string(),
+            enabled: false,
+            budget_credits_per_run: None,
+            nansen_lookahead_lag_days: None,
+        }
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_https_base_url() {
+        let entry = minimal_data_tool_entry("https://api.nansen.ai", "NANSEN_API_KEY");
+        entry.validate().expect("https URL must be accepted");
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_http_base_url() {
+        let entry = minimal_data_tool_entry("http://localhost:8080", "LOCAL_KEY");
+        entry.validate().expect("http URL must be accepted");
+    }
+
+    #[test]
+    fn data_tool_entry_rejects_non_http_base_url() {
+        let ftp = minimal_data_tool_entry("ftp://x.example.com", "KEY");
+        assert!(
+            ftp.validate().is_err(),
+            "ftp:// scheme must be rejected by validate()"
+        );
+        let file = minimal_data_tool_entry("file:///etc/passwd", "KEY");
+        assert!(
+            file.validate().is_err(),
+            "file:// scheme must be rejected by validate()"
+        );
+    }
+
+    #[test]
+    fn data_tool_entry_rejects_bad_api_key_env() {
+        // lowercase name
+        let bad1 = minimal_data_tool_entry("https://api.example.com", "lowercase");
+        assert!(bad1.validate().is_err(), "lowercase api_key_env must be rejected");
+        // shell-special chars
+        let bad2 = minimal_data_tool_entry("https://api.example.com", "foo;bar");
+        assert!(
+            bad2.validate().is_err(),
+            "api_key_env with semicolon must be rejected"
+        );
+        // starts with digit
+        let bad3 = minimal_data_tool_entry("https://api.example.com", "1KEY");
+        assert!(
+            bad3.validate().is_err(),
+            "api_key_env starting with digit must be rejected"
+        );
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_valid_api_key_env() {
+        // Canonical uppercase name
+        let ok1 = minimal_data_tool_entry("https://api.nansen.ai", "NANSEN_API_KEY");
+        ok1.validate().expect("NANSEN_API_KEY must be accepted");
+        // Single-char uppercase (mirrors existing ProviderEntry tests)
+        let ok2 = minimal_data_tool_entry("https://api.nansen.ai", "K");
+        ok2.validate().expect("single uppercase letter must be accepted");
+        // Empty (no-auth endpoint, mirrors ProviderEntry convention)
+        let ok3 = minimal_data_tool_entry("https://api.nansen.ai", "");
+        ok3.validate()
+            .expect("empty api_key_env must be accepted (no-auth endpoint)");
     }
 
     #[test]
