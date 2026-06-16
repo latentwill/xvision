@@ -153,6 +153,13 @@ pub struct SignalAssetIdentity {
 ///
 /// # GROUNDING (verify before mainnet, Task 6.4): confirm chain slugs +
 /// contract/mint addresses + native sentinel against live Nansen docs.
+///
+/// SINGLE SOURCE OF TRUTH (decision bd xvision-im2r.10): this static seed is
+/// intentionally the only active source of on-chain identity for now. Reading
+/// from `AssetEntry.chain`/`contract_address` (or a populated `RegistryEntry`)
+/// is deferred until the `asset_registry` `OnceLock`/`register()` startup path
+/// is wired — until then, add new whitelisted crypto assets HERE. Unmapped
+/// assets degrade (the tool returns `{available:false}`), never panic.
 pub fn signal_asset_identity(symbol: &str) -> Option<SignalAssetIdentity> {
     // Normalize: take base ticker (strip /USD etc.), uppercase.
     let s = symbol.trim().split('/').next().unwrap_or("").to_ascii_uppercase();
