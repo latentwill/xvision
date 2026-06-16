@@ -41,8 +41,17 @@ pub enum DashboardError {
     /// available; the route degrades loudly with 503 rather than guessing.
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    /// 400 — malformed x402 payment payload / failed terms.
+    #[error("bad request: {0}")]
+    BadRequest(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<xvision_marketplace::error::MarketplaceError> for DashboardError {
+    fn from(e: xvision_marketplace::error::MarketplaceError) -> Self {
+        DashboardError::BadRequest(format!("marketplace: {e}"))
+    }
 }
 
 impl From<ApiError> for DashboardError {
@@ -112,6 +121,11 @@ impl IntoResponse for DashboardError {
             DashboardError::ServiceUnavailable(m) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({ "code": "service_unavailable", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::BadRequest(m) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "code": "bad_request", "message": m.clone() })),
             )
                 .into_response(),
             DashboardError::Internal(e) => {
