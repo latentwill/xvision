@@ -7,3 +7,5 @@
 pub mod worktree;
 pub mod run_config;
 pub mod training_gate;
+pub mod experiment;
+pub mod promotion;
