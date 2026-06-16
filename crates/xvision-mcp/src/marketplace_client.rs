@@ -41,22 +41,27 @@ pub struct PaymentReq {
 /// Build an EIP-3009 Authorization with a random nonce and validity window.
 /// `from`/`to` = buyer/payTo addresses, `value` = USDC in 6-dp units,
 /// `ttl_secs` = how long the authorization is valid for (e.g. 600s = 10 min).
-pub fn build_authorization(from: Address, to: Address, value: U256, ttl_secs: u64) -> Authorization {
+pub fn build_authorization(
+    from: Address,
+    to: Address,
+    value: U256,
+    ttl_secs: u64,
+) -> Result<Authorization, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     // random 32-byte nonce
     let mut n = [0u8; 32];
-    getrandom::getrandom(&mut n).expect("rng");
-    Authorization {
+    getrandom::getrandom(&mut n).map_err(|e| format!("rng: {e}"))?;
+    Ok(Authorization {
         from,
         to,
         value,
         valid_after: U256::ZERO,
         valid_before: U256::from(now + ttl_secs),
         nonce: B256::from(n),
-    }
+    })
 }
 
 /// Full non-custodial buy: GET 402 → sign locally → POST settle with X-PAYMENT.
@@ -75,6 +80,13 @@ pub async fn buy(listing_id: u64) -> Result<serde_json::Value, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    let status = r.status();
+    if status.as_u16() != 402 {
+        let body = r.text().await.unwrap_or_default();
+        return Err(format!(
+            "expected HTTP 402 with payment requirements, got {status}: {body}"
+        ));
+    }
     let reqs: AcceptsResp = r.json().await.map_err(|e| e.to_string())?;
     let pr = reqs.accepts.into_iter().next().ok_or("no payment requirements")?;
 
@@ -91,7 +103,7 @@ pub async fn buy(listing_id: u64) -> Result<serde_json::Value, String> {
         .map_err(|_| "bad maxAmountRequired")?;
 
     // 2. sign locally — key never leaves this process
-    let auth = build_authorization(signer.address(), pay_to, value, 600);
+    let auth = build_authorization(signer.address(), pay_to, value, 600)?;
     let domain = x402::usdc_domain(chain_id, usdc);
     let parts = x402::sign_authorization(&signer, &auth, &domain).map_err(|e| e.to_string())?;
 
@@ -198,7 +210,7 @@ mod tests {
     fn build_authorization_sets_value_and_expiry() {
         let from = Address::ZERO;
         let to = Address::ZERO;
-        let auth = build_authorization(from, to, U256::from(49_000_000u64), 600);
+        let auth = build_authorization(from, to, U256::from(49_000_000u64), 600).unwrap();
         assert_eq!(auth.value, U256::from(49_000_000u64));
         assert!(auth.valid_before > auth.valid_after);
     }
