@@ -333,9 +333,19 @@ The MCP tool surface is **bespoke** — tool names, request schemas, and respons
 | `xvn_scenario_inspect_card` | `api::scenario::get`, `api::eval::list` | API-backed, formats bespoke text card. |
 | `xvn_eval_behavior` | `api::eval::get_run_behavior` | API-backed. |
 
-**Total MCP tools: 31**
+### Marketplace / x402 tools (backed by `crate::marketplace_client`, Task 3.1–3.3)
+
+| MCP tool | Backing fn | Notes |
+|---|---|---|
+| `xvn_marketplace_browse` | `marketplace_client::browse` | Read-only: GET /api/marketplace/listings. No auth required. |
+| `xvn_marketplace_get_listing` | `marketplace_client::get_listing` | Read-only: GET /api/marketplace/listings/{id}. No auth required. |
+| `xvn_marketplace_wallet` | `marketplace_client::load_agent_signer` | Shows local agent wallet address from `XVN_AGENT_PK`. Returns `invalid_params` if key unset. |
+| `xvn_marketplace_buy` | `marketplace_client::buy` | Non-custodial x402 purchase: GET 402 → sign EIP-3009 locally → POST settle. Key never leaves process. |
+| `xvn_marketplace_import` | `marketplace_client::import` | Verifies on-chain license then installs strategy locally via POST /api/marketplace/listings/{id}/import. |
+
+**Total MCP tools: 36**
 **API-backed (any engine API call): 15**
-**Bespoke (xvision-data / authoring layer / no direct API fn): 16**
+**Bespoke (xvision-data / authoring layer / no direct API fn): 21**
 
 ---
 

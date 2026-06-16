@@ -182,6 +182,13 @@ pub struct SetRiskConfigReq {
     pub explicit: Option<serde_json::Value>,
 }
 
+// --- marketplace request shapes (x402 autonomous purchases) ------------------
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct MarketplaceGetReq {
+    pub listing_id: u64,
+}
+
 // --- eval-domain request shapes (Phase 3.D Task 12) -------------------------
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -590,6 +597,11 @@ impl XvisionTools {
             "xvn_health",
             "xvn_list_templates",
             "xvn_macd",
+            "xvn_marketplace_browse",
+            "xvn_marketplace_buy",
+            "xvn_marketplace_get_listing",
+            "xvn_marketplace_import",
+            "xvn_marketplace_wallet",
             "xvn_rsi",
             "xvn_scenario_inspect_card",
             "xvn_scenarios_select",
@@ -1948,6 +1960,64 @@ impl XvisionTools {
             .await
             .map_err(api_err_to_mcp)?;
         json_or_err(&behavior)
+    }
+
+    // ── x402 marketplace tools (Task 3.1–3.3) ────────────────────────────────
+
+    #[tool(
+        description = "Browse marketplace listings (chain-indexed, read-only). Returns the listing array."
+    )]
+    async fn xvn_marketplace_browse(&self) -> Result<String, rmcp::ErrorData> {
+        let v = crate::marketplace_client::browse()
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+        json_or_err(&v)
+    }
+
+    #[tool(description = "Get one marketplace listing + bundle manifest by numeric id.")]
+    async fn xvn_marketplace_get_listing(
+        &self,
+        Parameters(req): Parameters<MarketplaceGetReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let v = crate::marketplace_client::get_listing(req.listing_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+        json_or_err(&v)
+    }
+
+    #[tool(
+        description = "Show the local agent wallet address (the non-custodial buyer key from XVN_AGENT_PK; funding helper)."
+    )]
+    async fn xvn_marketplace_wallet(&self) -> Result<String, rmcp::ErrorData> {
+        let signer = crate::marketplace_client::load_agent_signer()
+            .map_err(|e| rmcp::ErrorData::invalid_params(e, None))?;
+        json_or_err(&serde_json::json!({ "address": format!("0x{:x}", signer.address()) }))
+    }
+
+    #[tool(
+        description = "Autonomously buy a listing over x402 (signs locally with XVN_AGENT_PK; the key never leaves this process). Returns tx_hash + license_token_id."
+    )]
+    async fn xvn_marketplace_buy(
+        &self,
+        Parameters(req): Parameters<MarketplaceGetReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let v = crate::marketplace_client::buy(req.listing_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+        json_or_err(&v)
+    }
+
+    #[tool(
+        description = "Import a purchased listing: verifies the on-chain license then installs the strategy locally."
+    )]
+    async fn xvn_marketplace_import(
+        &self,
+        Parameters(req): Parameters<MarketplaceGetReq>,
+    ) -> Result<String, rmcp::ErrorData> {
+        let v = crate::marketplace_client::import(req.listing_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+        json_or_err(&v)
     }
 }
 
