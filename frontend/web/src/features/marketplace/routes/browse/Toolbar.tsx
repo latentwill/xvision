@@ -11,7 +11,6 @@ export const SORT_LABELS: Record<SortKey, string> = {
   return30d: "30d return",
   sharpe: "Sharpe",
   buyers: "Buyers",
-  mostCloned: "Most cloned",
   newest: "Newest",
 };
 
@@ -64,8 +63,8 @@ export function Toolbar({
 }: ToolbarProps) {
   // Build the sort options, dropping performance sorts when they'd sort on zeros.
   const sortKeys: SortKey[] = allowPerformanceSort
-    ? ["return30d", "sharpe", "buyers", "mostCloned", "newest"]
-    : ["newest", "buyers", "mostCloned"];
+    ? ["return30d", "sharpe", "buyers", "newest"]
+    : ["newest", "buyers"];
   const sortOptions = sortKeys.map((k) => ({ value: k, label: SORT_LABELS[k] }));
   // If the active sort was hidden (performance sort on a zeroed client), fall
   // back to "newest" for the menu's displayed value.

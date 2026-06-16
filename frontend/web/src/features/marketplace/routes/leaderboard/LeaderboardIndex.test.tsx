@@ -20,14 +20,13 @@ describe("LeaderboardIndex", () => {
     expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Leaderboard");
   });
 
-  it("renders all 7 slice labels from the fixture", async () => {
+  it("renders all slice labels from the fixture", async () => {
     render();
     expect(await screen.findByText("Trending")).toBeInTheDocument();
     expect(await screen.findByText("Top on SOL · 7d")).toBeInTheDocument();
     expect(await screen.findByText("Top with Claude")).toBeInTheDocument();
     expect(await screen.findByText("Most agent-bought")).toBeInTheDocument();
     expect(await screen.findByText("Newest 24h")).toBeInTheDocument();
-    expect(await screen.findByText("Most cloned")).toBeInTheDocument();
     expect(await screen.findByText("Free-tier breakouts")).toBeInTheDocument();
   });
 

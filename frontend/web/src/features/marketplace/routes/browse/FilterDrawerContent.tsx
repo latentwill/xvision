@@ -11,7 +11,6 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "return30d", label: "30d return" },
   { key: "sharpe", label: "Sharpe" },
   { key: "buyers", label: "Buyers (humans + agents)" },
-  { key: "mostCloned", label: "Most cloned" },
   { key: "newest", label: "Newest" },
 ];
 

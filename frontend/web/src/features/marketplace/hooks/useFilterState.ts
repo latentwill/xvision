@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { defaultFilterState } from "@/features/marketplace/data/filter";
 import type { FilterState, SortKey, Tier } from "@/features/marketplace/data/types";
 
-const SORTS: SortKey[] = ["return30d", "sharpe", "buyers", "mostCloned", "newest"];
+const SORTS: SortKey[] = ["return30d", "sharpe", "buyers", "newest"];
 const SEGMENTS = ["trending", "new", "mine"] as const;
 const TIERS: Tier[] = ["open", "sealed"];
 const list = (v: string | null) => (v ? v.split(",").filter(Boolean) : []);

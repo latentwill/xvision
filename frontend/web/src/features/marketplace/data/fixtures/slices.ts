@@ -13,6 +13,5 @@ export const SLICES: Slice[] = [
   { id: "claude", label: "Top with Claude", hint: "model=Claude", count: 0, filter: { models: ["Claude · Haiku 4.5"], sort: "return30d" } },
   { id: "agents", label: "Most agent-bought", hint: "sort by agent purchases", count: 0, filter: { sort: "buyers", trust: { verifiedOnly: false, acceptsAgents: true, auditedOnly: false } } },
   { id: "newest", label: "Newest 24h", hint: "recently minted", count: 0, filter: { sort: "newest" } },
-  { id: "cloned", label: "Most cloned", hint: "sort by clones", count: 0, filter: { sort: "mostCloned" } },
   { id: "free", label: "Free-tier breakouts", hint: "Free-tier · top 30d return", count: 0, filter: { tier: ["open"], sort: "return30d" } },
 ];
