@@ -19,9 +19,7 @@ pub struct VenueQuery {
     pub venue: Option<String>,
 }
 
-pub async fn venue_account(
-    Query(q): Query<VenueQuery>,
-) -> Result<Json<VenueAccountDto>, DashboardError> {
+pub async fn venue_account(Query(q): Query<VenueQuery>) -> Result<Json<VenueAccountDto>, DashboardError> {
     let dto = live_broker::venue_account(q.venue.as_deref()).await?;
     Ok(Json(dto))
 }
