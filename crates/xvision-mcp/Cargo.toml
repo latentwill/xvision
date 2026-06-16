@@ -20,9 +20,15 @@ name = "xvision-mcp"
 path = "src/bin/xvision-mcp.rs"
 
 [dependencies]
-xvision-data   = { path = "../xvision-data" }
-xvision-engine = { path = "../xvision-engine" }
-xvision-memory = { path = "../xvision-memory" }
+xvision-data        = { path = "../xvision-data" }
+xvision-engine      = { path = "../xvision-engine" }
+xvision-memory      = { path = "../xvision-memory" }
+xvision-marketplace = { path = "../xvision-marketplace" }
+
+alloy    = { workspace = true }
+reqwest  = { workspace = true, features = ["json"] }
+base64   = "0.22"
+getrandom = "0.2"
 
 # rmcp 1.6: official Rust MCP SDK. Default features = base64 + macros + server.
 # transport-io enables `rmcp::transport::stdio()` for MCP-over-stdin/stdout.

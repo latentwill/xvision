@@ -18,6 +18,7 @@ use rmcp::transport::stdio;
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
+pub mod marketplace_client;
 pub mod tools;
 
 use tools::XvisionTools;
