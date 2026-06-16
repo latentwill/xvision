@@ -532,7 +532,7 @@ fn parse_usdc6_decimal(field: &str, s: &str) -> Result<U256, DashboardError> {
 /// Pure body → driver-request conversion. Validation order: all field
 /// parses (400) → M-2 recipient==from (400). Env gating happens after this
 /// in the handler, so a malformed body never reports a misleading 503.
-fn build_buy_request(body: &BuyBody) -> Result<BuyRequest, DashboardError> {
+pub(crate) fn build_buy_request(body: &BuyBody) -> Result<BuyRequest, DashboardError> {
     let recipient = parse_address("recipient", &body.recipient)?;
     let auth = &body.authorization;
     let from = parse_address("authorization.from", &auth.from)?;

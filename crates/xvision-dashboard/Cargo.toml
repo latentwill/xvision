@@ -55,6 +55,7 @@ reqwest         = { workspace = true }
 # alloy + url: chain primitives (U256/B256/Address, PrivateKeySigner) and the
 # url::Url that IdentityClient::register takes — marketplace publish route.
 alloy           = { workspace = true }
+base64          = "0.22"
 url             = "2"
 
 [dev-dependencies]
