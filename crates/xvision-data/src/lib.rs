@@ -8,6 +8,7 @@ pub mod fixtures;
 pub mod hl_bars;
 pub mod indicators;
 pub mod manifest;
+pub mod nansen;
 pub mod perp_feed;
 pub mod validate;
 
