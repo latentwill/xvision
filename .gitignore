@@ -176,6 +176,8 @@ tools/agent-conductor/dist/
 # Ship only the in-app wiki + app runtime — exclude ALL internal documentation.
 # Untracked via `git rm --cached` (history preserved); working copies stay local.
 # KEPT (build/runtime, not ignored): docs/strategies/ (include_dir!),
+# /strategies/ (seed strategy library — Dockerfile.deploy COPYs it to /strategies
+# and docker/entrypoint.sh seeds it into $XVN_HOME/strategies at startup),
 # crates/**/prompts/** + data/examples/README.md (include_str!), the in-app wiki
 # crates/xvision-dashboard/wiki/, README.md, CHANGELOG.md, CREDITS.md, LICENSE.
 # ──────────────────────────────────────────────────────────────────────────
@@ -183,7 +185,6 @@ tools/agent-conductor/dist/
 !/docs/strategies
 /team/
 /decisions/
-/strategies/
 /qa/
 
 # Internal planning/process docs + agent config at repo root
