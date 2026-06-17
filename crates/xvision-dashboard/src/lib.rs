@@ -16,6 +16,7 @@ pub mod ipc;
 pub mod llm_dispatch;
 pub mod marketplace_index;
 pub mod marketplace_nonce;
+pub mod ratelimit;
 pub mod redact;
 pub mod routes;
 pub mod server;

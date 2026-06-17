@@ -41,8 +41,32 @@ pub enum DashboardError {
     /// available; the route degrades loudly with 503 rather than guessing.
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    /// 400 — malformed x402 payment payload / failed terms.
+    #[error("bad request: {0}")]
+    BadRequest(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<xvision_marketplace::error::MarketplaceError> for DashboardError {
+    fn from(e: xvision_marketplace::error::MarketplaceError) -> Self {
+        use xvision_marketplace::error::MarketplaceError as M;
+        // Discriminate so x402 clients get retry-meaningful status codes:
+        // transient/infra → 503, missing/gone → 404/409, client/payload → 400.
+        let msg = format!("marketplace: {e}");
+        match e {
+            M::NotConfigured(_)
+            | M::Rpc(_)
+            | M::Chain(_)
+            | M::Ipfs(_)
+            | M::Sealed(_)
+            | M::NotImplemented(_)
+            | M::Identity(_) => DashboardError::ServiceUnavailable(msg),
+            M::UnknownListing(_) => DashboardError::NotFound(msg),
+            M::ListingRevoked(_) => DashboardError::Conflict(msg),
+            M::Contract(_) | M::Signing(_) => DashboardError::BadRequest(msg),
+        }
+    }
 }
 
 impl From<ApiError> for DashboardError {
@@ -112,6 +136,11 @@ impl IntoResponse for DashboardError {
             DashboardError::ServiceUnavailable(m) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({ "code": "service_unavailable", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::BadRequest(m) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "code": "bad_request", "message": m.clone() })),
             )
                 .into_response(),
             DashboardError::Internal(e) => {

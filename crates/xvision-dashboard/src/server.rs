@@ -213,7 +213,7 @@ use crate::routes::{
     search as search_route, settings, settings_autoresearch as settings_autoresearch_route, skills,
     static_files, strategies, strategies_folder as strategies_folder_route, tools as tools_route,
     version::version,
-    wizard,
+    wizard, x402 as x402_route,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -999,10 +999,30 @@ pub fn build_router(state: AppState) -> Router {
     // axum's router matches in registration order for overlapping patterns.
     // The split into readonly/mutating routers preserves this ordering because
     // both sub-routers are merged before final assembly.
+
+    // x402 public sub-router: NOT behind require_auth — these routes are for
+    // unauthenticated external x402 clients (autonomous agents). Rate-limited
+    // per IP via tower_governor. The server is already started with
+    // into_make_service_with_connect_info::<SocketAddr>() (see `serve`), which
+    // is required by PeerIpKeyExtractor.
+    let x402_public = Router::new()
+        .route("/api/marketplace/listings/:id/x402", get(x402_route::get_x402))
+        .route(
+            "/api/marketplace/facilitator/verify",
+            post(x402_route::post_verify),
+        )
+        .route(
+            "/api/marketplace/facilitator/settle/:id",
+            post(x402_route::post_settle),
+        )
+        .layer(crate::ratelimit::x402_rate_limit_layer())
+        .with_state(state.clone());
+
     Router::new()
         .merge(readonly_router(state.clone()))
         .merge(mutating_router(state.clone()))
         .merge(auth_router(state.clone()))
+        .merge(x402_public)
         .route("/", get(static_files::serve_index))
         .route("/assets/*path", get(static_files::serve_static))
         .fallback(static_files::fallback)

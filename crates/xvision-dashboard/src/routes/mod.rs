@@ -41,3 +41,4 @@ pub mod strategies_folder;
 pub mod tools;
 pub mod version;
 pub mod wizard;
+pub mod x402;
