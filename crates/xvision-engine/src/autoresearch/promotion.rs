@@ -126,12 +126,7 @@ pub async fn insert_trained_model(pool: &SqlitePool, req: &NewTrainedModel) -> R
 
 /// Update `autoresearch_runs.best_acc` and `best_model_id` when a new
 /// checkpoint promotes.
-pub async fn update_run_best(
-    pool: &SqlitePool,
-    run_id: &str,
-    val_acc: f64,
-    model_id: &str,
-) -> Result<()> {
+pub async fn update_run_best(pool: &SqlitePool, run_id: &str, val_acc: f64, model_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE autoresearch_runs SET best_acc = ?, best_model_id = ?
          WHERE run_id = ?",
@@ -303,12 +298,11 @@ mod tests {
         };
         insert_trained_model(&pool, &req).await.unwrap();
 
-        let (promoted, live_approved): (i64, i64) = sqlx::query_as(
-            "SELECT promoted, live_approved FROM trained_models WHERE model_id = 'model-01'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let (promoted, live_approved): (i64, i64) =
+            sqlx::query_as("SELECT promoted, live_approved FROM trained_models WHERE model_id = 'model-01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(promoted, 1, "should be promoted");
         assert_eq!(live_approved, 0, "live_approved must start at 0");

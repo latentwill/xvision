@@ -14,9 +14,9 @@ use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
     set_agent_checkpoint, set_mechanistic_config, set_pipeline, set_risk_config, update_inspector,
-    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq,
-    ListStrategiesRequest, MarketplaceProvenance, RemoveAgentReq, RenameAgentRoleReq,
-    SetAgentCheckpointReq, SetPipelineReq, StrategyAgentsOut, StrategyRequirements, StrategySummary,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
+    MarketplaceProvenance, RemoveAgentReq, RenameAgentRoleReq, SetAgentCheckpointReq, SetPipelineReq,
+    StrategyAgentsOut, StrategyRequirements, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{

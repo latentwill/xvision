@@ -18,8 +18,7 @@ use xvision_engine::agent::nano_dispatch::{NanoDirection, NanoInputSpec, NanoNor
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn stub_worker_path() -> std::path::PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set by cargo test");
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by cargo test");
     std::path::PathBuf::from(manifest).join("tests/fixtures/stub_nano_worker.py")
 }
 

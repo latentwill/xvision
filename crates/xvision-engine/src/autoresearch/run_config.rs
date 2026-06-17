@@ -4,9 +4,9 @@
 //! harness writes it from the validated `POST /api/autoresearch/runs` payload
 //! so no operator-controlled string is interpolated into a shell command.
 
-use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// v1 label strategies. Matches the spec operator-surface names and the
 /// `label_strategy` column in `autoresearch_runs`.
@@ -104,9 +104,7 @@ impl RunConfig {
         if matches!(self.label_strategy, LabelStrategy::OutcomeImitation)
             && self.label_config.outcome_imitation_filter.is_none()
         {
-            bail!(
-                "outcome_imitation_filter is required when label_strategy = outcome_imitation"
-            );
+            bail!("outcome_imitation_filter is required when label_strategy = outcome_imitation");
         }
         if self.promotion_acc_floor < 0.0 || self.promotion_acc_floor > 1.0 {
             bail!("promotion_acc_floor must be in [0, 1]");
@@ -120,8 +118,7 @@ impl RunConfig {
     /// Serialize and write atomically to `path` (write to `.tmp`, then rename).
     pub fn write_to(&self, path: &Path) -> Result<()> {
         self.validate()?;
-        let json = serde_json::to_string_pretty(self)
-            .context("serialize RunConfig to JSON")?;
+        let json = serde_json::to_string_pretty(self).context("serialize RunConfig to JSON")?;
         let tmp_path = path.with_extension("json.tmp");
         std::fs::write(&tmp_path, json.as_bytes())
             .with_context(|| format!("write run_config to {}", tmp_path.display()))?;

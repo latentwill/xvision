@@ -116,8 +116,7 @@ async fn strategy_save_rejected_when_checkpoint_not_live_approved() {
         .await
         .expect_err("live_approved=0 must block save");
     assert!(
-        err.to_string().contains("live-approved")
-            || err.to_string().contains("CheckpointNotLiveApproved"),
+        err.to_string().contains("live-approved") || err.to_string().contains("CheckpointNotLiveApproved"),
         "error must mention live-approved gate: {err}"
     );
 }
@@ -137,8 +136,7 @@ async fn strategy_save_rejected_when_indicator_missing() {
         .await
         .expect_err("missing indicator must block save");
     assert!(
-        err.to_string().contains("rsi_14")
-            || err.to_string().contains("MissingCheckpointIndicators"),
+        err.to_string().contains("rsi_14") || err.to_string().contains("MissingCheckpointIndicators"),
         "error must name missing indicator: {err}"
     );
 }
@@ -196,17 +194,15 @@ fn strategy_no_checkpoint() -> Strategy {
             capital_mode: Default::default(),
         },
         hypothesis: None,
-        agents: vec![
-            AgentRef {
-                agent_id: "01HZFILTER000000000000000000".into(),
-                role: "filter".into(),
-                activates: None,
-                prompt_override: None,
-                model_override: None,
-                checkpoint: None,
-                veto: None,
-            },
-        ],
+        agents: vec![AgentRef {
+            agent_id: "01HZFILTER000000000000000000".into(),
+            role: "filter".into(),
+            activates: None,
+            prompt_override: None,
+            model_override: None,
+            checkpoint: None,
+            veto: None,
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         trader_slot: None,
@@ -242,7 +238,9 @@ async fn set_agent_checkpoint_persists_live_approved_checkpoint() {
         SetAgentCheckpointReq {
             strategy_id: strategy_id.clone(),
             role: "filter".into(),
-            checkpoint: Some(CheckpointRef { model_id: model_id.clone() }),
+            checkpoint: Some(CheckpointRef {
+                model_id: model_id.clone(),
+            }),
             veto: Some(true),
         },
     )
@@ -293,7 +291,9 @@ async fn set_agent_checkpoint_rejects_not_live_approved() {
         SetAgentCheckpointReq {
             strategy_id: strategy_id.clone(),
             role: "filter".into(),
-            checkpoint: Some(CheckpointRef { model_id: model_id.clone() }),
+            checkpoint: Some(CheckpointRef {
+                model_id: model_id.clone(),
+            }),
             veto: Some(true),
         },
     )
@@ -301,8 +301,7 @@ async fn set_agent_checkpoint_rejects_not_live_approved() {
     .expect_err("non-live-approved checkpoint must be rejected");
 
     assert!(
-        err.to_string().contains("live-approved")
-            || err.to_string().contains("CheckpointNotLiveApproved"),
+        err.to_string().contains("live-approved") || err.to_string().contains("CheckpointNotLiveApproved"),
         "error must mention live-approved gate: {err}"
     );
 }
@@ -350,7 +349,9 @@ async fn set_agent_checkpoint_clears_checkpoint_when_none() {
     // Start with a strategy that already has a checkpoint.
     let mut s = strategy_no_checkpoint();
     let strategy_id = s.manifest.id.clone();
-    s.agents[0].checkpoint = Some(CheckpointRef { model_id: model_id.clone() });
+    s.agents[0].checkpoint = Some(CheckpointRef {
+        model_id: model_id.clone(),
+    });
     s.agents[0].veto = Some(true);
     ctx.validate_and_save_strategy(s).await.unwrap();
 
@@ -397,7 +398,9 @@ async fn set_agent_checkpoint_rejects_model_override_conflict() {
         SetAgentCheckpointReq {
             strategy_id: strategy_id.clone(),
             role: "filter".into(),
-            checkpoint: Some(CheckpointRef { model_id: model_id.clone() }),
+            checkpoint: Some(CheckpointRef {
+                model_id: model_id.clone(),
+            }),
             veto: Some(true),
         },
     )

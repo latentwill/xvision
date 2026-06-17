@@ -4204,13 +4204,8 @@ impl Executor {
         // Publish the current asset + bar timestamp into the shared dispatch
         // handles (mirrors the backtest write at the top of `let parsed`).
         if let Some(cline) = self.cline.as_ref() {
-            publish_decision_context(
-                &cline.tool_asset_guard,
-                &cline.as_of_guard,
-                &asset,
-                bar.timestamp,
-            )
-            .await;
+            publish_decision_context(&cline.tool_asset_guard, &cline.as_of_guard, &asset, bar.timestamp)
+                .await;
         }
 
         let outs = run_pipeline(PipelineInputs {
@@ -6556,9 +6551,7 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
 /// handle is `None` (non-sidecar run).
 async fn publish_decision_context(
     asset_guard: &Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>>,
-    as_of_guard: &Option<
-        std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
-    >,
+    as_of_guard: &Option<std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>>,
     asset: &str,
     as_of: chrono::DateTime<chrono::Utc>,
 ) {
@@ -6780,7 +6773,10 @@ mod tests {
 
         publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", ts).await;
 
-        assert_eq!(asset_guard.as_ref().unwrap().read().await.as_deref(), Some("BTC/USD"));
+        assert_eq!(
+            asset_guard.as_ref().unwrap().read().await.as_deref(),
+            Some("BTC/USD")
+        );
         assert_eq!(*as_of_guard.as_ref().unwrap().read().await, Some(ts));
     }
 
@@ -6788,9 +6784,8 @@ mod tests {
     async fn decision_context_write_is_noop_when_guards_absent() {
         use chrono::Utc;
         let asset_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>> = None;
-        let as_of_guard: Option<
-            std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
-        > = None;
+        let as_of_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>> =
+            None;
         // Both None (non-sidecar run) must not panic.
         publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", Utc::now()).await;
     }
