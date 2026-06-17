@@ -33,6 +33,7 @@
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
 // 17e. PUT    /api/strategy/:id/mechanistic            strategies::put_mechanistic
+// 17f. PUT    /api/strategy/:id/agents/:role/checkpoint strategies::put_agent_checkpoint
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
@@ -200,7 +201,8 @@ use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, autoresearch as autoresearch_route,
+    bars, charts_annotated, charts_dashboards,
     charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -208,8 +210,10 @@ use crate::routes::{
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
     marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    nanochat,
     optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
-    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    settings, settings_autoresearch as settings_autoresearch_route,
+    skills, static_files, strategies, strategies_folder as strategies_folder_route,
     tools as tools_route,
     version::version,
     wizard,
@@ -297,6 +301,31 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/export", get(eval_runs::export))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        // ── Nanochat checkpoints (read) ───────────────────────────────────
+        .route("/api/nanochat/checkpoints", get(nanochat::list_checkpoints))
+        .route(
+            "/api/nanochat/checkpoints/:model_id",
+            get(nanochat::get_checkpoint),
+        )
+        // ── Autoresearch runs (read + SSE) ────────────────────────────────
+        .route("/api/autoresearch/runs", get(autoresearch_route::list_runs))
+        .route(
+            "/api/autoresearch/runs/:run_id",
+            get(autoresearch_route::get_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/stream",
+            get(autoresearch_route::stream_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/experiments",
+            get(autoresearch_route::list_experiments),
+        )
+        // ── Autoresearch settings (read) ──────────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            get(settings_autoresearch_route::get_autoresearch_config),
+        )
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
@@ -568,6 +597,22 @@ fn mutating_router(state: AppState) -> Router {
     let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
 
     Router::new()
+        // ── Nanochat checkpoints (mutating) ───────────────────────────────
+        .route(
+            "/api/nanochat/checkpoints/:model_id/approve",
+            post(nanochat::approve_checkpoint),
+        )
+        // ── Autoresearch runs (mutating) ──────────────────────────────────
+        .route("/api/autoresearch/runs", post(autoresearch_route::start_run))
+        .route(
+            "/api/autoresearch/runs/:run_id/stop",
+            post(autoresearch_route::stop_run),
+        )
+        // ── Autoresearch settings (mutating) ──────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            post(settings_autoresearch_route::set_autoresearch_config),
+        )
         // ── Agents ────────────────────────────────────────────────────────
         .route("/api/agents", post(agents::create))
         .route(
@@ -621,6 +666,10 @@ fn mutating_router(state: AppState) -> Router {
             put(strategies::put_filter).delete(strategies::delete_filter),
         )
         .route("/api/strategy/:id/mechanistic", put(strategies::put_mechanistic))
+        .route(
+            "/api/strategy/:id/agents/:role/checkpoint",
+            put(strategies::put_agent_checkpoint),
+        )
         .route(
             "/api/strategy/:id/validate",
             post(strategies::post_validate)

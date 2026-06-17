@@ -191,6 +191,15 @@ const MIGRATION_067_LIVE_RUN_STATE: &str = include_str!("../../migrations/067_li
 /// strands the DB with one column missing; re-opening converges to both columns.
 const MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA: &str =
     include_str!("../../migrations/068_live_run_state_budget_eta.sql");
+/// Migration 069: nanochat filter agent — `trained_models`, `autoresearch_runs`,
+/// and `autoresearch_experiments` tables, plus the partial unique index
+/// `idx_autoresearch_single_running` on `autoresearch_runs(status='running')`.
+/// Applied via `migrate_nanochat_tables` using `split_sql_statements` because
+/// the file contains multiple CREATE TABLE + CREATE INDEX statements that a
+/// single `sqlx::query` cannot batch. Idempotent — all DDL uses
+/// `CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`.
+const MIGRATION_069_NANOCHAT: &str =
+    include_str!("../../migrations/069_nanochat_models.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -505,6 +514,8 @@ impl ApiContext {
         migrate_autooptimizer_lineage(&pool).await?;
         // F8 one-time import of any pre-fix `lineage/lineage.db` (non-fatal).
         import_legacy_lineage_db(&pool, xvn_home).await;
+        // Migration 069: nanochat filter agent tables.
+        migrate_nanochat_tables(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -1972,6 +1983,20 @@ async fn migrate_autooptimizer_schedules(pool: &SqlitePool) -> ApiResult<()> {
         sqlx::query(MIGRATION_059_AUTOOPTIMIZER_SCHEDULES)
             .execute(pool)
             .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 069: `trained_models`, `autoresearch_runs`, and
+/// `autoresearch_experiments` tables, plus the partial unique index
+/// `idx_autoresearch_single_running`. The migration file contains multiple
+/// CREATE TABLE and CREATE INDEX statements that a single `sqlx::query` cannot
+/// batch, so we use `split_sql_statements` and run each on its own. All DDL
+/// uses `CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`, so
+/// this fn is idempotent and re-opening an already-initialized DB is a no-op.
+async fn migrate_nanochat_tables(pool: &SqlitePool) -> ApiResult<()> {
+    for stmt in split_sql_statements(MIGRATION_069_NANOCHAT) {
+        sqlx::query(&stmt).execute(pool).await?;
     }
     Ok(())
 }

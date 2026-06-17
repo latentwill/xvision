@@ -296,6 +296,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Filter),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "vol-filter-agent".into(),
@@ -303,6 +305,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Filter),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "trader-agent".into(),
@@ -310,6 +314,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Trader),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
         ],
         pipeline: PipelineDef {
@@ -357,6 +363,7 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: false,
+            nano: None,
         }
     }
     vec![

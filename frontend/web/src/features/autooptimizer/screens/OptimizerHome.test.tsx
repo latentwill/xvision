@@ -13,6 +13,14 @@ vi.mock("../ui/LaunchPanel", () => ({
   LaunchPanel: () => <div data-testid="launch-panel">launch-panel</div>,
 }));
 
+// AutoresearcherTab has its own test suite. Stub it here to keep
+// OptimizerHome tests focused on the tab strip + optimizer content only.
+vi.mock("./AutoresearcherTab", () => ({
+  AutoresearcherTab: () => (
+    <div data-testid="autoresearcher-tab">autoresearcher-tab</div>
+  ),
+}));
+
 // Mock uPlot — EdgeVsRandomChart renders inside the charts row.
 vi.mock("uplot", () => ({
   default: class {
@@ -446,5 +454,53 @@ describe("OptimizerHome — dropped surfaces", () => {
     expect(screen.queryByText(/Observations toward next prompt compile/i)).toBeNull();
     expect(screen.queryByText(/No scheduled run/i)).toBeNull();
     expect(screen.queryByText(/Show outcome mix/i)).toBeNull();
+  });
+});
+
+describe("OptimizerHome — Autoresearcher tab", () => {
+  it("renders both tab buttons in the nav strip", async () => {
+    mockMutations();
+    renderWithProviders(<OptimizerHome />);
+    expect(
+      screen.getByRole("tab", { name: "Optimizer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Autoresearcher" }),
+    ).toBeInTheDocument();
+  });
+
+  it("Optimizer tab is selected by default", async () => {
+    mockMutations();
+    renderWithProviders(<OptimizerHome />);
+    expect(
+      screen.getByRole("tab", { name: "Optimizer" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("tab", { name: "Autoresearcher" }),
+    ).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("clicking Autoresearcher tab shows the AutoresearcherTab stub", async () => {
+    mockMutations();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    expect(screen.queryByTestId("autoresearcher-tab")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Autoresearcher" }));
+    expect(screen.getByTestId("autoresearcher-tab")).toBeInTheDocument();
+  });
+
+  it("switching to Autoresearcher hides the optimizer headline and history", async () => {
+    setupIdleWithHistory();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    // Optimizer content visible initially
+    await screen.findByRole("heading", { level: 1, name: /Last ran/ });
+    await user.click(screen.getByRole("tab", { name: "Autoresearcher" }));
+    // Optimizer headline hidden
+    expect(
+      screen.queryByRole("heading", { level: 1, name: /Last ran/ }),
+    ).toBeNull();
+    // AutoresearcherTab stub visible
+    expect(screen.getByTestId("autoresearcher-tab")).toBeInTheDocument();
   });
 });

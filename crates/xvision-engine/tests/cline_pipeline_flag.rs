@@ -75,6 +75,8 @@ fn trader_strategy() -> Strategy {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
@@ -112,6 +114,7 @@ fn trader_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        nano: None,
     }
 }
 

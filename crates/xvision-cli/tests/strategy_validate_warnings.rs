@@ -107,6 +107,8 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                 activates: Some(Capability::Trader),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,

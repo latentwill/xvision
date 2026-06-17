@@ -118,6 +118,7 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        nano: None,
     }
 }
 
@@ -134,6 +135,8 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -141,6 +144,8 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents);

@@ -127,6 +127,7 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        nano: None,
     }
 }
 
@@ -139,6 +140,8 @@ async fn filter_signal_flows_into_trader_briefing() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -146,6 +149,8 @@ async fn filter_signal_flows_into_trader_briefing() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents);
@@ -225,6 +230,8 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -232,6 +239,8 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents);
@@ -283,6 +292,8 @@ async fn graph_predicate_true_invokes_trader() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -290,6 +301,8 @@ async fn graph_predicate_true_invokes_trader() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy_with_pipeline(
@@ -348,6 +361,8 @@ async fn graph_predicate_false_skips_trader() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -355,6 +370,8 @@ async fn graph_predicate_false_skips_trader() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy_with_pipeline(
@@ -437,6 +454,8 @@ async fn filter_provider_error_aborts_pipeline() {
             activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
         AgentRef {
             agent_id: "01HZT".into(),
@@ -444,6 +463,8 @@ async fn filter_provider_error_aborts_pipeline() {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         },
     ];
     let strategy = fixture_strategy(agents);

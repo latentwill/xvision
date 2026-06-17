@@ -120,6 +120,7 @@ fn trader_slot(noop_skip: bool) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip,
+        nano: None,
     }
 }
 
