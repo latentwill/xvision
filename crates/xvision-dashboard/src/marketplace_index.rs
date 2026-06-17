@@ -492,12 +492,66 @@ pub(crate) async fn apply_perf(snapshot: &mut MarketplaceSnapshot, pool: &Sqlite
 ///   1. the creator-chosen name on the local publish receipt (when non-empty);
 ///   2. else the local strategy manifest's `display_name` (when non-empty);
 ///   3. else leave the existing gen-art name (foreign / unknown strategies).
+/// Map an `ipfs://CID[/path]` content URI to a full gateway URL by appending it
+/// to `gateway` (a prefix the CID is joined onto, e.g.
+/// `https://gateway.pinata.cloud/ipfs`). `None` for non-ipfs URIs or empty CIDs.
+fn ipfs_gateway_url(gateway: &str, content_uri: &str) -> Option<String> {
+    let cid = content_uri.strip_prefix("ipfs://")?.trim();
+    if cid.is_empty() {
+        return None;
+    }
+    Some(format!("{}/{}", gateway.trim_end_matches('/'), cid))
+}
+
+/// Pull a non-empty `display_name` from a fetched manifest JSON, checking both
+/// the top level and a nested `manifest` object. `None` if absent/blank/unparseable.
+fn parse_manifest_display_name(json: &str) -> Option<String> {
+    fn pick(v: &serde_json::Value) -> Option<String> {
+        v.get("display_name")
+            .and_then(|d| d.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    }
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    pick(&v).or_else(|| v.get("manifest").and_then(pick))
+}
+
+/// Thin HTTP wrapper: GET the gateway URL and extract the manifest display name.
+/// Best-effort — any network/status/parse failure returns `None` so the caller
+/// keeps the existing gen-art name.
+async fn resolve_ipfs_name(client: &reqwest::Client, url: &str) -> Option<String> {
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.text().await.ok()?;
+    parse_manifest_display_name(&body)
+}
+
 pub(crate) async fn enrich_local_names(
     snapshot: &mut MarketplaceSnapshot,
     xvn_home: &PathBuf,
     pool: &SqlitePool,
 ) {
     let store = FilesystemStore::new(strategy_store_dir(xvn_home));
+    // Optional IPFS gateway for FOREIGN sealed listings (`ipfs://CID`) that have
+    // no local strategy: set `XVN_IPFS_GATEWAY` to a gateway prefix the CID is
+    // appended to (e.g. `https://gateway.pinata.cloud/ipfs`). Unset → such
+    // listings keep their gen-art name (prior behavior).
+    let ipfs_gateway = std::env::var("XVN_IPFS_GATEWAY")
+        .ok()
+        .map(|g| g.trim().to_string())
+        .filter(|g| !g.is_empty());
+    let http = ipfs_gateway.as_ref().and_then(|_| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(6))
+            .build()
+            .ok()
+    });
+    // Dedupe gateway fetches across listings that share a CID within one pass.
+    let mut ipfs_name_cache: HashMap<String, Option<String>> = HashMap::new();
+
     for listing in &mut snapshot.listings {
         let agent_id = listing.agent_id.trim().to_string();
         if agent_id.is_empty() {
@@ -513,12 +567,14 @@ pub(crate) async fn enrich_local_names(
             }
         }
 
-        // 2. Otherwise default to the strategy's own display name.
+        // 2. Otherwise default to the local strategy's own display name.
+        let mut resolved = false;
         match store.load(&agent_id).await {
             Ok(strategy) => {
                 let display_name = strategy.manifest.display_name.trim().to_string();
                 if !display_name.is_empty() {
                     listing.name = display_name;
+                    resolved = true;
                 }
             }
             Err(e) => {
@@ -526,8 +582,33 @@ pub(crate) async fn enrich_local_names(
                     listing_id = listing.listing_id,
                     agent_id = %agent_id,
                     error = %e,
-                    "enrich_local_names: strategy load failed; keeping gen-art name"
+                    "enrich_local_names: strategy load failed; trying ipfs gateway"
                 );
+            }
+        }
+        if resolved {
+            continue;
+        }
+
+        // 3. Foreign sealed listing (no local strategy): resolve the name from
+        //    the IPFS gateway when configured. Best-effort; failure keeps the
+        //    gen-art name. Cached per CID within this pass.
+        if let (Some(client), Some(url)) = (
+            http.as_ref(),
+            ipfs_gateway
+                .as_deref()
+                .and_then(|gw| ipfs_gateway_url(gw, &listing.content_uri)),
+        ) {
+            let name = match ipfs_name_cache.get(&url) {
+                Some(cached) => cached.clone(),
+                None => {
+                    let fetched = resolve_ipfs_name(client, &url).await;
+                    ipfs_name_cache.insert(url.clone(), fetched.clone());
+                    fetched
+                }
+            };
+            if let Some(name) = name {
+                listing.name = name;
             }
         }
     }
@@ -798,6 +879,41 @@ mod tests {
         assert_eq!(usdc6_to_f64(1_000_000), 1.0);
         assert_eq!(usdc6_to_f64(49_500_000), 49.5);
         assert_eq!(usdc6_to_f64(0), 0.0);
+    }
+
+    // -- ipfs name resolution (ctkm.9) -------------------------------------
+
+    #[test]
+    fn ipfs_gateway_url_maps_cid() {
+        assert_eq!(
+            ipfs_gateway_url("https://gw/ipfs", "ipfs://bafyCID"),
+            Some("https://gw/ipfs/bafyCID".to_string())
+        );
+        // trailing slash on the gateway is normalized; sub-paths survive.
+        assert_eq!(
+            ipfs_gateway_url("https://gw/ipfs/", "ipfs://bafyCID/manifest.json"),
+            Some("https://gw/ipfs/bafyCID/manifest.json".to_string())
+        );
+        // non-ipfs (open listing) and empty CID → None (skip gateway).
+        assert_eq!(ipfs_gateway_url("https://gw/ipfs", "xvn://strategy/01ABC"), None);
+        assert_eq!(ipfs_gateway_url("https://gw/ipfs", "ipfs://"), None);
+    }
+
+    #[test]
+    fn parse_manifest_display_name_variants() {
+        assert_eq!(
+            parse_manifest_display_name(r#"{"display_name":"Momentum Scalper"}"#).as_deref(),
+            Some("Momentum Scalper")
+        );
+        // nested under a `manifest` object.
+        assert_eq!(
+            parse_manifest_display_name(r#"{"manifest":{"display_name":"Nested Name"}}"#).as_deref(),
+            Some("Nested Name")
+        );
+        // blank / missing / non-JSON → None (caller keeps gen-art name).
+        assert_eq!(parse_manifest_display_name(r#"{"display_name":"  "}"#), None);
+        assert_eq!(parse_manifest_display_name(r#"{"other":"x"}"#), None);
+        assert_eq!(parse_manifest_display_name("not json at all"), None);
     }
 
     // -- gen_art_seed -------------------------------------------------------
