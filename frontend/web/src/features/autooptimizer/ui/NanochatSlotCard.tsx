@@ -13,6 +13,7 @@ import {
   parseInputSpec,
   type NanochatCheckpoint,
 } from "@/api/nanochat";
+import { NanochatBacktestFlow } from "./NanochatBacktestFlow";
 
 export type NanochatSlotCardProps = {
   strategyId: string;
@@ -45,7 +46,7 @@ function getMissingIndicators(
 }
 
 export function NanochatSlotCard({
-  strategyId: _strategyId,
+  strategyId,
   agentRefRole: _agentRefRole,
   availableIndicators,
   checkpointModelId,
@@ -196,6 +197,20 @@ export function NanochatSlotCard({
             </div>
           )}
         </div>
+      )}
+
+      {/* Backtest + approve gate — shown inline when a candidate checkpoint is
+          selected and the strategy is already compatible (no missing indicators).
+          Operator-triggered only: never auto-fires. */}
+      {isCandidate && compatible && selectedCheckpoint && (
+        <NanochatBacktestFlow
+          strategyId={strategyId}
+          checkpointModelId={selectedCheckpoint.model_id}
+          onApproved={() => {
+            // Cache invalidation is handled by useApproveCheckpoint's onSuccess;
+            // the checkpoints query will refetch and live_approved flips to true.
+          }}
+        />
       )}
     </div>
   );
