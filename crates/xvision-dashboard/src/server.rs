@@ -209,7 +209,8 @@ use crate::routes::{
     marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
     nanochat,
     optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
-    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    settings, settings_autoresearch as settings_autoresearch_route,
+    skills, static_files, strategies, strategies_folder as strategies_folder_route,
     tools as tools_route,
     version::version,
     wizard,
@@ -316,6 +317,11 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autoresearch/runs/:run_id/experiments",
             get(autoresearch_route::list_experiments),
+        )
+        // ── Autoresearch settings (read) ──────────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            get(settings_autoresearch_route::get_autoresearch_config),
         )
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
@@ -597,6 +603,11 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/autoresearch/runs/:run_id/stop",
             post(autoresearch_route::stop_run),
+        )
+        // ── Autoresearch settings (mutating) ──────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            post(settings_autoresearch_route::set_autoresearch_config),
         )
         // ── Agents ────────────────────────────────────────────────────────
         .route("/api/agents", post(agents::create))

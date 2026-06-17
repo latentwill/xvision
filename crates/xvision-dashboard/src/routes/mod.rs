@@ -33,6 +33,7 @@ pub mod safety;
 pub mod scenarios;
 pub mod search;
 pub mod settings;
+pub mod settings_autoresearch;
 pub mod skills;
 pub mod static_files;
 pub mod strategies;
