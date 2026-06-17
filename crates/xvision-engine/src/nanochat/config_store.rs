@@ -23,19 +23,17 @@ pub const DEFAULT_PRICE_FORWARD_THRESHOLD: f64 = 0.02;
 /// Get a config value by key. Returns `Ok(None)` when the key has never been set
 /// (caller uses the documented default).
 pub async fn get_config(pool: &SqlitePool, key: &str) -> anyhow::Result<Option<String>> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM xvn_config WHERE key = ?")
-            .bind(key)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM xvn_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(v,)| v))
 }
 
 /// Set a config value by key. Validates the value per key-specific rules before
 /// writing. Returns `Err` if the key is unknown or the value is out of range.
 pub async fn set_config(pool: &SqlitePool, key: &str, value: &str) -> anyhow::Result<()> {
-    let canonical = validate_config_value(key, value)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let canonical = validate_config_value(key, value).map_err(|e| anyhow::anyhow!("{e}"))?;
     let updated_at = Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO xvn_config (key, value, updated_at) VALUES (?, ?, ?) \
@@ -58,21 +56,26 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
     let trimmed = value.trim().to_string();
     match key {
         "autoresearch.min_precision_lift_pp" => {
-            let v: f64 = trimmed.parse()
+            let v: f64 = trimmed
+                .parse()
                 .map_err(|_| format!("autoresearch.min_precision_lift_pp must be a number, got {value:?}"))?;
             if v >= 0.0 {
                 Ok(trimmed)
             } else {
-                Err(format!("autoresearch.min_precision_lift_pp must be >= 0, got {v}"))
+                Err(format!(
+                    "autoresearch.min_precision_lift_pp must be >= 0, got {v}"
+                ))
             }
         }
         "autoresearch.max_pnl_regression" => {
-            let _v: f64 = trimmed.parse()
+            let _v: f64 = trimmed
+                .parse()
                 .map_err(|_| format!("autoresearch.max_pnl_regression must be a number, got {value:?}"))?;
             Ok(trimmed)
         }
         "autoresearch.promotion_epsilon" => {
-            let v: f64 = trimmed.parse()
+            let v: f64 = trimmed
+                .parse()
                 .map_err(|_| format!("autoresearch.promotion_epsilon must be a number, got {value:?}"))?;
             if v > 0.0 {
                 Ok(trimmed)
@@ -81,17 +84,21 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "autoresearch.promotion_acc_floor" => {
-            let v: f64 = trimmed.parse()
+            let v: f64 = trimmed
+                .parse()
                 .map_err(|_| format!("autoresearch.promotion_acc_floor must be a number, got {value:?}"))?;
             if v > 0.0 && v <= 1.0 {
                 Ok(trimmed)
             } else {
-                Err(format!("autoresearch.promotion_acc_floor must be in range (0.0, 1.0], got {v}"))
+                Err(format!(
+                    "autoresearch.promotion_acc_floor must be in range (0.0, 1.0], got {v}"
+                ))
             }
         }
         "autoresearch.promotion_min_holdout" => {
-            let v: i64 = trimmed.parse()
-                .map_err(|_| format!("autoresearch.promotion_min_holdout must be an integer, got {value:?}"))?;
+            let v: i64 = trimmed.parse().map_err(|_| {
+                format!("autoresearch.promotion_min_holdout must be an integer, got {value:?}")
+            })?;
             if v > 0 {
                 Ok(trimmed)
             } else {
@@ -99,7 +106,8 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "autoresearch.min_cycle_count" => {
-            let v: i64 = trimmed.parse()
+            let v: i64 = trimmed
+                .parse()
                 .map_err(|_| format!("autoresearch.min_cycle_count must be an integer, got {value:?}"))?;
             if v > 0 {
                 Ok(trimmed)
@@ -108,8 +116,9 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "autoresearch.train_wall_clock_sec" => {
-            let v: i64 = trimmed.parse()
-                .map_err(|_| format!("autoresearch.train_wall_clock_sec must be an integer, got {value:?}"))?;
+            let v: i64 = trimmed.parse().map_err(|_| {
+                format!("autoresearch.train_wall_clock_sec must be an integer, got {value:?}")
+            })?;
             if v > 0 {
                 Ok(trimmed)
             } else {
@@ -117,12 +126,15 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "autoresearch.price_forward_threshold" => {
-            let v: f64 = trimmed.parse()
-                .map_err(|_| format!("autoresearch.price_forward_threshold must be a number, got {value:?}"))?;
+            let v: f64 = trimmed.parse().map_err(|_| {
+                format!("autoresearch.price_forward_threshold must be a number, got {value:?}")
+            })?;
             if v > 0.0 {
                 Ok(trimmed)
             } else {
-                Err(format!("autoresearch.price_forward_threshold must be > 0, got {v}"))
+                Err(format!(
+                    "autoresearch.price_forward_threshold must be > 0, got {v}"
+                ))
             }
         }
         other => Err(format!(
@@ -162,7 +174,9 @@ mod tests {
     #[tokio::test]
     async fn set_and_read_back_valid_key() {
         let pool = open_pool().await;
-        set_config(&pool, "autoresearch.promotion_epsilon", "0.02").await.unwrap();
+        set_config(&pool, "autoresearch.promotion_epsilon", "0.02")
+            .await
+            .unwrap();
         let v = get_config(&pool, "autoresearch.promotion_epsilon").await.unwrap();
         assert_eq!(v.as_deref(), Some("0.02"));
     }
@@ -170,16 +184,24 @@ mod tests {
     #[tokio::test]
     async fn set_overwrites_existing_value() {
         let pool = open_pool().await;
-        set_config(&pool, "autoresearch.promotion_acc_floor", "0.55").await.unwrap();
-        set_config(&pool, "autoresearch.promotion_acc_floor", "0.60").await.unwrap();
-        let v = get_config(&pool, "autoresearch.promotion_acc_floor").await.unwrap();
+        set_config(&pool, "autoresearch.promotion_acc_floor", "0.55")
+            .await
+            .unwrap();
+        set_config(&pool, "autoresearch.promotion_acc_floor", "0.60")
+            .await
+            .unwrap();
+        let v = get_config(&pool, "autoresearch.promotion_acc_floor")
+            .await
+            .unwrap();
         assert_eq!(v.as_deref(), Some("0.60"));
     }
 
     #[tokio::test]
     async fn unknown_key_rejected() {
         let pool = open_pool().await;
-        let err = set_config(&pool, "autoresearch.nonexistent_key", "1.0").await.unwrap_err();
+        let err = set_config(&pool, "autoresearch.nonexistent_key", "1.0")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("unknown"), "{err}");
     }
 
@@ -187,8 +209,13 @@ mod tests {
     async fn out_of_range_value_rejected() {
         let pool = open_pool().await;
         // promotion_acc_floor must be in (0.0, 1.0].
-        let err = set_config(&pool, "autoresearch.promotion_acc_floor", "-0.5").await.unwrap_err();
-        assert!(err.to_string().contains("range") || err.to_string().contains("must be"), "{err}");
+        let err = set_config(&pool, "autoresearch.promotion_acc_floor", "-0.5")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("range") || err.to_string().contains("must be"),
+            "{err}"
+        );
     }
 
     #[test]

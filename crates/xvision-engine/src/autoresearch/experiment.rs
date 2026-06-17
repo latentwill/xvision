@@ -114,9 +114,13 @@ pub async fn run_one_experiment(
         let commit_msg = format!("experiment: {description}");
         let commit_status = Command::new("git")
             .args([
-                "-c", "user.email=autoresearch@xvision",
-                "-c", "user.name=Autoresearch Harness",
-                "commit", "-m", &commit_msg,
+                "-c",
+                "user.email=autoresearch@xvision",
+                "-c",
+                "user.name=Autoresearch Harness",
+                "commit",
+                "-m",
+                &commit_msg,
                 "--allow-empty",
             ])
             .current_dir(worktree_path)
@@ -263,8 +267,8 @@ pub fn new_experiment_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use sqlx::SqlitePool;
+    use tempfile::TempDir;
 
     /// Write a deterministic stub `xvision_train.py` into `dir`.
     /// `outcome` controls what the script emits as its last line:

@@ -339,8 +339,7 @@ pub async fn dispatch_filter_with_checkpoint(
         NanoInferenceResult::Ok {
             direction,
             confidence,
-        } => resolve_nano_filter(llm_dir, direction, confidence, veto)
-            .unwrap_or(serde_json::Value::Null),
+        } => resolve_nano_filter(llm_dir, direction, confidence, veto).unwrap_or(serde_json::Value::Null),
         NanoInferenceResult::FailSafe { reason } => {
             tracing::warn!(
                 event = "nanochat_fail_safe",

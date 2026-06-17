@@ -7,7 +7,6 @@
 pub mod auth;
 pub mod autoresearch_runner;
 pub mod chain_config;
-pub mod ratelimit;
 pub mod chat_unified;
 pub mod cli_jobs;
 pub mod embed;
@@ -17,6 +16,7 @@ pub mod ipc;
 pub mod llm_dispatch;
 pub mod marketplace_index;
 pub mod marketplace_nonce;
+pub mod ratelimit;
 pub mod redact;
 pub mod routes;
 pub mod server;

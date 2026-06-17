@@ -353,6 +353,13 @@ pub async fn settle_from_header(
         .fetch_listing(alloy::primitives::U256::from(listing_id))
         .await
         .map_err(DashboardError::from)?;
+    // Fail closed on a revoked listing before submitting — the contract reverts
+    // it on-chain anyway, but this saves relayer gas and returns a clean 409.
+    if !view.active {
+        return Err(DashboardError::Conflict(format!(
+            "listing {listing_id} is revoked — not purchasable"
+        )));
+    }
     check_terms(&payment_value, &view.price_usdc.to_string(), valid_before, now)?;
 
     // Build the signer-backed driver and settle.
@@ -423,6 +430,15 @@ pub async fn get_x402(
         .fetch_listing(alloy::primitives::U256::from(id))
         .await
         .map_err(DashboardError::from)?;
+
+    // A revoked listing is no longer purchasable. Returning a 402 here would
+    // prompt an agent to sign+pay for something that reverts at settlement, so
+    // fail closed with the same Conflict the marketplace uses for ListingRevoked.
+    if !view.active {
+        return Err(DashboardError::Conflict(format!(
+            "listing {id} is revoked — not purchasable"
+        )));
+    }
 
     let body = build_accepts(
         chain.chain_id,

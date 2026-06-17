@@ -117,11 +117,7 @@ pub trait AnchorDriver: Send + Sync {
     async fn revoke_listing(&self, listing_id: U256) -> Result<TxHash, MarketplaceError>;
     /// Reprice a listing in place (seller-only on-chain). `new_price_usdc` is
     /// 6-decimal USDC and must fit `uint96`; `0` makes the listing free.
-    async fn update_price(
-        &self,
-        listing_id: U256,
-        new_price_usdc: U256,
-    ) -> Result<TxHash, MarketplaceError>;
+    async fn update_price(&self, listing_id: U256, new_price_usdc: U256) -> Result<TxHash, MarketplaceError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,11 +200,7 @@ impl AnchorDriver for MockDriver {
         Ok(fake_tx(st.tx_counter))
     }
 
-    async fn update_price(
-        &self,
-        listing_id: U256,
-        new_price_usdc: U256,
-    ) -> Result<TxHash, MarketplaceError> {
+    async fn update_price(&self, listing_id: U256, new_price_usdc: U256) -> Result<TxHash, MarketplaceError> {
         let mut st = self.state.lock().expect("mock lock");
         let id = listing_id_u64(listing_id)?;
         if id == 0 || id as usize > st.listings.len() {
@@ -532,11 +524,7 @@ impl AnchorDriver for Erc8004MantleDriver {
 
     /// Reprice a listing in place on `ListingRegistry` (seller-only on-chain;
     /// the contract reverts `NotSeller`/`AlreadyRevoked`/`FreeTransferableForbidden`).
-    async fn update_price(
-        &self,
-        listing_id: U256,
-        new_price_usdc: U256,
-    ) -> Result<TxHash, MarketplaceError> {
+    async fn update_price(&self, listing_id: U256, new_price_usdc: U256) -> Result<TxHash, MarketplaceError> {
         let registry = require_addr(self.addresses.listing_registry, "listing_registry address")?;
         let provider = self.wallet_provider().await?;
         let contract = IListingRegistry::new(registry, &provider);

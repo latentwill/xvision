@@ -1097,10 +1097,7 @@ pub async fn resolve_agent_slots_for_strategy(
                 })?;
             let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
                 serde_json::from_str(&model.input_spec).map_err(|e| {
-                    anyhow::anyhow!(
-                        "bad input_spec JSON for {}: {e}",
-                        checkpoint_ref.model_id
-                    )
+                    anyhow::anyhow!("bad input_spec JSON for {}: {e}", checkpoint_ref.model_id)
                 })?;
             resolved.nano = Some(NanoSlotConfig {
                 checkpoint: checkpoint_ref.clone(),

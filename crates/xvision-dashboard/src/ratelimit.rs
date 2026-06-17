@@ -7,11 +7,7 @@
 
 use std::sync::Arc;
 
-use tower_governor::{
-    governor::GovernorConfigBuilder,
-    key_extractor::PeerIpKeyExtractor,
-    GovernorLayer,
-};
+use tower_governor::{governor::GovernorConfigBuilder, key_extractor::PeerIpKeyExtractor, GovernorLayer};
 
 // Re-exported by tower_governor; no need for a direct `governor` dep.
 use ::governor::middleware::NoOpMiddleware;

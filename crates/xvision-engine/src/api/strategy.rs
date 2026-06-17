@@ -2679,10 +2679,7 @@ async fn index_strategy_after_mutation(ctx: &ApiContext, store: &FilesystemStore
 /// Called by `save_and_index` and `ApiContext::validate_and_save_strategy` so
 /// the gate is enforced on all write paths that receive a fully-constructed
 /// `Strategy` object.
-async fn validate_checkpoint_pre_save(
-    strategy: &Strategy,
-    db: &sqlx::SqlitePool,
-) -> ApiResult<()> {
+async fn validate_checkpoint_pre_save(strategy: &Strategy, db: &sqlx::SqlitePool) -> ApiResult<()> {
     let nano_store = crate::nanochat::store::NanochatStore::new(db.clone());
     for agent in &strategy.agents {
         let Some(cp_ref) = &agent.checkpoint else {
@@ -2698,8 +2695,8 @@ async fn validate_checkpoint_pre_save(
                     cp_ref.model_id, agent.role
                 ))
             })?;
-        let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
-            serde_json::from_str(&model.input_spec).map_err(|e| {
+        let input_spec: crate::agent::nano_dispatch::NanoInputSpec = serde_json::from_str(&model.input_spec)
+            .map_err(|e| {
                 ApiError::Validation(format!(
                     "invalid input_spec in trained_models for model '{}': {e}",
                     cp_ref.model_id

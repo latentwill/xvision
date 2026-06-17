@@ -201,23 +201,19 @@ use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route, autooptimizer_cycle, autoresearch as autoresearch_route,
-    bars, charts_annotated, charts_dashboards,
-    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
-    diagnostics as diagnostics_route, docs,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, autoresearch as autoresearch_route, bars,
+    charts_annotated, charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route,
+    cli, cost as cost_route, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
     marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
-    nanochat,
-    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
-    settings, settings_autoresearch as settings_autoresearch_route,
-    skills, static_files, strategies, strategies_folder as strategies_folder_route,
-    tools as tools_route,
+    nanochat, optimizations as optimizations_route, safety as safety_route, scenarios,
+    search as search_route, settings, settings_autoresearch as settings_autoresearch_route, skills,
+    static_files, strategies, strategies_folder as strategies_folder_route, tools as tools_route,
     version::version,
-    wizard,
-    x402 as x402_route,
+    wizard, x402 as x402_route,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -1010,10 +1006,7 @@ pub fn build_router(state: AppState) -> Router {
     // into_make_service_with_connect_info::<SocketAddr>() (see `serve`), which
     // is required by PeerIpKeyExtractor.
     let x402_public = Router::new()
-        .route(
-            "/api/marketplace/listings/:id/x402",
-            get(x402_route::get_x402),
-        )
+        .route("/api/marketplace/listings/:id/x402", get(x402_route::get_x402))
         .route(
             "/api/marketplace/facilitator/verify",
             post(x402_route::post_verify),

@@ -727,7 +727,10 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 0, "expected at least one trader/executor slot with ohlcv");
+        assert!(
+            checked > 0,
+            "expected at least one trader/executor slot with ohlcv"
+        );
     }
 
     #[test]

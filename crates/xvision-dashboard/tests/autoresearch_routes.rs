@@ -38,9 +38,7 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 async fn boot() -> (TestServer, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     let server = TestServer::new(build_router(state.clone())).unwrap();
     (server, tmp, state)
@@ -86,9 +84,7 @@ async fn start_run_requires_auth() {
     // A non-loopback client with no token must be rejected by the auth
     // middleware BEFORE the handler runs. Use oneshot to inject a public IP.
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     let app = build_router(state);
 
@@ -116,10 +112,7 @@ async fn start_run_rejects_invalid_run_tag() {
     let mut body = valid_start_body();
     body["run_tag"] = json!("INVALID TAG with spaces");
 
-    let res = server
-        .post("/api/autoresearch/runs")
-        .json(&body)
-        .await;
+    let res = server.post("/api/autoresearch/runs").json(&body).await;
 
     assert_eq!(res.status_code(), StatusCode::BAD_REQUEST);
     let resp: Value = res.json();
@@ -136,10 +129,7 @@ async fn start_run_rejects_zero_min_cycle_count() {
     let mut body = valid_start_body();
     body["min_cycle_count"] = json!(0);
 
-    let res = server
-        .post("/api/autoresearch/runs")
-        .json(&body)
-        .await;
+    let res = server.post("/api/autoresearch/runs").json(&body).await;
 
     assert_eq!(res.status_code(), StatusCode::BAD_REQUEST);
 }
@@ -238,9 +228,7 @@ async fn experiments_returned_in_created_at_asc_order() {
         .unwrap();
     }
 
-    let res = server
-        .get("/api/autoresearch/runs/run-ord-01/experiments")
-        .await;
+    let res = server.get("/api/autoresearch/runs/run-ord-01/experiments").await;
     assert_eq!(res.status_code(), StatusCode::OK);
     let body: Value = res.json();
     let exps = body["experiments"].as_array().unwrap();

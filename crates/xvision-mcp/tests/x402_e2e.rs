@@ -38,7 +38,10 @@ async fn x402_buy_then_import_round_trip() {
     let listings = marketplace_client::browse()
         .await
         .expect("browse the running dashboard");
-    assert!(listings.is_array() || listings.is_object(), "unexpected browse shape: {listings}");
+    assert!(
+        listings.is_array() || listings.is_object(),
+        "unexpected browse shape: {listings}"
+    );
 
     // 2. Buy over x402: GET 402 → sign locally → POST settle.
     let receipt = marketplace_client::buy(id)

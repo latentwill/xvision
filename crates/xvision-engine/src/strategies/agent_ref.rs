@@ -320,7 +320,10 @@ mod tests {
             !s.contains("model_override"),
             "absent override must be omitted: {s}"
         );
-        assert!(!s.contains("checkpoint"), "absent checkpoint must be omitted: {s}");
+        assert!(
+            !s.contains("checkpoint"),
+            "absent checkpoint must be omitted: {s}"
+        );
         assert!(!s.contains("veto"), "absent veto must be omitted: {s}");
     }
 
@@ -483,7 +486,10 @@ mod tests {
             veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
-        assert!(!s.contains("checkpoint"), "absent checkpoint must be omitted: {s}");
+        assert!(
+            !s.contains("checkpoint"),
+            "absent checkpoint must be omitted: {s}"
+        );
         assert!(!s.contains("veto"), "absent veto must be omitted: {s}");
     }
 
@@ -503,7 +509,10 @@ mod tests {
         let s = serde_json::to_string(&r).unwrap();
         let back: AgentRef = serde_json::from_str(&s).unwrap();
         assert_eq!(back, r);
-        assert_eq!(back.checkpoint.as_ref().unwrap().model_id, "01JNANO00000000000000000000");
+        assert_eq!(
+            back.checkpoint.as_ref().unwrap().model_id,
+            "01JNANO00000000000000000000"
+        );
         assert_eq!(back.veto, Some(true));
     }
 
