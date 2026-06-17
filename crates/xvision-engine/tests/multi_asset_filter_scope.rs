@@ -84,6 +84,8 @@ async fn spawn_recording_mock() -> (ClineDispatchCtx, TempDir, PathBuf) {
             api_key: Some("test-key".into()),
             recording_slot_role: None,
             tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
         },
         dir,
         steps_path,

@@ -38,6 +38,7 @@ ts-rs        = { version = "9", optional = true }
 [dev-dependencies]
 proptest = { workspace = true }
 wiremock = "0.6"
+mockito  = "1"
 tokio    = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]

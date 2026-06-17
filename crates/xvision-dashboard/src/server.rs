@@ -62,6 +62,7 @@
 // 34. DELETE /api/settings/brokers/alpaca             settings::brokers::delete_alpaca
 // 35. POST   /api/settings/brokers/alpaca/test-conn   settings::brokers::test_alpaca
 // 36. PUT    /api/settings/observability              settings::observability::put
+// 36b. PUT   /api/settings/data-tools                settings::data_tools::put
 // 37. POST   /api/settings/providers                  settings::providers::add
 // 38. PUT    /api/settings/providers/:name            settings::providers::update
 // 39. DELETE /api/settings/providers/:name            settings::providers::remove
@@ -145,6 +146,7 @@
 //  R43. GET  /api/settings/daemon
 //  R44. GET  /api/settings/identity
 //  R45. GET  /api/settings/observability
+//  R45b. GET /api/settings/data-tools
 //  R46. GET  /api/settings/providers
 //  R47. GET  /api/settings/providers/:name
 //  R48. GET  /api/settings/providers/:name/models
@@ -498,6 +500,7 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route("/api/settings/observability", get(settings::observability::get))
+        .route("/api/settings/data-tools", get(settings::data_tools::get))
         .route("/api/settings/memory", get(settings::memory::get))
         .route("/api/settings/memory/status", get(settings::memory::status))
         .route(
@@ -865,9 +868,13 @@ fn mutating_router(state: AppState) -> Router {
             "/api/live/deploy/degen-arena",
             post(settings::brokers::set_degen_arena).delete(settings::brokers::delete_degen_arena),
         )
-        // ── Settings: observability ───────────────────────────────────────
+        // ── Settings: observability / memory / data-tools ────────────────
         .route("/api/settings/observability", put(settings::observability::put))
         .route("/api/settings/memory", put(settings::memory::put))
+        .route(
+            "/api/settings/data-tools",
+            put(settings::data_tools::put),
+        )
         // ── Settings: providers ───────────────────────────────────────────
         .route("/api/settings/providers", post(settings::providers::add))
         .route(
