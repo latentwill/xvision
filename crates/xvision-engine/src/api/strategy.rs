@@ -1135,6 +1135,9 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
         strategy.manifest.published_at = None;
         // Clones are expected to be user-editable drafts; keep creator
         // and templates from the parent for continuity.
+        // Nanochat gate: a clone that carries a checkpoint slot must still pass
+        // the live_approved + indicator-compat checks (fail-closed; no bypass).
+        validate_checkpoint_pre_save(&strategy, &ctx.db).await?;
         store
             .save(&strategy)
             .await
@@ -1471,6 +1474,12 @@ async fn import_strategy_inner(ctx: &ApiContext, manifest: serde_json::Value) ->
     strategy.manifest.id = Ulid::new().to_string();
     strategy.manifest.published_at = None;
 
+    // Nanochat gate: an imported strategy carrying a checkpoint slot must pass
+    // the live_approved + indicator-compat checks (fail-closed; no bypass).
+    if let Err(e) = validate_checkpoint_pre_save(&strategy, &ctx.db).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(e);
+    }
     let strategy_store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     if let Err(e) = strategy_store.save(&strategy).await {
         cleanup_created_clone_agents(ctx, &created_agent_ids).await;
@@ -1722,6 +1731,12 @@ async fn clone_strategy_full_inner(
 
     // 8. Persist. Source is untouched; agents we created above already
     //    exist in the library.
+    // Nanochat gate: a full-clone carrying a checkpoint slot (the clone path
+    // propagates AgentRef.checkpoint) must pass live_approved + indicator-compat.
+    if let Err(e) = validate_checkpoint_pre_save(&new_strategy, &ctx.db).await {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(e);
+    }
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     if let Err(e) = store.save(&new_strategy).await {
         cleanup_created_clone_agents(ctx, &created_agent_ids).await;
