@@ -72,6 +72,7 @@ fn listing(listing_id: u64, content_uri: &str, content_hash: &str) -> IndexedLis
         palette: "Ember".into(),
         attestation_count: 0,
         units_sold: 0,
+        units_sold_agents: 0,
         earned_usdc: 0.0,
         return30d_pct: None,
         sharpe: None,

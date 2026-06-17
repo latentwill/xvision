@@ -58,6 +58,10 @@ export interface IndexedListing {
   /// Licenses sold, derived from `Sold` event logs (0 when the marketplace
   /// address isn't configured).
   units_sold: number;
+  /// Of `units_sold`, those bought via the x402 autonomous-agent payment path
+  /// (`Sold.purchasePath == 1`). `units_sold - units_sold_agents` = direct
+  /// (human) buyers.
+  units_sold_agents: number;
   /// Sum of seller proceeds across `Sold` events, in whole USDC.
   earned_usdc: number;
   /// Best trailing-30d return % from completed eval runs (Part B).
@@ -197,14 +201,15 @@ function toRow(l: IndexedListing): ListingRow {
     style: "",
     assets: [],
     // Part B: consume real perf metrics when the backend provides them.
-    // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
-    // with a code comment referencing bead xvision-ctkm.8.
     return30dPct: l.return30d_pct ?? 0,
     sharpe: l.sharpe ?? 0,
-    // Honest approximation: the chain only tells us how many licenses sold,
-    // not whether the buyer was a human or an agent — count them all as
-    // humans rather than inventing an agent split.
-    buyers: { humans: l.units_sold, agents: 0 },
+    // Honest split (xvision-ctkm.8): agents = purchases via the x402
+    // autonomous-agent rail (Sold.purchasePath == 1); humans = the rest
+    // (direct wallet purchases). Both are real on-chain counts.
+    buyers: {
+      humans: Math.max(0, l.units_sold - (l.units_sold_agents ?? 0)),
+      agents: l.units_sold_agents ?? 0,
+    },
     priceUsdc: l.price_usdc > 0 ? l.price_usdc : null,
     tier: l.tier === 1 ? "sealed" : "open",
     transferableLicense: l.transferable_license,
@@ -212,7 +217,6 @@ function toRow(l: IndexedListing): ListingRow {
     // verified; zero attestations renders no badge (never a negative mark).
     verification: l.attestation_count > 0 ? "verified" : "unverified",
     acceptsX402: true,
-    clones: 0,
     // QA11: fallback to String(listing_id) when gen_art_seed is absent so
     // the gen-art plate never renders with an empty seed.
     genArtSeed: l.gen_art_seed || String(l.listing_id),

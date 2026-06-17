@@ -26,7 +26,7 @@ export function buildPublishDraft(strategyId: string): PublishDraft {
       id: s?.name ?? strategyId, lineageId: s?.name ?? strategyId, version: s?.version ?? "v0.1",
       creator: { address: "0xa83e", handle: "@ed" }, model: "Claude · Haiku 4.5", style: "Day",
       assets: s?.assets ?? [], return30dPct: 0, sharpe: 0, buyers: { humans: 0, agents: 0 },
-      priceUsdc: 49, tier: "sealed", verification: "unverified", acceptsX402: true, clones: 0,
+      priceUsdc: 49, tier: "sealed", verification: "unverified", acceptsX402: true,
       transferableLicense: false, genArtSeed: strategyId,
     },
   };

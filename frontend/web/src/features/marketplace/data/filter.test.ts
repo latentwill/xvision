@@ -8,7 +8,7 @@ function row(p: Partial<ListingRow>): ListingRow {
     creator: { address: "0xabc" }, model: "Claude", style: "Day",
     assets: ["BTC"], return30dPct: 10, sharpe: 1, buyers: { humans: 5, agents: 0 },
     priceUsdc: 49, tier: "sealed", transferableLicense: false, verification: "unverified",
-    acceptsX402: false, clones: 0, genArtSeed: "x", ...p,
+    acceptsX402: false, genArtSeed: "x", ...p,
   };
 }
 

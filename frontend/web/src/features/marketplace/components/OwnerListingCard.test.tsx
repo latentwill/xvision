@@ -25,6 +25,7 @@ const listing: IndexedListing = {
   palette: "gold",
   attestation_count: 0,
   units_sold: 0,
+  units_sold_agents: 0,
   earned_usdc: 0,
 };
 

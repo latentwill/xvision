@@ -44,7 +44,7 @@ const happyDraft: PublishDraft = {
     id: "btc-momentum", lineageId: "btc-momentum", version: "v3.0",
     creator: { address: "0xa83e", handle: "@ed" }, model: "Claude · Haiku 4.5", style: "Day",
     assets: ["BTC"], return30dPct: 47.2, sharpe: 1.31, buyers: { humans: 0, agents: 0 },
-    priceUsdc: 49, tier: "sealed", verification: "unverified", acceptsX402: true, clones: 0,
+    priceUsdc: 49, tier: "sealed", verification: "unverified", acceptsX402: true,
     transferableLicense: false, genArtSeed: "btc-momentum-preview",
   },
 };

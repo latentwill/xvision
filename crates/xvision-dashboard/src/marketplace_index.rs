@@ -83,6 +83,9 @@ pub struct IndexedListing {
     /// scan (`0` when the marketplace contract is unconfigured or the
     /// scan cursor hasn't reached the sale yet).
     pub units_sold: u64,
+    /// Of `units_sold`, purchases via the x402 autonomous-agent payment path.
+    /// `units_sold - units_sold_agents` = direct (human) buyers.
+    pub units_sold_agents: u64,
     /// Sum of `Sold.sellerProceeds` in whole USDC (`0.0` when dormant or
     /// not yet scanned).
     pub earned_usdc: f64,
@@ -260,6 +263,10 @@ pub(crate) fn chunk_ranges(cursor: u64, latest: u64, chunk: u64, max_chunks: usi
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub(crate) struct SaleTotals {
     pub units_sold: u64,
+    /// Of `units_sold`, those bought via the x402 autonomous-agent payment
+    /// path (`Sold.purchasePath == 1`). `units_sold - units_sold_agents` are
+    /// direct (human-wallet) purchases.
+    pub units_sold_agents: u64,
     /// Sum of `sellerProceeds` in 6-decimal USDC units.
     pub seller_proceeds_usdc6: u128,
 }
@@ -275,6 +282,10 @@ where
         let listing_id: u64 = sold.listingId.try_into().unwrap_or(u64::MAX);
         let t = totals.entry(listing_id).or_default();
         t.units_sold += 1;
+        // purchasePath == 1 is the x402 autonomous-agent rail (0 = direct).
+        if sold.purchasePath == 1 {
+            t.units_sold_agents += 1;
+        }
         t.seller_proceeds_usdc6 = t
             .seller_proceeds_usdc6
             .saturating_add(sold.sellerProceeds.to::<u128>());
@@ -374,6 +385,7 @@ pub(crate) fn apply_sales(snapshot: &mut MarketplaceSnapshot, ledger: &SalesLedg
     for listing in &mut snapshot.listings {
         if let Some(t) = ledger.per_listing.get(&listing.listing_id) {
             listing.units_sold = t.units_sold;
+            listing.units_sold_agents = t.units_sold_agents;
             listing.earned_usdc = usdc6_to_f64(t.seller_proceeds_usdc6);
         }
     }
@@ -660,6 +672,7 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<PollOutcome> {
             attestation_count,
             // Overlaid by apply_sales() in the spawn loop.
             units_sold: 0,
+            units_sold_agents: 0,
             earned_usdc: 0.0,
             // Overlaid by apply_perf() in the spawn loop (Part B).
             return30d_pct: None,
@@ -899,6 +912,7 @@ mod tests {
             palette: String::new(),
             attestation_count: 0,
             units_sold: 0,
+            units_sold_agents: 0,
             earned_usdc: 0.0,
             return30d_pct: None,
             sharpe: None,
@@ -933,6 +947,7 @@ mod tests {
             totals.get(&3).copied(),
             Some(SaleTotals {
                 units_sold: 2,
+                units_sold_agents: 0,
                 seller_proceeds_usdc6: 1_000_000,
             })
         );
@@ -995,6 +1010,10 @@ mod tests {
     // -- Sold aggregation ----------------------------------------------------
 
     fn sold(listing_id: u64, seller_proceeds_usdc6: u64) -> IMarketplace::Sold {
+        sold_with_path(listing_id, seller_proceeds_usdc6, 0) // 0 = direct (human)
+    }
+
+    fn sold_with_path(listing_id: u64, seller_proceeds_usdc6: u64, purchase_path: u8) -> IMarketplace::Sold {
         use alloy::primitives::aliases::U96;
         IMarketplace::Sold {
             listingId: U256::from(listing_id),
@@ -1004,8 +1023,8 @@ mod tests {
             sellerProceeds: U96::from(seller_proceeds_usdc6),
             protocolProceeds: U96::from(0u64),
             licenseTokenId: U256::from(listing_id),
-            payerKind: 0,
-            purchasePath: 1,
+            payerKind: purchase_path as u16,
+            purchasePath: purchase_path,
         }
     }
 
@@ -1016,12 +1035,26 @@ mod tests {
             totals.get(&2).copied(),
             Some(SaleTotals {
                 units_sold: 2,
+                units_sold_agents: 0,
                 seller_proceeds_usdc6: 1_900_000,
             })
         );
         assert_eq!(totals.get(&5).unwrap().units_sold, 1);
         assert_eq!(usdc6_to_f64(totals.get(&2).unwrap().seller_proceeds_usdc6), 1.9);
         assert!(totals.get(&99).is_none());
+    }
+
+    #[test]
+    fn fold_sales_counts_x402_purchases_as_agents() {
+        // listing 7: 1 direct + 2 x402 (purchasePath==1) → 3 units, 2 agents.
+        let totals = aggregate_sales(vec![
+            sold(7, 100_000),
+            sold_with_path(7, 100_000, 1),
+            sold_with_path(7, 100_000, 1),
+        ]);
+        let t = totals.get(&7).copied().unwrap();
+        assert_eq!(t.units_sold, 3);
+        assert_eq!(t.units_sold_agents, 2);
     }
 
     #[test]

@@ -340,18 +340,6 @@ function CreatorStrategyCard({
             </span>
           </div>
         </div>
-        <div>
-          <div className="font-mono text-[8.5px] tracking-[0.16em] uppercase text-text-3">
-            CLONES
-          </div>
-          <div
-            className={`font-mono text-[12px] mt-0.5 ${
-              strategy.clones > 0 ? "text-text" : "text-text-3"
-            }`}
-          >
-            {strategy.clones > 0 ? strategy.clones : "—"}
-          </div>
-        </div>
       </div>
     </Link>
   );

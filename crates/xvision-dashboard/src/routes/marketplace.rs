@@ -510,19 +510,21 @@ pub async fn post_set_price(
         chain.chain_id,
         chain.signer.clone(),
     );
-    let tx_hash =
-        with_chain_timeout(chain_call_timeout(mp), driver.update_price(U256::from(id), price6))
-            .await?
-            .map_err(|e| {
-                // Contract reverts (NotSeller, UnknownListing, AlreadyRevoked,
-                // FreeTransferableForbidden) and RPC failures map to 400. Testnet
-                // posture, same as revoke.
-                let msg = e.to_string();
-                DashboardError::Validation {
-                    field: "listing_id".into(),
-                    msg: format!("reprice failed: {msg}"),
-                }
-            })?;
+    let tx_hash = with_chain_timeout(
+        chain_call_timeout(mp),
+        driver.update_price(U256::from(id), price6),
+    )
+    .await?
+    .map_err(|e| {
+        // Contract reverts (NotSeller, UnknownListing, AlreadyRevoked,
+        // FreeTransferableForbidden) and RPC failures map to 400. Testnet
+        // posture, same as revoke.
+        let msg = e.to_string();
+        DashboardError::Validation {
+            field: "listing_id".into(),
+            msg: format!("reprice failed: {msg}"),
+        }
+    })?;
 
     Ok(Json(SetPriceOut {
         listing_id: id,
@@ -1410,6 +1412,7 @@ mod tests {
             palette: "".into(),
             attestation_count: 0,
             units_sold: 0,
+            units_sold_agents: 0,
             earned_usdc: 0.0,
             return30d_pct: None,
             sharpe: None,

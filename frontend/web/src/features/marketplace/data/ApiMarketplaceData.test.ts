@@ -45,6 +45,7 @@ const indexedListing = {
   palette: "ember",
   attestation_count: 2,
   units_sold: 3,
+  units_sold_agents: 0,
   earned_usdc: 12.5,
 };
 
@@ -182,8 +183,7 @@ describe("ApiMarketplaceData.listListings", () => {
     // attestation_count > 0 → verified (badge stays positive-only)
     expect(sealed.verification).toBe("verified");
     expect(sealed.acceptsX402).toBe(true);
-    expect(sealed.clones).toBe(0);
-    // units_sold approximated as human buyers (agents not distinguished on-chain)
+    // units_sold split: humans = units_sold - units_sold_agents, agents = units_sold_agents
     expect(sealed.buyers).toEqual({ humans: 3, agents: 0 });
     expect(sealed.return30dPct).toBe(0);
     expect(sealed.sharpe).toBe(0);
