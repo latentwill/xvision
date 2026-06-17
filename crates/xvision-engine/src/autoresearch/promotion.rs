@@ -31,21 +31,25 @@ impl PromotionGate {
     ///
     /// `current_best`: the best `val_acc` across all previously promoted
     /// checkpoints for the same `source_strategy_id`. `None` = no prior
-    /// checkpoint (any val_acc ≥ floor with sufficient holdout promotes).
+    /// checkpoint (treated as a 0.0 baseline).
+    ///
+    /// Delegates to the single canonical gate `nanochat::validate::
+    /// evaluate_promotion_gate` (s3ph.17 — promotion logic lives in ONE place).
+    /// For sane configs (`epsilon << acc_floor`) this is identical to the prior
+    /// behavior: with no prior checkpoint, any `val_acc ≥ acc_floor` also clears
+    /// the epsilon-over-zero check (since `acc_floor > epsilon`). The two impls
+    /// previously diverged only in the pathological `epsilon ≥ acc_floor` case.
     pub fn should_promote(&self, val_acc: f64, holdout_samples: u32, current_best: Option<f64>) -> bool {
-        // Floor check.
-        if val_acc < self.acc_floor {
-            return false;
-        }
-        // Holdout check.
-        if holdout_samples < self.min_holdout_samples {
-            return false;
-        }
-        // Epsilon check.
-        match current_best {
-            Some(best) => val_acc - best > self.epsilon,
-            None => true,
-        }
+        crate::nanochat::validate::evaluate_promotion_gate(
+            Some(val_acc),
+            current_best,
+            holdout_samples as i64,
+            crate::nanochat::validate::PromotionGateCfg {
+                epsilon: self.epsilon,
+                acc_floor: self.acc_floor,
+                min_holdout: self.min_holdout_samples as i64,
+            },
+        )
     }
 
     /// Variant accepting `Option<f64>` for val_acc — `None` (crash) always
@@ -246,6 +250,36 @@ mod tests {
         let gate = gate();
         // val_acc = None (crash) → should_promote_opt returns false.
         assert!(!gate.should_promote_opt(None, 300, None));
+    }
+
+    #[test]
+    fn unified_with_evaluate_promotion_gate_no_divergence_on_none_baseline() {
+        // s3ph.17: PromotionGate now DELEGATES to evaluate_promotion_gate, so the
+        // two impls must agree even in the pathological epsilon >= acc_floor case
+        // where they historically diverged (old PromotionGate had `None => true`,
+        // skipping epsilon). Here epsilon (0.55) > acc_floor (0.52); val_acc 0.54
+        // clears the floor but NOT epsilon-over-zero, so it must NOT promote.
+        let strict_gate = PromotionGate {
+            epsilon: 0.55,
+            acc_floor: 0.52,
+            min_holdout_samples: 200,
+        };
+        let pg = strict_gate.should_promote(0.54, 300, None);
+        let canon = crate::nanochat::validate::evaluate_promotion_gate(
+            Some(0.54),
+            None,
+            300,
+            crate::nanochat::validate::PromotionGateCfg {
+                epsilon: 0.55,
+                acc_floor: 0.52,
+                min_holdout: 200,
+            },
+        );
+        assert_eq!(pg, canon, "PromotionGate must match the canonical gate");
+        assert!(!pg, "0.54 must NOT promote when epsilon=0.55 (no None-skip)");
+
+        // And the common sane case still promotes (no behavior change there).
+        assert!(gate().should_promote(0.75, 250, None));
     }
 
     #[tokio::test]

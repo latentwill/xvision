@@ -181,13 +181,28 @@ pub async fn run_one_experiment(
         None => ExperimentStatus::Crash,
     };
 
-    // 5. Git reset if not keeping.
+    // 5. Git reset if not keeping. Log (don't swallow) a failed reset — a
+    //    leftover rejected commit in the worktree would corrupt the next
+    //    experiment's baseline.
     if status != ExperimentStatus::Keep {
-        let _ = Command::new("git")
+        match Command::new("git")
             .args(["reset", "HEAD~1"])
             .current_dir(worktree_path)
             .status()
-            .await;
+            .await
+        {
+            Ok(s) if s.success() => {}
+            Ok(s) => tracing::warn!(
+                worktree = %worktree_path.display(),
+                code = ?s.code(),
+                "git reset HEAD~1 failed after a discarded experiment; the worktree may retain the rejected commit"
+            ),
+            Err(e) => tracing::warn!(
+                worktree = %worktree_path.display(),
+                error = %e,
+                "could not spawn git reset HEAD~1 after a discarded experiment"
+            ),
+        }
     }
 
     let val_acc = train_result.as_ref().map(|r| r.val_acc);
