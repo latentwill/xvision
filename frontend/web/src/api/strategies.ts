@@ -75,6 +75,13 @@ export type EdgePredicate =
   | { any: EdgePredicate[] }
   | { not: EdgePredicate };
 
+/** FK reference to a trained nanochat checkpoint. Mirrors
+ *  `CheckpointRef` in `crates/xvision-engine/src/strategies/agent_ref.rs`
+ *  (added in WU-1.1). Absent from the wire for non-nanochat slots. */
+export type CheckpointRef = {
+  model_id: string;
+};
+
 export type AgentRef = {
   agent_id: string;
   role: string;
@@ -83,6 +90,14 @@ export type AgentRef = {
   /// every legacy slot. Set to `"filter"` by the inline composer when
   /// adding a Filter agent to a strategy.
   activates?: Capability | null;
+  /** When present, this slot runs a local nanochat checkpoint as a
+   *  pre-filter. Absent (undefined) = omitted from wire → existing
+   *  strategy hashes remain byte-stable. Added in WU-8.3. */
+  checkpoint?: CheckpointRef | null;
+  /** Hard-gate mode: true = block trade on NEUTRAL output (default for
+   *  nanochat filter slots), false = advisory only.
+   *  Absent (undefined) = omitted from wire. Added in WU-8.3. */
+  veto?: boolean | null;
 };
 export type PipelineEdge = {
   from_role: string;
