@@ -69,15 +69,10 @@ pub fn build_nano_request(
     // the contract is read-by-key-name, so field order is not significant.
     let mut req = serde_json::Map::with_capacity(4);
     req.insert("spec".into(), serde_json::to_value(spec).unwrap());
-    req.insert(
-        "conditioning".into(),
-        serde_json::to_value(conditioning).unwrap(),
-    );
+    req.insert("conditioning".into(), serde_json::to_value(conditioning).unwrap());
     let ohlcv_arr: Vec<Value> = ohlcv
         .iter()
-        .map(|bar| {
-            Value::Array(bar.iter().map(|&v| serde_json::json!(v)).collect())
-        })
+        .map(|bar| Value::Array(bar.iter().map(|&v| serde_json::json!(v)).collect()))
         .collect();
     req.insert("ohlcv".into(), Value::Array(ohlcv_arr));
     req.insert("indicators".into(), Value::Object(ind_obj));
@@ -139,9 +134,7 @@ pub async fn run_nano_inference(
     let actual_hash = hex::encode(Sha256::digest(&file_bytes));
     if actual_hash != expected_sha256 {
         return Ok(NanoInferenceResult::FailSafe {
-            reason: format!(
-                "hash mismatch: expected {expected_sha256}, got {actual_hash}"
-            ),
+            reason: format!("hash mismatch: expected {expected_sha256}, got {actual_hash}"),
         });
     }
 
@@ -181,11 +174,7 @@ pub async fn run_nano_inference(
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
 
-    let read_result = timeout(
-        Duration::from_millis(timeout_ms),
-        reader.read_line(&mut line),
-    )
-    .await;
+    let read_result = timeout(Duration::from_millis(timeout_ms), reader.read_line(&mut line)).await;
 
     match read_result {
         Err(_elapsed) => {
@@ -323,23 +312,16 @@ mod tests {
 
     #[test]
     fn veto_true_mismatch_direction_returns_none() {
-        let result = resolve_nano_filter(
-            NanoDirection::Long,
-            NanoDirection::Short,
-            0.8,
-            true,
+        let result = resolve_nano_filter(NanoDirection::Long, NanoDirection::Short, 0.8, true);
+        assert!(
+            result.is_none(),
+            "direction mismatch + veto=true must produce null payload"
         );
-        assert!(result.is_none(), "direction mismatch + veto=true must produce null payload");
     }
 
     #[test]
     fn veto_true_matching_direction_returns_payload() {
-        let result = resolve_nano_filter(
-            NanoDirection::Long,
-            NanoDirection::Long,
-            0.85,
-            true,
-        );
+        let result = resolve_nano_filter(NanoDirection::Long, NanoDirection::Long, 0.85, true);
         let payload = result.expect("matching direction + veto=true must return Some payload");
         assert_eq!(payload.get("direction").and_then(|v| v.as_str()), Some("LONG"));
         let conf = payload.get("confidence").and_then(|v| v.as_f64()).unwrap();

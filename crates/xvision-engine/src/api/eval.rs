@@ -2508,12 +2508,8 @@ impl ToolDispatch for ToolRegistryDispatch {
         // (im2r.5) so a failed/unknown-tool call doesn't permanently burn one.
         let budget_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU32>> =
             match crate::tools::signal_policy::tool_provider(name) {
-                Some(crate::tools::signal_policy::SignalProvider::Nansen) => {
-                    self.nansen_budget.clone()
-                }
-                Some(crate::tools::signal_policy::SignalProvider::Elfa) => {
-                    self.elfa_budget.clone()
-                }
+                Some(crate::tools::signal_policy::SignalProvider::Nansen) => self.nansen_budget.clone(),
+                Some(crate::tools::signal_policy::SignalProvider::Elfa) => self.elfa_budget.clone(),
                 None => None,
             };
         let mut credit_consumed = false;
@@ -2530,7 +2526,9 @@ impl ToolDispatch for ToolRegistryDispatch {
                     )
                     .unwrap_or(0);
                 if prev == 0 {
-                    return Ok(crate::tools::signal_policy::signal_unavailable("budget exhausted"));
+                    return Ok(crate::tools::signal_policy::signal_unavailable(
+                        "budget exhausted",
+                    ));
                 }
                 credit_consumed = true;
             }
@@ -2762,12 +2760,12 @@ async fn spawn_cline_ctx(
     // Read lag + budgets from the SignalToolConfig already embedded in the
     // registry by build_tool_registry — no second xvn.toml parse (im2r.6).
     let (nansen_lag_days, nansen_budget_arc, elfa_budget_arc) = {
-        let sig = tools
-            .signal_cfg
-            .as_deref()
-            .cloned()
-            .unwrap_or_default();
-        (sig.nansen_lag_days(), sig.nansen_budget_arc(), sig.elfa_budget_arc())
+        let sig = tools.signal_cfg.as_deref().cloned().unwrap_or_default();
+        (
+            sig.nansen_lag_days(),
+            sig.nansen_budget_arc(),
+            sig.elfa_budget_arc(),
+        )
     };
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
@@ -6640,7 +6638,10 @@ mod tool_registry_dispatch_tests {
             .invoke("elfa_smart_mentions", serde_json::json!({"asset":"BTC"}))
             .await
             .unwrap();
-        assert_eq!(out["available"], false, "elfa call with zero elfa_budget must degrade");
+        assert_eq!(
+            out["available"], false,
+            "elfa call with zero elfa_budget must degrade"
+        );
         // Nansen budget must still be 1 — the Elfa call must not have touched it.
         assert_eq!(
             nansen_b.load(std::sync::atomic::Ordering::Relaxed),
@@ -6834,7 +6835,9 @@ mod tool_registry_dispatch_tests {
     #[test]
     fn is_degrade_true_when_available_false() {
         use super::is_degrade;
-        assert!(is_degrade(&serde_json::json!({"available": false, "reason": "budget exhausted"})));
+        assert!(is_degrade(
+            &serde_json::json!({"available": false, "reason": "budget exhausted"})
+        ));
         assert!(is_degrade(&serde_json::json!({"available": false})));
     }
 
@@ -7169,12 +7172,9 @@ budget_credits_per_run = 5
         )
         .unwrap();
 
-        let ctx = crate::api::ApiContext::open(
-            dir.path(),
-            crate::api::Actor::Cli { user: "test".into() },
-        )
-        .await
-        .unwrap();
+        let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
 
         let sig_cfg = super::resolve_signal_tool_config(&ctx);
 
@@ -7210,12 +7210,9 @@ budget_credits_per_run = 5
     #[tokio::test]
     async fn signal_tool_config_empty_when_no_config_file() {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = crate::api::ApiContext::open(
-            dir.path(),
-            crate::api::Actor::Cli { user: "test".into() },
-        )
-        .await
-        .unwrap();
+        let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
         let sig_cfg = super::resolve_signal_tool_config(&ctx);
         assert!(sig_cfg.nansen_entry.is_none());
         assert!(sig_cfg.elfa_entry.is_none());
@@ -7227,7 +7224,9 @@ budget_credits_per_run = 5
         // No signal tools registered when config is absent.
         let names: Vec<String> = registry.list().iter().map(|n| n.as_str().to_string()).collect();
         assert!(
-            names.iter().all(|n| !n.starts_with("nansen_") && !n.starts_with("elfa_")),
+            names
+                .iter()
+                .all(|n| !n.starts_with("nansen_") && !n.starts_with("elfa_")),
             "no signal tools expected without config: {names:?}"
         );
     }

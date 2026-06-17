@@ -198,8 +198,7 @@ const MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA: &str =
 /// the file contains multiple CREATE TABLE + CREATE INDEX statements that a
 /// single `sqlx::query` cannot batch. Idempotent — all DDL uses
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`.
-const MIGRATION_069_NANOCHAT: &str =
-    include_str!("../../migrations/069_nanochat_models.sql");
+const MIGRATION_069_NANOCHAT: &str = include_str!("../../migrations/069_nanochat_models.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via

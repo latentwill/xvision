@@ -144,38 +144,29 @@ async fn happy_path_run_completes_with_experiment_row() {
     .await;
 
     // Run status must be 'completed'
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM autoresearch_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM autoresearch_runs WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status, "completed", "run must be marked completed");
 
     // best_acc must be stored
-    let best_acc: Option<f64> = sqlx::query_scalar(
-        "SELECT best_acc FROM autoresearch_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(
-        best_acc.is_some(),
-        "best_acc must be set after a successful run"
-    );
+    let best_acc: Option<f64> = sqlx::query_scalar("SELECT best_acc FROM autoresearch_runs WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(best_acc.is_some(), "best_acc must be set after a successful run");
     let acc = best_acc.unwrap();
     assert!((acc - 0.6).abs() < 1e-9, "best_acc should be ~0.6, got {acc}");
 
     // An experiments row must exist
-    let exp_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM autoresearch_experiments WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let exp_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autoresearch_experiments WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(exp_count >= 1, "at least one experiment row expected");
 
     // At least one stdout line must have been broadcast
@@ -186,7 +177,10 @@ async fn happy_path_run_completes_with_experiment_row() {
             break;
         }
     }
-    assert!(got_any, "at least one AutoresearchStdoutLine must have been broadcast");
+    assert!(
+        got_any,
+        "at least one AutoresearchStdoutLine must have been broadcast"
+    );
 }
 
 // ─── Prepare failure path ─────────────────────────────────────────────────────
@@ -215,13 +209,11 @@ async fn prepare_failure_marks_run_failed() {
     )
     .await;
 
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM autoresearch_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM autoresearch_runs WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status, "failed", "run must be failed when prepare exits non-zero");
 }
 
@@ -251,13 +243,11 @@ async fn train_failure_marks_run_failed() {
     )
     .await;
 
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM autoresearch_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM autoresearch_runs WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status, "failed", "run must be failed when train exits non-zero");
 }
 
@@ -287,12 +277,10 @@ async fn missing_xvn_result_marks_run_failed() {
     )
     .await;
 
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM autoresearch_runs WHERE run_id = ?",
-    )
-    .bind(run_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM autoresearch_runs WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(status, "failed", "run must be failed when XVN_RESULT is missing");
 }

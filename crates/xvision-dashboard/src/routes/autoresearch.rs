@@ -10,12 +10,12 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
+use axum::response::sse::Sse;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use axum::response::sse::Sse;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
@@ -108,11 +108,12 @@ pub async fn start_run(
     // 2. Validate run_tag — delegate to the pure-Rust fn from Phase 2 Task 2.1.
     //    `validate_run_tag` enforces ^[a-z0-9][a-z0-9-]{0,31}$ via pure std char
     //    checks (no regex dependency in xvision-dashboard).
-    xvision_engine::nanochat::validate::validate_run_tag(&body.run_tag)
-        .map_err(|msg| DashboardError::Validation {
+    xvision_engine::nanochat::validate::validate_run_tag(&body.run_tag).map_err(|msg| {
+        DashboardError::Validation {
             field: "run_tag".into(),
             msg,
-        })?;
+        }
+    })?;
 
     // 3. Parse and validate label_strategy.
     let label_strategy: LabelStrategy = match body.label_strategy.as_str() {
@@ -121,16 +122,14 @@ pub async fn start_run(
         other => {
             return Err(DashboardError::Validation {
                 field: "label_strategy".into(),
-                msg: format!(
-                    "unknown label_strategy {other:?}; expected price_forward or outcome_imitation"
-                ),
+                msg: format!("unknown label_strategy {other:?}; expected price_forward or outcome_imitation"),
             })
         }
     };
 
     // 4. Parse label_config from the request's JSON value.
-    let label_config: LabelConfig = serde_json::from_value(body.label_config.clone())
-        .map_err(|e| DashboardError::Validation {
+    let label_config: LabelConfig =
+        serde_json::from_value(body.label_config.clone()).map_err(|e| DashboardError::Validation {
             field: "label_config".into(),
             msg: format!("invalid label_config: {e}"),
         })?;
@@ -162,12 +161,11 @@ pub async fn start_run(
 
     // 6. Pre-check concurrency (the DB unique index is the hard guard; this
     //    gives a clear 409 before worktree creation).
-    let running: Option<String> = sqlx::query_scalar(
-        "SELECT run_id FROM autoresearch_runs WHERE status = 'running' LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("concurrency check: {e}")))?;
+    let running: Option<String> =
+        sqlx::query_scalar("SELECT run_id FROM autoresearch_runs WHERE status = 'running' LIMIT 1")
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("concurrency check: {e}")))?;
 
     if let Some(existing_id) = running {
         return Err(DashboardError::Conflict(format!(
@@ -176,8 +174,8 @@ pub async fn start_run(
     }
 
     // 7. Create the git worktree.
-    let repo_root = std::env::current_dir()
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("current_dir: {e}")))?;
+    let repo_root =
+        std::env::current_dir().map_err(|e| DashboardError::Internal(anyhow::anyhow!("current_dir: {e}")))?;
     let wt = WorktreeHandle::create(&repo_root, &body.run_tag)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("worktree create: {e}")))?;
 
@@ -193,8 +191,7 @@ pub async fn start_run(
     // 9. Insert the run row.
     let run_id = Ulid::new().to_string();
     let started_at = Utc::now().to_rfc3339();
-    let label_config_json =
-        serde_json::to_string(&body.label_config).unwrap_or_else(|_| "{}".to_string());
+    let label_config_json = serde_json::to_string(&body.label_config).unwrap_or_else(|_| "{}".to_string());
 
     sqlx::query(
         "INSERT INTO autoresearch_runs
@@ -247,13 +244,10 @@ pub async fn stop_run(
             .bind(&run_id)
             .fetch_optional(&state.pool)
             .await
-            .map_err(|e| {
-                DashboardError::Internal(anyhow::anyhow!("stop_run status check: {e}"))
-            })?;
+            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("stop_run status check: {e}")))?;
 
-    let current_status = existing.ok_or_else(|| {
-        DashboardError::NotFound(format!("autoresearch run {run_id} not found"))
-    })?;
+    let current_status =
+        existing.ok_or_else(|| DashboardError::NotFound(format!("autoresearch run {run_id} not found")))?;
 
     if current_status != "running" {
         // Idempotent: already stopped/completed — return current status.
@@ -264,14 +258,12 @@ pub async fn stop_run(
     }
 
     let stopped_at = Utc::now().to_rfc3339();
-    sqlx::query(
-        "UPDATE autoresearch_runs SET status = 'stopped', stopped_at = ? WHERE run_id = ?",
-    )
-    .bind(&stopped_at)
-    .bind(&run_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("stop_run update: {e}")))?;
+    sqlx::query("UPDATE autoresearch_runs SET status = 'stopped', stopped_at = ? WHERE run_id = ?")
+        .bind(&stopped_at)
+        .bind(&run_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("stop_run update: {e}")))?;
 
     Ok(Json(StopRunResponse {
         run_id,
@@ -281,23 +273,24 @@ pub async fn stop_run(
 
 // ─── GET /api/autoresearch/runs ───────────────────────────────────────────────
 
-pub async fn list_runs(
-    State(state): State<AppState>,
-) -> Result<Json<ListRunsResponse>, DashboardError> {
-    let rows = sqlx::query_as::<_, (
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        String,
-        Option<String>,
-        i64,
-        Option<f64>,
-        Option<String>,
-        String,
-        String,
-    )>(
+pub async fn list_runs(State(state): State<AppState>) -> Result<Json<ListRunsResponse>, DashboardError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+            Option<f64>,
+            Option<String>,
+            String,
+            String,
+        ),
+    >(
         "SELECT run_id, run_tag, source_strategy_id, label_strategy, status,
                 started_at, stopped_at, experiments, best_acc, best_model_id,
                 git_branch, worktree_path
@@ -350,20 +343,23 @@ pub async fn get_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<Json<RunSummary>, DashboardError> {
-    let row = sqlx::query_as::<_, (
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        String,
-        Option<String>,
-        i64,
-        Option<f64>,
-        Option<String>,
-        String,
-        String,
-    )>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+            Option<f64>,
+            Option<String>,
+            String,
+            String,
+        ),
+    >(
         "SELECT run_id, run_tag, source_strategy_id, label_strategy, status,
                 started_at, stopped_at, experiments, best_acc, best_model_id,
                 git_branch, worktree_path
@@ -412,17 +408,13 @@ pub async fn get_run(
 pub async fn stream_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
-) -> Result<
-    Sse<impl Stream<Item = Result<axum::response::sse::Event, Infallible>>>,
-    DashboardError,
-> {
+) -> Result<Sse<impl Stream<Item = Result<axum::response::sse::Event, Infallible>>>, DashboardError> {
     // Verify run exists.
-    let exists: Option<String> =
-        sqlx::query_scalar("SELECT run_id FROM autoresearch_runs WHERE run_id = ?")
-            .bind(&run_id)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("stream_run: {e}")))?;
+    let exists: Option<String> = sqlx::query_scalar("SELECT run_id FROM autoresearch_runs WHERE run_id = ?")
+        .bind(&run_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("stream_run: {e}")))?;
 
     if exists.is_none() {
         return Err(DashboardError::NotFound(format!(
@@ -440,18 +432,21 @@ pub async fn list_experiments(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<Json<ListExperimentsResponse>, DashboardError> {
-    let rows = sqlx::query_as::<_, (
-        String,
-        String,
-        String,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-        String,
-        String,
-        String,
-    )>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+            String,
+            String,
+            String,
+        ),
+    >(
         "SELECT experiment_id, run_id, git_commit,
                 val_acc, val_loss, peak_vram_mb, training_seconds,
                 status, description, created_at

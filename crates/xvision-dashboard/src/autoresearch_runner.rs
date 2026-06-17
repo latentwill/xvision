@@ -65,7 +65,11 @@ pub async fn execute_training_run(
 
     let prep_ok = run_subprocess_streaming(
         "uv",
-        &["run", "xvision_prepare.py", run_config_path.to_str().unwrap_or("")],
+        &[
+            "run",
+            "xvision_prepare.py",
+            run_config_path.to_str().unwrap_or(""),
+        ],
         &nanochat_dir,
         &emit,
     )
@@ -143,7 +147,9 @@ pub async fn execute_training_run(
     .await;
 
     if let Err(e) = insert_result {
-        emit(format!("[autoresearch] failed: could not insert experiment row: {e}"));
+        emit(format!(
+            "[autoresearch] failed: could not insert experiment row: {e}"
+        ));
         mark_run_failed(&pool, &run_id, None).await;
         return;
     }
@@ -268,7 +274,7 @@ async fn run_subprocess_collecting(
             // Non-zero exit — still emit nothing extra; caller will handle
             None
         }
-        Ok(Err(_)) => None,  // wait() error
+        Ok(Err(_)) => None, // wait() error
         Err(_) => {
             // Timeout — kill the child
             let _ = child.kill().await;
@@ -281,13 +287,12 @@ async fn run_subprocess_collecting(
 /// stderr but not propagated (we have no error surface from a detached task).
 async fn mark_run_failed(pool: &SqlitePool, run_id: &str, _reason: Option<&str>) {
     let stopped_at = Utc::now().to_rfc3339();
-    if let Err(e) = sqlx::query(
-        "UPDATE autoresearch_runs SET status = 'failed', stopped_at = ? WHERE run_id = ?",
-    )
-    .bind(&stopped_at)
-    .bind(run_id)
-    .execute(pool)
-    .await
+    if let Err(e) =
+        sqlx::query("UPDATE autoresearch_runs SET status = 'failed', stopped_at = ? WHERE run_id = ?")
+            .bind(&stopped_at)
+            .bind(run_id)
+            .execute(pool)
+            .await
     {
         eprintln!("[autoresearch_runner] failed to mark run {run_id} as failed: {e}");
     }

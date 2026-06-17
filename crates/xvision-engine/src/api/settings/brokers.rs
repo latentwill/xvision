@@ -1267,9 +1267,7 @@ pub struct ResolvedOrderlyCredentials {
 
 /// Resolve Orderly credentials: stored (Settings → Brokers) win over env.
 /// `None` when neither is configured.
-pub async fn resolve_orderly_credentials(
-    xvn_home: &Path,
-) -> ApiResult<Option<ResolvedOrderlyCredentials>> {
+pub async fn resolve_orderly_credentials(xvn_home: &Path) -> ApiResult<Option<ResolvedOrderlyCredentials>> {
     // 1. Stored creds win.
     if let Some(c) = load_orderly_credentials(xvn_home).await? {
         if !c.api_key.trim().is_empty() {
@@ -1850,12 +1848,20 @@ mod tests {
             .unwrap();
         let cleared = clear_hyperliquid(&ctx).await.unwrap();
         assert!(!cleared.stored);
-        assert!(load_hyperliquid_credentials(&ctx.xvn_home).await.unwrap().is_none());
+        assert!(load_hyperliquid_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     // ── Orderly credential store ──────────────────────────────────────────────
 
-    fn orderly_req(api_key: &str, api_secret: &str, account_id: &str, base_url: Option<&str>) -> SetOrderlyReq {
+    fn orderly_req(
+        api_key: &str,
+        api_secret: &str,
+        account_id: &str,
+        base_url: Option<&str>,
+    ) -> SetOrderlyReq {
         SetOrderlyReq {
             api_key: api_key.into(),
             api_secret: api_secret.into(),
@@ -1908,13 +1914,24 @@ mod tests {
         let (ctx, _dir) = fresh_ctx().await;
         let out = set_orderly(
             &ctx,
-            orderly_req("ed25519:KEY", "sec", "0xACCT", Some("https://testnet-api-evm.orderly.org")),
+            orderly_req(
+                "ed25519:KEY",
+                "sec",
+                "0xACCT",
+                Some("https://testnet-api-evm.orderly.org"),
+            ),
         )
         .await
         .unwrap();
-        assert_eq!(out.base_url.as_deref(), Some("https://testnet-api-evm.orderly.org"));
+        assert_eq!(
+            out.base_url.as_deref(),
+            Some("https://testnet-api-evm.orderly.org")
+        );
         let creds = load_orderly_credentials(&ctx.xvn_home).await.unwrap().unwrap();
-        assert_eq!(creds.base_url.as_deref(), Some("https://testnet-api-evm.orderly.org"));
+        assert_eq!(
+            creds.base_url.as_deref(),
+            Some("https://testnet-api-evm.orderly.org")
+        );
     }
 
     #[tokio::test]

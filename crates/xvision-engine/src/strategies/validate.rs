@@ -908,7 +908,9 @@ mod preflight_tests {
                 activates: Some(Capability::Filter),
                 prompt_override: None,
                 model_override: Some("anthropic/claude-haiku-4-5".into()),
-                checkpoint: Some(CheckpointRef { model_id: "01HZMODEL".into() }),
+                checkpoint: Some(CheckpointRef {
+                    model_id: "01HZMODEL".into(),
+                }),
                 veto: Some(true),
             },
             AgentRef {
@@ -943,8 +945,8 @@ mod preflight_tests {
     fn checkpoint_without_model_override_is_accepted() {
         let mut s = strategy_with_checkpoint_and_model_override();
         s.agents[0].model_override = None; // remove the conflicting field
-        // Should pass the mutual-exclusion check (other validations may fail
-        // if the Strategy fixture is incomplete, but not this one).
+                                           // Should pass the mutual-exclusion check (other validations may fail
+                                           // if the Strategy fixture is incomplete, but not this one).
         let err = validate_strategy(&s);
         match err {
             Ok(()) => {}

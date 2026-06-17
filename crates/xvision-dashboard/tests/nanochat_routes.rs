@@ -21,9 +21,7 @@ use xvision_dashboard::AppState;
 
 async fn boot() -> (TestServer, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     // Run dashboard migrations (session/auth tables).
     state
         .run_dashboard_migrations()
@@ -128,12 +126,11 @@ async fn approve_flips_live_approved_to_1() {
     // TestServer defaults to loopback — passes through require_auth.
     assert_eq!(res.status_code(), StatusCode::OK);
 
-    let live_approved: i64 = sqlx::query_scalar(
-        "SELECT live_approved FROM trained_models WHERE model_id = 'model-approve-01'",
-    )
-    .fetch_one(&state.pool)
-    .await
-    .unwrap();
+    let live_approved: i64 =
+        sqlx::query_scalar("SELECT live_approved FROM trained_models WHERE model_id = 'model-approve-01'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
     assert_eq!(live_approved, 1);
 }
 
@@ -155,9 +152,7 @@ async fn approve_double_approve_is_200_noop() {
 #[tokio::test]
 async fn approve_requires_auth_from_non_loopback() {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     insert_checkpoint(&state, "model-noauth-01", true, false).await;
 
@@ -182,9 +177,7 @@ async fn approve_requires_auth_from_non_loopback() {
 #[tokio::test]
 async fn approve_with_valid_token_from_non_loopback_succeeds() {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     insert_checkpoint(&state, "model-token-01", true, false).await;
     let token = create_session_token(&state).await;
@@ -205,11 +198,10 @@ async fn approve_with_valid_token_from_non_loopback_succeeds() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    let live_approved: i64 = sqlx::query_scalar(
-        "SELECT live_approved FROM trained_models WHERE model_id = 'model-token-01'",
-    )
-    .fetch_one(&state.pool)
-    .await
-    .unwrap();
+    let live_approved: i64 =
+        sqlx::query_scalar("SELECT live_approved FROM trained_models WHERE model_id = 'model-token-01'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
     assert_eq!(live_approved, 1);
 }

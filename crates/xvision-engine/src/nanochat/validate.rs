@@ -181,7 +181,7 @@ pub fn evaluate_promotion_gate(
     let baseline = current_best.unwrap_or(0.0);
     acc - baseline > cfg.epsilon      // beats current best by margin
         && acc >= cfg.acc_floor       // meets absolute floor
-        && holdout_samples >= cfg.min_holdout  // backed by enough data
+        && holdout_samples >= cfg.min_holdout // backed by enough data
 }
 
 #[cfg(test)]
@@ -193,8 +193,17 @@ mod tests {
 
     #[test]
     fn run_tag_valid_cases() {
-        for tag in &["a", "abc", "jun12a", "a-b-c", "run-2026-06-14",
-                      "a0", "0a", "abc-123-def", "a".repeat(32).as_str()] {
+        for tag in &[
+            "a",
+            "abc",
+            "jun12a",
+            "a-b-c",
+            "run-2026-06-14",
+            "a0",
+            "0a",
+            "abc-123-def",
+            "a".repeat(32).as_str(),
+        ] {
             assert!(validate_run_tag(tag).is_ok(), "expected valid: {tag}");
         }
     }
@@ -269,8 +278,18 @@ mod tests {
 
     #[test]
     fn null_val_acc_never_promotes() {
-        assert!(!evaluate_promotion_gate(None, None, 300, PromotionGateCfg::default()));
-        assert!(!evaluate_promotion_gate(None, Some(0.5), 300, PromotionGateCfg::default()));
+        assert!(!evaluate_promotion_gate(
+            None,
+            None,
+            300,
+            PromotionGateCfg::default()
+        ));
+        assert!(!evaluate_promotion_gate(
+            None,
+            Some(0.5),
+            300,
+            PromotionGateCfg::default()
+        ));
     }
 
     #[test]
@@ -280,7 +299,11 @@ mod tests {
             Some(0.55),
             Some(0.51),
             250,
-            PromotionGateCfg { epsilon: 0.01, acc_floor: 0.52, min_holdout: 200 },
+            PromotionGateCfg {
+                epsilon: 0.01,
+                acc_floor: 0.52,
+                min_holdout: 200
+            },
         ));
     }
 
@@ -302,7 +325,11 @@ mod tests {
             Some(0.51),
             None,
             250,
-            PromotionGateCfg { epsilon: 0.01, acc_floor: 0.52, min_holdout: 200 },
+            PromotionGateCfg {
+                epsilon: 0.01,
+                acc_floor: 0.52,
+                min_holdout: 200
+            },
         ));
     }
 
@@ -313,7 +340,11 @@ mod tests {
             Some(0.58),
             Some(0.50),
             150,
-            PromotionGateCfg { epsilon: 0.01, acc_floor: 0.52, min_holdout: 200 },
+            PromotionGateCfg {
+                epsilon: 0.01,
+                acc_floor: 0.52,
+                min_holdout: 200
+            },
         ));
     }
 
@@ -336,7 +367,11 @@ mod tests {
             Some(0.52),
             None,
             300,
-            PromotionGateCfg { epsilon: 0.01, acc_floor: 0.52, min_holdout: 200 },
+            PromotionGateCfg {
+                epsilon: 0.01,
+                acc_floor: 0.52,
+                min_holdout: 200
+            },
         ));
     }
 
@@ -346,7 +381,11 @@ mod tests {
             Some(0.5199),
             None,
             300,
-            PromotionGateCfg { epsilon: 0.0, acc_floor: 0.52, min_holdout: 200 },
+            PromotionGateCfg {
+                epsilon: 0.0,
+                acc_floor: 0.52,
+                min_holdout: 200
+            },
         ));
     }
 
@@ -358,7 +397,8 @@ mod tests {
             "filter",
             &["rsi_14".to_string(), "atr_20".to_string()],
             &["rsi_14".to_string()], // atr_20 not registered
-        ).expect_err("missing indicators must be rejected");
+        )
+        .expect_err("missing indicators must be rejected");
         match err {
             ValidationError::MissingCheckpointIndicators { role, missing } => {
                 assert_eq!(role, "filter");
@@ -374,16 +414,13 @@ mod tests {
             "filter",
             &["rsi_14".to_string(), "atr_20".to_string()],
             &["rsi_14".to_string(), "atr_20".to_string()],
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
     fn empty_indicators_always_passes() {
-        assert!(validate_checkpoint_indicators(
-            "filter",
-            &[],
-            &[],
-        ).is_ok());
+        assert!(validate_checkpoint_indicators("filter", &[], &[],).is_ok());
     }
 
     // ── Task 4.3: validate_checkpoint_live_approved ─────────────────────────

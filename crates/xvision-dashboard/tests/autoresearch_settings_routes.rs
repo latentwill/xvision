@@ -25,9 +25,7 @@ use xvision_dashboard::AppState;
 
 async fn boot() -> (TestServer, TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     let server = TestServer::new(build_router(state.clone())).unwrap();
     (server, tmp, state)
@@ -93,9 +91,7 @@ async fn post_requires_auth() {
     // A non-loopback client with no token must be rejected by the auth
     // middleware before the handler runs.
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
-        .await
-        .expect("init state");
+    let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
     let app = build_router(state);
 

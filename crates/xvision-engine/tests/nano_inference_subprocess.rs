@@ -15,8 +15,7 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn stub_worker_path() -> PathBuf {
     // __file__ is not stable in Rust; locate relative to CARGO_MANIFEST_DIR.
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set by cargo test");
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by cargo test");
     PathBuf::from(manifest).join("tests/fixtures/stub_nano_worker.py")
 }
 
@@ -55,14 +54,9 @@ async fn happy_path_returns_direction_and_confidence() {
     let hash = golden_sha256(&worker);
     let req = build_nano_request(&spec(), NanoDirection::Long, &ohlcv(), &inds());
 
-    let result = run_nano_inference(
-        &worker,
-        &hash,
-        &req,
-        /*timeout_ms=*/ 5_000,
-    )
-    .await
-    .unwrap();
+    let result = run_nano_inference(&worker, &hash, &req, /*timeout_ms=*/ 5_000)
+        .await
+        .unwrap();
 
     assert!(matches!(result, NanoInferenceResult::Ok { direction, confidence }
         if direction == NanoDirection::Long && (confidence - 0.9).abs() < 1e-9));

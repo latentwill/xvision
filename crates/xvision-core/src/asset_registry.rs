@@ -167,13 +167,16 @@ pub fn signal_asset_identity(symbol: &str) -> Option<SignalAssetIdentity> {
         // GROUNDING (verify before mainnet, Task 6.4): confirm chain slugs +
         // contract/mint addresses + native sentinel against live Nansen docs.
         "BTC" | "WBTC" => ("ethereum", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"), // WBTC (BTC tracked via WBTC on-chain)
-        "ETH" | "WETH"  => ("ethereum", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), // WETH
-        "USDC"          => ("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-        "USDT"          => ("ethereum", "0xdac17f958d2ee523a2206206994597c13d831ec7"),
-        "SOL"           => ("solana",   "So11111111111111111111111111111111111111112"),
+        "ETH" | "WETH" => ("ethereum", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), // WETH
+        "USDC" => ("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+        "USDT" => ("ethereum", "0xdac17f958d2ee523a2206206994597c13d831ec7"),
+        "SOL" => ("solana", "So11111111111111111111111111111111111111112"),
         _ => return None,
     };
-    Some(SignalAssetIdentity { chain, contract_address: contract })
+    Some(SignalAssetIdentity {
+        chain,
+        contract_address: contract,
+    })
 }
 
 /// Returns `true` iff the asset is known to have Alpaca bar data and

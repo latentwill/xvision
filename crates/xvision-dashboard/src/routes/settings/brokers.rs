@@ -10,9 +10,8 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored,
-    HyperliquidStored, OrderlyStored, SetAlpacaReq, SetByrealReq, SetDegenArenaReq,
-    SetHyperliquidReq, SetOrderlyReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored, HyperliquidStored,
+    OrderlyStored, SetAlpacaReq, SetByrealReq, SetDegenArenaReq, SetHyperliquidReq, SetOrderlyReq,
 };
 
 use crate::error::DashboardError;
@@ -94,9 +93,7 @@ pub async fn set_hyperliquid(
 }
 
 /// DELETE `/api/settings/brokers/hyperliquid` — drop stored Hyperliquid creds.
-pub async fn delete_hyperliquid(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, DashboardError> {
+pub async fn delete_hyperliquid(State(state): State<AppState>) -> Result<impl IntoResponse, DashboardError> {
     brokers::clear_hyperliquid(&state.api_context()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -112,9 +109,7 @@ pub async fn set_orderly(
 }
 
 /// DELETE `/api/settings/brokers/orderly` — drop stored Orderly creds.
-pub async fn delete_orderly(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, DashboardError> {
+pub async fn delete_orderly(State(state): State<AppState>) -> Result<impl IntoResponse, DashboardError> {
     brokers::clear_orderly(&state.api_context()).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -133,10 +133,7 @@ async fn tool_cache_round_trips() {
     );
 
     // Miss on an unknown key — must return None.
-    let miss = store
-        .get_cached_tool_response(&rec, "x", "nope")
-        .await
-        .unwrap();
+    let miss = store.get_cached_tool_response(&rec, "x", "nope").await.unwrap();
     assert!(miss.is_none(), "cache miss must return None");
 }
 

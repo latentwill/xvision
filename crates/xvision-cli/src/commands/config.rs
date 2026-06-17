@@ -17,11 +17,9 @@
 use clap::{Args, Subcommand};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::nanochat::config_store::{
-    get_config, set_config,
-    DEFAULT_MIN_PRECISION_LIFT_PP, DEFAULT_MAX_PNL_REGRESSION,
-    DEFAULT_PROMOTION_EPSILON, DEFAULT_PROMOTION_ACC_FLOOR,
-    DEFAULT_PROMOTION_MIN_HOLDOUT, DEFAULT_MIN_CYCLE_COUNT,
-    DEFAULT_TRAIN_WALL_CLOCK_SEC, DEFAULT_PRICE_FORWARD_THRESHOLD,
+    get_config, set_config, DEFAULT_MAX_PNL_REGRESSION, DEFAULT_MIN_CYCLE_COUNT,
+    DEFAULT_MIN_PRECISION_LIFT_PP, DEFAULT_PRICE_FORWARD_THRESHOLD, DEFAULT_PROMOTION_ACC_FLOOR,
+    DEFAULT_PROMOTION_EPSILON, DEFAULT_PROMOTION_MIN_HOLDOUT, DEFAULT_TRAIN_WALL_CLOCK_SEC,
 };
 
 use crate::commands::home::resolve_xvn_home;
@@ -63,7 +61,13 @@ pub async fn run(cmd: ConfigCmd) -> anyhow::Result<()> {
     match cmd.action {
         ConfigAction::Get { key, xvn_home } => {
             let home = resolve_xvn_home(xvn_home)?;
-            let ctx = ApiContext::open(&home, Actor::Cli { user: "operator".into() }).await?;
+            let ctx = ApiContext::open(
+                &home,
+                Actor::Cli {
+                    user: "operator".into(),
+                },
+            )
+            .await?;
             let stored = get_config(&ctx.db, &key).await?;
             let display = match stored.as_deref() {
                 Some(v) => format!("{key} = {v}"),
@@ -77,7 +81,13 @@ pub async fn run(cmd: ConfigCmd) -> anyhow::Result<()> {
         }
         ConfigAction::Set { key, value, xvn_home } => {
             let home = resolve_xvn_home(xvn_home)?;
-            let ctx = ApiContext::open(&home, Actor::Cli { user: "operator".into() }).await?;
+            let ctx = ApiContext::open(
+                &home,
+                Actor::Cli {
+                    user: "operator".into(),
+                },
+            )
+            .await?;
             set_config(&ctx.db, &key, &value).await?;
             println!("ok: {key} = {value}");
             Ok(())

@@ -71,13 +71,24 @@ pub struct ListCheckpointsResponse {
 pub async fn list_checkpoints(
     State(state): State<AppState>,
 ) -> Result<Json<ListCheckpointsResponse>, DashboardError> {
-    let rows = sqlx::query_as::<_, (
-        String, String, String, String,
-        Option<f64>, Option<f64>, Option<i64>,
-        i64, i64,
-        Option<String>, Option<String>, Option<String>,
-        String,
-    )>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            Option<f64>,
+            Option<f64>,
+            Option<i64>,
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+        ),
+    >(
         "SELECT model_id, display_name, run_tag, label_strategy,
                 best_acc, best_loss, holdout_samples,
                 promoted, live_approved,
@@ -94,11 +105,21 @@ pub async fn list_checkpoints(
     let checkpoints = rows
         .into_iter()
         .map(
-            |(model_id, display_name, run_tag, label_strategy,
-              best_acc, best_loss, holdout_samples,
-              promoted, live_approved,
-              source_strategy_id, source_strategy_name, autoresearch_run_id,
-              created_at)| CheckpointSummary {
+            |(
+                model_id,
+                display_name,
+                run_tag,
+                label_strategy,
+                best_acc,
+                best_loss,
+                holdout_samples,
+                promoted,
+                live_approved,
+                source_strategy_id,
+                source_strategy_name,
+                autoresearch_run_id,
+                created_at,
+            )| CheckpointSummary {
                 model_id,
                 display_name,
                 run_tag,
@@ -181,13 +202,11 @@ pub async fn approve_checkpoint(
     Path(model_id): Path<String>,
 ) -> Result<Json<ApproveResponse>, DashboardError> {
     // Verify the checkpoint exists first.
-    let exists: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM trained_models WHERE model_id = ?",
-    )
-    .bind(&model_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("approve_checkpoint exists check: {e}")))?;
+    let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM trained_models WHERE model_id = ?")
+        .bind(&model_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("approve_checkpoint exists check: {e}")))?;
 
     if exists.is_none() {
         return Err(DashboardError::NotFound(format!(
@@ -196,13 +215,11 @@ pub async fn approve_checkpoint(
     }
 
     // Set live_approved = 1. Idempotent: no-op if already 1.
-    sqlx::query(
-        "UPDATE trained_models SET live_approved = 1 WHERE model_id = ?",
-    )
-    .bind(&model_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("approve_checkpoint update: {e}")))?;
+    sqlx::query("UPDATE trained_models SET live_approved = 1 WHERE model_id = ?")
+        .bind(&model_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("approve_checkpoint update: {e}")))?;
 
     Ok(Json(ApproveResponse {
         model_id,

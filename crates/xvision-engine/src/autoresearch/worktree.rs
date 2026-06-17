@@ -4,8 +4,8 @@
 //! on branch `autoresearch/{run_tag}`. All training commits go there; the main
 //! checkout (enforced by `.githooks/pre-commit`) is never touched.
 
-use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
+use std::path::{Path, PathBuf};
 
 /// A live git worktree for one autoresearch run.
 ///
@@ -40,8 +40,7 @@ fn validate_run_tag(run_tag: &str) -> Result<()> {
     }
     // Delegate charset + length check to the canonical pure-Rust validator
     // (Task 2.1, crates/xvision-engine/src/nanochat/validate.rs).
-    crate::nanochat::validate::validate_run_tag(run_tag)
-        .map_err(|msg| anyhow::anyhow!("{msg}"))
+    crate::nanochat::validate::validate_run_tag(run_tag).map_err(|msg| anyhow::anyhow!("{msg}"))
 }
 
 impl WorktreeHandle {
@@ -57,15 +56,15 @@ impl WorktreeHandle {
         validate_run_tag(run_tag)?;
 
         // Canonicalize for git commands (handles macOS /var → /private/var symlinks).
-        let repo_canonical = repo.canonicalize()
+        let repo_canonical = repo
+            .canonicalize()
             .with_context(|| format!("canonicalize repo root {}", repo.display()))?;
 
         let wt_rel = format!(".worktrees/autoresearch-{run_tag}");
         let branch = format!("autoresearch/{run_tag}");
 
         // Ensure .worktrees/ exists so git doesn't complain about missing parent.
-        std::fs::create_dir_all(repo_canonical.join(".worktrees"))
-            .context("create .worktrees/ directory")?;
+        std::fs::create_dir_all(repo_canonical.join(".worktrees")).context("create .worktrees/ directory")?;
 
         let status = std::process::Command::new("git")
             .args(["worktree", "add", "-b", &branch, &wt_rel])
@@ -87,22 +86,32 @@ impl WorktreeHandle {
 
         // Safety check via canonical forms: the resolved path must stay within
         // the canonical checkout root.
-        let path_canonical = path.canonicalize()
+        let path_canonical = path
+            .canonicalize()
             .with_context(|| format!("canonicalize worktree path {}", path.display()))?;
         if !path_canonical.starts_with(&repo_canonical) {
             // Remove the just-created worktree before returning an error.
             let _ = std::process::Command::new("git")
-                .args(["worktree", "remove", "--force",
-                       path_canonical.to_str().unwrap_or("")])
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    path_canonical.to_str().unwrap_or(""),
+                ])
                 .current_dir(&repo_canonical)
                 .status();
             bail!(
                 "worktree path {} escapes checkout root {} — path traversal rejected",
-                path_canonical.display(), repo_canonical.display()
+                path_canonical.display(),
+                repo_canonical.display()
             );
         }
 
-        Ok(Self { path, repo_canonical, branch })
+        Ok(Self {
+            path,
+            repo_canonical,
+            branch,
+        })
     }
 
     /// The filesystem path to this worktree (built from the caller-supplied repo
@@ -121,8 +130,7 @@ impl WorktreeHandle {
     pub fn remove(self) -> Result<()> {
         // Best-effort remove; prune cleans metadata even if the dir is missing.
         let _ = std::process::Command::new("git")
-            .args(["worktree", "remove", "--force",
-                   self.path.to_str().unwrap_or("")])
+            .args(["worktree", "remove", "--force", self.path.to_str().unwrap_or("")])
             .current_dir(&self.repo_canonical)
             .status();
 
@@ -179,7 +187,10 @@ mod tests {
         // Worktree must land inside the checkout root.
         assert!(wt.path().starts_with(&repo));
         // Must be the canonical path we expect.
-        assert_eq!(wt.path(), repo.join(".worktrees").join(format!("autoresearch-{run_tag}")));
+        assert_eq!(
+            wt.path(),
+            repo.join(".worktrees").join(format!("autoresearch-{run_tag}"))
+        );
         // Branch name is correct.
         assert_eq!(wt.branch(), format!("autoresearch/{run_tag}"));
         // Directory physically exists.
@@ -187,7 +198,10 @@ mod tests {
 
         // Remove — directory must be gone.
         wt.remove().expect("remove worktree");
-        assert!(!repo.join(".worktrees").join(format!("autoresearch-{run_tag}")).exists());
+        assert!(!repo
+            .join(".worktrees")
+            .join(format!("autoresearch-{run_tag}"))
+            .exists());
     }
 
     #[test]

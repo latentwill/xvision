@@ -16,10 +16,10 @@ pub struct TrainedModel {
     pub checkpoint_path: String,
     pub weights_format: String,
     pub weights_sha256: String,
-    pub input_spec: String,       // JSON string
+    pub input_spec: String, // JSON string
     pub base_model: String,
     pub label_strategy: String,
-    pub label_config: String,     // JSON string
+    pub label_config: String, // JSON string
     pub best_acc: Option<f64>,
     pub best_loss: Option<f64>,
     pub holdout_samples: Option<i64>,
@@ -301,7 +301,12 @@ impl NanochatStore {
         Ok(rows.into_iter().map(row_to_run).collect())
     }
 
-    pub async fn update_run_status(&self, run_id: &str, status: &str, stopped_at: Option<&str>) -> anyhow::Result<()> {
+    pub async fn update_run_status(
+        &self,
+        run_id: &str,
+        status: &str,
+        stopped_at: Option<&str>,
+    ) -> anyhow::Result<()> {
         sqlx::query("UPDATE autoresearch_runs SET status = ?, stopped_at = ? WHERE run_id = ?")
             .bind(status)
             .bind(stopped_at)
@@ -390,12 +395,10 @@ mod tests {
 
     async fn open_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!(
-            "../../migrations/069_nanochat_models.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query(include_str!("../../migrations/069_nanochat_models.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -469,14 +472,17 @@ mod tests {
     async fn insert_and_get_run_roundtrips() {
         let pool = open_pool().await;
         let store = NanochatStore::new(pool);
-        let run_id = store.insert_run(NewAutoresearchRun {
-            run_tag: "jun12a".into(),
-            source_strategy_id: Some("strat-01".into()),
-            label_strategy: "price_forward".into(),
-            label_config: "{}".into(),
-            git_branch: "autoresearch/jun12a".into(),
-            worktree_path: ".worktrees/autoresearch-jun12a".into(),
-        }).await.unwrap();
+        let run_id = store
+            .insert_run(NewAutoresearchRun {
+                run_tag: "jun12a".into(),
+                source_strategy_id: Some("strat-01".into()),
+                label_strategy: "price_forward".into(),
+                label_config: "{}".into(),
+                git_branch: "autoresearch/jun12a".into(),
+                worktree_path: ".worktrees/autoresearch-jun12a".into(),
+            })
+            .await
+            .unwrap();
         let got = store.get_run(&run_id).await.unwrap().expect("run must exist");
         assert_eq!(got.run_id, run_id);
         assert_eq!(got.status, "running");
@@ -487,16 +493,22 @@ mod tests {
     async fn update_run_status_to_stopped() {
         let pool = open_pool().await;
         let store = NanochatStore::new(pool);
-        let run_id = store.insert_run(NewAutoresearchRun {
-            run_tag: "jun12a".into(),
-            source_strategy_id: None,
-            label_strategy: "price_forward".into(),
-            label_config: "{}".into(),
-            git_branch: "autoresearch/jun12a".into(),
-            worktree_path: ".worktrees/autoresearch-jun12a".into(),
-        }).await.unwrap();
+        let run_id = store
+            .insert_run(NewAutoresearchRun {
+                run_tag: "jun12a".into(),
+                source_strategy_id: None,
+                label_strategy: "price_forward".into(),
+                label_config: "{}".into(),
+                git_branch: "autoresearch/jun12a".into(),
+                worktree_path: ".worktrees/autoresearch-jun12a".into(),
+            })
+            .await
+            .unwrap();
         let ts = chrono::Utc::now().to_rfc3339();
-        store.update_run_status(&run_id, "stopped", Some(&ts)).await.unwrap();
+        store
+            .update_run_status(&run_id, "stopped", Some(&ts))
+            .await
+            .unwrap();
         let got = store.get_run(&run_id).await.unwrap().unwrap();
         assert_eq!(got.status, "stopped");
         assert!(got.stopped_at.is_some());
@@ -506,16 +518,22 @@ mod tests {
     async fn bump_experiment_count_increments_and_updates_best() {
         let pool = open_pool().await;
         let store = NanochatStore::new(pool);
-        let run_id = store.insert_run(NewAutoresearchRun {
-            run_tag: "jun12a".into(),
-            source_strategy_id: None,
-            label_strategy: "price_forward".into(),
-            label_config: "{}".into(),
-            git_branch: "autoresearch/jun12a".into(),
-            worktree_path: ".worktrees/autoresearch-jun12a".into(),
-        }).await.unwrap();
+        let run_id = store
+            .insert_run(NewAutoresearchRun {
+                run_tag: "jun12a".into(),
+                source_strategy_id: None,
+                label_strategy: "price_forward".into(),
+                label_config: "{}".into(),
+                git_branch: "autoresearch/jun12a".into(),
+                worktree_path: ".worktrees/autoresearch-jun12a".into(),
+            })
+            .await
+            .unwrap();
         let model_id = store.insert_model(sample_model()).await.unwrap();
-        store.bump_experiment_count(&run_id, Some(0.55), Some(&model_id)).await.unwrap();
+        store
+            .bump_experiment_count(&run_id, Some(0.55), Some(&model_id))
+            .await
+            .unwrap();
         let got = store.get_run(&run_id).await.unwrap().unwrap();
         assert_eq!(got.experiments, 1);
         assert_eq!(got.best_acc, Some(0.55));
@@ -526,34 +544,43 @@ mod tests {
     async fn insert_and_list_experiments_ordered_by_created_at() {
         let pool = open_pool().await;
         let store = NanochatStore::new(pool);
-        let run_id = store.insert_run(NewAutoresearchRun {
-            run_tag: "jun12a".into(),
-            source_strategy_id: None,
-            label_strategy: "price_forward".into(),
-            label_config: "{}".into(),
-            git_branch: "autoresearch/jun12a".into(),
-            worktree_path: ".worktrees/autoresearch-jun12a".into(),
-        }).await.unwrap();
-        store.insert_experiment(NewExperiment {
-            run_id: run_id.clone(),
-            git_commit: "abc1234".into(),
-            val_acc: Some(0.51),
-            val_loss: Some(1.1),
-            peak_vram_mb: None,
-            training_seconds: Some(120.0),
-            status: "keep".into(),
-            description: "baseline OHLCV only".into(),
-        }).await.unwrap();
-        store.insert_experiment(NewExperiment {
-            run_id: run_id.clone(),
-            git_commit: "def5678".into(),
-            val_acc: None,
-            val_loss: None,
-            peak_vram_mb: None,
-            training_seconds: None,
-            status: "crash".into(),
-            description: "added rsi_14 — OOM".into(),
-        }).await.unwrap();
+        let run_id = store
+            .insert_run(NewAutoresearchRun {
+                run_tag: "jun12a".into(),
+                source_strategy_id: None,
+                label_strategy: "price_forward".into(),
+                label_config: "{}".into(),
+                git_branch: "autoresearch/jun12a".into(),
+                worktree_path: ".worktrees/autoresearch-jun12a".into(),
+            })
+            .await
+            .unwrap();
+        store
+            .insert_experiment(NewExperiment {
+                run_id: run_id.clone(),
+                git_commit: "abc1234".into(),
+                val_acc: Some(0.51),
+                val_loss: Some(1.1),
+                peak_vram_mb: None,
+                training_seconds: Some(120.0),
+                status: "keep".into(),
+                description: "baseline OHLCV only".into(),
+            })
+            .await
+            .unwrap();
+        store
+            .insert_experiment(NewExperiment {
+                run_id: run_id.clone(),
+                git_commit: "def5678".into(),
+                val_acc: None,
+                val_loss: None,
+                peak_vram_mb: None,
+                training_seconds: None,
+                status: "crash".into(),
+                description: "added rsi_14 — OOM".into(),
+            })
+            .await
+            .unwrap();
         let exps = store.list_experiments(&run_id).await.unwrap();
         assert_eq!(exps.len(), 2);
         assert_eq!(exps[0].git_commit, "abc1234");
