@@ -3,6 +3,7 @@ pub mod agents;
 pub mod assets;
 pub mod assets_refresh;
 pub mod autooptimizer;
+pub mod autoresearch;
 pub mod autooptimizer_cycle;
 pub mod bars;
 pub mod charts_annotated;

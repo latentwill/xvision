@@ -198,7 +198,8 @@ use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, autoresearch as autoresearch_route,
+    bars, charts_annotated, charts_dashboards,
     charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -301,6 +302,20 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/nanochat/checkpoints/:model_id",
             get(nanochat::get_checkpoint),
+        )
+        // ── Autoresearch runs (read + SSE) ────────────────────────────────
+        .route("/api/autoresearch/runs", get(autoresearch_route::list_runs))
+        .route(
+            "/api/autoresearch/runs/:run_id",
+            get(autoresearch_route::get_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/stream",
+            get(autoresearch_route::stream_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/experiments",
+            get(autoresearch_route::list_experiments),
         )
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
@@ -576,6 +591,12 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/nanochat/checkpoints/:model_id/approve",
             post(nanochat::approve_checkpoint),
+        )
+        // ── Autoresearch runs (mutating) ──────────────────────────────────
+        .route("/api/autoresearch/runs", post(autoresearch_route::start_run))
+        .route(
+            "/api/autoresearch/runs/:run_id/stop",
+            post(autoresearch_route::stop_run),
         )
         // ── Agents ────────────────────────────────────────────────────────
         .route("/api/agents", post(agents::create))
