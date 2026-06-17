@@ -9,10 +9,10 @@ function DiffRow({ label, before, after }: { label: string; before: string; afte
     <div className="space-y-1">
       <div className="text-[11px] font-medium text-text-2 uppercase tracking-wider">{label}</div>
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded border border-border bg-surface-muted p-2 font-mono text-[11px] text-text-3 line-through">
+        <div className="min-w-0 rounded border border-border bg-surface-muted p-2 font-mono text-[11px] text-text-3 line-through whitespace-pre-wrap [overflow-wrap:anywhere]">
           {before || <span className="italic text-text-4">empty</span>}
         </div>
-        <div className="rounded border border-border bg-surface-muted p-2 font-mono text-[11px]">
+        <div className="min-w-0 rounded border border-border bg-surface-muted p-2 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">
           {after || <span className="italic text-text-4">empty</span>}
         </div>
       </div>

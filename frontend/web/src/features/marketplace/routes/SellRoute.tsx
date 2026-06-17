@@ -1,6 +1,7 @@
 // src/features/marketplace/routes/SellRoute.tsx
 import { useState, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { ApiError } from "@/api/client";
 import { patchStrategyMetadata } from "@/api/strategies";
@@ -13,7 +14,7 @@ type Step = 1 | 2 | 3;
 
 export function SellRoute() {
   const mp = useMarketplaceData();
-  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [step, setStep] = useState<Step>(1);
   const [draft, setDraft] = useState<PublishDraft | null>(null);
@@ -21,6 +22,9 @@ export function SellRoute() {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
+  const [minted, setMinted] = useState<{ txHash: string; name: string } | null>(
+    null,
+  );
 
   const handleStrategySelect = useCallback(
     async (strategy: ListableStrategy) => {
@@ -76,9 +80,13 @@ export function SellRoute() {
     }
     try {
       const tx = await mp.submitListing(draft);
+      // Refresh the marketplace caches so the new listing shows in Browse/stats
+      // when the seller heads there (the publish already succeeded server-side).
+      await queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+      // Surface an explicit success state instead of a silent redirect.
       // Phase-2 wart: txHash carries listing_id (not a real tx hash) until the
       // confirmation path is wired (see publish.ts — TxRef.txHash = out.listing_id).
-      navigate(`/marketplace/lineage/${tx.txHash}`);
+      setMinted({ txHash: tx.txHash, name: draft.name });
     } catch (err) {
       const msg =
         err instanceof ApiError
@@ -88,7 +96,53 @@ export function SellRoute() {
     } finally {
       setMinting(false);
     }
-  }, [draft, mp, navigate]);
+  }, [draft, mp, queryClient]);
+
+  if (minted) {
+    return (
+      <div className="px-7 py-8 max-w-2xl" data-page="sell">
+        <div className="mb-4 text-[13px]">
+          <Link
+            to="/marketplace"
+            className="text-text-3 hover:text-text hover:underline underline-offset-2"
+          >
+            ← Back to Marketplace
+          </Link>
+        </div>
+        <div
+          data-testid="mint-success"
+          className="rounded-md border border-gold/40 bg-gold/[0.06] px-6 py-6"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-full bg-gold/20 border border-gold/40 flex items-center justify-center text-gold text-[12px]">
+              ✓
+            </span>
+            <h1 className="text-[18px] font-sans font-semibold tracking-tight">
+              Listed on the marketplace
+            </h1>
+          </div>
+          <p className="text-[13px] text-text-2 mb-5">
+            <span className="text-text font-medium">{minted.name}</span> is now
+            live. It’ll show up in Browse.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              to={`/marketplace/lineage/${minted.txHash}`}
+              className="px-4 py-2 rounded-md bg-gold text-black text-[13px] font-medium hover:bg-gold/90"
+            >
+              View your listing →
+            </Link>
+            <Link
+              to="/marketplace"
+              className="px-4 py-2 rounded-md border border-border text-[13px] text-text-2 hover:border-border-strong"
+            >
+              Browse marketplace
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-7 py-8 max-w-2xl" data-page="sell">
@@ -161,6 +215,7 @@ export function SellRoute() {
               draft={draft}
               onUpdate={handleDraftUpdate}
               onNext={() => setStep(3)}
+              onBack={() => setStep(1)}
             />
           </div>
         )}
@@ -186,7 +241,12 @@ export function SellRoute() {
                 {mintError}
               </div>
             )}
-            <Step3Preview draft={draft} onMint={handleMint} minting={minting} />
+            <Step3Preview
+              draft={draft}
+              onMint={handleMint}
+              onBack={() => setStep(2)}
+              minting={minting}
+            />
           </div>
         )}
       </section>

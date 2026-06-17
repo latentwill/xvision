@@ -39,9 +39,18 @@ export interface VenueAccount {
 
 export const liveKeys = {
   all: ["live"] as const,
-  venueAccount: () => [...liveKeys.all, "venue-account"] as const,
+  /** Keyed by venue so each broker's account is cached independently. */
+  venueAccount: (venue?: string) =>
+    [...liveKeys.all, "venue-account", venue ?? "default"] as const,
 };
 
-export function getVenueAccount(): Promise<VenueAccount> {
-  return apiFetch<VenueAccount>("/api/live/venue-account");
+/**
+ * Fetch a venue's account snapshot. `venue` selects the broker (`"orderly"`,
+ * `"hyperliquid"`, …); omitted ⇒ the daemon's default (Orderly). The backend
+ * returns `{ connected:false, reason }` for venues whose live ledger isn't
+ * wired yet, so the panel renders an honest state rather than erroring.
+ */
+export function getVenueAccount(venue?: string): Promise<VenueAccount> {
+  const qs = venue ? `?venue=${encodeURIComponent(venue)}` : "";
+  return apiFetch<VenueAccount>(`/api/live/venue-account${qs}`);
 }

@@ -29,6 +29,8 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
             activates: activates_for_slot_name(&slot.name),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         })
         .collect();
 

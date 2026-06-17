@@ -40,6 +40,7 @@ use xvision_identity::contracts::{IEvalAttestationRegistry, ILicenseToken, IMark
 use xvision_identity::manifest_hash_hex;
 use xvision_marketplace::{IpfsStore, PinataDriver};
 
+use super::marketplace::{explorer_base, network_label};
 use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
 use crate::marketplace_index::{IndexedListing, IndexerCfg, MarketplaceSnapshot};
@@ -71,6 +72,36 @@ pub struct StatusOut {
     /// set, else the vendor-neutral default. This is the READ gateway only —
     /// the pinning API URL is NEVER exposed here.
     pub public_gateway: String,
+    /// The active chain the backend is configured for (from `XVN_CHAIN_ID` /
+    /// the startup-resolved signer). `null` when no chain is configured (no
+    /// signer) — the SPA then falls back to its build-time default network.
+    ///
+    /// This is the SINGLE SOURCE OF TRUTH for the network: the frontend selects
+    /// its chain / EIP-712 USDC domain / wallet-switch target from `chain_id`
+    /// here, so one prebuilt bundle works on testnet or mainnet purely by the
+    /// backend's `XVN_CHAIN_ID` — no build-time `VITE_MARKETPLACE_NETWORK` needed.
+    pub network: Option<NetworkOut>,
+}
+
+/// The active marketplace network, derived from the backend's configured chain
+/// id. `network` is the same slug the receipt/explorer surfaces use
+/// (`network_label`); `explorer_base` is its canonical Mantle explorer.
+#[derive(Debug, Serialize)]
+pub struct NetworkOut {
+    pub chain_id: u64,
+    pub network: String,
+    pub explorer_base: Option<String>,
+}
+
+/// Pure mapping from a configured chain id to the public network block (env read
+/// split out for testability, mirroring `resolve_public_gateway`). `None` chain
+/// id → `None` block, so the frontend falls back to its build-time default.
+fn network_out(chain_id: Option<u64>) -> Option<NetworkOut> {
+    chain_id.map(|id| NetworkOut {
+        chain_id: id,
+        network: network_label(Some(id)),
+        explorer_base: explorer_base(Some(id)).map(|s| s.to_string()),
+    })
 }
 
 /// Vendor-neutral default public read gateway. Mirrors
@@ -165,6 +196,12 @@ fn lit_status(state: &AppState) -> Option<LitStatusOut> {
 
 pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
     let snap = state.marketplace_snapshot.read().await;
+    // Chain id from the startup-resolved signer (set from XVN_CHAIN_ID). `None`
+    // when no signer is configured → the frontend keeps its build-time default.
+    let chain_id = state
+        .marketplace_chain()
+        .and_then(|c| c.chain.as_ref())
+        .map(|s| s.chain_id);
     Json(StatusOut {
         active: state.marketplace_indexer_active() && snap.last_poll_unix > 0,
         last_poll_unix: snap.last_poll_unix,
@@ -173,6 +210,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
         contracts: contracts_from_env(),
         lit: lit_status(&state),
         public_gateway: public_gateway(&state),
+        network: network_out(chain_id),
     })
 }
 
@@ -908,6 +946,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn network_out_maps_chain_id_to_slug_and_explorer() {
+        // Mantle mainnet (5000) → "mantle" + mainnet explorer.
+        let n = network_out(Some(5000)).expect("configured mainnet → Some");
+        assert_eq!(n.chain_id, 5000);
+        assert_eq!(n.network, "mantle");
+        assert_eq!(n.explorer_base.as_deref(), Some("https://explorer.mantle.xyz"));
+
+        // Mantle Sepolia (5003) → "mantle-sepolia" + testnet explorer.
+        let n = network_out(Some(5003)).expect("configured testnet → Some");
+        assert_eq!(n.chain_id, 5003);
+        assert_eq!(n.network, "mantle-sepolia");
+        assert_eq!(
+            n.explorer_base.as_deref(),
+            Some("https://explorer.sepolia.mantle.xyz")
+        );
+
+        // No chain configured (no XVN_CHAIN_ID / no signer) → None, so the
+        // frontend falls back to its build-time default.
+        assert!(network_out(None).is_none());
+    }
+
     fn listing(listing_id: u64, agent_nft_id: &str, seller: &str, revoked: bool) -> IndexedListing {
         IndexedListing {
             listing_id,
@@ -926,6 +986,7 @@ mod tests {
             palette: "Ember".into(),
             attestation_count: 0,
             units_sold: 0,
+            units_sold_agents: 0,
             earned_usdc: 0.0,
             return30d_pct: None,
             sharpe: None,
@@ -1105,6 +1166,7 @@ mod tests {
             palette: "Ember".into(),
             attestation_count: 0,
             units_sold: 0,
+            units_sold_agents: 0,
             earned_usdc: 0.0,
             return30d_pct: None,
             sharpe: None,

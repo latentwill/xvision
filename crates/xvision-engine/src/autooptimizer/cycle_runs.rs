@@ -47,6 +47,12 @@ pub struct CycleRunSummary {
     /// Count of LLM calls billed against a model with no catalog price (the
     /// metered cost is a lower bound when this is > 0).
     pub unpriced_calls: Option<i64>,
+    /// The strategy (`strategy_id`/agent_id) this cycle optimized, resolved via
+    /// the cycle's session bridge (`autooptimizer_events` → session →
+    /// `autooptimizer_session_state.strategy_id`). `None` for cycles that ran
+    /// without a session row (older CLI cycles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<String>,
 }
 
 /// F35.3: the live (or final) per-cycle cost + token totals, read straight from
@@ -185,6 +191,14 @@ async fn list_cycle_runs_inner(
     // status/time. A cycle that re-derived a shared candidate is now counted for
     // BOTH cycles instead of only the content-addressed-row owner.
     super::lineage::ensure_lineage_schema(pool).await.ok();
+    // The strategy column resolves through the session bridge tables; ensure they
+    // exist so the correlated subquery never references a missing table on a
+    // fresh / CLI-only workspace (idempotent — no-op on migrated DBs).
+    super::session::ensure_session_schema(pool).await.ok();
+    // `strategy_id` is a CORRELATED SCALAR SUBQUERY (not a join) on purpose: a
+    // join to the session/event tables would multiply the per-candidate rows and
+    // corrupt the COUNT/SUM aggregates below. The subquery references the grouped
+    // `cn.cycle_id` only, so it is one value per cycle.
     let mut sql = String::from(
         "WITH cn AS ( \
             SELECT cycle_id, bundle_hash FROM cycle_node_evaluations \
@@ -201,7 +215,11 @@ async fn list_cycle_runs_inner(
                 cc.cost_usd AS cost_usd, \
                 cc.input_tokens AS input_tokens, \
                 cc.output_tokens AS output_tokens, \
-                cc.unpriced_calls AS unpriced_calls \
+                cc.unpriced_calls AS unpriced_calls, \
+                ( SELECT ss.strategy_id FROM autooptimizer_events ev \
+                    JOIN autooptimizer_session_state ss ON ss.session_id = ev.session_id \
+                   WHERE ev.cycle_id = cn.cycle_id \
+                   ORDER BY ev.seq DESC LIMIT 1 ) AS strategy_id \
          FROM cn \
          JOIN lineage_nodes ln ON ln.bundle_hash = cn.bundle_hash \
          LEFT JOIN cycle_cost cc ON cc.cycle_id = cn.cycle_id ",
@@ -326,6 +344,7 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         .count() as i64;
     let node_count = nodes.len() as i64;
     let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
+    let strategy_id = load_cycle_strategy_id(pool, cycle_id).await;
     let summary = CycleRunSummary {
         cycle_id: cycle_id.to_string(),
         node_count,
@@ -344,6 +363,7 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         input_tokens,
         output_tokens,
         unpriced_calls,
+        strategy_id,
     };
 
     // Enrich each node with its persisted metrics + mutator provenance
@@ -463,7 +483,27 @@ fn row_to_cycle_summary(row: sqlx::sqlite::SqliteRow) -> Result<CycleRunSummary>
         input_tokens: row.try_get("input_tokens").ok(),
         output_tokens: row.try_get("output_tokens").ok(),
         unpriced_calls: row.try_get("unpriced_calls").ok(),
+        // Correlated subquery — NULL (→ None) when the cycle has no session row.
+        strategy_id: row.try_get::<Option<String>, _>("strategy_id").ok().flatten(),
     })
+}
+
+/// Resolve the strategy (`strategy_id`/agent_id) a cycle optimized via its
+/// session bridge. `None` when the cycle has no session row (older CLI cycles)
+/// or the session tables are absent. Best-effort: never errors.
+async fn load_cycle_strategy_id(pool: &SqlitePool, cycle_id: &str) -> Option<String> {
+    super::session::ensure_session_schema(pool).await.ok();
+    sqlx::query_scalar::<_, String>(
+        "SELECT ss.strategy_id FROM autooptimizer_events ev \
+            JOIN autooptimizer_session_state ss ON ss.session_id = ev.session_id \
+          WHERE ev.cycle_id = ? \
+          ORDER BY ev.seq DESC LIMIT 1",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ import type {
   SgSaleLite,
   SgStatsResponse,
 } from "./client";
+import { activeNetworkSlug } from "../../lib/chain";
 
 // --- manifest seam --------------------------------------------------------
 
@@ -145,7 +146,13 @@ export function txHashFromId(id: string): string {
 }
 
 const LICENSE_CONTRACT_FALLBACK = "marketplace";
-const NETWORK = "mantle-sepolia";
+// Build-time slug, deliberately NOT runtime-resolved: the subgraph source is
+// itself selected at build time (VITE_MARKETPLACE_SUBGRAPH_URL points at a
+// per-network Goldsky deployment), so a subgraph-backed listing is already
+// internally consistent with the build-time network. The subgraph path and the
+// runtime-indexer path (ApiMarketplaceData, which resolves the slug from the
+// backend) are mutually exclusive — see MarketplaceLayout.chooseInitialClient.
+const NETWORK = activeNetworkSlug;
 
 // --- row ------------------------------------------------------------------
 
@@ -178,7 +185,6 @@ export function mapListingRow(
     transferableLicense: false, // off-chain: not in the index (contract view)
     verification: verificationOf(l.agent),
     acceptsX402,
-    clones: 0, // off-chain: no clone event indexed
     genArtSeed, // deterministic seed from the agent id
   };
 }

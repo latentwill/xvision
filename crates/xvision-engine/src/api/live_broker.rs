@@ -78,9 +78,38 @@ fn network_from_base_url(base_url: Option<&str>) -> &'static str {
     }
 }
 
-/// Snapshot the Orderly account backing live runs. Never errors on a
-/// missing/unreachable venue — returns `connected: false` with a reason.
-pub async fn venue_account() -> ApiResult<VenueAccountDto> {
+/// Snapshot the live execution venue account. When `venue` is `None` or
+/// `Some("orderly")`, queries Orderly via the executor. For any other venue
+/// name, returns a `connected: false` stub indicating the account view is
+/// not yet wired — credentials may be stored but live ledger snapshots for
+/// non-Orderly venues are not implemented at this revision.
+///
+/// Never errors on a missing/unreachable venue — returns `connected: false`
+/// with a reason so the live page can render a "not configured" state instead
+/// of an HTTP error.
+pub async fn venue_account(venue: Option<&str>) -> ApiResult<VenueAccountDto> {
+    // Route non-Orderly venue requests to a stub response.
+    match venue {
+        Some(v) if v != "orderly" => {
+            return Ok(VenueAccountDto {
+                connected: false,
+                venue: v.to_string(),
+                network: None,
+                account_id: None,
+                equity_usd: None,
+                usdc_holding: None,
+                unrealized_pnl: None,
+                positions: vec![],
+                reason: Some(format!(
+                    "Live ledger snapshot for {v} is not wired yet — credentials are stored; \
+                     account view is Orderly-only at this revision."
+                )),
+            });
+        }
+        _ => {}
+    }
+
+    // Orderly path (venue == None or "orderly").
     let missing: Vec<&str> = ["ORDERLY_KEY", "ORDERLY_SECRET", "ORDERLY_ACCOUNT_ID"]
         .into_iter()
         .filter(|v| std::env::var(v).map(|s| s.trim().is_empty()).unwrap_or(true))

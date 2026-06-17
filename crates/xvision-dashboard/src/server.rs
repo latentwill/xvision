@@ -33,6 +33,7 @@
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
 // 17e. PUT    /api/strategy/:id/mechanistic            strategies::put_mechanistic
+// 17f. PUT    /api/strategy/:id/agents/:role/checkpoint strategies::put_agent_checkpoint
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
@@ -42,6 +43,7 @@
 // 18f2. POST /api/marketplace/listings/:id/import-sealed marketplace_route::post_import_sealed
 // 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
 // 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
+// 18i. POST  /api/marketplace/listings/:id/price      marketplace_route::post_set_price
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -60,6 +62,7 @@
 // 34. DELETE /api/settings/brokers/alpaca             settings::brokers::delete_alpaca
 // 35. POST   /api/settings/brokers/alpaca/test-conn   settings::brokers::test_alpaca
 // 36. PUT    /api/settings/observability              settings::observability::put
+// 36b. PUT   /api/settings/data-tools                settings::data_tools::put
 // 37. POST   /api/settings/providers                  settings::providers::add
 // 38. PUT    /api/settings/providers/:name            settings::providers::update
 // 39. DELETE /api/settings/providers/:name            settings::providers::remove
@@ -109,6 +112,7 @@
 //  R12. GET  /api/templates
 //  R12b. GET /api/strategy/pine-library          strategies::get_pine_library   (WU9)
 //  R13. GET  /api/strategy/:id
+//  R13b. GET /api/strategy/:id/requirements      strategies::requirements      (QA #4)
 //  R14. GET  /api/strategies/:id/chart
 //  R15. GET  /api/strategies-folder/list
 //  R16. GET  /api/scenarios
@@ -142,6 +146,7 @@
 //  R43. GET  /api/settings/daemon
 //  R44. GET  /api/settings/identity
 //  R45. GET  /api/settings/observability
+//  R45b. GET /api/settings/data-tools
 //  R46. GET  /api/settings/providers
 //  R47. GET  /api/settings/providers/:name
 //  R48. GET  /api/settings/providers/:name/models
@@ -196,7 +201,8 @@ use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, autoresearch as autoresearch_route,
+    bars, charts_annotated, charts_dashboards,
     charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -204,8 +210,10 @@ use crate::routes::{
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
     marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    nanochat,
     optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
-    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    settings, settings_autoresearch as settings_autoresearch_route,
+    skills, static_files, strategies, strategies_folder as strategies_folder_route,
     tools as tools_route,
     version::version,
     wizard,
@@ -262,6 +270,18 @@ fn readonly_router(state: AppState) -> Router {
             get(strategies::get_pine_library),
         )
         .route("/api/strategy/:id", get(strategies::get))
+        // QA #4: per-strategy model/skill/tool requirements for the buyer's
+        // machine. The Strategy detail page highlights gaps + gates eval.
+        .route(
+            "/api/strategy/:id/requirements",
+            get(strategies::requirements),
+        )
+        // #12 / QA #8: marketplace provenance (creator, price paid, license
+        // NFT, explorer link) for a strategy acquired from the marketplace.
+        .route(
+            "/api/strategy/:id/marketplace",
+            get(strategies::marketplace_provenance),
+        )
         // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
         // a strategy can't launch (typed per-agent blockers) BEFORE launch.
         .route(
@@ -282,6 +302,31 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/export", get(eval_runs::export))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        // ── Nanochat checkpoints (read) ───────────────────────────────────
+        .route("/api/nanochat/checkpoints", get(nanochat::list_checkpoints))
+        .route(
+            "/api/nanochat/checkpoints/:model_id",
+            get(nanochat::get_checkpoint),
+        )
+        // ── Autoresearch runs (read + SSE) ────────────────────────────────
+        .route("/api/autoresearch/runs", get(autoresearch_route::list_runs))
+        .route(
+            "/api/autoresearch/runs/:run_id",
+            get(autoresearch_route::get_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/stream",
+            get(autoresearch_route::stream_run),
+        )
+        .route(
+            "/api/autoresearch/runs/:run_id/experiments",
+            get(autoresearch_route::list_experiments),
+        )
+        // ── Autoresearch settings (read) ──────────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            get(settings_autoresearch_route::get_autoresearch_config),
+        )
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
@@ -456,8 +501,13 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route("/api/settings/observability", get(settings::observability::get))
+        .route("/api/settings/data-tools", get(settings::data_tools::get))
         .route("/api/settings/memory", get(settings::memory::get))
         .route("/api/settings/memory/status", get(settings::memory::status))
+        .route(
+            "/api/settings/profile",
+            get(settings::profile::get).put(settings::profile::put),
+        )
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
         .route(
@@ -548,6 +598,22 @@ fn mutating_router(state: AppState) -> Router {
     let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
 
     Router::new()
+        // ── Nanochat checkpoints (mutating) ───────────────────────────────
+        .route(
+            "/api/nanochat/checkpoints/:model_id/approve",
+            post(nanochat::approve_checkpoint),
+        )
+        // ── Autoresearch runs (mutating) ──────────────────────────────────
+        .route("/api/autoresearch/runs", post(autoresearch_route::start_run))
+        .route(
+            "/api/autoresearch/runs/:run_id/stop",
+            post(autoresearch_route::stop_run),
+        )
+        // ── Autoresearch settings (mutating) ──────────────────────────────
+        .route(
+            "/api/settings/autoresearch",
+            post(settings_autoresearch_route::set_autoresearch_config),
+        )
         // ── Agents ────────────────────────────────────────────────────────
         .route("/api/agents", post(agents::create))
         .route(
@@ -602,6 +668,10 @@ fn mutating_router(state: AppState) -> Router {
         )
         .route("/api/strategy/:id/mechanistic", put(strategies::put_mechanistic))
         .route(
+            "/api/strategy/:id/agents/:role/checkpoint",
+            put(strategies::put_agent_checkpoint),
+        )
+        .route(
             "/api/strategy/:id/validate",
             post(strategies::post_validate)
                 // F4: GET /api/strategy/:id/validate → 405 with a hint pointing to POST.
@@ -647,6 +717,13 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/listings/:id/update",
             post(marketplace_route::post_update),
+        )
+        // Seller in-place reprice (updatePrice). Env-gated: 503 without chain
+        // config; bad price → 400; NotSeller / AlreadyRevoked /
+        // FreeTransferableForbidden contract reverts → 400.
+        .route(
+            "/api/marketplace/listings/:id/price",
+            post(marketplace_route::post_set_price),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
@@ -776,6 +853,14 @@ fn mutating_router(state: AppState) -> Router {
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
         )
+        .route(
+            "/api/settings/brokers/hyperliquid",
+            post(settings::brokers::set_hyperliquid).delete(settings::brokers::delete_hyperliquid),
+        )
+        .route(
+            "/api/settings/brokers/orderly",
+            post(settings::brokers::set_orderly).delete(settings::brokers::delete_orderly),
+        )
         // ── Live deploy: Degen Arena key ingest ───────────────────────────
         // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet
         // credentials (apiKey, accountAddress, network) for the Virtuals Degen
@@ -784,9 +869,13 @@ fn mutating_router(state: AppState) -> Router {
             "/api/live/deploy/degen-arena",
             post(settings::brokers::set_degen_arena).delete(settings::brokers::delete_degen_arena),
         )
-        // ── Settings: observability ───────────────────────────────────────
+        // ── Settings: observability / memory / data-tools ────────────────
         .route("/api/settings/observability", put(settings::observability::put))
         .route("/api/settings/memory", put(settings::memory::put))
+        .route(
+            "/api/settings/data-tools",
+            put(settings::data_tools::put),
+        )
         // ── Settings: providers ───────────────────────────────────────────
         .route("/api/settings/providers", post(settings::providers::add))
         .route(

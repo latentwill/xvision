@@ -84,6 +84,8 @@ async fn spawn_recording_mock() -> (ClineDispatchCtx, TempDir, PathBuf) {
             api_key: Some("test-key".into()),
             recording_slot_role: None,
             tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
         },
         dir,
         steps_path,
@@ -294,6 +296,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Filter),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "vol-filter-agent".into(),
@@ -301,6 +305,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Filter),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "trader-agent".into(),
@@ -308,6 +314,8 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 activates: Some(Capability::Trader),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
         ],
         pipeline: PipelineDef {
@@ -355,6 +363,7 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: false,
+            nano: None,
         }
     }
     vec![

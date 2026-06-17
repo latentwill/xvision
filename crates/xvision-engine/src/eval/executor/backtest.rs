@@ -969,6 +969,21 @@ impl Executor {
         // table-only path.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
+        // ERROR-1 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // the documented `wake_when_in_position = Never` contract is "no
+        // mid-position calls; exits rely ENTIRELY on the deterministic risk
+        // gate (risk.stop_loss_atr_multiple)". A model that nonetheless emits a
+        // protective bracket at open time plants a stop tighter than the config
+        // ATR stop; because the trader is never re-woken in-position, the entry
+        // bar's own intraday low trips it and the position re-opens next bar →
+        // 1-bar churn / fee bleed. Honor the contract: under wake:never, ignore
+        // the model's protective brackets so only the config ATR stop (applied
+        // via the R1 fallback below) manages the exit.
+        let wake_never = strategy
+            .filter
+            .as_ref()
+            .map(|f| matches!(f.wake_when_in_position, xvision_filters::WakeInPosition::Never))
+            .unwrap_or(false);
         // Cache the pool handle for the hook's per-bar inserts. We
         // reach through `store` rather than threading it as a separate
         // parameter so the executor's surface area stays unchanged.
@@ -1743,6 +1758,21 @@ impl Executor {
                                 .await;
                         }
                     };
+                }
+
+                // Publish the current asset + bar timestamp into the shared
+                // dispatch handles so the tool chokepoint can (a) reject
+                // cross-asset market-data fetches (asset guard) and (b) anchor
+                // Nansen backtest calls to the simulated clock (`as_of`).
+                // No-op when `cline` is absent (non-sidecar run).
+                if let Some(cline) = self.cline.as_ref() {
+                    publish_decision_context(
+                        &cline.tool_asset_guard,
+                        &cline.as_of_guard,
+                        &asset,
+                        bar.timestamp,
+                    )
+                    .await;
                 }
 
                 // F-5 phase 2a: keep a copy of the seed so the
@@ -2650,8 +2680,24 @@ impl Executor {
                         } else {
                             xvision_core::trading::Direction::Short
                         };
-                        let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
-                        let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
+                        // ERROR-1: under wake:never the model's protective
+                        // brackets are ignored (see `wake_never` above) — only
+                        // the config ATR stop manages the exit. Neutralizing the
+                        // model's `*_pct` / `*_atr_mult` / trailing / breakeven /
+                        // fade / TP1-2 / time-exit inputs here leaves the R1
+                        // config-ATR fallback as the sole stop source.
+                        let sl_pct = if wake_never {
+                            0.0
+                        } else {
+                            parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0)
+                        };
+                        let tp_pct = if wake_never {
+                            0.0
+                        } else {
+                            parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0)
+                        };
+                        let model_sl_atr_mult = if wake_never { None } else { parsed.sl_atr_mult };
+                        let model_tp_atr_mult = if wake_never { None } else { parsed.tp_atr_mult };
                         // R1: enforce the strategy's configured protective stop
                         // even when the model emits no bracket of its own. If
                         // the trader supplied neither a percent SL nor an ATR
@@ -2661,7 +2707,7 @@ impl Executor {
                         // `sl_atr_mult` wins when present; otherwise the
                         // strategy config supplies a deterministic ATR stop.
                         let config_atr_mult = strategy.risk.stop_loss_atr_multiple;
-                        let effective_sl_atr_mult = parsed.sl_atr_mult.or_else(|| {
+                        let effective_sl_atr_mult = model_sl_atr_mult.or_else(|| {
                             if sl_pct <= 0.0 && config_atr_mult > 0.0 {
                                 Some(config_atr_mult)
                             } else {
@@ -2672,10 +2718,39 @@ impl Executor {
                         // config fallback) needs it. When warmup leaves ATR
                         // unavailable, `atr_sl_price`/`atr_tp_price` no-op, so
                         // no spurious stop fires.
-                        let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                        let entry_atr = if effective_sl_atr_mult.is_some() || model_tp_atr_mult.is_some() {
                             crate::eval::executor::sltp::compute_atr14(history_slice)
                         } else {
                             None
+                        };
+                        // Model-supplied management brackets, suppressed wholesale
+                        // under wake:never so the config ATR stop is authoritative.
+                        let (
+                            trailing_stop_pct,
+                            breakeven_trigger_pct,
+                            breakeven_offset_pct,
+                            fade_sl_bars,
+                            fade_sl_start_pct,
+                            fade_sl_end_pct,
+                            max_bars_held,
+                            tp1_pct,
+                            tp1_close_fraction,
+                            tp2_pct,
+                        ) = if wake_never {
+                            (None, None, None, None, None, None, None, None, None, None)
+                        } else {
+                            (
+                                parsed.trailing_stop_pct,
+                                parsed.breakeven_trigger_pct,
+                                parsed.breakeven_offset_pct,
+                                parsed.fade_sl_bars,
+                                parsed.fade_sl_start_pct,
+                                parsed.fade_sl_end_pct,
+                                parsed.max_bars_held,
+                                parsed.tp1_pct,
+                                parsed.tp1_close_fraction,
+                                parsed.tp2_pct,
+                            )
                         };
                         sltp_state.insert(
                             asset_sym,
@@ -2685,18 +2760,18 @@ impl Executor {
                                 sl_pct,
                                 tp_pct,
                                 entry_atr,
-                                parsed.trailing_stop_pct,
-                                parsed.breakeven_trigger_pct,
-                                parsed.breakeven_offset_pct,
-                                parsed.fade_sl_bars,
-                                parsed.fade_sl_start_pct,
-                                parsed.fade_sl_end_pct,
-                                parsed.max_bars_held,
+                                trailing_stop_pct,
+                                breakeven_trigger_pct,
+                                breakeven_offset_pct,
+                                fade_sl_bars,
+                                fade_sl_start_pct,
+                                fade_sl_end_pct,
+                                max_bars_held,
                                 effective_sl_atr_mult,
-                                parsed.tp_atr_mult,
-                                parsed.tp1_pct,
-                                parsed.tp1_close_fraction,
-                                parsed.tp2_pct,
+                                model_tp_atr_mult,
+                                tp1_pct,
+                                tp1_close_fraction,
+                                tp2_pct,
                             ),
                         );
                     } else if fill.new_pos.abs() <= f64::EPSILON {
@@ -4125,6 +4200,18 @@ impl Executor {
                 perps: perps_ctx,
             },
         )));
+
+        // Publish the current asset + bar timestamp into the shared dispatch
+        // handles (mirrors the backtest write at the top of `let parsed`).
+        if let Some(cline) = self.cline.as_ref() {
+            publish_decision_context(
+                &cline.tool_asset_guard,
+                &cline.as_of_guard,
+                &asset,
+                bar.timestamp,
+            )
+            .await;
+        }
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -6463,6 +6550,26 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
         .and_then(|r| r.bar_history_limit)
 }
 
+/// Publish the current decision's asset + simulated-clock timestamp into the
+/// shared dispatch handles so the tool chokepoint can (a) reject cross-asset
+/// market-data fetches and (b) anchor Nansen backtest calls. No-op when a
+/// handle is `None` (non-sidecar run).
+async fn publish_decision_context(
+    asset_guard: &Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>>,
+    as_of_guard: &Option<
+        std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+    >,
+    asset: &str,
+    as_of: chrono::DateTime<chrono::Utc>,
+) {
+    if let Some(g) = asset_guard {
+        *g.write().await = Some(asset.to_string());
+    }
+    if let Some(g) = as_of_guard {
+        *g.write().await = Some(as_of);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6635,6 +6742,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }
     }
 
@@ -6659,6 +6767,32 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
+    }
+
+    #[tokio::test]
+    async fn decision_context_write_populates_asset_and_clock() {
+        use chrono::{TimeZone, Utc};
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        let asset_guard = Some(Arc::new(RwLock::new(None)));
+        let as_of_guard = Some(Arc::new(RwLock::new(None)));
+        let ts = Utc.with_ymd_and_hms(2024, 3, 15, 14, 0, 0).unwrap();
+
+        publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", ts).await;
+
+        assert_eq!(asset_guard.as_ref().unwrap().read().await.as_deref(), Some("BTC/USD"));
+        assert_eq!(*as_of_guard.as_ref().unwrap().read().await, Some(ts));
+    }
+
+    #[tokio::test]
+    async fn decision_context_write_is_noop_when_guards_absent() {
+        use chrono::Utc;
+        let asset_guard: Option<std::sync::Arc<tokio::sync::RwLock<Option<String>>>> = None;
+        let as_of_guard: Option<
+            std::sync::Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+        > = None;
+        // Both None (non-sidecar run) must not panic.
+        publish_decision_context(&asset_guard, &as_of_guard, "BTC/USD", Utc::now()).await;
     }
 }
 

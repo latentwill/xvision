@@ -4,21 +4,24 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import {
   clearAlpacaCredentials,
   clearByrealCredentials,
+  clearDegenArenaCredentials,
+  clearHyperliquidCredentials,
+  clearOrderlyCredentials,
   getBrokers,
   setAlpacaCredentials,
   setByrealCredentials,
+  setDegenArenaCredentials,
+  setHyperliquidCredentials,
+  setOrderlyCredentials,
   settingsKeys,
   testAlpacaConnection,
 } from "@/api/settings";
-import type {
-  AlpacaTestReport,
-  BrokerEntry,
-  CredentialRef,
-} from "@/api/types.gen";
+import type { AlpacaTestReport, BrokerEntry } from "@/api/types.gen";
 
 // ── Market refresh types ──────────────────────────────────────────────────
 
@@ -40,7 +43,11 @@ const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
-  { to: "marketplace", label: "Marketplace" },
+  { to: "autoresearcher", label: "Autoresearcher" },
+  // Marketplace tab removed (QA) — opt-in marketplace settings live on the
+  // marketplace surface itself; the `/settings/marketplace` route is kept
+  // registered so the legacy `identity` redirect and deep links still resolve.
+  { to: "tools", label: "Tools" },
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -89,8 +96,10 @@ export function SettingsBrokersRoute() {
       {(data) => (
         <div className="space-y-5">
           <AlpacaBrokerCard entry={data.alpaca} />
-          <BrokerCard entry={data.orderly} />
+          <OrderlyBrokerCard entry={data.orderly} />
           <ByrealBrokerCard entry={data.byreal} />
+          <DegenArenaBrokerCard entry={data.degen_arena} />
+          <HyperliquidBrokerCard entry={data.hyperliquid} />
           <MarketsRefreshCard />
         </div>
       )}
@@ -102,6 +111,8 @@ export { SettingsDangerRoute } from "./danger";
 export { SettingsSkillsRoute } from "./skills";
 export { SettingsWalletRoute } from "./wallet";
 export { SettingsMarketplaceRoute } from "./marketplace";
+export { AutoresearcherSettingsRoute } from "./autoresearcher";
+export { SettingsToolsRoute } from "./tools";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Markets refresh card
@@ -632,9 +643,9 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
       {showForm ? (
         <form onSubmit={onSubmit} className="space-y-3">
           <p className="m-0 text-[12px] text-text-3 leading-snug">
-            Use a Hyperliquid{" "}
-            <strong className="text-text-2">agent / API wallet key</strong> —
-            trading-only, cannot withdraw.
+            Use a{" "}
+            <strong className="text-text-2">trading-only agent / API wallet key</strong>{" "}
+            (cannot withdraw) — never your master account key.
           </p>
           <div>
             <label className="block text-[12px] text-text-2 mb-1">
@@ -652,14 +663,12 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
           </div>
           <div>
             <label className="block text-[12px] text-text-2 mb-1">Network</label>
-            <select
+            <SignalSelectMenu
               value={network}
-              onChange={(e) => setNetwork(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
-            >
-              <option value="testnet">testnet</option>
-              <option value="mainnet">mainnet</option>
-            </select>
+              options={NETWORK_OPTIONS}
+              onChange={setNetwork}
+              minWidth={180}
+            />
           </div>
           <div>
             <label className="block text-[12px] text-text-2 mb-1">
@@ -705,7 +714,88 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
   );
 }
 
-function BrokerCard({ entry }: { entry: BrokerEntry }) {
+// Virtuals Degen Arena (Hyperliquid perps via native EIP-712 signing). Mirrors
+// the Byreal card, but the wire contract carries an explicit master-account
+// address alongside the trade-only key, and the ingest route is shared with the
+// /live deploy strip (POST/DELETE /api/live/deploy/degen-arena). The displayed
+// state (`stored`, `stored_key_id_suffix`, `configured`, `note`) comes from the
+// brokers snapshot; save/clear only trigger a refetch.
+const HL_KEY_RE = /^0x[0-9a-fA-F]{64}$/;
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+// Shared network options for the design-standard dropdown across broker cards.
+const NETWORK_OPTIONS = [
+  { value: "testnet", label: "testnet" },
+  { value: "mainnet", label: "mainnet" },
+];
+
+function DegenArenaBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [apiKey, setApiKey] = useState("");
+  const [accountAddress, setAccountAddress] = useState("");
+  const [network, setNetwork] = useState("testnet");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setDegenArenaCredentials({
+        apiKey: apiKey.trim(),
+        accountAddress: accountAddress.trim(),
+        network: network.trim() || "testnet",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setApiKey("");
+      setAccountAddress("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const clear = useMutation({
+    mutationFn: clearDegenArenaCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!HL_KEY_RE.test(apiKey.trim())) {
+      setErrorMsg("Trade-only HL key must be 0x + 64 hex (66 characters total)");
+      return;
+    }
+    if (!ADDR_RE.test(accountAddress.trim())) {
+      setErrorMsg("Account address must be 0x + 40 hex (42 characters total)");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between mb-3">
@@ -728,58 +818,515 @@ function BrokerCard({ entry }: { entry: BrokerEntry }) {
         )}
       </div>
 
-      <table className="w-full mt-2">
-        <tbody>
-          {entry.credentials.map((c) => (
-            <CredentialRow key={c.env_var} cred={c} />
-          ))}
-          {entry.base_url ? (
-            <tr className="border-t border-border-soft">
-              <td className="py-2 text-text-2 text-[12px]">base url</td>
-              <td className="py-2 text-right">
-                <code className="font-mono text-[12px] text-text">
-                  {entry.base_url}
-                </code>
-              </td>
-            </tr>
+      {showStored ? (
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-3 px-3 py-2 bg-surface-elev border border-border-soft rounded">
+            <div className="text-[13px] text-text-2">
+              Stored agent key ending in{" "}
+              <code className="font-mono text-text">
+                ••••{entry.stored_key_id_suffix ?? "····"}
+              </code>
+              {entry.base_url ? (
+                <span className="ml-2 text-text-3">({entry.base_url})</span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(true);
+                  setErrorMsg(null);
+                }}
+                className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
+              >
+                Edit replacement
+              </button>
+              <button
+                type="button"
+                onClick={() => clear.mutate()}
+                disabled={clear.isPending}
+                className="text-[12px] text-danger hover:underline disabled:opacity-50"
+              >
+                {clear.isPending ? "clearing…" : "clear"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          <p className="m-0 text-[12px] text-text-3 leading-snug">
+            Use a Hyperliquid{" "}
+            <strong className="text-text-2">trade-only agent key</strong> (cannot
+            withdraw). New here?{" "}
+            <a
+              href="https://degen.virtuals.io/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-info underline-offset-2 hover:underline"
+            >
+              Set up your agent on Virtuals
+            </a>
+            .
+          </p>
+          <div>
+            <label
+              htmlFor="degen-hl-api-key"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Trade-only HL API key
+            </label>
+            <input
+              id="degen-hl-api-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="degen-account-address"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Account address
+            </label>
+            <input
+              id="degen-account-address"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={accountAddress}
+              onChange={(e) => setAccountAddress(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="degen-network"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Network
+            </label>
+            <select
+              id="degen-network"
+              value={network}
+              onChange={(e) => setNetwork(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
+            >
+              <option value="testnet">testnet</option>
+              <option value="mainnet">mainnet</option>
+            </select>
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
           ) : null}
-        </tbody>
-      </table>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={save.isPending}
+              className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {save.isPending ? "Saving…" : entry.stored ? "Save replacement" : "Save"}
+            </button>
+            {entry.stored ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setErrorMsg(null);
+                }}
+                className="px-3 py-1.5 rounded text-[13px] text-text-2 hover:text-text"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
     </Card>
   );
 }
 
-const FRIENDLY_NAMES: Record<string, string> = {
-  ORDERLY_KEY: "API Key",
-  ORDERLY_SECRET: "API Secret",
-  ALPACA_API_KEY: "API Key",
-  ALPACA_SECRET_KEY: "API Secret",
-  ALPACA_BASE_URL: "Base URL",
-  BYREAL_API_KEY: "API Key",
-  BYREAL_API_SECRET: "API Secret",
-};
+// Hyperliquid (direct perps). Same credential shape as Degen Arena (trade-only
+// HL agent key + master account address + network), but persisted to the
+// settings store at POST/DELETE /api/settings/brokers/hyperliquid.
+function HyperliquidBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [apiKey, setApiKey] = useState("");
+  const [accountAddress, setAccountAddress] = useState("");
+  const [network, setNetwork] = useState("testnet");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-function CredentialRow({ cred }: { cred: CredentialRef }) {
-  const friendly = FRIENDLY_NAMES[cred.env_var];
+  const save = useMutation({
+    mutationFn: () =>
+      setHyperliquidCredentials({
+        api_key: apiKey.trim(),
+        account_address: accountAddress.trim(),
+        network: network.trim() || "testnet",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setApiKey("");
+      setAccountAddress("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => setErrorMsg(brokerErr(err)),
+  });
+
+  const clear = useMutation({
+    mutationFn: clearHyperliquidCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => setErrorMsg(brokerErr(err)),
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!HL_KEY_RE.test(apiKey.trim())) {
+      setErrorMsg("Trade-only HL key must be 0x + 64 hex (66 characters total)");
+      return;
+    }
+    if (!ADDR_RE.test(accountAddress.trim())) {
+      setErrorMsg("Account address must be 0x + 40 hex (42 characters total)");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
   return (
-    <tr className="border-t border-border-soft first:border-t-0">
-      <td className="py-2">
-        {friendly ? (
-          <span className="flex flex-col gap-0.5">
-            <span className="text-[12px] text-text">{friendly}</span>
-            <code className="font-mono text-[10px] text-text-4">{cred.env_var}</code>
-          </span>
-        ) : (
-          <code className="font-mono text-[12px] text-text-2">{cred.env_var}</code>
-        )}
-      </td>
-      <td className="py-2 text-right">
-        {cred.is_set ? (
-          <span className="text-gold text-[12px]">● set</span>
-        ) : (
-          <span className="text-text-3 text-[12px]">○ unset</span>
-        )}
-      </td>
-    </tr>
+    <Card className="p-5">
+      <BrokerCardHeader entry={entry} />
+
+      {showStored ? (
+        <StoredKeyRow
+          suffix={entry.stored_key_id_suffix}
+          baseUrl={entry.base_url}
+          onEdit={() => {
+            setEditing(true);
+            setErrorMsg(null);
+          }}
+          onClear={() => clear.mutate()}
+          clearing={clear.isPending}
+        />
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          <p className="m-0 text-[12px] text-text-3 leading-snug">
+            Use a Hyperliquid{" "}
+            <strong className="text-text-2">trade-only agent key</strong> (cannot
+            withdraw) — never your master account key.
+          </p>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              Trade-only HL API key
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              Account address
+            </label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={accountAddress}
+              onChange={(e) => setAccountAddress(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">Network</label>
+            <SignalSelectMenu
+              value={network}
+              options={NETWORK_OPTIONS}
+              onChange={setNetwork}
+              minWidth={180}
+            />
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
+          ) : null}
+          <BrokerFormActions
+            saving={save.isPending}
+            stored={entry.stored}
+            onCancel={() => {
+              setEditing(false);
+              setErrorMsg(null);
+            }}
+          />
+        </form>
+      ) : null}
+    </Card>
+  );
+}
+
+// Orderly Network — API key + secret + account id (+ optional base URL).
+// Persisted to POST/DELETE /api/settings/brokers/orderly.
+function OrderlyBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setOrderlyCredentials({
+        api_key: apiKey.trim(),
+        api_secret: apiSecret.trim(),
+        account_id: accountId.trim(),
+        base_url: baseUrl.trim() ? baseUrl.trim() : null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setApiKey("");
+      setApiSecret("");
+      setAccountId("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => setErrorMsg(brokerErr(err)),
+  });
+
+  const clear = useMutation({
+    mutationFn: clearOrderlyCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => setErrorMsg(brokerErr(err)),
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!apiKey.trim() || !apiSecret.trim() || !accountId.trim()) {
+      setErrorMsg("API key, secret, and account id are all required");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
+  return (
+    <Card className="p-5">
+      <BrokerCardHeader entry={entry} />
+
+      {showStored ? (
+        <StoredKeyRow
+          suffix={entry.stored_key_id_suffix}
+          baseUrl={entry.base_url}
+          onEdit={() => {
+            setEditing(true);
+            setErrorMsg(null);
+          }}
+          onClear={() => clear.mutate()}
+          clearing={clear.isPending}
+        />
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">API key</label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="ed25519:…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">API secret</label>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={apiSecret}
+              onChange={(e) => setApiSecret(e.target.value)}
+              placeholder="•••"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">Account id</label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              placeholder="0x…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              Base URL <span className="text-text-3">(optional — testnet/mainnet gateway)</span>
+            </label>
+            <input
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://testnet-api-evm.orderly.org"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
+          ) : null}
+          <BrokerFormActions
+            saving={save.isPending}
+            stored={entry.stored}
+            onCancel={() => {
+              setEditing(false);
+              setErrorMsg(null);
+            }}
+          />
+        </form>
+      ) : null}
+    </Card>
+  );
+}
+
+// Shared bits for the editable broker cards (header pill, stored-key row,
+// form action buttons, error formatting) so HL / Orderly stay thin.
+function brokerErr(err: unknown): string {
+  return err instanceof ApiError
+    ? `${err.code}: ${err.message}`
+    : err instanceof Error
+      ? err.message
+      : String(err);
+}
+
+function BrokerCardHeader({ entry }: { entry: BrokerEntry }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <div>
+        <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
+          {entry.name}
+        </h3>
+        {entry.note ? (
+          <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
+        ) : null}
+      </div>
+      {entry.configured ? (
+        <Pill tone="gold">
+          <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
+        </Pill>
+      ) : (
+        <Pill tone="warn">
+          <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
+        </Pill>
+      )}
+    </div>
+  );
+}
+
+function StoredKeyRow({
+  suffix,
+  baseUrl,
+  onEdit,
+  onClear,
+  clearing,
+}: {
+  suffix: string | null;
+  baseUrl: string | null;
+  onEdit: () => void;
+  onClear: () => void;
+  clearing: boolean;
+}) {
+  return (
+    <div className="mt-2 space-y-3">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 bg-surface-elev border border-border-soft rounded">
+        <div className="text-[13px] text-text-2">
+          Stored key ending in{" "}
+          <code className="font-mono text-text">••••{suffix ?? "····"}</code>
+          {baseUrl ? <span className="ml-2 text-text-3">({baseUrl})</span> : null}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
+          >
+            Edit replacement
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={clearing}
+            className="text-[12px] text-danger hover:underline disabled:opacity-50"
+          >
+            {clearing ? "clearing…" : "clear"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BrokerFormActions({
+  saving,
+  stored,
+  onCancel,
+}: {
+  saving: boolean;
+  stored: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <button
+        type="submit"
+        disabled={saving}
+        className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {saving ? "Saving…" : stored ? "Save replacement" : "Save"}
+      </button>
+      {stored ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1.5 rounded text-[13px] text-text-2 hover:text-text"
+        >
+          Cancel
+        </button>
+      ) : null}
+    </div>
   );
 }

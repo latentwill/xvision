@@ -168,6 +168,7 @@ const DENYLIST_SUBCOMMANDS: &[&str] = &[
     "fire-trade",     // explicit live order smoke test
     "close-position", // explicit live position mutation
     "init",           // initializes/migrates the dashboard host DB (alias: migrate)
+    "live",           // guarded real-money launch — local operator only, never remote
 ];
 
 /// Top-level commands that are supported through the remote CLI job API.
@@ -189,23 +190,16 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // eval compare, eval cancel — all read-only or cancellable
     "example",
     "experiment", // bounded via STRICT_TEMPLATES (experiment run only)
-    "gate",
     "indicator",
-    "metrics",
-    // "init" is in DENYLIST_SUBCOMMANDS — intentionally absent here
+    // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
     "optimize", // bounded via STRICT_TEMPLATES (optimize run only)
     "portfolio",
     "provider",
-    "report",
-    // `risk` was retired from the CLI in #1038 (Byreal/perps risk unified onto
-    // the engine veto path); this stale allowlist entry pointed at a removed
-    // verb and tripped `remote_allowlist_paths_exist_in_clap_tree`.
     "run",
     "scenario", // scenario show, scenario select — read-only paths allowed
     "show-decision",
-    "show-metrics",
     "store",
     "strategy", // strategy show, strategy validate — read-only paths allowed
 ];
@@ -720,6 +714,57 @@ mod tests {
     #[test]
     fn top_level_init_is_rejected() {
         assert_reject(&["init", "--dry-run"], "not allowed over remote cli");
+    }
+
+    // Real-money launch verb is local-only — must never execute over the
+    // remote CLI API (bypasses broker credential isolation + operator ack).
+    #[test]
+    fn live_real_money_subcommand_is_rejected_over_remote_cli() {
+        // Testnet variant — still denied: the remote CLI has no interactive
+        // terminal for operator confirmation and no way to gate on
+        // --i-understand-real-money safely.
+        assert_reject(
+            &[
+                "live",
+                "--venue",
+                "byreal",
+                "--network",
+                "testnet",
+                "--strategy",
+                "st_01",
+                "--display-name",
+                "remote-test",
+                "--asset",
+                "BTC/USD",
+                "--capital",
+                "1000",
+                "--bar-limit",
+                "50",
+            ],
+            "not allowed over remote cli",
+        );
+        // Mainnet variant.
+        assert_reject(
+            &[
+                "live",
+                "--venue",
+                "byreal",
+                "--network",
+                "mainnet",
+                "--i-understand-real-money",
+                "--strategy",
+                "st_01",
+                "--display-name",
+                "remote-mainnet",
+                "--asset",
+                "BTC/USD",
+                "--capital",
+                "5000",
+                "--time-limit-secs",
+                "3600",
+            ],
+            "not allowed over remote cli",
+        );
     }
 
     // ── write-path gaps we still want blocked remotely ───────────────────

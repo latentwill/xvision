@@ -181,6 +181,16 @@ async fn audit_row_written_for_denied_submit() {
 }
 
 #[tokio::test]
+async fn testnet_run_against_live_broker_is_rejected() {
+    let gate = SafetyGate::new(open_manager().await);
+    let result = check_submit(&gate, VenueLabel::Testnet, VenueLabel::Live).await;
+    assert!(
+        matches!(result, Err(SafetyGateError::VenueLabelMismatch { .. })),
+        "Testnet→Live must return VenueLabelMismatch, got: {result:?}"
+    );
+}
+
+#[tokio::test]
 async fn audit_row_written_for_allowed_submit() {
     let manager = open_manager().await;
     let gate = SafetyGate::new(manager.clone());

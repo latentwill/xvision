@@ -48,7 +48,6 @@ export interface ListingRow {
   transferableLicense: boolean; // default false (direction); opt-in per listing
   verification: Verification;
   acceptsX402: boolean;
-  clones: number;
   genArtSeed: GenArtSeed;
 }
 
@@ -224,7 +223,7 @@ export interface Receipt {
   share: ShareComposerData;
 }
 
-export type SortKey = "return30d" | "sharpe" | "buyers" | "mostCloned" | "newest";
+export type SortKey = "return30d" | "sharpe" | "buyers" | "newest";
 export interface FilterState {
   segment: "trending" | "new" | "mine";
   search: string;

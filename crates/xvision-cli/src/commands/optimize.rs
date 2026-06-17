@@ -82,7 +82,7 @@ use xvision_engine::tools::ToolRegistry;
 
 use xvision_engine::autooptimizer::events_store::persist_cycle_event;
 
-use crate::exit::{CliError, CliResult};
+use crate::exit::{CliError, CliResult, XvnExit};
 use crate::io::print_json;
 
 // ── Top-level command ─────────────────────────────────────────────────────────
@@ -718,7 +718,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
         // always returns Some on success and Err on failure — never Ok(None).
         let cline_ctx =
-            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools))
+            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools), xvision_engine::eval::run::RunMode::Backtest)
                 .await
                 .map_err(|e| {
                     CliError::upstream(anyhow::anyhow!(
@@ -923,6 +923,13 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         cycles_planned,
         args.budget,
         Vec::new(),
+        cycle_config.max_consecutive_errors,
+        // Live cumulative spend so the --budget ceiling trips even on cycles
+        // that errored after spending (the session-cumulative cost meter).
+        Arc::new({
+            let m = Arc::clone(&meter);
+            move || m.lock().map(|g| g.spent_usd).unwrap_or(0.0)
+        }),
         Arc::clone(&cancel),
         Arc::clone(&pause),
         move || {
@@ -1024,7 +1031,10 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let _ = persist_task.await;
     let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &session_id).await;
 
-    session_result.map_err(|e| CliError::upstream(anyhow::anyhow!("run session: {e}")))?;
+    // R3/R5: a one-off cycle error, SIGTERM, or dropped-candidate run returns
+    // Ok here (sealed cleanly, exit 0). Only a tripped consecutive-error breaker
+    // (or a genuine infra error) returns Err — surfaced as a distinct exit code
+    // AFTER the summary below, so the per-cycle error counts always print.
 
     // WS-11c: with --export <DIR>, write a feedback document per completed cycle.
     // The drain task above already flushed every event to autooptimizer_events,
@@ -1052,17 +1062,31 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         }
     }
 
-    // Final session summary.
+    // Final session summary. Read the sealed terminal state + per-cycle error
+    // count so a sealed-with-errors or halted run reports what failed (R5) —
+    // not just a bare "finished".
     let totals = *meter.lock().expect("meter mutex poisoned");
-    let completed: i64 =
-        sqlx::query_scalar("SELECT cycles_completed FROM autooptimizer_session_state WHERE session_id = ?")
-            .bind(&session_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
+    let (state, completed, errored, err_text): (String, i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT state, cycles_completed, errored_count, error \
+         FROM autooptimizer_session_state WHERE session_id = ?",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|_| ("unknown".to_string(), 0, 0, None));
+    // The breaker-trip path is the ONLY one that persists state=`failed`. Any
+    // OTHER run_session Err is a genuine infra fault (DB lock / IO) that left a
+    // non-terminal state — don't echo that stale state as the outcome, and map
+    // it to a retryable code (Upstream), NOT the breaker's OptHalted.
+    let breaker_halt = session_result.is_err() && state == "failed";
+    let display_state = if session_result.is_err() && state != "failed" {
+        "halted (infra error)"
+    } else {
+        state.as_str()
+    };
     eprintln!(
-        "session {session_id} finished: {completed} cycle(s) via {provider_label}; \
-         tokens {} in / {} out; total cost ${:.4}{}",
+        "session {session_id} ended [{display_state}]: {completed} cycle(s) via {provider_label} \
+         ({errored} errored); tokens {} in / {} out; total cost ${:.4}{}",
         totals.input_tokens,
         totals.output_tokens,
         totals.spent_usd,
@@ -1072,7 +1096,34 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             String::new()
         },
     );
+    // Surface the failure reason on ANY error outcome — the persisted `error`
+    // for a breaker halt, otherwise the run_session error itself — so the cause
+    // is never swallowed.
+    if let Some(err) = err_text.as_deref().filter(|_| state == "failed") {
+        eprintln!("session error: {err}");
+    } else if let Err(e) = &session_result {
+        eprintln!("session error: {e:#}");
+    }
     println!("session_id={session_id}");
+
+    // R3/R5: a sustained-failure breaker trip exits with the distinct OptHalted
+    // code (so automation can tell "the optimizer gave up"); a genuine infra
+    // error (DB/IO) is a retryable Upstream failure, NOT a breaker trip. One-off
+    // errors / SIGTERM / dropped candidates returned Ok (exit 0) and never reach
+    // here.
+    session_result.map_err(|e| {
+        if breaker_halt {
+            CliError {
+                exit: XvnExit::OptHalted,
+                source: anyhow::anyhow!("optimizer run halted (sustained failure): {e}"),
+            }
+        } else {
+            CliError {
+                exit: XvnExit::Upstream,
+                source: anyhow::anyhow!("optimizer run failed (infra error): {e}"),
+            }
+        }
+    })?;
 
     Ok(())
 }

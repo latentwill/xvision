@@ -343,7 +343,9 @@
       "long_flags": [
         "--asset",
         "--help",
-        "--venue"
+        "--i-understand-real-money",
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -1296,12 +1298,14 @@
       "long_flags": [
         "--asset",
         "--help",
+        "--i-understand-real-money",
         "--side",
         "--size-bps",
         "--stop-loss-pct",
         "--summary",
         "--take-profit-pct",
-        "--venue"
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -1420,22 +1424,6 @@
       "path": [
         "flywheel",
         "velocity"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--baseline",
-        "--block-size",
-        "--help",
-        "--n-resamples",
-        "--report",
-        "--treatment"
-      ],
-      "mutates": false,
-      "path": [
-        "gate"
       ]
     },
     {
@@ -1984,16 +1972,6 @@
       "mutates": false,
       "path": [
         "help",
-        "gate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
         "help"
       ]
     },
@@ -2113,6 +2091,16 @@
       "path": [
         "help",
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "live"
       ]
     },
     {
@@ -2331,16 +2319,6 @@
         "help",
         "memory",
         "undo-forget"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "metrics"
       ]
     },
     {
@@ -2654,16 +2632,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "report"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2875,7 +2843,7 @@
       "mutates": false,
       "path": [
         "help",
-        "show-metrics"
+        "spot"
       ]
     },
     {
@@ -3567,6 +3535,30 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--bar-limit",
+        "--capital",
+        "--decision-limit",
+        "--display-name",
+        "--help",
+        "--i-understand-real-money",
+        "--json",
+        "--network",
+        "--strategy",
+        "--time-limit-secs",
+        "--venue",
+        "--warmup-bars",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "live"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -4096,22 +4088,6 @@
       "path": [
         "memory",
         "undo-forget"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--baseline",
-        "--block-size",
-        "--help",
-        "--n-resamples",
-        "--report",
-        "--treatment"
-      ],
-      "mutates": false,
-      "path": [
-        "metrics"
       ]
     },
     {
@@ -5040,19 +5016,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--input",
-        "--output"
-      ],
-      "mutates": false,
-      "path": [
-        "report"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -5563,12 +5526,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--amount",
         "--help",
-        "--report"
+        "--i-understand-real-money",
+        "--side",
+        "--slippage",
+        "--symbol",
+        "--xvn-home"
       ],
       "mutates": false,
       "path": [
-        "show-metrics"
+        "spot"
       ]
     },
     {

@@ -413,6 +413,7 @@ pub async fn start_cycle(
         &api_ctx,
         &cfg.mutator.provider, // TODO: prefer the strategy's resolved trader provider (select_eval_provider parity)
         Arc::new(ToolRegistry::default_with_builtins()),
+        xvision_engine::eval::run::RunMode::Backtest,
     )
     .await
     .map_err(|e| DashboardError::Validation {

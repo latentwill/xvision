@@ -1,9 +1,0 @@
-# Phase 1.4 — frontend unified-event TS mirror + per-row reducer
-# integrated tree, 2026-05-25T00:41:29Z  a7a82a7
-$ pnpm exec vitest run src/stores/message-row-reducer.test.ts
- ✓ src/stores/message-row-reducer.test.ts (11 tests) 3ms
-
- Test Files  1 passed (1)
-      Tests  11 passed (11)
-   Start at  08:41:30
-   Duration  813ms (transform 24ms, setup 101ms, collect 13ms, tests 3ms, environment 386ms, prepare 39ms)

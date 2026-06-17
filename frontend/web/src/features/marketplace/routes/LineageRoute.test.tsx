@@ -62,7 +62,12 @@ function Wrapper({
         <MemoryRouter initialEntries={[initialPath]}>
           <Routes>
             <Route path="/marketplace/lineage/:name" element={<LineageRoute />} />
-            <Route path="/marketplace/receipts/:tx" element={<div>receipt</div>} />
+            {/* Buy/clone now finalize the acquisition and land on the runnable
+                Strategy detail page (QA #11/#12) — no receipt page. */}
+            <Route
+              path="/strategies/:id"
+              element={<div data-testid="strategy-detail">strategy detail</div>}
+            />
           </Routes>
         </MemoryRouter>
       </MarketplaceDataProvider>
@@ -124,9 +129,10 @@ describe("LineageRoute", () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-hero");
     expect(screen.getByText("BTC")).toBeInTheDocument(); // AssetPill
-    // VerifiedBadge and X402Badge rendered (fixture: verified + acceptsX402)
+    // VerifiedBadge renders; the x402 badge was removed from listing surfaces
+    // (operator QA) — it must no longer appear in the hero.
     expect(screen.getByTestId("verified-badge")).toBeInTheDocument();
-    expect(screen.getByTestId("x402-badge")).toBeInTheDocument();
+    expect(screen.queryByTestId("x402-badge")).not.toBeInTheDocument();
   });
 
   it("renders no verification badge for unverified listings", async () => {
@@ -196,12 +202,14 @@ describe("LineageRoute", () => {
     expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
   });
 
-  it("Acquire calls purchaseIntent and navigates to receipts", async () => {
+  it("Acquire finalizes the buy and navigates to the Strategy detail page", async () => {
     const client = new FixtureMarketplaceData();
     const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
       txHash: "0xdeadbeef",
       network: "mantle-sepolia",
     });
+    // Finalize materializes the agents and resolves the new local strategy id.
+    vi.spyOn(client, "importSealed").mockResolvedValue({ agent_id: "NEW" });
     render(<Wrapper client={client} />);
     await screen.findByRole("button", { name: /^acquire$/i });
     await act(async () => {
@@ -210,11 +218,11 @@ describe("LineageRoute", () => {
     await waitFor(() => {
       expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
     });
-    // After success, navigated to receipts
-    expect(await screen.findByText("receipt")).toBeInTheDocument();
+    // After success, landed on the runnable Strategy detail page (not a receipt).
+    expect(await screen.findByTestId("strategy-detail")).toBeInTheDocument();
   });
 
-  it("open-tier listings show Run free and route through cloneIntent", async () => {
+  it("open-tier listings show Run free and import via importListing", async () => {
     const client = new FixtureMarketplaceData();
     const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
     vi.spyOn(client, "getListing").mockResolvedValue({
@@ -222,10 +230,9 @@ describe("LineageRoute", () => {
       tier: "open",
       priceUsdc: null,
     });
-    const cloneSpy = vi.spyOn(client, "cloneIntent").mockResolvedValue({
-      txHash: "0xfreeclone",
-      network: "mantle-sepolia",
-    });
+    const importSpy = vi
+      .spyOn(client, "importListing")
+      .mockResolvedValue({ agent_id: "FREE-NEW" });
     render(<Wrapper client={client} />);
     const runFree = await screen.findByTestId("run-free-btn");
     expect(runFree).toHaveTextContent(/run free/i);
@@ -234,8 +241,9 @@ describe("LineageRoute", () => {
     await act(async () => {
       await userEvent.click(runFree);
     });
-    await waitFor(() => expect(cloneSpy).toHaveBeenCalledWith("btc-momentum-v3"));
-    expect(await screen.findByText("receipt")).toBeInTheDocument();
+    await waitFor(() => expect(importSpy).toHaveBeenCalledWith("btc-momentum-v3"));
+    // Landed on the Strategy detail page (not a receipt).
+    expect(await screen.findByTestId("strategy-detail")).toBeInTheDocument();
   });
 
   it("does not render a 'Clone to edit' button — clone lives on the Strategies page, and sealed listings are encrypted", async () => {
@@ -255,13 +263,6 @@ describe("LineageRoute", () => {
     expect(
       screen.queryByRole("button", { name: /clone to edit/i }),
     ).not.toBeInTheDocument();
-  });
-
-  it("ingredient banner is shown when some ingredients are missing", async () => {
-    render(<Wrapper />);
-    // fixture has 2 missing ingredients
-    expect(await screen.findByTestId("ingredient-banner")).toBeInTheDocument();
-    expect(screen.getByText(/2 of 4/)).toBeInTheDocument();
   });
 
   it("receipts drawer is collapsed by default", async () => {
@@ -461,7 +462,10 @@ describe("LineageRoute bundle enrichment", () => {
   it("renders requirement chips for attested models + required tools, with the note", async () => {
     stubBundleFetch();
     render(<Wrapper client={await numericClient()} />);
-    const row = await screen.findByTestId("requirements-row");
+    // The row appears immediately (it leads with the listing's model); wait for
+    // the async manifest fetch to add the attested-model + tool chips.
+    await screen.findByText("birdeye-mcp");
+    const row = screen.getByTestId("requirements-row");
     expect(row).toHaveTextContent("claude-haiku-4.5");
     expect(row).toHaveTextContent("birdeye-mcp");
     expect(row).toHaveTextContent(/you'll need these to run the strategy after purchase/i);
@@ -484,8 +488,13 @@ describe("LineageRoute bundle enrichment", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<Wrapper client={await numericClient()} />);
     await screen.findByTestId("lineage-page");
+    // Manifest-derived enrichment (about + tool requirements) stays gone on a
+    // bundle error, but the run-requirements row still leads with the model the
+    // listing runs on, so it renders without the manifest's tool chips.
     expect(screen.queryByTestId("about-strategy")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("requirements-row")).not.toBeInTheDocument();
+    const reqRow = await screen.findByTestId("requirements-row");
+    expect(reqRow).not.toHaveTextContent("birdeye-mcp");
+    expect(reqRow).toHaveTextContent(/you'll need these to run the strategy/i);
   });
 
   it("never fetches the bundle for fixture (slug) listings and keeps the fixture title", async () => {
@@ -497,5 +506,47 @@ describe("LineageRoute bundle enrichment", () => {
     expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId("creator-link")).not.toBeInTheDocument();
+  });
+});
+
+// ── Owner strip ──────────────────────────────────────────────────────────────
+describe("LineageRoute owner strip", () => {
+  it("shows owner strip when viewer.createdListingIds includes the listing id", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xowner",
+      createdListingIds: ["btc-momentum-v3"],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    expect(await screen.findByTestId("owner-strip")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit price/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^revoke$/i })).toBeInTheDocument();
+  });
+
+  it("does NOT show owner strip when viewer does not own the listing", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: "0xstranger",
+      createdListingIds: [],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.queryByTestId("owner-strip")).not.toBeInTheDocument();
+  });
+
+  it("does NOT show owner strip when viewer is not connected", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getViewer").mockResolvedValue({
+      isConnected: false,
+      createdListingIds: [],
+      ownedListingIds: [],
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.queryByTestId("owner-strip")).not.toBeInTheDocument();
   });
 });

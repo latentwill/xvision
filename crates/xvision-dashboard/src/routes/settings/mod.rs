@@ -8,7 +8,9 @@
 pub mod brokers;
 pub mod daemon;
 pub mod danger;
+pub mod data_tools;
 pub mod identity;
 pub mod memory;
 pub mod observability;
+pub mod profile;
 pub mod providers;

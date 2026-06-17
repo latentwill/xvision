@@ -2,7 +2,7 @@
 // identity are read-only snapshots; providers is the only CRUD surface
 // in this module.
 
-import { apiFetch } from "./client";
+import { ApiError, apiFetch } from "./client";
 import {
   createTrace,
   durationSince,
@@ -19,6 +19,7 @@ import type {
   MemoryReport,
   MemoryStatus,
   ObservabilityReport,
+  ProfileReport,
   ProviderModelsReport,
   ProviderRow,
   ProvidersReport,
@@ -27,6 +28,7 @@ import type {
   RetentionModeDto,
   TestConnectionReport,
   UpdateMemoryRequest,
+  UpdateProfileRequest,
   UpdateProviderRequest,
 } from "./types.gen";
 
@@ -56,6 +58,7 @@ export const settingsKeys = {
   observability: () => [...settingsKeys.all, "observability"] as const,
   memory: () => [...settingsKeys.all, "memory"] as const,
   memoryStatus: () => [...settingsKeys.all, "memory", "status"] as const,
+  profile: () => [...settingsKeys.all, "profile"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
   providerModels: (name: string) =>
     [...settingsKeys.all, "providers", name, "models"] as const,
@@ -139,6 +142,21 @@ export function updateMemorySettings(
     });
 }
 
+// ─── Profile (operator display name / handle) ─────────────────────────────
+
+export function getProfile(): Promise<ProfileReport> {
+  return apiFetch<ProfileReport>("/api/settings/profile");
+}
+
+export function updateProfile(
+  req: UpdateProfileRequest,
+): Promise<ProfileReport> {
+  return apiFetch<ProfileReport>("/api/settings/profile", {
+    method: "PUT",
+    body: JSON.stringify(req),
+  });
+}
+
 export function getMemoryStatus(): Promise<MemoryStatus> {
   return apiFetch<MemoryStatus>("/api/settings/memory/status");
 }
@@ -164,13 +182,13 @@ export function getBrokers(): Promise<BrokersReport> {
     });
 }
 
-// ─── Brokers (Alpaca, Byreal) CRUD ────────────────────────────────────────
-
-// Byreal is a report-only broker surface — credentials are env-var-only
-// (BYREAL_PRIVATE_KEY / BYREAL_NETWORK / BYREAL_ACCOUNT). The frontend
-// surfaces a read-only BrokerCard for it (mirroring the Orderly treatment);
-// there is no `setByrealCredentials` because the backend exposes no store
-// endpoint for Byreal at this revision.
+// ─── Brokers (Alpaca, Byreal, Hyperliquid, Orderly, Degen Arena) CRUD ──────
+//
+// Each editable broker has a stored-credential store under
+// `$XVN_HOME/secrets/brokers.toml` (stored creds win over env at runtime).
+// Request/response types are hand-written here because the engine structs
+// don't carry `derive(TS)` — secrets must never leak into the generated
+// type surface.
 
 // Hand-written wire shapes for the Alpaca-credentials surface. The
 // engine-side `AlpacaStored` and `SetAlpacaReq` types don't carry
@@ -269,6 +287,185 @@ export function clearByrealCredentials(): Promise<void> {
   return apiFetch<void>("/api/settings/brokers/byreal", {
     method: "DELETE",
   });
+}
+
+// Hyperliquid (direct perps) stored creds. `api_key` MUST be a Hyperliquid
+// trade-only agent key (`0x` + 64 hex, cannot withdraw); `account_address` is
+// the master account (`0x` + 40 hex). Mirrors the engine `SetHyperliquidReq` /
+// `HyperliquidStored` (no `derive(TS)` so the secret never leaks into the
+// generated surface).
+export type SetHyperliquidRequest = {
+  api_key: string;
+  account_address: string;
+  network: string;
+};
+
+export type HyperliquidStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  network: string | null;
+};
+
+export function setHyperliquidCredentials(
+  body: SetHyperliquidRequest,
+): Promise<HyperliquidStored> {
+  const trace = createTrace("settings", {
+    broker: "hyperliquid",
+    network: body.network,
+  });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<HyperliquidStored>("/api/settings/brokers/hyperliquid", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearHyperliquidCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/hyperliquid", {
+    method: "DELETE",
+  });
+}
+
+// Orderly Network stored creds (API key / secret / account id, optional base
+// URL). Mirrors the engine `SetOrderlyReq` / `OrderlyStored` (no `derive(TS)`
+// so the secret never leaks into the generated surface).
+export type SetOrderlyRequest = {
+  api_key: string;
+  api_secret: string;
+  account_id: string;
+  base_url: string | null;
+};
+
+export type OrderlyStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  base_url: string | null;
+};
+
+export function setOrderlyCredentials(
+  body: SetOrderlyRequest,
+): Promise<OrderlyStored> {
+  const trace = createTrace("settings", {
+    broker: "orderly",
+    base_url_host: safeUrlHost(body.base_url),
+  });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<OrderlyStored>("/api/settings/brokers/orderly", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearOrderlyCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/orderly", {
+    method: "DELETE",
+  });
+}
+
+// Degen Arena (Virtuals) stored creds. The `apiKey` MUST be a Hyperliquid
+// trade-only agent key (`0x` + 64 hex, cannot withdraw); `accountAddress` is
+// the master account (`0x` + 40 hex). Mirrors the engine `SetDegenArenaReq` /
+// `DegenArenaStored` (no `derive(TS)` so the secret never leaks into the
+// generated surface). The backend ingest route is shared with the /live deploy
+// strip: POST/DELETE /api/live/deploy/degen-arena.
+export type SetDegenArenaRequest = {
+  apiKey: string;
+  accountAddress: string;
+  network: string;
+};
+
+export type DegenArenaStored = {
+  ok: boolean;
+  stored_key_suffix?: string | null;
+  network?: string | null;
+};
+
+// Deliberately uses a RAW `fetch` (not `apiFetch`, which logs body summaries)
+// so the trade-only HL private key in the body is never passed through the
+// shared logging helper — same cred-safety posture as `useDeployDegenArena`.
+// Only the non-secret `network` and the redacted `ok` summary are traced.
+export function setDegenArenaCredentials(
+  body: SetDegenArenaRequest,
+): Promise<DegenArenaStored> {
+  const trace = createTrace("settings", { broker: "degen_arena", network: body.network });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return fetch("/api/live/deploy/degen-arena", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      apiKey: body.apiKey,
+      accountAddress: body.accountAddress,
+      network: body.network,
+    }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const errBody = (await res.json()) as { message?: string };
+          if (typeof errBody.message === "string" && errBody.message.length > 0) {
+            message = errBody.message;
+          }
+        } catch {
+          // Non-JSON error body — keep the HTTP-status fallback message.
+        }
+        throw new ApiError(res.status, String(res.status), message);
+      }
+      const stored = (await res.json()) as DegenArenaStored;
+      trace.info("settings.broker.save.ok", {
+        stored: stored.ok,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearDegenArenaCredentials(): Promise<void> {
+  return fetch("/api/live/deploy/degen-arena", { method: "DELETE" }).then(
+    (res) => {
+      if (!res.ok) {
+        throw new ApiError(res.status, String(res.status), `HTTP ${res.status}`);
+      }
+    },
+  );
 }
 
 /// Connectivity probe for Alpaca — calls `/v2/account` with the stored

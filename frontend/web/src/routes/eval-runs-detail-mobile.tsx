@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { downloadEvalRunExport } from "@/api/eval";
+import { SignalsUsedChips } from "@/components/eval-detail/SignalsUsedChips";
 import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
@@ -73,6 +74,7 @@ export function MobileEvalRunDetail({
   agents,
   agentsAll,
   totalCostUsd,
+  signalsUsed,
   onCancel,
   cancelling,
   onRetry,
@@ -86,6 +88,9 @@ export function MobileEvalRunDetail({
   agents: { agent_id: string; role: string }[];
   agentsAll: Agent[];
   totalCostUsd: number | null;
+  /** Optional list of signal tool names used in this run. Absent until the
+   *  backend populates `RunDetail.signals_used`. Renders nothing when absent. */
+  signalsUsed?: string[];
   onCancel: () => void;
   cancelling: boolean;
   onRetry: () => void;
@@ -132,6 +137,7 @@ export function MobileEvalRunDetail({
             agents={agents}
             agentsAll={agentsAll}
             totalCostUsd={totalCostUsd}
+            signalsUsed={signalsUsed}
             isLive={isLive}
             liveDuration={liveDuration}
             onRetry={onRetry}
@@ -276,6 +282,7 @@ function SummaryTab({
   agents,
   agentsAll,
   totalCostUsd,
+  signalsUsed,
   isLive,
   liveDuration,
   onRetry,
@@ -289,6 +296,7 @@ function SummaryTab({
   agents: { agent_id: string; role: string }[];
   agentsAll: Agent[];
   totalCostUsd: number | null;
+  signalsUsed?: string[];
   isLive: boolean;
   liveDuration: number;
   onRetry: () => void;
@@ -350,6 +358,10 @@ function SummaryTab({
         agents={agents}
         agentsAll={agentsAll}
       />
+
+      {/* Signals used — full-width inline chip strip. Renders nothing when
+          `signalsUsed` is absent (backend doesn't yet populate this field). */}
+      <SignalsUsedChips signals_used={signalsUsed} />
 
       {isLive && (
         <ActivityCard

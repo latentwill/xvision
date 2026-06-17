@@ -35,6 +35,21 @@ pub enum ValidationError {
     MechanisticConfigMissing,
     #[error("mechanistic strategy's mechanistic_config must have at least one entry rule or close policy")]
     MechanisticConfigEmpty,
+    #[error("slot '{role}' has both `checkpoint` and `model_override` set; they are mutually exclusive")]
+    CheckpointAndModelOverrideConflict { role: String },
+    #[error(
+        "slot '{role}' checkpoint requires indicators {missing:?} \
+         that are not in the strategy's tool registry; \
+         add them to the strategy's tools, pick a different checkpoint, \
+         or remove the nanochat slot"
+    )]
+    MissingCheckpointIndicators { role: String, missing: Vec<String> },
+    #[error(
+        "slot '{role}' checkpoint '{model_id}' has not been live-approved; \
+         run the backtest comparison in the strategy builder and confirm \
+         it before attaching"
+    )]
+    CheckpointNotLiveApproved { role: String, model_id: String },
 }
 
 pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
@@ -388,6 +403,15 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
             return Err(ValidationError::DuplicateAgentRole(role));
         }
     }
+    // Task 4.1: checkpoint and model_override are mutually exclusive per slot.
+    for agent in &b.agents {
+        if agent.checkpoint.is_some() && agent.model_override.is_some() {
+            return Err(ValidationError::CheckpointAndModelOverrideConflict {
+                role: agent.role.clone(),
+            });
+        }
+    }
+
     if b.pipeline.kind == PipelineKind::Single && b.agents.len() > 1 {
         return Err(ValidationError::InvalidSinglePipeline);
     }
@@ -511,6 +535,8 @@ mod preflight_tests {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
@@ -867,5 +893,65 @@ mod preflight_tests {
             !result.eval_ready,
             "eval_ready must be false when warnings present"
         );
+    }
+
+    // ── Task 4.1: CheckpointAndModelOverrideConflict ─────────────────────
+
+    fn strategy_with_checkpoint_and_model_override() -> Strategy {
+        use crate::agents::Capability;
+        use crate::strategies::agent_ref::{CheckpointRef, PipelineDef};
+        let mut s = make_strategy_with_agent("ETH/USD", 240);
+        s.agents = vec![
+            AgentRef {
+                agent_id: "01HZAGENT".into(),
+                role: "filter".into(),
+                activates: Some(Capability::Filter),
+                prompt_override: None,
+                model_override: Some("anthropic/claude-haiku-4-5".into()),
+                checkpoint: Some(CheckpointRef { model_id: "01HZMODEL".into() }),
+                veto: Some(true),
+            },
+            AgentRef {
+                agent_id: "01HZTRADER".into(),
+                role: "trader".into(),
+                activates: Some(Capability::Trader),
+                prompt_override: None,
+                model_override: None,
+                checkpoint: None,
+                veto: None,
+            },
+        ];
+        s.pipeline = PipelineDef::sequential();
+        s
+    }
+
+    #[test]
+    fn checkpoint_and_model_override_on_same_slot_is_rejected() {
+        let s = strategy_with_checkpoint_and_model_override();
+        let err = validate_strategy(&s).expect_err("must reject checkpoint+model_override");
+        assert!(
+            matches!(err, ValidationError::CheckpointAndModelOverrideConflict { .. }),
+            "wrong error: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("filter"),
+            "error must name the offending role: {err}"
+        );
+    }
+
+    #[test]
+    fn checkpoint_without_model_override_is_accepted() {
+        let mut s = strategy_with_checkpoint_and_model_override();
+        s.agents[0].model_override = None; // remove the conflicting field
+        // Should pass the mutual-exclusion check (other validations may fail
+        // if the Strategy fixture is incomplete, but not this one).
+        let err = validate_strategy(&s);
+        match err {
+            Ok(()) => {}
+            Err(ValidationError::CheckpointAndModelOverrideConflict { .. }) => {
+                panic!("checkpoint without model_override must not produce conflict error")
+            }
+            Err(_) => {} // other validation errors are fine for this fixture
+        }
     }
 }

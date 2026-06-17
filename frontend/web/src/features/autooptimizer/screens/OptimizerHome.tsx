@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { AutoresearcherTab } from "./AutoresearcherTab";
 import { Link, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { LaunchPanel } from "../ui/LaunchPanel";
@@ -6,12 +7,12 @@ import { RecentCyclesTableBody } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { EditorialHeadline } from "../ui/EditorialHeadline";
 import { ConsoleModule } from "../ui/ConsoleModule";
+import { RunStatusBar } from "../ui/RunStatusBar";
 import { LineageRiver } from "../ui/LineageRiver";
 import { EdgeVsRandomChart } from "../ui/EdgeVsRandomChart";
-import { buildHeadline, type HeadlineInput } from "../selectors/buildHeadline";
+import { buildHeadline } from "../selectors/buildHeadline";
 import { buildDigest, deriveBestFind } from "../selectors/buildDigest";
 import {
-  useOptimizerStatus,
   useOptimizerStats,
   useCycleRuns,
   useCycleRun,
@@ -22,6 +23,7 @@ import {
   useCancelCycle,
   type LineageNode,
 } from "../api";
+import { useLiveActivity } from "../hooks/useLiveActivity";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
 import { OptiCapsuleSlot } from "../OptiCapsuleSlot";
 import { formatRelativeTime, formatUntil } from "../utils/time";
@@ -70,17 +72,16 @@ export function OptimizerHome() {
   const [params] = useSearchParams();
   const sessionId = params.get("session");
 
-  const status = useOptimizerStatus(); // StatusResponse | undefined — not a query object
+  // The one truthful run signal — server status, live SSE, or an in-flight
+  // cycle's persisted log — shared with the console so they never disagree.
+  const live = useLiveActivity();
   const stats = useOptimizerStats(sessionId ? { session_id: sessionId } : undefined);
   const cycles = useCycleRuns();
   const lineage = useLineageNodes({ status: "active" });
   const schedule = useSchedule();
 
-  const session = status?.active_session ?? null;
-  const rawState = session?.state ?? "idle";
-  const state = (
-    ["running", "paused", "cancelling"].includes(rawState) ? rawState : "idle"
-  ) as HeadlineInput["state"];
+  const session = live.session;
+  const state = live.activity;
   const isActive = state !== "idle";
 
   const cycleRows = cycles.data ?? [];
@@ -111,21 +112,24 @@ export function OptimizerHome() {
       ? formatUntil(schedule.data.next_run_at)
       : null;
 
+  // Top-level tab selection: Optimizer | Autoresearcher
+  const [activeTab, setActiveTab] = useState<"optimizer" | "autoresearcher">(
+    "optimizer",
+  );
+
   // Contextual action: Launch (idle) | Pause+Cancel (running) | Resume+Cancel (paused)
   const [launcherOpen, setLauncherOpen] = useState(false);
   useEffect(() => {
     if (isActive) setLauncherOpen(false);
   }, [isActive]);
 
-  // The stream-derived cycle id is empty after a page reload mid-run (the SSE
-  // buffer starts fresh); the status poll's active_cycle_id is the fallback so
-  // Pause/Resume/Cancel stay wired.
-  const {
-    activeCycleId: streamCycleId,
-    events: cycleEvents,
-    isRunning: streamRunning,
-  } = useCycleEventStream();
-  const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
+  // Resolved across live SSE → server status → latest cycle, so Pause/Resume/
+  // Cancel stay wired even after a reload mid-run (empty SSE buffer).
+  const activeCycleId = live.activeCycleId;
+  // Raw SSE buffer for the OPTI trace capsule. useCycleEventStream is a shared
+  // singleton, so this is the SAME socket useLiveActivity reads — no second
+  // EventSource.
+  const { events: cycleEvents, isRunning: streamRunning } = useCycleEventStream();
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
   const cancelMutation = useCancelCycle();
@@ -207,57 +211,100 @@ export function OptimizerHome() {
         isRunning={streamRunning}
       />
       <div className="space-y-5">
-        <EditorialHeadline headline={headline} digest={digest}>
-          {action}
-        </EditorialHeadline>
+        {/* Tab strip — Optimizer | Autoresearcher */}
+        <nav
+          className="flex gap-1 border-b border-border"
+          aria-label="Optimizer sections"
+        >
+          {(["optimizer", "autoresearcher"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              onClick={() => setActiveTab(tab)}
+              className={[
+                "-mb-px border-b-2 px-3 py-2 text-[13px] transition-colors",
+                activeTab === tab
+                  ? "border-gold font-medium text-text"
+                  : "border-transparent text-text-3 hover:text-text",
+              ].join(" ")}
+            >
+              {tab === "optimizer" ? "Optimizer" : "Autoresearcher"}
+            </button>
+          ))}
+        </nav>
 
-        {(newestStatsTs || nextRun) && (
-          <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-text-4 -mt-2">
-            {newestStatsTs && <span>as of {formatRelativeTime(newestStatsTs)}</span>}
-            {nextRun && (
-              <span className="text-text-3">next run {nextRun}</span>
+        {activeTab === "autoresearcher" ? (
+          <AutoresearcherTab />
+        ) : (
+          <>
+            <EditorialHeadline headline={headline} digest={digest}>
+              {action}
+            </EditorialHeadline>
+
+            {/* The unmissable live indicator — answers "is something running right
+                now" before anything else on the page. */}
+            {isActive && (
+              <RunStatusBar
+                activity={live.activity}
+                source={live.source}
+                cycleId={activeCycleId}
+                session={session}
+                connected={live.connected}
+                startedAtMs={live.startedAtMs}
+              />
             )}
-          </div>
-        )}
 
-        {sessionId && <SessionScopeBanner sessionId={sessionId} />}
-
-        {/* Inline launch panel — the launch form extracted from LiveCycleView */}
-        {launcherOpen && !isActive && <LaunchPanel />}
-
-        {/* The headline already carries the contextual action; hand the launch
-            button to the console only for the never-ran explainer. */}
-        <ConsoleModule launchAction={hasHistory ? undefined : launchButton} />
-
-        {/* Charts row — section header carries the honest sample sizes */}
-        <section className="space-y-3">
-          <div className="text-[11px] uppercase tracking-widest text-text-4">
-            Trajectory
-            <span className="ml-2 normal-case tracking-normal text-text-3">
-              {attemptCount} attempts · {cycleCount} cycle
-              {cycleCount === 1 ? "" : "s"}
-            </span>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <LineageRiver hasHistory={hasHistory} />
-            <div className="rounded-md border border-border bg-surface-card p-5 space-y-3">
-              <div className="text-[11px] uppercase tracking-widest text-text-4">
-                Edge vs random
+            {(newestStatsTs || nextRun) && (
+              <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-text-4 -mt-2">
+                {newestStatsTs && <span>as of {formatRelativeTime(newestStatsTs)}</span>}
+                {nextRun && (
+                  <span className="text-text-3">next run {nextRun}</span>
+                )}
               </div>
-              <EdgeVsRandomChart rows={statsRows} />
-            </div>
-          </div>
-        </section>
+            )}
 
-        <ExperimentWritersPanel />
+            {sessionId && <SessionScopeBanner sessionId={sessionId} />}
 
-        {/* Cycle history */}
-        <section className="rounded-md border border-border bg-surface-card p-5">
-          <h2 className="m-0 mb-3 text-[15px] font-semibold tracking-tight">
-            Cycle history
-          </h2>
-          <RecentCyclesTableBody />
-        </section>
+            {/* Inline launch panel — the launch form extracted from LiveCycleView */}
+            {launcherOpen && !isActive && <LaunchPanel />}
+
+            {/* The headline already carries the contextual action; hand the launch
+                button to the console only for the never-ran explainer. */}
+            <ConsoleModule launchAction={hasHistory ? undefined : launchButton} />
+
+            {/* Charts row — section header carries the honest sample sizes */}
+            <section className="space-y-3">
+              <div className="text-[11px] uppercase tracking-widest text-text-4">
+                Trajectory
+                <span className="ml-2 normal-case tracking-normal text-text-3">
+                  {attemptCount} attempts · {cycleCount} cycle
+                  {cycleCount === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <LineageRiver hasHistory={hasHistory} />
+                <div className="rounded-md border border-border bg-surface-card p-5 space-y-3">
+                  <div className="text-[11px] uppercase tracking-widest text-text-4">
+                    Edge vs random
+                  </div>
+                  <EdgeVsRandomChart rows={statsRows} />
+                </div>
+              </div>
+            </section>
+
+            <ExperimentWritersPanel />
+
+            {/* Cycle history */}
+            <section className="rounded-md border border-border bg-surface-card p-5">
+              <h2 className="m-0 mb-3 text-[15px] font-semibold tracking-tight">
+                Cycle history
+              </h2>
+              <RecentCyclesTableBody />
+            </section>
+          </>
+        )}
       </div>
     </>
   );

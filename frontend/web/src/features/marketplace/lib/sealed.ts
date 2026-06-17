@@ -21,7 +21,11 @@
 // it decoded to an object; the authoritative hash gate is the 409 on import.
 
 import { apiFetch } from "@/api/client";
-import { currentAddress, mantleSepolia, walletClient } from "./chain";
+import {
+  currentAddress,
+  getActiveNetworkConfigOrDefault,
+  walletClient,
+} from "./chain";
 import { WalletRequiredError } from "./purchaseErrors";
 import { SEALED_GATE_ACTION_SRC } from "./sealedGateCode";
 
@@ -346,6 +350,13 @@ export async function decryptSealedBundle(params: {
 
   const signature = await walletClient().signMessage({ account: address, message });
 
+  // The Lit gate action checks the caller's ERC-1155 license balance on-chain,
+  // so it must hit the BACKEND-selected chain's RPC — not the build-time default
+  // (a prebuilt sepolia bundle on a mainnet backend would query the wrong chain
+  // and fail every license check). Lenient: a status outage falls back to the
+  // build-time default rather than blocking decrypt.
+  const net = await getActiveNetworkConfigOrDefault();
+
   const { plaintext } = await invokeGateAction(litCfg, {
     pkpId: litCfg.pkp_id,
     ciphertext,
@@ -354,7 +365,7 @@ export async function decryptSealedBundle(params: {
     signature,
     listingId: String(listingId),
     nftAddress,
-    rpcUrl: mantleSepolia.rpcUrls.default.http[0],
+    rpcUrl: net.chain.rpcUrls.default.http[0],
   });
 
   let manifest: unknown;

@@ -10,6 +10,7 @@ pub mod filter_dispatch;
 pub mod llm;
 pub mod local_embedder;
 pub mod memory_recorder;
+pub mod nano_dispatch;
 pub mod observability;
 pub mod openai_embedder;
 pub mod pipeline;

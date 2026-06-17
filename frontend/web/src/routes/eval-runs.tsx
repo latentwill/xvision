@@ -717,8 +717,11 @@ function StartEvalPanel({
   const [liveWarmupBars, setLiveWarmupBars] = useState("200");
   // Forward-test execution venue. Values are the backend `broker_creds_ref`
   // contract (resolve_live_venue): "alpaca" (paper), "orderly_testnet",
-  // "byreal". All are paper/testnet — real money lives on the /live surface.
-  const [brokerCredsRef, setBrokerCredsRef] = useState<"alpaca" | "orderly_testnet" | "byreal">("alpaca");
+  // "byreal", "degen_arena". All are paper/testnet — real money lives on the
+  // /live surface (Degen Arena mainnet additionally gates on DEGEN_ALLOW_MAINNET).
+  const [brokerCredsRef, setBrokerCredsRef] = useState<
+    "alpaca" | "orderly_testnet" | "byreal" | "degen_arena"
+  >("alpaca");
   const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
   const [reviewProvider, setReviewProvider] = useState<string>("");
   const [reviewModel, setReviewModel] = useState<string>("");
@@ -796,9 +799,11 @@ function StartEvalPanel({
         setPreflightError("Enter a non-negative live warmup bar count.");
         return;
       }
-      // Alpaca is always required — it supplies the live market-data bar stream
-      // regardless of which venue executes the orders.
-      if (brokers.data?.alpaca.configured !== true) {
+      // Alpaca supplies the live market-data bar stream for most venues, so it
+      // is required — EXCEPT Degen Arena, which sources its own Hyperliquid
+      // candles (mirrors the engine's `uses_alpaca_data = venue != DegenArena`).
+      const usesAlpacaData = brokerCredsRef !== "degen_arena";
+      if (usesAlpacaData && brokers.data?.alpaca.configured !== true) {
         setPreflightError(
           "Configure Alpaca paper credentials in Settings -> Brokers before starting a Forward test.",
         );
@@ -814,6 +819,12 @@ function StartEvalPanel({
       if (brokerCredsRef === "byreal" && brokers.data?.byreal.configured !== true) {
         setPreflightError(
           "Configure Byreal credentials (BYREAL_PRIVATE_KEY) with BYREAL_NETWORK=testnet before starting a Forward test on Byreal.",
+        );
+        return;
+      }
+      if (brokerCredsRef === "degen_arena" && brokers.data?.degen_arena.configured !== true) {
+        setPreflightError(
+          "Configure Degen Arena credentials in Settings -> Brokers before starting a Forward test on Degen Arena.",
         );
         return;
       }
@@ -859,7 +870,9 @@ function StartEvalPanel({
                 ? "Alpaca paper"
                 : brokerCredsRef === "orderly_testnet"
                   ? "Orderly testnet"
-                  : "Byreal testnet"
+                  : brokerCredsRef === "degen_arena"
+                    ? "Degen Arena"
+                    : "Byreal testnet"
             } ${effectiveLiveAsset}`,
             description: null,
             tags: ["live", brokerCredsRef],
@@ -1015,6 +1028,7 @@ function StartEvalPanel({
                     ["alpaca", "Alpaca paper"],
                     ["orderly_testnet", "Orderly testnet"],
                     ["byreal", "Byreal testnet"],
+                    ["degen_arena", "Degen Arena"],
                   ] as const
                 ).map(([value, label]) => (
                   <button

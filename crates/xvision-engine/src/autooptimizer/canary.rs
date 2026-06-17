@@ -126,22 +126,61 @@ pub async fn run_honesty_check(
     // genuine broker fault on them still WARNs. Only the SABOTAGED (child) runs
     // are labeled, so their by-design broker rejections are demoted to expected
     // honesty-check noise.
-    let parent_day = paper_tester.run(base, day_scenario).await?;
-    let child_day = neutralize_zero_trade_canary(
-        paper_tester
-            .run_canary(&sabotaged, day_scenario, variant_label)
-            .await?,
-        variant_label,
-        day_scenario.id.as_str(),
-    );
-    let parent_untouched = paper_tester.run(base, baseline_scenario).await?;
-    let child_untouched = neutralize_zero_trade_canary(
-        paper_tester
-            .run_canary(&sabotaged, baseline_scenario, variant_label)
-            .await?,
-        variant_label,
-        baseline_scenario.id.as_str(),
-    );
+    //
+    // R2: the four canary eval calls are wrapped so ANY eval/trader error
+    // (provider outage, malformed output, etc.) degrades to a NEUTRAL
+    // failed-canary result instead of propagating — no canary decision may be
+    // fatal. This overrides the earlier B28 narrowing (which propagated genuine
+    // canary errors): a canary INFRA failure must not kill the optimizer
+    // session. It is surfaced via a WARN + the `errored` sabotage_variant +
+    // a Fail verdict, not hidden. (A zero-trade *completion* is still handled by
+    // `neutralize_zero_trade_canary` on the success path.)
+    let eval = async {
+        let parent_day = paper_tester.run(base, day_scenario).await?;
+        let child_day = neutralize_zero_trade_canary(
+            paper_tester
+                .run_canary(&sabotaged, day_scenario, variant_label)
+                .await?,
+            variant_label,
+            day_scenario.id.as_str(),
+        );
+        let parent_untouched = paper_tester.run(base, baseline_scenario).await?;
+        let child_untouched = neutralize_zero_trade_canary(
+            paper_tester
+                .run_canary(&sabotaged, baseline_scenario, variant_label)
+                .await?,
+            variant_label,
+            baseline_scenario.id.as_str(),
+        );
+        Ok::<_, anyhow::Error>((parent_day, child_day, parent_untouched, child_untouched))
+    }
+    .await;
+
+    let (parent_day, child_day, parent_untouched, child_untouched) = match eval {
+        Ok(metrics) => metrics,
+        Err(e) => {
+            tracing::warn!(
+                target: "xvision::autooptimizer",
+                error = %e,
+                sabotage_variant = variant_label,
+                "honesty-check canary errored; recording a neutral failed-canary result and continuing (R2)"
+            );
+            return Ok(HonestyCheckResult {
+                parent_hash: ContentHash::of_json(&serde_json::to_value(base)?),
+                gate_verdict: GateVerdict::Fail {
+                    reason: format!("canary errored: {e:#}"),
+                },
+                // A canary that could not RUN is not evidence the gate is too
+                // lax, so the honesty check is treated as a non-event (passed),
+                // distinguished by the `errored` variant + the verdict reason.
+                passed_check: true,
+                sabotage_variant: "errored".to_string(),
+                message: format!(
+                    "Honesty check skipped: canary evaluation errored ({e:#}); recorded as neutral and the cycle continued."
+                ),
+            });
+        }
+    };
 
     let gate_in = gate_input_builder(&parent_day, &child_day, &parent_untouched, &child_untouched);
     let gate_verdict = evaluate(&gate_in);
@@ -183,14 +222,14 @@ pub async fn run_honesty_check(
 /// reliably rejects the sabotage and the honesty check PASSES — independent of
 /// objective (0.0 is the no-improvement sentinel for return / sharpe / win-rate).
 ///
-/// **Narrow by design (B28 follow-up).** ONLY the zero-trade case is
-/// neutralised here. Genuine canary backtest errors (provider outage, panic,
-/// malformed scenario) are NOT swallowed — the caller `?`-propagates them so a
-/// real infrastructure fault fails the cycle loudly instead of being silently
-/// scored as a passed honesty check. This does not re-introduce the original
-/// stale-lock symptom: `run_cycle_cmd` releases the cycle lock unconditionally
-/// *before* propagating any `run_cycle` error (see
-/// `xvision-cli/.../optimize.rs`).
+/// **Narrow by design (B28 follow-up).** ONLY the zero-trade *completion* case
+/// is neutralised here. A genuine canary backtest *error* (provider outage,
+/// panic, malformed scenario) is a separate concern handled one level up: R2
+/// makes `run_honesty_check` degrade such an error to a NEUTRAL failed-canary
+/// result (`sabotage_variant = "errored"`) so a real infrastructure fault is
+/// surfaced (WARN + `errored` marker) without killing the cycle or the
+/// optimizer session. This function deliberately stays scoped to the
+/// successful-but-zero-trade case only.
 fn neutralize_zero_trade_canary(
     metrics: MetricsSummary,
     variant_label: &str,

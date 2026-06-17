@@ -134,6 +134,48 @@ pub fn list_registry_entries() -> Vec<RegistryEntry> {
         .unwrap_or_default()
 }
 
+// ── Signal asset identity (static seed) ─────────────────────────────────────
+
+/// Minimal on-chain identity for a ticker, used by the Nansen tools until the
+/// full registry OnceLock is wired (follow-up). Seeded for the v1 crypto
+/// whitelist only; unmapped assets degrade (D8), never panic.
+pub struct SignalAssetIdentity {
+    pub chain: &'static str,
+    pub contract_address: &'static str,
+}
+
+/// Returns the on-chain identity (chain slug + token contract/mint) for a
+/// ticker symbol, or `None` for unmapped assets. Callers **must** handle
+/// `None` as a degrade, never as a panic.
+///
+/// Normalises the symbol by stripping everything after the first `/` (so
+/// "BTC/USD" → "BTC") and upper-casing before lookup.
+///
+/// # GROUNDING (verify before mainnet, Task 6.4): confirm chain slugs +
+/// contract/mint addresses + native sentinel against live Nansen docs.
+///
+/// SINGLE SOURCE OF TRUTH (decision bd xvision-im2r.10): this static seed is
+/// intentionally the only active source of on-chain identity for now. Reading
+/// from `AssetEntry.chain`/`contract_address` (or a populated `RegistryEntry`)
+/// is deferred until the `asset_registry` `OnceLock`/`register()` startup path
+/// is wired — until then, add new whitelisted crypto assets HERE. Unmapped
+/// assets degrade (the tool returns `{available:false}`), never panic.
+pub fn signal_asset_identity(symbol: &str) -> Option<SignalAssetIdentity> {
+    // Normalize: take base ticker (strip /USD etc.), uppercase.
+    let s = symbol.trim().split('/').next().unwrap_or("").to_ascii_uppercase();
+    let (chain, contract) = match s.as_str() {
+        // GROUNDING (verify before mainnet, Task 6.4): confirm chain slugs +
+        // contract/mint addresses + native sentinel against live Nansen docs.
+        "BTC" | "WBTC" => ("ethereum", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"), // WBTC (BTC tracked via WBTC on-chain)
+        "ETH" | "WETH"  => ("ethereum", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), // WETH
+        "USDC"          => ("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+        "USDT"          => ("ethereum", "0xdac17f958d2ee523a2206206994597c13d831ec7"),
+        "SOL"           => ("solana",   "So11111111111111111111111111111111111111112"),
+        _ => return None,
+    };
+    Some(SignalAssetIdentity { chain, contract_address: contract })
+}
+
 /// Returns `true` iff the asset is known to have Alpaca bar data and
 /// trading pair support. Falls back to the hardcoded 15-symbol legacy
 /// list when the registry has not been loaded (keeps unit tests that
@@ -220,6 +262,23 @@ mod tests {
         assert!(is_alpaca_crypto(AssetSymbol::Btc));
         // HYPE is NOT in the legacy list → false when registry not loaded.
         assert!(!is_alpaca_crypto(AssetSymbol::from_static("HYPE")));
+    }
+
+    #[test]
+    fn known_crypto_has_chain_and_contract() {
+        let id = signal_asset_identity("ETH").expect("ETH mapped");
+        assert_eq!(id.chain, "ethereum");
+        assert!(!id.contract_address.is_empty());
+    }
+
+    #[test]
+    fn btc_is_mapped_so_nansen_tools_resolve() {
+        assert!(signal_asset_identity("BTC").is_some());
+    }
+
+    #[test]
+    fn unmapped_asset_returns_none() {
+        assert!(signal_asset_identity("NOTACOIN").is_none());
     }
 
     #[test]

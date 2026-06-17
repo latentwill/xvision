@@ -5,12 +5,47 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { VenueAccountPanel } from "./VenueAccountPanel";
 import * as liveApi from "@/api/live";
+import * as settingsApi from "@/api/settings";
 import type { VenueAccount } from "@/api/live";
+import type { BrokerEntry, BrokersReport } from "@/api/types.gen";
 
 vi.mock("@/api/live", async () => {
   const actual = await vi.importActual<typeof import("@/api/live")>("@/api/live");
   return { ...actual, getVenueAccount: vi.fn() };
 });
+
+vi.mock("@/api/settings", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/api/settings")>("@/api/settings");
+  return { ...actual, getBrokers: vi.fn() };
+});
+
+function entry(over: Partial<BrokerEntry>): BrokerEntry {
+  return {
+    name: "Broker",
+    kind: "broker",
+    credentials: [],
+    configured: false,
+    stored: false,
+    stored_key_id_suffix: null,
+    base_url: null,
+    note: null,
+    ...over,
+  };
+}
+
+/** A brokers report with the given venue kinds marked configured. */
+function mkReport(configured: string[]): BrokersReport {
+  const cfg = (kind: string, name: string) =>
+    entry({ kind, name, configured: configured.includes(kind) });
+  return {
+    alpaca: cfg("alpaca", "Alpaca"),
+    orderly: cfg("orderly", "Orderly Network"),
+    byreal: cfg("byreal", "Byreal"),
+    degen_arena: cfg("degen_arena", "Degen Arena"),
+    hyperliquid: cfg("hyperliquid", "Hyperliquid"),
+  };
+}
 
 function renderPanel() {
   const qc = new QueryClient({
@@ -33,6 +68,7 @@ afterEach(() => {
 
 describe("VenueAccountPanel", () => {
   test("renders connected venue stats and positions", async () => {
+    vi.mocked(settingsApi.getBrokers).mockResolvedValue(mkReport(["orderly"]));
     const acct: VenueAccount = {
       connected: true,
       venue: "orderly",
@@ -64,6 +100,7 @@ describe("VenueAccountPanel", () => {
   });
 
   test("renders quiet disconnected state with reason, never an error", async () => {
+    vi.mocked(settingsApi.getBrokers).mockResolvedValue(mkReport(["orderly"]));
     const acct: VenueAccount = {
       connected: false,
       venue: "orderly",
@@ -82,6 +119,7 @@ describe("VenueAccountPanel", () => {
   });
 
   test("shows the connected wallet address from localStorage", async () => {
+    vi.mocked(settingsApi.getBrokers).mockResolvedValue(mkReport(["orderly"]));
     localStorage.setItem(
       "xvn_wallet_address",
       "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553",
@@ -100,5 +138,44 @@ describe("VenueAccountPanel", () => {
         /0xb5d2…E553/,
       );
     });
+  });
+
+  test("only lists venues configured in settings, and queries the selected one", async () => {
+    // orderly + hyperliquid configured; byreal/degen/alpaca not.
+    vi.mocked(settingsApi.getBrokers).mockResolvedValue(
+      mkReport(["orderly", "hyperliquid"]),
+    );
+    vi.mocked(liveApi.getVenueAccount).mockResolvedValue({
+      connected: false,
+      venue: "orderly",
+      positions: [],
+      reason: "not wired",
+    });
+
+    renderPanel();
+
+    // The dropdown trigger shows the first configured venue's label.
+    await waitFor(() => {
+      expect(screen.getByText("Orderly Network")).toBeInTheDocument();
+    });
+    // The account fetch was made for a configured venue, not a hardcoded one.
+    await waitFor(() => {
+      expect(vi.mocked(liveApi.getVenueAccount)).toHaveBeenCalledWith("orderly");
+    });
+    // A non-configured venue must not be offered.
+    expect(screen.queryByText("Byreal")).not.toBeInTheDocument();
+  });
+
+  test("shows the empty state and never fetches an account when no broker is configured", async () => {
+    vi.mocked(settingsApi.getBrokers).mockResolvedValue(mkReport([]));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText(/No brokers configured/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("link", { name: /set one up in Settings/i }))
+      .toHaveAttribute("href", "/settings/brokers");
+    expect(vi.mocked(liveApi.getVenueAccount)).not.toHaveBeenCalled();
   });
 });

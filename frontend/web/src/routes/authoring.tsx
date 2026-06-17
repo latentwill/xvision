@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -12,6 +12,8 @@ import {
   cloneStrategy,
   deleteStrategy,
   getStrategy,
+  getStrategyMarketplace,
+  getStrategyRequirements,
   patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
@@ -19,28 +21,32 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  useSetAgentCheckpoint,
   validateDraft,
   type AgentRef,
   type ClosePolicy,
   type EntryDirection,
   type EntryRule,
   type PipelineDef,
+  type MarketplaceProvenance,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
+  type StrategyRequirements,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
 // `FiringSection` is still exported from `@/components/strategy` for the
 // deferred per-agent filter composer; re-add it to this import when
 // un-deferring (see authoring.tsx FilterCard wiring below).
-import { FilterCard } from "@/components/strategy";
-import { listProviders, settingsKeys } from "@/api/settings";
+import { FilterCard, StrategyRequirementChip } from "@/components/strategy";
+import { getProfile, listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TimeframeSelect } from "@/components/TimeframeSelect";
 import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
+import { NanochatSlotCard } from "@/features/autooptimizer/ui/NanochatSlotCard";
 
 const AGENT_COLLAPSE_KEY_PREFIX = "xvn:authoring:agent-collapsed";
 
@@ -62,6 +68,13 @@ function InspectorPage({ id }: { id: string }) {
   const strategyQ = useQuery({
     queryKey: strategyKeys.detail(id),
     queryFn: () => getStrategy(id),
+  });
+  // #12 / QA #8: marketplace provenance lives in a backend sidecar (not on the
+  // Strategy artifact), so it's fetched separately. `null` for non-marketplace
+  // strategies → no strip.
+  const marketplaceQ = useQuery({
+    queryKey: strategyKeys.marketplace(id),
+    queryFn: () => getStrategyMarketplace(id),
   });
 
   return (
@@ -88,6 +101,10 @@ function InspectorPage({ id }: { id: string }) {
       />
 
       <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
+
+      {marketplaceQ.data ? (
+        <MarketplaceProvenanceStrip provenance={marketplaceQ.data} />
+      ) : null}
 
       <div className="space-y-5">
         <div className="space-y-5">
@@ -242,6 +259,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
       <ManifestCard strategy={strategy} />
+      <RequirementsCard strategyId={strategy.manifest.id} />
       <FilterCard strategy={strategy} />
       {isMechanistic ? (
         <MechanisticConfigCard strategy={strategy} />
@@ -251,6 +269,105 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
       <RiskCard strategy={strategy} />
       <ValidationCard strategy={strategy} />
     </>
+  );
+}
+
+// QA #4 + Q1: a purchased strategy may reference models/skills the buyer
+// hasn't configured locally. This full-width inline card (no right sidebar —
+// chat-rail rule) lists each requirement as satisfied (✓) or missing (⚠) with
+// a Configure CTA. Missing MODEL requirements gate the eval/go-live action in
+// `InspectorActions`; skills warn and tools are informational.
+function configureTargetFor(kind: string): string {
+  // Models live under Settings → Providers; everything else (skills, tools)
+  // routes to the Settings root.
+  return kind === "model" ? "/settings/providers" : "/settings";
+}
+
+function RequirementsCard({ strategyId }: { strategyId: string }) {
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+
+  if (requirementsQ.isPending) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Checking the models and skills this strategy needs on your machine..."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-text-3">Loading…</div>
+      </Card>
+    );
+  }
+  if (requirementsQ.isError) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Could not load this strategy's requirements."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-danger">
+          {errorMessage(requirementsQ.error)}
+        </div>
+      </Card>
+    );
+  }
+
+  const data = requirementsQ.data;
+  const requirements = data.requirements ?? [];
+  if (requirements.length === 0) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="This strategy declares no model, skill, or tool requirements."
+        />
+      </Card>
+    );
+  }
+
+  const missing = requirements.filter((r) => !r.satisfied);
+  const hint = data.all_models_satisfied
+    ? "All required models are configured on this machine."
+    : "Some required models are not configured — configure them before running eval.";
+
+  return (
+    <Card>
+      <SectionHeader label="Requirements" hint={hint} />
+      <div className="px-5 pt-4 pb-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {requirements.map((requirement) => (
+            <StrategyRequirementChip
+              key={`${requirement.kind}:${requirement.name}`}
+              requirement={requirement}
+            />
+          ))}
+        </div>
+        {missing.length > 0 ? (
+          <ul className="space-y-1.5">
+            {missing.map((requirement) => (
+              <li
+                key={`missing:${requirement.kind}:${requirement.name}`}
+                className="flex flex-wrap items-center gap-2 text-[12px] text-text-2"
+              >
+                <span className="font-mono text-text">{requirement.name}</span>
+                {requirement.hint ? (
+                  <span className="text-text-3">— {requirement.hint}</span>
+                ) : null}
+                <Link
+                  to={configureTargetFor(requirement.kind)}
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[12px] font-medium text-text hover:border-text-3"
+                >
+                  Configure
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </Card>
   );
 }
 
@@ -401,6 +518,36 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [renameRoleFrom, setRenameRoleFrom] = useState<string | null>(null);
   const [renameRoleTo, setRenameRoleTo] = useState("");
+
+  // Nanochat slot state — keyed by AgentRef role so multi-slot strategies
+  // each get independent checkpoint + veto selections. Hydrated from the
+  // AgentRef.checkpoint / AgentRef.veto fields on the strategy (persisted
+  // values from the server). onChange calls the mutation to persist immediately.
+  const [nanochatCheckpoints, setNanochatCheckpoints] = useState<
+    Record<string, string | null>
+  >(() => {
+    const init: Record<string, string | null> = {};
+    for (const ref of strategy.agents ?? []) {
+      if (ref.checkpoint) init[ref.role] = ref.checkpoint.model_id;
+    }
+    return init;
+  });
+  const [nanochatVetos, setNanochatVetos] = useState<Record<string, boolean>>(
+    () => {
+      const init: Record<string, boolean> = {};
+      for (const ref of strategy.agents ?? []) {
+        if (ref.checkpoint) init[ref.role] = ref.veto ?? true;
+      }
+      return init;
+    },
+  );
+  const setCheckpointMut = useSetAgentCheckpoint(strategy.manifest.id);
+
+  // ?attach_checkpoint=<model_id> — when present, the first filter-capable
+  // AgentRef is the target slot. We read the param here (AgentsCard is the
+  // section that owns slot rendering) so NanochatSlotCard can consume it.
+  const [searchParams] = useSearchParams();
+  const attachCheckpointParam = searchParams.get("attach_checkpoint");
 
   const attached = strategy.agents ?? [];
   const pipeline = strategy.pipeline ?? { kind: "single" as const, edges: [] };
@@ -571,28 +718,73 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           </p>
         ) : (
           <div className="space-y-2">
-            {attached.map((a, idx) => (
-              <AttachedAgentRow
-                key={`${a.agent_id}:${a.role}`}
-                strategyId={strategy.manifest.id}
-                agentRef={a}
-                index={idx + 1}
-                agent={agentById.get(a.agent_id)}
-                onRenameRole={() => {
-                  setRenameRoleFrom(a.role);
-                  setRenameRoleTo(a.role);
-                }}
-                onRemove={() => removeMut.mutate(a.role)}
-                allRefs={attached}
-                pipeline={pipeline}
-                filterCandidates={filterCandidates}
-                providers={providers.data?.providers ?? []}
-                onFiringChanged={async () => {
-                  await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
-                  invalidateStrategy();
-                }}
-              />
-            ))}
+            {attached.map((a, idx) => {
+              // Show the nanochat slot card when:
+              //   (a) the AgentRef already carries a checkpoint from the server, OR
+              //   (b) the ?attach_checkpoint param is present and this is a filter slot.
+              const showNanochat =
+                !!a.checkpoint ||
+                (attachCheckpointParam != null && a.activates === "filter");
+              return (
+                <div key={`${a.agent_id}:${a.role}`} className="space-y-2">
+                  <AttachedAgentRow
+                    strategyId={strategy.manifest.id}
+                    agentRef={a}
+                    index={idx + 1}
+                    agent={agentById.get(a.agent_id)}
+                    onRenameRole={() => {
+                      setRenameRoleFrom(a.role);
+                      setRenameRoleTo(a.role);
+                    }}
+                    onRemove={() => removeMut.mutate(a.role)}
+                    allRefs={attached}
+                    pipeline={pipeline}
+                    filterCandidates={filterCandidates}
+                    providers={providers.data?.providers ?? []}
+                    onFiringChanged={async () => {
+                      await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
+                      invalidateStrategy();
+                    }}
+                  />
+                  {showNanochat && (
+                    <NanochatSlotCard
+                      strategyId={strategy.manifest.id}
+                      agentRefRole={a.role}
+                      availableIndicators={strategy.briefing_indicators ?? []}
+                      checkpointModelId={nanochatCheckpoints[a.role] ?? null}
+                      veto={nanochatVetos[a.role] ?? true}
+                      onCheckpointChange={(modelId) => {
+                        setNanochatCheckpoints((prev) => ({
+                          ...prev,
+                          [a.role]: modelId,
+                        }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: modelId
+                              ? { model_id: modelId }
+                              : null,
+                            veto: nanochatVetos[a.role] ?? true,
+                          },
+                        });
+                      }}
+                      onVetoChange={(v) => {
+                        setNanochatVetos((prev) => ({ ...prev, [a.role]: v }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: nanochatCheckpoints[a.role]
+                              ? { model_id: nanochatCheckpoints[a.role]! }
+                              : null,
+                            veto: v,
+                          },
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -1295,6 +1487,24 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     },
   });
 
+  // Operator profile handle — offered as the creator for this strategy (QA:
+  // "allow creator field to be updated with the user profile").
+  const profileQ = useQuery({
+    queryKey: settingsKeys.profile(),
+    queryFn: getProfile,
+  });
+  const profileHandle = profileQ.data?.display_name?.trim() || null;
+  const setCreator = useMutation({
+    mutationFn: (creator: string) => patchStrategyMetadata(m.id, { creator }),
+    onSuccess: (updated) => {
+      setLocalError(null);
+      qc.setQueryData(strategyKeys.detail(m.id), updated);
+    },
+    onError: (err) => {
+      setLocalError(errorMessage(err));
+    },
+  });
+
   const sameAssets =
     assetUniverse.length === m.asset_universe.length &&
     assetUniverse.every((a, i) => a === m.asset_universe[i]);
@@ -1397,10 +1607,21 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
           />
         </Field>
         <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-[13px]">
-          <DT>Template</DT>
-          <DD className="font-mono text-text-2">{m.template}</DD>
           <DT>Creator</DT>
-          <DD className="font-mono text-text-2">{m.creator}</DD>
+          <DD className="flex flex-wrap items-center gap-2 font-mono text-text-2">
+            <span>{m.creator}</span>
+            {profileHandle && profileHandle !== m.creator ? (
+              <button
+                type="button"
+                onClick={() => setCreator.mutate(profileHandle)}
+                disabled={setCreator.isPending}
+                title={`Set creator to your profile handle (${profileHandle})`}
+                className="rounded border border-border px-2 py-0.5 font-sans text-[11px] text-text-2 hover:border-text-3 hover:text-text disabled:opacity-50"
+              >
+                {setCreator.isPending ? "Setting…" : `Use my handle (${profileHandle})`}
+              </button>
+            ) : null}
+          </DD>
           <DT>Risk basis</DT>
           <DD>{m.risk_preset_or_config}</DD>
         </dl>
@@ -1593,6 +1814,102 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
   };
 }
 
+// Issue #12 / QA #8: when a strategy was acquired from the marketplace, surface
+// its on-chain provenance inline at the top of the detail page — creator, price
+// paid, license NFT (token id), and a working "View on Explorer" link to the
+// owned license token. Full-width strip (no right sidebar — chat-rail rule);
+// renders nothing for hand-authored / optimizer strategies (the caller only
+// mounts it when `strategy.marketplace` is present).
+function formatProvenancePrice(priceUsdc: number): string {
+  if (!Number.isFinite(priceUsdc) || priceUsdc <= 0) return "Free";
+  // Trim trailing zeros: 12.5 → "12.5 USDC", 49 → "49 USDC".
+  const trimmed = Number(priceUsdc.toFixed(2)).toString();
+  return `${trimmed} USDC`;
+}
+
+function MarketplaceProvenanceStrip({
+  provenance,
+}: {
+  provenance: MarketplaceProvenance;
+}) {
+  const hasExplorer =
+    typeof provenance.explorer_url === "string" &&
+    provenance.explorer_url.length > 0;
+
+  return (
+    <Card>
+      <div
+        data-testid="marketplace-provenance-strip"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 text-[12px]"
+      >
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/[0.1] px-2.5 py-1 font-medium text-gold">
+          Acquired from marketplace
+        </span>
+        <ProvenanceFact label="Creator" value={provenance.creator} mono />
+        <ProvenanceFact
+          label="Price paid"
+          value={formatProvenancePrice(provenance.price_usdc)}
+        />
+        <ProvenanceFact
+          label="License"
+          value={`#${provenance.license_token_id}`}
+          mono
+        />
+        <span className="text-text-3">{provenance.network}</span>
+        {hasExplorer ? (
+          <a
+            href={provenance.explorer_url ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 font-medium text-text hover:border-text-3"
+          >
+            View on Explorer
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 2h6v6M10 2L4.5 7.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </a>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-border-soft px-2 py-0.5 text-text-3"
+            title="No block explorer is configured for this network."
+          >
+            Explorer unavailable
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ProvenanceFact({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="uppercase tracking-wide text-text-3">{label}</span>
+      <span className={`text-text ${mono ? "font-mono" : ""}`}>{value}</span>
+    </span>
+  );
+}
+
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {
   return (
     <header className="px-5 pt-4 pb-3 border-b border-border-soft">
@@ -1622,6 +1939,18 @@ function InspectorActions({
       navigate("/strategies");
     },
   });
+  // QA #4 + Q1: gate the eval/go-live action when a required MODEL is
+  // unsatisfied. Inspect/edit stays allowed. While this query is still
+  // loading we keep the action enabled (don't flash a gate) — the gate only
+  // engages once we KNOW a model is unconfigured.
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+  const requirements: StrategyRequirements | undefined = requirementsQ.data;
+  const modelsBlocked =
+    requirements !== undefined && requirements.all_models_satisfied === false;
 
   // Clone the strategy via the shared `POST /api/strategy/:id/clone` endpoint,
   // then jump to the new draft's inspector. Clone lives here on the Strategies
@@ -1709,6 +2038,37 @@ function InspectorActions({
         {deleteButton}
         {cloneError}
         {cloneButton}
+      </div>
+    );
+  }
+
+  if (modelsBlocked) {
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-5">
+        {deleteMut.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(deleteMut.error)}
+          </span>
+        ) : null}
+        <span className="text-[12px] text-amber-700 dark:text-amber-300">
+          Configure the required model(s) before running.
+        </span>
+        <Link
+          to="/settings/providers"
+          className="inline-flex items-center gap-1 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text hover:border-text-3"
+        >
+          Configure
+        </Link>
+        {deleteButton}
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          title="Configure the required model(s) before running"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold/40 text-bg cursor-not-allowed"
+        >
+          Run eval →
+        </button>
       </div>
     );
   }

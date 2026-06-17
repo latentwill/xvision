@@ -11,6 +11,8 @@ import type { ListingDetail } from "./types";
 
 // Mock chain so getViewer tests don't need real wallet state.
 vi.mock("../lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
+  getActiveNetworkConfigOrDefault: vi.fn(async () => ({ slug: "mantle-sepolia" })),
   currentAddress: vi.fn(async () => null),
   ensureMantleSepolia: vi.fn(),
   usdcBalance: vi.fn(),
@@ -43,6 +45,7 @@ const indexedListing = {
   palette: "ember",
   attestation_count: 2,
   units_sold: 3,
+  units_sold_agents: 0,
   earned_usdc: 12.5,
 };
 
@@ -180,8 +183,7 @@ describe("ApiMarketplaceData.listListings", () => {
     // attestation_count > 0 → verified (badge stays positive-only)
     expect(sealed.verification).toBe("verified");
     expect(sealed.acceptsX402).toBe(true);
-    expect(sealed.clones).toBe(0);
-    // units_sold approximated as human buyers (agents not distinguished on-chain)
+    // units_sold split: humans = units_sold - units_sold_agents, agents = units_sold_agents
     expect(sealed.buyers).toEqual({ humans: 3, agents: 0 });
     expect(sealed.return30dPct).toBe(0);
     expect(sealed.sharpe).toBe(0);
@@ -579,6 +581,50 @@ describe("ApiMarketplaceData delegation", () => {
   });
 });
 
+describe("ApiMarketplaceData.importListing (open tier)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("posts to the open import route with the wallet address and returns {agent_id}", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => mockOkJson({ agent_id: "01HNEWAGENT" }));
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const out = await api.importListing("4");
+
+    expect(out).toEqual({ agent_id: "01HNEWAGENT" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/marketplace/listings/4/import",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ address: ADDR }),
+      }),
+    );
+  });
+
+  it("throws WalletRequiredError when no wallet is connected", async () => {
+    mockedChain.currentAddress.mockResolvedValue(null);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const api = new ApiMarketplaceData(makeFallback());
+    await expect(api.importListing("4")).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("FixtureMarketplaceData.importListing (open tier)", () => {
+  it("returns a deterministic fake {agent_id} (no chain, no fetch)", async () => {
+    const fixture = new FixtureMarketplaceData();
+    const a = await fixture.importListing("4");
+    const b = await fixture.importListing("4");
+    // Deterministic per listing id (same input → same agent_id).
+    expect(a.agent_id).toBe(b.agent_id);
+    expect(typeof a.agent_id).toBe("string");
+    expect(a.agent_id.length).toBeGreaterThan(0);
+  });
+});
+
 describe("chooseMarketplaceData", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -605,5 +651,32 @@ describe("chooseMarketplaceData", () => {
     );
     const fallback = makeFallback();
     expect(await chooseMarketplaceData(fallback)).toBe(fallback);
+  });
+});
+
+describe("ApiMarketplaceData.setListingPrice", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("POSTs to /api/marketplace/listings/:id/price and returns a TxRef", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ listing_id: 7, price_usdc: 25, tx_hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab" }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const result = await api.setListingPrice("7", 25);
+    expect(result).toEqual({ txHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab", network: "mantle-sepolia" });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/marketplace/listings/7/price",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ price_usdc: 25 }) }),
+    );
+  });
+
+  it("setListingPrice with price 0 (free) works correctly", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ listing_id: 7, price_usdc: 0, tx_hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab" }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const result = await api.setListingPrice("7", 0);
+    expect(result.network).toBe("mantle-sepolia");
+    expect(result.txHash).toBeTruthy();
   });
 });

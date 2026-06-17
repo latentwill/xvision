@@ -43,6 +43,8 @@ const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) =
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
+const AutoresearcherSettingsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.AutoresearcherSettingsRoute })));
+const SettingsToolsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolsRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -84,8 +86,8 @@ const LeaderboardSlice = lazy(() => import("./features/marketplace/routes/leader
 const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRoute").then((m) => ({ default: m.LineageRoute })));
 const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
-const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
 const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
+const MyListingsRoute = lazy(() => import("./features/marketplace/routes/MyListingsRoute").then((m) => ({ default: m.MyListingsRoute })));
 const NotFoundRoute = lazy(() => import("./routes/not-found").then((m) => ({ default: m.NotFoundRoute })));
 
 /**
@@ -235,7 +237,7 @@ export const router = createBrowserRouter([
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
           { path: "wallet", element: page(<MarketplaceWalletRoute />) },
-          { path: "receipts/:tx", element: page(<ReceiptRoute />) },
+          { path: "mine", element: page(<MyListingsRoute />) },
         ],
       },
       {
@@ -263,8 +265,10 @@ export const router = createBrowserRouter([
           { path: "skills", element: <Navigate to="/agents/skills" replace /> },
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
+          { path: "autoresearcher", element: page(<AutoresearcherSettingsRoute />) },
           { path: "tool-policy", element: <Navigate to="/agents" replace /> },
           { path: "identity", element: <Navigate to="/settings/marketplace" replace /> },
+          { path: "tools", element: page(<SettingsToolsRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

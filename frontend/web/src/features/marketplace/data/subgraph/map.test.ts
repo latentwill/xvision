@@ -77,7 +77,6 @@ describe("mapListingRow", () => {
     expect(row.assets).toEqual([]);
     expect(row.sharpe).toBe(0);
     expect(row.return30dPct).toBe(0);
-    expect(row.clones).toBe(0);
     expect(row.transferableLicense).toBe(false);
     // QA9: name is undefined when no manifest
     expect(row.name).toBeUndefined();

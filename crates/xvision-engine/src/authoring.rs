@@ -377,6 +377,7 @@ pub async fn update_manifest(
         color: req.color,
         asset_universe: req.asset_universe,
         decision_cadence_minutes: req.decision_cadence_minutes,
+        creator: None,
     };
     apply_metadata_patch(&mut strategy, patch).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -431,6 +432,8 @@ pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -
         activates: req.activates,
         prompt_override: None,
         model_override: None,
+        checkpoint: None,
+        veto: None,
     });
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         strategy.pipeline.kind = PipelineKind::Sequential;
@@ -1306,6 +1309,8 @@ mod tests {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
             AgentRef {
                 agent_id: "01HZTRADER".into(),
@@ -1313,6 +1318,8 @@ mod tests {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             },
         ];
         strategy.pipeline = PipelineDef {
@@ -1496,6 +1503,8 @@ mod tests {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         });
         store.save(&strategy).await.unwrap();
 
@@ -1544,6 +1553,8 @@ mod tests {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         });
         strategy.acknowledge_no_filter = true;
         store.save(&strategy).await.unwrap();

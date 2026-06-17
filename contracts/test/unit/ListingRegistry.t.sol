@@ -151,4 +151,75 @@ contract ListingRegistryTest is BaseTest {
         emit IListingRegistry.ListingCreated(1, seller, lineage, keccak256("variant-bundle"), 0, 1);
         _createListing(seller, lineage, 1, false);
     }
+
+    // ---- updatePrice: in-place repricing (seller-only) ------------------
+
+    /// The seller can change a listing's price in place; everything else
+    /// (tier, fee snapshot, content, transferable) is untouched.
+    function test_updatePrice_changesPriceInPlace() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 15_000_000, false);
+
+        vm.prank(seller);
+        listings.updatePrice(lid, 9_000_000);
+
+        IListingRegistry.Listing memory l = listings.getListing(lid);
+        assertEq(l.priceUSDC, 9_000_000, "price updated");
+        assertEq(l.tier, 0, "tier untouched");
+        assertEq(l.protocolFeeBps, 500, "fee snapshot untouched");
+        assertFalse(l.revoked);
+    }
+
+    function test_updatePrice_emitsEvent() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 15_000_000, false);
+        vm.expectEmit(true, false, false, true, address(listings));
+        emit IListingRegistry.ListingPriceUpdated(lid, 15_000_000, 9_000_000);
+        vm.prank(seller);
+        listings.updatePrice(lid, 9_000_000);
+    }
+
+    /// Repricing a soulbound listing to 0 makes it free (open/clone path).
+    function test_updatePrice_toZero_freeSoulbound_ok() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 15_000_000, false);
+        vm.prank(seller);
+        listings.updatePrice(lid, 0);
+        assertEq(listings.getListing(lid).priceUSDC, 0);
+    }
+
+    function test_updatePrice_revert_notSeller() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 1, false);
+        vm.prank(other);
+        vm.expectRevert(abi.encodeWithSelector(ListingRegistry.NotSeller.selector, lid, other));
+        listings.updatePrice(lid, 2);
+    }
+
+    function test_updatePrice_revert_unknown() public {
+        vm.prank(seller);
+        vm.expectRevert(abi.encodeWithSelector(ListingRegistry.UnknownListing.selector, uint256(999)));
+        listings.updatePrice(999, 1);
+    }
+
+    function test_updatePrice_revert_revoked() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 1, false);
+        vm.prank(seller);
+        listings.revokeListing(lid);
+        vm.prank(seller);
+        vm.expectRevert(abi.encodeWithSelector(ListingRegistry.AlreadyRevoked.selector, lid));
+        listings.updatePrice(lid, 2);
+    }
+
+    /// A paid + transferable listing cannot be repriced to free (0): that would
+    /// recreate the forbidden free+transferable combo (Finding 3), so the
+    /// create-time invariant is preserved on reprice.
+    function test_updatePrice_revert_freeAndTransferable() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 5_000_000, true);
+        vm.prank(seller);
+        vm.expectRevert(ListingRegistry.FreeTransferableForbidden.selector);
+        listings.updatePrice(lid, 0);
+    }
 }

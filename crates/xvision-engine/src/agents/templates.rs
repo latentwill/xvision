@@ -54,6 +54,28 @@ pub struct AgentTemplate {
     pub slots: Vec<AgentSlot>,
 }
 
+/// Tools granted to every trader / executor slot.
+///
+/// Includes the two baseline tools (`ohlcv` and `submit_decision`) plus the
+/// six Nansen/Elfa signal tools added in Task 6.1. Slots that already had
+/// `ohlcv` are upgraded to this set; risk/router/analyst slots that had an
+/// empty `allowed_tools` are left untouched.
+fn trader_tools() -> Vec<String> {
+    [
+        "ohlcv",
+        "submit_decision",
+        "nansen_smart_money_flow",
+        "nansen_token_screener",
+        "nansen_flow_intel",
+        "elfa_smart_mentions",
+        "elfa_trending_tokens",
+        "elfa_trending_narratives",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 pub fn builtin_templates() -> Vec<AgentTemplate> {
     vec![
         AgentTemplate {
@@ -80,7 +102,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                allowed_tools: trader_tools(),
                 delta_briefing: None,
             }],
         },
@@ -130,7 +152,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
             ],
@@ -160,7 +182,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -201,7 +223,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
             ],
@@ -236,7 +258,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                allowed_tools: trader_tools(),
                 delta_briefing: None,
             }],
         },
@@ -269,7 +291,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                allowed_tools: trader_tools(),
                 delta_briefing: None,
             }],
         },
@@ -327,7 +349,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -350,7 +372,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -372,7 +394,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
             ],
@@ -433,7 +455,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
             ],
@@ -492,7 +514,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
             ],
@@ -527,7 +549,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
-                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+                    allowed_tools: trader_tools(),
                     delta_briefing: None,
                 },
                 AgentSlot {
@@ -676,6 +698,36 @@ mod tests {
         let names: Vec<&str> = tpl.slots.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["paper_trader", "executor"]);
         assert!(tpl.slots.iter().all(|s| !s.system_prompt.is_empty()));
+    }
+
+    #[test]
+    fn trader_slots_grant_signal_tools() {
+        let templates = builtin_templates();
+        // every slot that has "ohlcv" should now also have the 6 signal tools
+        let mut checked = 0;
+        for t in &templates {
+            for slot in &t.slots {
+                if slot.allowed_tools.iter().any(|x| x == "ohlcv") {
+                    for n in [
+                        "nansen_smart_money_flow",
+                        "nansen_token_screener",
+                        "nansen_flow_intel",
+                        "elfa_smart_mentions",
+                        "elfa_trending_tokens",
+                        "elfa_trending_narratives",
+                    ] {
+                        assert!(
+                            slot.allowed_tools.iter().any(|x| x == n),
+                            "template {} slot {} missing {n}",
+                            t.id,
+                            slot.name
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0, "expected at least one trader/executor slot with ohlcv");
     }
 
     #[test]

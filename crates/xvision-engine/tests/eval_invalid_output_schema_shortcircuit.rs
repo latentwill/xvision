@@ -101,6 +101,8 @@ fn minimal_strategy() -> Strategy {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,
@@ -135,6 +137,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-invalid-schema-trader".into(),
         noop_skip: true,
+        nano: None,
     }
 }
 

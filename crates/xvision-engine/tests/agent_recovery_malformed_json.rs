@@ -270,6 +270,7 @@ fn trader_agent_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::default(),
         agent_id: "test-trader-agent".into(),
         noop_skip: false,
+        nano: None,
     }
 }
 

@@ -45,24 +45,39 @@ describe("RecentCyclesTable", () => {
     expect(link).toHaveAttribute("href", "/optimizer/cycle/cyc-1");
   });
 
-  it("does not show a misleading Strategy column from stale cycle metadata", async () => {
+  // QA: the cycle history needs a Strategy column. The value is sourced from
+  // the authoritative session bridge (events → session → strategy_id), not the
+  // stale lineage metadata an earlier attempt rejected — so it links to the
+  // strategy detail when present.
+  it("shows a Strategy column linking to the strategy detail", async () => {
     vi.spyOn(client, "apiFetch").mockResolvedValue([
       row({ cycle_id: "cyc-1", strategy_id: "strat-abc" }),
     ]);
     renderWithProviders(<RecentCyclesTable />);
     await screen.findByRole("link", { name: /cyc-1/ });
-    expect(screen.queryByRole("columnheader", { name: "Strategy" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "strat-abc" })).toBeNull();
+    expect(
+      screen.getByRole("columnheader", { name: "Strategy" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "strat-abc" })).toHaveAttribute(
+      "href",
+      "/strategies/strat-abc",
+    );
   });
 
-  it("renders a cycle when no strategy metadata exists", async () => {
+  it("renders a cycle with no strategy as an em-dash (no link)", async () => {
     vi.spyOn(client, "apiFetch").mockResolvedValue([
       row({ cycle_id: "cyc-nostrat", strategy_id: null }),
     ]);
     renderWithProviders(<RecentCyclesTable />);
     await screen.findByRole("link", { name: /cyc-nostrat/ });
-    expect(screen.queryByRole("columnheader", { name: "Strategy" })).toBeNull();
-    expect(screen.queryByRole("link", { name: /agents/ })).toBeNull();
+    // Column still present; the cell is a non-link placeholder (no /strategies link).
+    expect(
+      screen.getByRole("columnheader", { name: "Strategy" }),
+    ).toBeInTheDocument();
+    const hasStrategyLink = screen
+      .getAllByRole("link")
+      .some((l) => l.getAttribute("href")?.startsWith("/strategies/"));
+    expect(hasStrategyLink).toBe(false);
   });
 
   // UI3: the history list must not render unbounded rows — it caps at the

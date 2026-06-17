@@ -22,6 +22,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     getStrategy: vi.fn(),
+    getStrategyRequirements: vi.fn(),
     patchStrategyMetadata: vi.fn(),
     validateDraft: vi.fn(),
     deleteStrategy: vi.fn(),
@@ -119,8 +120,10 @@ vi.mock("@/components/ModelPicker", () => ({
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],
+    profile: () => ["settings", "profile"],
   },
   listProviders: vi.fn(),
+  getProfile: vi.fn().mockResolvedValue({ display_name: null, persisted: false }),
 }));
 
 function renderRoute() {
@@ -156,6 +159,10 @@ beforeEach(() => {
       default_model: null,
   });
   vi.mocked(strategyApi.deleteStrategy).mockResolvedValue(undefined);
+  vi.mocked(strategyApi.getStrategyRequirements).mockResolvedValue({
+    requirements: [],
+    all_models_satisfied: true,
+  });
 });
 
 afterEach(() => {

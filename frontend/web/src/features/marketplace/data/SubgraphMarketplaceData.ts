@@ -14,7 +14,8 @@
 //   getReceipt           needs licenseTokenId/bundleCid (post-purchase; §3.4)
 //   getViewer            wallet state (§3.4, wallet signer deferred)
 //   listListableStrategies / createPublishDraft   operator-local (dashboard/CLI)
-//   submitListing / purchaseIntent / cloneIntent  on-chain WRITES (driver; §3.4)
+//   submitListing / purchaseIntent                on-chain WRITES (driver; §3.4)
+//   importSealed / importListing                   license-gated finalize (server)
 //   subscribePurchases   live feed (could poll sales later)
 //
 // Display metrics (sharpe/return/equity) and name/model come from the eval and
@@ -183,8 +184,14 @@ export class SubgraphMarketplaceData implements MarketplaceData {
   purchaseIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.purchaseIntent(listingId);
   }
-  cloneIntent(listingId: Id): Promise<TxRef> {
-    return this.fallback.cloneIntent(listingId);
+  importSealed(listingId: Id): Promise<{ agent_id: string }> {
+    return this.fallback.importSealed(listingId);
+  }
+  importListing(listingId: Id): Promise<{ agent_id: string }> {
+    return this.fallback.importListing(listingId);
+  }
+  setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    return this.fallback.setListingPrice(listingId, priceUsdc);
   }
 
   // --- helpers -----------------------------------------------------------

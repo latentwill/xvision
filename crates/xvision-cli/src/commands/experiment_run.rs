@@ -460,6 +460,10 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
+    // Wire the observability bus onto the CLI ctx so each eval run in the
+    // experiment's batch records spans + finalizes its agent_run (same gap as
+    // `eval run` / `eval batch`). Drained via `obs_bus.quiesce().await` below.
+    let (ctx, obs_bus) = crate::commands::eval::wire_obs_bus(ctx);
 
     // `--assets` is a RUN-LAYER subset of the strategy universe (which assets
     // to trade), NOT a scenario filter — scenarios are asset-free. Task C3:
@@ -613,7 +617,11 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         review_with: args.review_with.clone(),
         xvn_home: args.xvn_home.clone(),
     };
-    let batch_result = run_batch_via_env_with_assets(&ctx, &batch_args, asset_subset).await?;
+    let batch_result = run_batch_via_env_with_assets(&ctx, &batch_args, asset_subset).await;
+    // Drain the obs bus on BOTH success and error before this short-lived CLI
+    // process exits, so every run's spans + RunFinished land in SQLite.
+    obs_bus.quiesce().await;
+    let batch_result = batch_result?;
 
     // Step 3: Bind the persisted batch to the experiment row.
     update_experiment(

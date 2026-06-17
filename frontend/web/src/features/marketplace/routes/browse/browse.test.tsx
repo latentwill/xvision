@@ -326,7 +326,6 @@ const PAID_ROW: ListingRow = {
   tier: "sealed",
   verification: "verified",
   acceptsX402: true,
-  clones: 8,
   transferableLicense: false,
   genArtSeed: "btc-momentum-7a91-v3",
 };

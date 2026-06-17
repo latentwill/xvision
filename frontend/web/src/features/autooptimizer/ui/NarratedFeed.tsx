@@ -10,6 +10,15 @@ const toneClass: Record<NarrationTone, string> = {
   neutral: "text-text-2",
 };
 
+/** Marker dot colour per tone — the timeline spine reads at a glance. */
+const dotClass: Record<NarrationTone, string> = {
+  kept: "bg-gold",
+  rejected: "bg-danger",
+  suspect: "bg-warn",
+  warn: "bg-warn",
+  neutral: "bg-text-4",
+};
+
 function fmtTime(ts?: string) {
   if (!ts) return "";
   try {
@@ -28,22 +37,34 @@ export function NarratedFeed({
 }) {
   const rows = events.slice(-maxItems);
   return (
-    <ol className="space-y-1" aria-label="Cycle events">
+    <ol className="space-y-0" aria-label="Cycle events">
       {rows.map((e, i) => {
         const n = narrateEvent(e);
+        const isLast = i === rows.length - 1;
         const line = (
-          <span className="flex gap-3 font-mono text-[12px]">
-            <span className="flex-none text-text-4">{fmtTime(e.ts)}</span>
-            <span className={toneClass[n.tone]}>{n.sentence}</span>
+          <span className="flex min-w-0 items-baseline gap-3 font-mono text-[12px]">
+            <span className="flex-none tabular-nums text-text-4">{fmtTime(e.ts)}</span>
+            <span className={`min-w-0 ${toneClass[n.tone]}`}>{n.sentence}</span>
           </span>
         );
         return (
-          <li key={e.ts ? `${e.ts}-${i}` : i}>
-            {n.hash ? (
-              <ExpandableArtifact hash={n.hash} summary={line} />
-            ) : (
-              <div className="px-3 py-2">{line}</div>
-            )}
+          <li key={e.ts ? `${e.ts}-${i}` : i} className="relative flex gap-3">
+            {/* Timeline spine: a faint connector with a tone-coloured node. */}
+            <span className="relative flex w-2 flex-none justify-center" aria-hidden>
+              {!isLast && (
+                <span className="absolute top-3 bottom-0 w-px bg-border-soft" />
+              )}
+              <span
+                className={`relative z-10 mt-[7px] h-1.5 w-1.5 rounded-full ${dotClass[n.tone]}`}
+              />
+            </span>
+            <div className="min-w-0 flex-1">
+              {n.hash ? (
+                <ExpandableArtifact hash={n.hash} summary={line} />
+              ) : (
+                <div className="py-1">{line}</div>
+              )}
+            </div>
           </li>
         );
       })}

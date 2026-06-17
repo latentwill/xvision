@@ -16,7 +16,7 @@ use xvision_engine::api::eval::RunDetail;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
-use xvision_engine::safety::SafetyManager;
+use xvision_engine::safety::{SafetyGate, SafetyManager};
 use xvision_observability::{
     AgentRunRecorder, BroadcastSubscriber, RunEventBus as ObsRunEventBus, SqliteRecorder,
 };
@@ -113,6 +113,11 @@ pub struct AppState {
     /// `xvn optimizer mutate-once --ipc-socket` connects; the SSE handler
     /// at `GET /api/autooptimizer/events` subscribes per request.
     pub autooptimizer_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
+    /// Broadcast channel for autoresearch training subprocess stdout lines.
+    /// The run harness publishes one `AutoresearchStdoutLine` per stdout line;
+    /// `GET /api/autoresearch/runs/:id/stream` subscribes and filters by run_id.
+    pub autoresearch_stdout_tx:
+        tokio::sync::broadcast::Sender<crate::sse::autoresearch_sse::AutoresearchStdoutLine>,
     /// F28: registry of cooperative cancel flags for in-flight optimizer cycles,
     /// keyed by `cycle_id`. `start_cycle` registers a flag and passes it into
     /// `run_cycle`; `POST /cycles/:id/cancel` sets it so the cycle stops
@@ -369,6 +374,7 @@ impl AppState {
         }
 
         let (autooptimizer_tx, _) = tokio::sync::broadcast::channel(256);
+        let (autoresearch_stdout_tx, _) = tokio::sync::broadcast::channel(512);
 
         Ok(Self {
             pool,
@@ -387,6 +393,7 @@ impl AppState {
             cli_runner,
             safety_manager,
             autooptimizer_tx,
+            autoresearch_stdout_tx,
             autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
             marketplace_snapshot: Default::default(),
@@ -499,6 +506,10 @@ impl AppState {
         // `/api/agent-runs/<eval_run_id>` and the trace dock.
         .with_obs_event_bus(self.obs_event_bus.clone())
         .with_obs_config(self.obs_config.clone())
+        // Wire the real safety gate backed by the process-wide SafetyManager
+        // singleton. Without this the gate would default to allow_all (no-op)
+        // in production even though the manager is bootstrapped at startup.
+        .with_safety_gate(SafetyGate::new(self.safety_manager.clone()))
     }
 
     /// Read a cached models report for `provider` if it's within the TTL.
@@ -713,5 +724,33 @@ impl AppState {
         .context("create publish_receipts token_id index")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// WU-1.3: Verify that `AppState::api_context()` returns an `ApiContext`
+    /// whose `safety_gate` is backed by the real `SafetyManager` (enforcing),
+    /// not the no-op `allow_all` gate that `ApiContext::new` defaults to.
+    ///
+    /// RED: before `AppState::api_context()` calls `.with_safety_gate(...)`,
+    /// this test fails because the gate is `allow_all` → `is_enforcing()` is
+    /// false. GREEN: after the wiring, the gate is backed by `self.safety_manager`
+    /// and `is_enforcing()` returns true.
+    #[tokio::test]
+    async fn api_context_carries_enforcing_safety_gate() {
+        let tmp = TempDir::new().expect("tempdir");
+        let state = AppState::new(tmp.path().to_path_buf())
+            .await
+            .expect("AppState::new");
+        assert!(
+            state.api_context().safety_gate.is_enforcing(),
+            "api_context().safety_gate should be enforcing (backed by SafetyManager), \
+             but got allow_all — check that AppState::api_context calls \
+             .with_safety_gate(SafetyGate::new(self.safety_manager.clone()))"
+        );
     }
 }

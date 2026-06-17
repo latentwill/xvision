@@ -66,7 +66,8 @@ target/
 # generated mobile artifacts). Repo-root anchored so it doesn't shadow
 # nested `docs/` paths like `crates/xvision-dashboard/src/routes/docs/`.
 # The in-app wiki lives at `crates/xvision-dashboard/wiki/`, not here.
-# NOTE: docs/design/ is tracked for design research and prompts.
+# Design docs (docs/design/, etc.) are NOT distributed — see the
+# "Design IP" block near the end of this file.
 /docs/*.md
 /docs/*.png
 /docs/*.jpg
@@ -92,10 +93,6 @@ target/
 /docs/generated/
 /docs/mobile/
 /docs/.DS_Store
-!/docs/design/
-!/docs/design/**
-# Keep macOS cruft out of the tracked docs/design tree (the negation above re-includes it otherwise)
-/docs/design/**/.DS_Store
 
 # NotebookLM research exports — local scratch, not tracked
 /docs/NLM/
@@ -118,9 +115,6 @@ target/
 
 # 1Password env wrapper — secrets indirection, never commit
 .op_env
-
-# Design source archives — store in Figma/Drive, not as git blobs
-/docs/design/*.zip
 
 # Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
 crates/xvision-dashboard/static/*
@@ -158,3 +152,65 @@ tools/agent-conductor/dist/
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# ──────────────────────────────────────────────────────────────────────────
+# Design IP — NOT distributed in the repo. Working copies stay on disk locally;
+# git history is preserved (these were untracked via `git rm --cached`, not
+# purged). The product wiki at crates/xvision-dashboard/wiki/ is separate and
+# stays tracked. docs/strategies/ is embedded into the xvn binary — keep it.
+# (Placed last so it overrides the earlier !/docs/superpowers/ re-include.)
+# ──────────────────────────────────────────────────────────────────────────
+/docs/design/
+/docs/design-audit/
+/docs/testnft/
+/docs/superpowers/designs/
+/docs/superpowers/evidence/2026-05-24-chat-rail-dspy-strategy-agents/chat-rail/unified-stream-dashboard.png
+/frontend/prototype/
+/marketing/
+
+# Build hygiene — stale npm lockfile (pnpm-lock.yaml is canonical) + generated research scratch
+/frontend/web/package-lock.json
+/docs/research/.gen/
+
+# ──────────────────────────────────────────────────────────────────────────
+# Ship only the in-app wiki + app runtime — exclude ALL internal documentation.
+# Untracked via `git rm --cached` (history preserved); working copies stay local.
+# KEPT (build/runtime, not ignored): docs/strategies/ (include_dir!),
+# crates/**/prompts/** + data/examples/README.md (include_str!), the in-app wiki
+# crates/xvision-dashboard/wiki/, README.md, CHANGELOG.md, CREDITS.md, LICENSE.
+# ──────────────────────────────────────────────────────────────────────────
+/docs/*
+!/docs/strategies
+/team/
+/decisions/
+/strategies/
+/qa/
+
+# Internal planning/process docs + agent config at repo root
+/AGENTS.md
+/CLAUDE.md
+/MANUAL.md
+/PRODUCT.md
+/architecture.md
+/implementation-plan.md
+/BACKEND_AUDIT_2026-05-13.md
+/FOLLOWUPS.md
+/QA_TRACKER.md
+/SERVICE-INVENTORY.md
+/qa-xvision-30day-eval.md
+/v1-build-steps.md
+/v1-shipping-plan.md
+
+# Crate & tooling READMEs (data/examples/README.md stays — it's include_str!'d)
+/crates/xvision-dashboard/README.md
+/crates/xvision-dashboard/src/auth/README.md
+/crates/xvision-engine/README.md
+/crates/xvision-engine/src/api/README.md
+/crates/xvision-eval/src/baselines/AUDIT.md
+/crates/xvision-filters/tests/fixtures/README.md
+/crates/xvision-marketplace/subgraph/README.md
+/scripts/README.md
+/docker/README.md
+/contracts/README.md
+/.beads/README.md
+/.github/projects/agent-cicd-board.md

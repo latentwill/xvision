@@ -125,6 +125,38 @@ fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
     validate_provider_name_str(name).map_err(garde::Error::new)
 }
 
+/// Accept only `http://` or `https://` base URLs (defense-in-depth, xvision-im2r.11).
+/// Rejects other schemes (ftp://, file://, etc.) with a clear error.
+fn validate_data_tool_base_url(value: &str, _ctx: &()) -> garde::Result {
+    if value.starts_with("http://") || value.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(garde::Error::new("base_url must begin with http:// or https://"))
+    }
+}
+
+/// Accept only POSIX-style env-var names: `^[A-Z][A-Z0-9_]*$`, or empty
+/// (empty = no auth required, mirrors `ProviderEntry` convention).
+/// Rejects lowercase letters, shell-special chars, etc. (xvision-im2r.11).
+fn validate_api_key_env(value: &str, _ctx: &()) -> garde::Result {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_uppercase() {
+        return Err(garde::Error::new(
+            "api_key_env must start with an uppercase ASCII letter (A-Z)",
+        ));
+    }
+    if !chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return Err(garde::Error::new(
+            "api_key_env must match ^[A-Z][A-Z0-9_]*$ (uppercase letters, digits, underscores only)",
+        ));
+    }
+    Ok(())
+}
+
 // --- runtime ----------------------------------------------------------------
 
 /// Which agent runtime drives LLM-backed slots.
@@ -183,6 +215,11 @@ pub struct RuntimeConfig {
     #[serde(default)]
     #[garde(dive)]
     pub data: Data,
+    /// External data/signal providers (Nansen, Elfa, …). Omitting
+    /// `[[data_tools]]` from the TOML is valid — defaults to an empty vec.
+    #[serde(default)]
+    #[garde(dive)]
+    pub data_tools: Vec<DataToolEntry>,
 }
 
 /// Top-level `[data]` section. Holds per-fetcher knobs; today only Alpaca.
@@ -334,6 +371,40 @@ impl Backtest {
     }
 }
 
+// --- data tools -------------------------------------------------------------
+
+/// Data/signal providers (NOT LLM providers — kept separate from ProviderKind).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DataToolKind {
+    Nansen,
+    Elfa,
+}
+
+/// One external data-signal provider. Secrets stay in env — `api_key_env`
+/// is the env-var NAME, never the key (mirrors `ProviderEntry`).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct DataToolEntry {
+    #[garde(skip)]
+    pub kind: DataToolKind,
+    #[garde(length(max = 512), custom(validate_data_tool_base_url))]
+    pub base_url: String,
+    #[garde(length(max = 64), custom(validate_api_key_env))]
+    pub api_key_env: String,
+    #[serde(default)]
+    #[garde(skip)]
+    pub enabled: bool,
+    /// Per-run credit budget cap (D8). `None` => uncapped.
+    #[serde(default)]
+    #[garde(skip)]
+    pub budget_credits_per_run: Option<u32>,
+    /// Nansen-only: backtest lookahead lag in days (D4). `None` => default 1.
+    /// garde does not support `range` on `Option<u32>`; validated at use-site.
+    #[serde(default)]
+    #[garde(skip)]
+    pub nansen_lookahead_lag_days: Option<u32>,
+}
+
 // --- whitelist --------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
@@ -361,6 +432,19 @@ pub struct AssetEntry {
     #[garde(skip)]
     #[serde(default)]
     pub venues: AssetVenues,
+    /// On-chain network slug for Nansen, e.g. "ethereum" | "solana" | "base".
+    /// None for non-chain assets (equities, RWA). Typed source of truth for
+    /// wiring the registry OnceLock (Task 6.4 follow-up).
+    #[garde(skip)]
+    #[serde(default)]
+    pub chain: Option<String>,
+    /// Token contract address / mint for Nansen. None for non-chain assets.
+    /// Carries the same grounding caveat as `signal_asset_identity` in
+    /// `xvision_core::asset_registry` — verify against live Nansen docs before
+    /// mainnet (Task 6.4).
+    #[garde(skip)]
+    #[serde(default)]
+    pub contract_address: Option<String>,
 }
 
 /// Per-venue symbol mappings. Both fields are optional so that alpaca-only
@@ -380,6 +464,53 @@ impl WhitelistConfig {
             .filter(|a| a.enabled)
             .map(|a| a.symbol.as_str())
             .collect()
+    }
+}
+
+// --- byreal spot curated set ------------------------------------------------
+
+/// Token category for a curated Solana-spot asset. `xstock` (Backed Finance
+/// tokenized equities) is a plain SPL token; the tag drives display only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpotAssetKind {
+    Spl,
+    Xstock,
+}
+
+/// One operator-curated Solana-spot asset.
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct SpotAssetEntry {
+    /// Ticker symbol used by the agent and `xvn spot` (e.g. "SOL", "AAPLx").
+    #[garde(length(min = 1, max = 32))]
+    pub symbol: String,
+    /// SPL mint address (base58). xStocks are plain SPL mints.
+    #[garde(length(min = 32, max = 64))]
+    pub mint: String,
+    #[garde(skip)]
+    pub kind: SpotAssetKind,
+    /// On-chain decimals for the mint (informational; byreal-cli auto-resolves
+    /// decimals from UI amounts).
+    #[garde(range(min = 0, max = 18))]
+    pub decimals: u8,
+}
+
+/// Curated whitelist mapping `symbol → { mint, kind, decimals }`, plus the
+/// USDC mint used as the quote leg of every buy/sell swap. Out-of-set symbols
+/// are refused (whitelist, not a hint list).
+#[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
+pub struct SpotAssetConfig {
+    /// USDC SPL mint used as the quote asset for buys (USDC→token) and sells.
+    #[garde(length(min = 32, max = 64))]
+    pub usdc_mint: String,
+    #[garde(dive)]
+    pub assets: Vec<SpotAssetEntry>,
+}
+
+impl SpotAssetConfig {
+    /// Case-insensitive ticker lookup. `None` for symbols outside the curated set.
+    pub fn resolve(&self, symbol: &str) -> Option<&SpotAssetEntry> {
+        self.assets.iter().find(|a| a.symbol.eq_ignore_ascii_case(symbol))
     }
 }
 
@@ -672,6 +803,16 @@ pub fn load_runtime_lenient(path: &Path) -> Result<(RuntimeConfig, Vec<InvalidPr
 
 pub fn load_whitelist(path: &Path) -> Result<WhitelistConfig, ConfigError> {
     read_toml(path)
+}
+
+/// Load the curated Byreal-spot asset set from a TOML file. Validated via `garde`.
+pub fn load_spot_assets(path: &Path) -> Result<SpotAssetConfig, ConfigError> {
+    read_toml(path)
+}
+
+/// Default location of the curated spot-asset config under `xvn_home`.
+pub fn spot_assets_path(xvn_home: &Path) -> PathBuf {
+    xvn_home.join("config").join("byreal_spot_assets.toml")
 }
 
 pub fn load_risk(path: &Path) -> Result<RiskConfig, ConfigError> {
@@ -1597,6 +1738,150 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(v.as_str(), Some("vllm"));
     }
 
+    // --- data_tools (Task 2.1) -----------------------------------------------
+
+    #[test]
+    fn data_tool_entry_round_trips() {
+        let toml = r#"
+kind = "nansen"
+base_url = "https://api.nansen.ai"
+api_key_env = "NANSEN_API_KEY"
+enabled = true
+budget_credits_per_run = 500
+nansen_lookahead_lag_days = 1
+"#;
+        let dt: DataToolEntry = toml::from_str(toml).unwrap();
+        assert_eq!(dt.kind, DataToolKind::Nansen);
+        assert_eq!(dt.api_key_env, "NANSEN_API_KEY");
+        assert!(dt.enabled);
+        assert_eq!(dt.budget_credits_per_run, Some(500));
+        assert_eq!(dt.nansen_lookahead_lag_days, Some(1));
+        // garde validation passes for a well-formed entry
+        dt.validate().unwrap();
+    }
+
+    #[test]
+    fn data_tools_defaults_empty_and_optional_fields_absent() {
+        // kebab-case kind, minimal entry, optionals omitted
+        let dt: DataToolEntry = toml::from_str(
+            "kind = \"elfa\"\nbase_url = \"https://api.elfa.ai\"\napi_key_env = \"ELFA_API_KEY\"\n",
+        )
+        .unwrap();
+        assert_eq!(dt.kind, DataToolKind::Elfa);
+        assert!(!dt.enabled); // serde default false
+        assert_eq!(dt.budget_credits_per_run, None);
+        assert_eq!(dt.nansen_lookahead_lag_days, None);
+    }
+
+    // --- DataToolEntry garde validators (xvision-im2r.11) -------------------
+
+    fn minimal_data_tool_entry(base_url: &str, api_key_env: &str) -> DataToolEntry {
+        DataToolEntry {
+            kind: DataToolKind::Nansen,
+            base_url: base_url.to_string(),
+            api_key_env: api_key_env.to_string(),
+            enabled: false,
+            budget_credits_per_run: None,
+            nansen_lookahead_lag_days: None,
+        }
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_https_base_url() {
+        let entry = minimal_data_tool_entry("https://api.nansen.ai", "NANSEN_API_KEY");
+        entry.validate().expect("https URL must be accepted");
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_http_base_url() {
+        let entry = minimal_data_tool_entry("http://localhost:8080", "LOCAL_KEY");
+        entry.validate().expect("http URL must be accepted");
+    }
+
+    #[test]
+    fn data_tool_entry_rejects_non_http_base_url() {
+        let ftp = minimal_data_tool_entry("ftp://x.example.com", "KEY");
+        assert!(
+            ftp.validate().is_err(),
+            "ftp:// scheme must be rejected by validate()"
+        );
+        let file = minimal_data_tool_entry("file:///etc/passwd", "KEY");
+        assert!(
+            file.validate().is_err(),
+            "file:// scheme must be rejected by validate()"
+        );
+    }
+
+    #[test]
+    fn data_tool_entry_rejects_bad_api_key_env() {
+        // lowercase name
+        let bad1 = minimal_data_tool_entry("https://api.example.com", "lowercase");
+        assert!(bad1.validate().is_err(), "lowercase api_key_env must be rejected");
+        // shell-special chars
+        let bad2 = minimal_data_tool_entry("https://api.example.com", "foo;bar");
+        assert!(
+            bad2.validate().is_err(),
+            "api_key_env with semicolon must be rejected"
+        );
+        // starts with digit
+        let bad3 = minimal_data_tool_entry("https://api.example.com", "1KEY");
+        assert!(
+            bad3.validate().is_err(),
+            "api_key_env starting with digit must be rejected"
+        );
+    }
+
+    #[test]
+    fn data_tool_entry_accepts_valid_api_key_env() {
+        // Canonical uppercase name
+        let ok1 = minimal_data_tool_entry("https://api.nansen.ai", "NANSEN_API_KEY");
+        ok1.validate().expect("NANSEN_API_KEY must be accepted");
+        // Single-char uppercase (mirrors existing ProviderEntry tests)
+        let ok2 = minimal_data_tool_entry("https://api.nansen.ai", "K");
+        ok2.validate().expect("single uppercase letter must be accepted");
+        // Empty (no-auth endpoint, mirrors ProviderEntry convention)
+        let ok3 = minimal_data_tool_entry("https://api.nansen.ai", "");
+        ok3.validate()
+            .expect("empty api_key_env must be accepted (no-auth endpoint)");
+    }
+
+    #[test]
+    fn runtime_config_data_tools_defaults_empty() {
+        // A config without [[data_tools]] must load fine (serde default = empty vec).
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-data-tools.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        let cfg = load_runtime(&path).unwrap();
+        assert!(cfg.data_tools.is_empty(), "[[data_tools]] absent → empty vec");
+    }
+
     const BAD_STEP_HORIZON: &str = r#"
 [runtime]
 mode = "backtest"
@@ -1632,4 +1917,55 @@ vectors = "data/vectors"
 probes = "data/probes"
 sqlite_url = "sqlite://x.db"
 "#;
+
+    // --- byreal spot asset config --------------------------------------------
+
+    #[test]
+    fn loads_byreal_spot_assets_and_resolves_mint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("byreal_spot_assets.toml");
+        std::fs::write(
+            &path,
+            r#"
+usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[assets]]
+symbol = "SOL"
+mint = "So11111111111111111111111111111111111111112"
+kind = "spl"
+decimals = 9
+
+[[assets]]
+symbol = "AAPLx"
+mint = "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp"
+kind = "xstock"
+decimals = 8
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_spot_assets(&path).expect("valid config loads");
+        assert_eq!(cfg.usdc_mint, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+        let sol = cfg.resolve("SOL").expect("SOL is curated");
+        assert_eq!(sol.mint, "So11111111111111111111111111111111111111112");
+        assert_eq!(sol.decimals, 9);
+        assert_eq!(sol.kind, SpotAssetKind::Spl);
+        assert!(cfg.resolve("aaplx").is_some()); // case-insensitive
+        assert!(cfg.resolve("DOGE").is_none()); // whitelist: unknown refused
+    }
+
+    #[test]
+    fn rejects_spot_assets_with_empty_mint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(
+            &path,
+            "usdc_mint = \"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v\"\n[[assets]]\nsymbol = \"SOL\"\nmint = \"\"\nkind = \"spl\"\ndecimals = 9\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            load_spot_assets(&path),
+            Err(ConfigError::Validation { .. })
+        ));
+    }
 }

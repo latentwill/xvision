@@ -1380,6 +1380,8 @@ impl XvisionTools {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

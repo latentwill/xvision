@@ -8,7 +8,7 @@ function row(p: Partial<ListingRow>): ListingRow {
     creator: { address: "0xabc" }, model: "Claude", style: "Day",
     assets: ["BTC"], return30dPct: 10, sharpe: 1, buyers: { humans: 5, agents: 0 },
     priceUsdc: 49, tier: "sealed", transferableLicense: false, verification: "unverified",
-    acceptsX402: false, clones: 0, genArtSeed: "x", ...p,
+    acceptsX402: false, genArtSeed: "x", ...p,
   };
 }
 
@@ -65,6 +65,21 @@ describe("applyFilter", () => {
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "mom" }).rows).toHaveLength(1);
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "@ed" }).rows).toHaveLength(1);
     expect(applyFilter(withHandle, { ...defaultFilterState(), search: "zzz" }).rows).toHaveLength(0);
+  });
+
+  it("matches search over the display name, model, style and assets", () => {
+    // Operator report: searching "test" returned nothing for a listing named
+    // "test" because the old query only looked at id + handle.
+    const named = [
+      row({ id: "abc123", name: "Test Strategy", model: "Claude", style: "Swing", assets: ["DOGE"] }),
+    ];
+    const search = (q: string) =>
+      applyFilter(named, { ...defaultFilterState(), search: q }).rows;
+    expect(search("test")).toHaveLength(1); // display name
+    expect(search("claude")).toHaveLength(1); // model
+    expect(search("swing")).toHaveLength(1); // style
+    expect(search("doge")).toHaveLength(1); // asset
+    expect(search("nope")).toHaveLength(0);
   });
 
   it("filters by tier: open returns only open-tier rows", () => {

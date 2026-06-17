@@ -43,6 +43,22 @@ where
     s.serialize_str(&canonical_role(value))
 }
 
+/// Reference from a strategy's `AgentRef` to a trained nanochat checkpoint.
+/// When `Some`, the slot runs a local nanochat model instead of an LLM.
+/// Mutually exclusive with `model_override` at strategy-save validation time.
+/// Absent (the default) → omitted from wire → all existing strategy JSON and
+/// content hashes are byte-stable.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckpointRef {
+    /// FK → `trained_models.model_id` (ULID).
+    pub model_id: String,
+}
+
 /// One agent's appearance inside a strategy. `agent_id` is an FK to the
 /// `Agent` record in the workspace agent library; `role` is the
 /// user-defined role this agent plays in this particular strategy. The
@@ -86,6 +102,18 @@ pub struct AgentRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub model_override: Option<String>,
+    /// NEW: when present, this slot runs a local nanochat checkpoint instead of
+    /// an LLM. Absent (the default) → omitted from the wire so every existing
+    /// strategy's JSON and content hash is byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub checkpoint: Option<CheckpointRef>,
+    /// NEW: hard-gate (true) vs advisory (false) for nanochat filter slots.
+    /// None → omitted from wire (default semantics = hard gate for nanochat
+    /// slots, resolved at dispatch time). Omitted from wire when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub veto: Option<bool>,
 }
 
 impl AgentRef {
@@ -280,6 +308,8 @@ mod tests {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(
@@ -290,6 +320,8 @@ mod tests {
             !s.contains("model_override"),
             "absent override must be omitted: {s}"
         );
+        assert!(!s.contains("checkpoint"), "absent checkpoint must be omitted: {s}");
+        assert!(!s.contains("veto"), "absent veto must be omitted: {s}");
     }
 
     #[test]
@@ -300,6 +332,8 @@ mod tests {
             activates: None,
             prompt_override: Some("You are a disciplined momentum trader...".into()),
             model_override: Some("openrouter/google/gemini-3.1-flash-lite".into()),
+            checkpoint: None,
+            veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: AgentRef = serde_json::from_str(&s).unwrap();
@@ -325,6 +359,8 @@ mod tests {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: AgentRef = serde_json::from_str(&s).unwrap();
@@ -399,6 +435,8 @@ mod tests {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(
@@ -429,5 +467,55 @@ mod tests {
         .unwrap();
         assert_eq!(d.kind, PipelineKind::Sequential);
         assert!(d.edges.is_empty());
+    }
+
+    #[test]
+    fn checkpoint_ref_absent_omitted_from_wire() {
+        // Existing strategies with no checkpoint must serialize identically to
+        // before: new fields absent ⇒ omitted from wire ⇒ content hash stable.
+        let r = AgentRef {
+            agent_id: "01HZAGENT".into(),
+            role: "filter".into(),
+            activates: None,
+            prompt_override: None,
+            model_override: None,
+            checkpoint: None,
+            veto: None,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("checkpoint"), "absent checkpoint must be omitted: {s}");
+        assert!(!s.contains("veto"), "absent veto must be omitted: {s}");
+    }
+
+    #[test]
+    fn checkpoint_ref_round_trips_when_present() {
+        let r = AgentRef {
+            agent_id: "01HZAGENT".into(),
+            role: "filter".into(),
+            activates: None,
+            prompt_override: None,
+            model_override: None,
+            checkpoint: Some(CheckpointRef {
+                model_id: "01JNANO00000000000000000000".into(),
+            }),
+            veto: Some(true),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let back: AgentRef = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, r);
+        assert_eq!(back.checkpoint.as_ref().unwrap().model_id, "01JNANO00000000000000000000");
+        assert_eq!(back.veto, Some(true));
+    }
+
+    #[test]
+    fn agent_ref_legacy_json_without_checkpoint_or_veto_parses() {
+        // JSON written before these fields exist must still load with None defaults.
+        let r: AgentRef = serde_json::from_value(serde_json::json!({
+            "agent_id": "01HZAGENT",
+            "role": "trader"
+        }))
+        .unwrap();
+        assert_eq!(r.checkpoint, None);
+        assert_eq!(r.veto, None);
     }
 }

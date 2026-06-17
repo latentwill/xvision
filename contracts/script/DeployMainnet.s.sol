@@ -14,28 +14,34 @@ import {EvalAttestationRegistry} from "../src/EvalAttestationRegistry.sol";
 import {Marketplace} from "../src/Marketplace.sol";
 
 /// @title DeployMainnet — Mantle mainnet (chain 5000) deploy in the §8.3 order.
-/// @notice Operator-EOA admin path (V2 operator-EOA fast path — admin == feeRecipient ==
-///         OPERATOR_EOA). Mirrors DeployTestnet exactly; chain guard rejects anything
-///         but chain 5000. NOT for broadcasting without operator credentials.
+/// @notice HACKATHON-GRADE deploy (operator decision 2026-06-14). This
+///         deliberately bypasses the V4 governance gate (external audit +
+///         TimelockController + 2-of-3 multisig) and deploys with the **operator
+///         EOA as proxy admin and fee recipient** — same posture as
+///         `DeployTestnet`, just on mainnet. It is NOT production-secured: the
+///         EOA admin can upgrade/rug the proxies and there is no audit. For a
+///         production cutover, redeploy (or `UpgradeTimelock`) with
+///         admin/feeRecipient pointing at a TimelockController + treasury
+///         multisig. See the V4 prep notes (surface spec §7.4, §9.5).
 ///
-/// @dev Determinism (surface spec §5, §6.5): every contract is deployed through
-///      the CREATE2 `XvnDeployer`, so addresses depend only on (factory, salt,
-///      init code). Both impls and proxies go through the factory; proxies are
-///      initialized atomically via constructor `_data` (no uninitialized
-///      front-run window). Reusing the same nonce-0 EOA to deploy the factory
-///      from testnet yields identical addresses.
+/// @dev Determinism (surface spec §5, §6.5): byte-for-byte identical to
+///      `DeployTestnet` — every contract goes through the CREATE2 `XvnDeployer`
+///      with `keccak256("xvn.<name>.v1")` salts, so reusing the SAME nonce-0 EOA
+///      that deployed the testnet factory yields the SAME addresses on mainnet.
+///      Proxies are initialized atomically via constructor `_data` (no
+///      uninitialized front-run window).
 ///
 ///      Required env:
-///        OPERATOR_EOA      — proxy admin + fee recipient
-///        USDC_ADDRESS      — USDC.e on Mantle mainnet (0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9)
+///        OPERATOR_EOA      — proxy admin + fee recipient (hackathon-grade)
+///        USDC_ADDRESS      — USDC.e on Mantle mainnet (chain 5000)
 ///        LICENSE_URI       — ERC-1155 metadata URI template (e.g. ".../{id}")
 ///      Optional env:
-///        XVN_DEPLOYER      — pre-deployed factory; if unset, a fresh one is
+///        XVN_DEPLOYER      — pre-deployed factory; if unset a fresh one is
 ///                            deployed (MUST be from a nonce-0 EOA for the
 ///                            cross-chain address guarantee).
 ///        PROTOCOL_FEE_BPS  — default 500 (5%).
 contract DeployMainnet is Script {
-    error WrongChain(uint256 chainId);
+    error WrongChain(uint256 got, uint256 want);
 
     struct Deployed {
         address xvnDeployer;
@@ -49,7 +55,9 @@ contract DeployMainnet is Script {
     }
 
     function run() external returns (Deployed memory d) {
-        if (block.chainid != 5000) revert WrongChain(block.chainid);
+        // Fail-closed: this script is mainnet-only. Refuse to broadcast against
+        // any other chain (e.g. an accidental testnet/anvil RPC).
+        if (block.chainid != 5000) revert WrongChain(block.chainid, 5000);
 
         address operator = vm.envAddress("OPERATOR_EOA");
         address usdc = vm.envAddress("USDC_ADDRESS");
@@ -64,8 +72,8 @@ contract DeployMainnet is Script {
         // 1-3. Immutable ERC-8004 registries (no proxy), via the factory so
         //      their addresses are deterministic too.
         d.identityRegistry = _via(factory, _salt("IdentityRegistry"), type(IdentityRegistry).creationCode);
-        // ReputationRegistry now takes an `admin` (registrar) constructor arg for
-        // the §3.6 license-gate wiring — append it to the creation code.
+        // ReputationRegistry takes an `admin` (registrar) constructor arg for the
+        // §3.6 license-gate wiring — append it to the creation code.
         d.reputationRegistry = _via(
             factory,
             _salt("ReputationRegistry"),
@@ -114,11 +122,9 @@ contract DeployMainnet is Script {
         // §3.6: wire the LicenseToken into the ReputationRegistry so per-listing
         // feedback gates can read `balanceOf`.
         ReputationRegistry(d.reputationRegistry).setLicenseToken(d.licenseToken);
-        // Finding 1: wire ReputationRegistry <-> ListingRegistry so per-agent
-        // feedback gates are set ATOMICALLY when a strategy is listed
-        // (createListing -> setListingForAgent). The ListingRegistry is the
-        // authorized registrar; without this the gate would be inert until a
-        // separate manual setListingForAgent call.
+        // Wire ReputationRegistry <-> ListingRegistry so per-agent feedback gates
+        // are set ATOMICALLY when a strategy is listed (createListing ->
+        // setListingForAgent). The ListingRegistry is the authorized registrar.
         ReputationRegistry(d.reputationRegistry).setListingRegistrar(d.listingRegistry);
         ListingRegistry(d.listingRegistry).setReputationRegistry(d.reputationRegistry);
 
@@ -128,7 +134,7 @@ contract DeployMainnet is Script {
     }
 
     // -----------------------------------------------------------------------
-    // Helpers
+    // Helpers (identical to DeployTestnet — keep in sync)
     // -----------------------------------------------------------------------
 
     function _factory() internal returns (XvnDeployer) {
@@ -166,7 +172,7 @@ contract DeployMainnet is Script {
     }
 
     function _log(Deployed memory d) internal pure {
-        console2.log("=== xvn marketplace - Mantle mainnet (chain 5000) ===");
+        console2.log("=== xvn marketplace - Mantle MAINNET (chain 5000) ===");
         console2.log("XvnDeployer            ", d.xvnDeployer);
         console2.log("IdentityRegistry       ", d.identityRegistry);
         console2.log("ReputationRegistry     ", d.reputationRegistry);

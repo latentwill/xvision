@@ -5,6 +5,14 @@
 // labels the network so the testnet (Mantle Sepolia) nature is honest to the
 // user. Theme-token styling only — warn tones with dark-safe opacity, never
 // hard white/gray borders.
+//
+// On MAINNET these render nothing / an accurate real-funds notice: a "Testnet ·
+// purchases are simulated" claim on mainnet would be false and unsafe. The
+// network is resolved at RUNTIME from the backend (useMarketplaceNetwork) so a
+// prebuilt bundle reflects whatever chain the backend is on — not the build-time
+// VITE_MARKETPLACE_NETWORK.
+
+import { useMarketplaceNetwork } from "../lib/useMarketplaceNetwork";
 
 interface TestnetBadgeProps {
   /** "xs" for inline pills next to CTAs/prices, "sm" for standalone rows. */
@@ -13,6 +21,9 @@ interface TestnetBadgeProps {
 }
 
 export function TestnetBadge({ size = "xs", className = "" }: TestnetBadgeProps) {
+  const { isMainnet } = useMarketplaceNetwork();
+  // No testnet to flag on mainnet — never mislabel a real-funds surface.
+  if (isMainnet) return null;
   const sizing =
     size === "sm"
       ? "px-1.5 py-0.5 text-[10px]"
@@ -34,6 +45,14 @@ export function TestnetBadge({ size = "xs", className = "" }: TestnetBadgeProps)
 // Page-level banner for the marketplace shell. Quiet, full-width, single row —
 // no right-side box (chat rail owns the right), no popup.
 export function TestnetBanner({ className = "" }: { className?: string }) {
+  const { isMainnet } = useMarketplaceNetwork();
+  // Mainnet is the normal state — render nothing (no "Mainnet" banner). The
+  // banner exists only to warn that testnet purchases are simulated; on mainnet
+  // there is nothing to warn about, so we suppress it entirely (operator
+  // decision 2026-06-16: testnet banner stays, no mainnet banner).
+  if (isMainnet) {
+    return null;
+  }
   return (
     <div
       className={[

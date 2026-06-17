@@ -68,6 +68,22 @@ export function isLiveRun(run: AgentRunSummary): boolean {
 }
 
 /**
+ * True when a run belongs to a LIVE deployment lineage (its parent eval run
+ * was started in `mode = live`), regardless of its current state. This is the
+ * gate for what may appear ANYWHERE on the Live Trading page: active, paused,
+ * stopped, and stale-orphan live runs all qualify; backtest/paper eval runs
+ * and parentless runs do NOT. It exists so the strip never lists the dozens of
+ * finished backtest evals as "STOPPED live strategies" — those have a home on
+ * the eval-runs page, not here.
+ *
+ * `eval_mode` is populated by the agent-runs list endpoint from the parent
+ * eval run's mode ("live" | "backtest"); absent ⇒ not a live deployment.
+ */
+export function isLiveLineage(run: AgentRunSummary): boolean {
+  return run.eval_mode === "live";
+}
+
+/**
  * Classify a run for honest counts:
  *   done  — agent run reached a terminal status.
  *   stale — non-terminal agent run whose parent eval run is terminal.
@@ -219,4 +235,26 @@ export function pickDefaultRun(runs: AgentRunSummary[]): AgentRunSummary | null 
     .sort(byStartedDesc);
   if (paper.length > 0) return paper[0]!;
   return [...runs].sort(byStartedDesc)[0]!;
+}
+
+/**
+ * Strict live-only auto-selection for the bare `/live` route's VIEWPORT.
+ *
+ * Returns the most recently started genuinely-live-money run, or null when
+ * none exists. Unlike `pickDefaultRun`, this NEVER falls back to a
+ * backtest/paper/stale/terminal run — so when nothing is actually trading
+ * live, the viewport shows the honest "No active live deployments" empty
+ * state instead of auto-loading some old eval run's equity curve and chart.
+ *
+ * Deep links (`/live/:id`) and explicit row clicks still view any run; this
+ * only governs what loads automatically with no selection.
+ */
+export function pickDefaultLiveRun(
+  runs: AgentRunSummary[],
+): AgentRunSummary | null {
+  if (runs.length === 0) return null;
+  const byStartedDesc = (a: AgentRunSummary, b: AgentRunSummary) =>
+    new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+  const live = runs.filter(isLiveRun).sort(byStartedDesc);
+  return live[0] ?? null;
 }

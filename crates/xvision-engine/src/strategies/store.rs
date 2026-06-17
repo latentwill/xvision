@@ -14,11 +14,11 @@ use xvision_filters::ActivationMode;
 /// patch with every field `None` is a valid no-op and round-trips the
 /// stored strategy untouched.
 ///
-/// Scope is deliberately narrow: only the four operator-editable
-/// top-level manifest fields a typo in the create wizard could land
-/// on. The strategy `id`, `creator`, `template`, `published_at`,
-/// `risk_preset_or_config`, `agents`, `pipeline`, and `risk` are out
-/// of scope — they either have dedicated sub-routes
+/// Scope: the operator-editable top-level manifest fields a typo in the
+/// create wizard could land on, plus `creator` (so the operator can stamp a
+/// strategy with their profile handle — QA). The strategy `id`, `template`,
+/// `published_at`, `risk_preset_or_config`, `agents`, `pipeline`, and `risk`
+/// remain out of scope — they either have dedicated sub-routes
 /// (slot/agents/pipeline/risk) or are immutable post-create.
 ///
 /// # Color clear convention
@@ -52,6 +52,12 @@ pub struct StrategyMetadataPatch {
     /// color untouched. `Some("#D4A547")` sets the color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Optional strategy author/owner handle. `Some(non-empty)` sets the
+    /// `creator` (e.g. the operator's profile handle); `Some("")`/whitespace
+    /// and `None` both leave the existing creator untouched (no accidental
+    /// wipe). QA: "allow creator to be updated with the user profile".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
 }
 
 /// Structured errors from [`update_metadata`]. Each variant maps to
@@ -198,6 +204,14 @@ pub fn apply_metadata_patch(
     }
     if let Some(color) = color_action {
         strategy.manifest.color = color;
+    }
+    // creator: Some(non-empty trimmed) → set; Some("")/whitespace and None →
+    // leave untouched (no accidental wipe of authorship).
+    if let Some(creator) = patch.creator.as_deref() {
+        let trimmed = creator.trim();
+        if !trimmed.is_empty() {
+            strategy.manifest.creator = trimmed.to_string();
+        }
     }
     Ok(())
 }
@@ -385,6 +399,38 @@ mod tests {
             briefing_indicators: Vec::new(),
             tunable_bounds: Vec::new(),
         }
+    }
+
+    #[test]
+    fn creator_patch_sets_and_preserves() {
+        let mut s = strategy_with_id("01HZSTRATEGYCREATOR00001A");
+        assert_eq!(s.manifest.creator, "@tester");
+
+        // Non-empty creator → set (with trimming).
+        apply_metadata_patch(
+            &mut s,
+            StrategyMetadataPatch {
+                creator: Some("  @alice  ".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.manifest.creator, "@alice");
+
+        // None → untouched.
+        apply_metadata_patch(&mut s, StrategyMetadataPatch::default()).unwrap();
+        assert_eq!(s.manifest.creator, "@alice");
+
+        // Empty/whitespace → untouched (no accidental wipe).
+        apply_metadata_patch(
+            &mut s,
+            StrategyMetadataPatch {
+                creator: Some("   ".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.manifest.creator, "@alice");
     }
 
     #[test]
@@ -585,6 +631,7 @@ mod tests {
                     asset_universe: Some(vec!["eth/usd".into(), "btc/usd".into()]),
                     decision_cadence_minutes: Some(240),
                     color: None,
+                    creator: None,
                 },
             )
             .await
@@ -637,6 +684,7 @@ mod tests {
                     asset_universe: None,
                     decision_cadence_minutes: None,
                     color: None,
+                    creator: None,
                 },
             )
             .await
@@ -734,6 +782,7 @@ mod tests {
                     asset_universe: Some(vec!["ETH/USD".into()]),
                     decision_cadence_minutes: None,
                     color: None,
+                    creator: None,
                 },
             )
             .await

@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
+import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { WalletRoute } from "./WalletRoute";
 
 // ── useWallet mock ───────────────────────────────────────────────────────────
@@ -22,6 +24,7 @@ vi.mock("@/features/marketplace/lib/wallet", () => ({
 const usdcBalanceMock = vi.fn<(addr: string) => Promise<bigint>>();
 const faucetUsdcMock = vi.fn<(amount6: bigint) => Promise<string>>();
 vi.mock("@/features/marketplace/lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   usdcBalance: (addr: string) => usdcBalanceMock(addr),
   faucetUsdc: (amount6: bigint) => faucetUsdcMock(amount6),
 }));
@@ -132,9 +135,11 @@ function renderRoute() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/marketplace/wallet"]}>
-        <WalletRoute />
-      </MemoryRouter>
+      <MarketplaceDataProvider client={new FixtureMarketplaceData()}>
+        <MemoryRouter initialEntries={["/marketplace/wallet"]}>
+          <WalletRoute />
+        </MemoryRouter>
+      </MarketplaceDataProvider>
     </QueryClientProvider>,
   );
 }

@@ -25,6 +25,7 @@ import {
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
 import { SpanTree } from "./SpanTree";
+import { emptyTreeReason, TraceEmptyState } from "./trace-empty-state";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
@@ -286,6 +287,17 @@ export function TraceDock() {
   const summary = q.data?.summary;
   const isLive = summary?.status === "running";
 
+  // Why is the tree empty? Name the real reason instead of always blaming the
+  // filter. `null` means there ARE rows to render.
+  const emptyReason = emptyTreeReason({
+    sourceCount: sourceSpans.length,
+    filteredCount: filter.filtered.length,
+    displayCount: displaySpans.length,
+    filterActive: filter.active,
+    isLive,
+    advancedView: advanced_view,
+  });
+
   const qc = useQueryClient();
   useEffect(() => {
     if (!activeRunId || !isLive) return;
@@ -465,6 +477,20 @@ export function TraceDock() {
       style={{ height: heightPx, maxHeight: "calc(100vh - 60px)" }}
     >
       <DockResizeHandle />
+      {/*
+        Filter-first layout (operator request): the search / kind / status
+        filter is the FIRST row of the dock — above the TRACE stats header and
+        the TREE/FLAME view toggle — so filtering is the primary action and the
+        views below react to it.
+      */}
+      <FilterBar
+        query={filter.query} setQuery={filter.setQuery}
+        kinds={filter.kinds} toggleKind={filter.toggleKind}
+        status={filter.status} setStatus={filter.setStatus}
+        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+        decisions={decisions}
+        total={filter.summary.total} filtered={filter.summary.filtered}
+      />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">
         <span className="text-text-2">TRACE</span>
         {summary ? (
@@ -665,18 +691,17 @@ export function TraceDock() {
           </button>
         </div>
       </div>
-      <FilterBar
-        query={filter.query} setQuery={filter.setQuery}
-        kinds={filter.kinds} toggleKind={filter.toggleKind}
-        status={filter.status} setStatus={filter.setStatus}
-        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
-        decisions={decisions}
-        total={filter.summary.total} filtered={filter.summary.filtered}
-      />
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
-            structuredView === "tree" ? (
+            emptyReason ? (
+              <TraceEmptyState
+                reason={emptyReason}
+                hiddenCount={simpleHiddenCount}
+                onClearFilters={filter.reset}
+                onShowAdvanced={() => setAdvancedView(true)}
+              />
+            ) : structuredView === "tree" ? (
               <SpanTree
                 spans={displaySpans}
                 selectedSpanId={selectedSpan?.span_id ?? null}

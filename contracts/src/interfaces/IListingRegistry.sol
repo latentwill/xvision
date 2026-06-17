@@ -31,6 +31,11 @@ interface IListingRegistry {
 
     function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI) external;
 
+    /// @notice Seller-only in-place repricing. `newPriceUSDC == 0` makes the
+    ///         listing free (open/clone path); everything else (tier, fee
+    ///         snapshot, content, transferable flag) is unchanged.
+    function updatePrice(uint256 listingId, uint96 newPriceUSDC) external;
+
     function revokeListing(uint256 listingId) external;
 
     function getListing(uint256 listingId) external view returns (Listing memory);
@@ -51,5 +56,6 @@ interface IListingRegistry {
         uint96 priceUSDC
     );
     event ListingUpdated(uint256 indexed listingId, bytes32 contentHash, string contentURI);
+    event ListingPriceUpdated(uint256 indexed listingId, uint96 oldPriceUSDC, uint96 newPriceUSDC);
     event ListingRevoked(uint256 indexed listingId, address indexed seller);
 }

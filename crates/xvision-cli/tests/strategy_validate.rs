@@ -120,6 +120,8 @@ fn seed_strategy_with_trader(
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
@@ -172,6 +174,8 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
             activates: Some(xvision_engine::agents::Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef {
             kind: PipelineKind::Single,

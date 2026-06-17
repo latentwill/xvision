@@ -7,6 +7,7 @@ import { defaultFilterState } from "./filter";
 
 // Mock chain so getViewer tests don't need real wallet state.
 vi.mock("../lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   currentAddress: vi.fn(async () => null),
 }));
 
@@ -64,7 +65,8 @@ function spyFallback(): MarketplaceData {
     createPublishDraft: vi.fn(async () => ({}) as never),
     submitListing: vi.fn(async () => tx),
     purchaseIntent: vi.fn(async () => tx),
-    cloneIntent: vi.fn(async () => tx),
+    importSealed: vi.fn(async () => ({ agent_id: "demo-agent-7" })),
+    importListing: vi.fn(async () => ({ agent_id: "demo-agent-7" })),
     subscribePurchases: vi.fn(() => () => {}),
   } as unknown as MarketplaceData;
 }
@@ -148,10 +150,14 @@ describe("SubgraphMarketplaceData", () => {
     await mp.listListableStrategies();
     await mp.purchaseIntent("7");
     await mp.submitListing({} as never);
+    await mp.importSealed("7");
+    await mp.importListing("7");
     expect(fallback.getReceipt).toHaveBeenCalledWith("0xabc");
     expect(fallback.listListableStrategies).toHaveBeenCalled();
     expect(fallback.purchaseIntent).toHaveBeenCalledWith("7");
     expect(fallback.submitListing).toHaveBeenCalled();
+    expect(fallback.importSealed).toHaveBeenCalledWith("7");
+    expect(fallback.importListing).toHaveBeenCalledWith("7");
   });
 
   it("QA1: getSlices does NOT delegate to fallback — computes live counts", async () => {

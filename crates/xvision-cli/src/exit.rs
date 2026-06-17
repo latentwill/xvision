@@ -30,7 +30,7 @@ pub enum XvnExit {
     Conflict = 7,
     // `xvn optimize` failure classes (Phase 3.6). Distinct codes so an agent
     // can branch on the exact reason an optimization run failed without parsing
-    // text. Kept in the 10–15 band, clear of the shared codes above.
+    // text. Kept in the 10–16 band, clear of the shared codes above.
     /// The corpus query resolved to no usable training data.
     OptMissingData = 10,
     /// The requested capability has no optimizer signature (the typed
@@ -45,6 +45,13 @@ pub enum XvnExit {
     OptValidation = 14,
     /// The store write failed (migration not applied, DB error).
     OptPersistence = 15,
+    /// The optimizer halted on sustained failure — the consecutive-cycle-error
+    /// breaker tripped (`--max-consecutive-errors`). A one-off cycle error is
+    /// sealed `errored` and the run continues (exit 0); only *sustained* failure
+    /// surfaces here. Distinct from the cosmetic Upstream=5 so automation can
+    /// tell "the optimizer gave up" from a healthy / SIGTERM / dropped-candidate
+    /// exit.
+    OptHalted = 16,
 }
 
 impl From<XvnExit> for ExitCode {
@@ -158,6 +165,7 @@ mod tests {
         assert_eq!(XvnExit::OptMetric as u8, 13);
         assert_eq!(XvnExit::OptValidation as u8, 14);
         assert_eq!(XvnExit::OptPersistence as u8, 15);
+        assert_eq!(XvnExit::OptHalted as u8, 16);
     }
 
     #[test]

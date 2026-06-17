@@ -11,10 +11,12 @@ import {
   fetchPublishDraft,
 } from "./listable";
 import {
+  activeNetworkSlug,
   approveUsdc,
   buyDirect,
   currentAddress,
   ensureMantleSepolia,
+  getActiveNetworkConfigOrDefault,
   getContracts,
   signTransferAuthorization,
   usdcBalance,
@@ -56,6 +58,10 @@ export interface IndexedListing {
   /// Licenses sold, derived from `Sold` event logs (0 when the marketplace
   /// address isn't configured).
   units_sold: number;
+  /// Of `units_sold`, those bought via the x402 autonomous-agent payment path
+  /// (`Sold.purchasePath == 1`). `units_sold - units_sold_agents` = direct
+  /// (human) buyers.
+  units_sold_agents: number;
   /// Sum of seller proceeds across `Sold` events, in whole USDC.
   earned_usdc: number;
   /// Best trailing-30d return % from completed eval runs (Part B).
@@ -141,10 +147,10 @@ export async function fetchBundle(listingId: Id): Promise<BundleOut> {
 
 /**
  * Standalone sealed-tier import: fetch bundle → Lit-gated decrypt → POST the
- * plaintext manifest to import-sealed. Exported so the InstallSteps stepper can
- * drive it without instantiating the data client. See `importSealed` below for
- * the error contract; the server's on-chain `content_hash` recheck (409) is the
- * integrity authority.
+ * plaintext manifest to import-sealed. Exported so callers can drive it without
+ * instantiating the data client (the LineageRoute buy flow finalizes through
+ * `importSealed` below). See `importSealed` for the error contract; the
+ * server's on-chain `content_hash` recheck (409) is the integrity authority.
  */
 export async function importSealedListing(
   listingId: Id,
@@ -188,17 +194,22 @@ function toRow(l: IndexedListing): ListingRow {
     name: l.name || undefined,
     creator: { address: l.seller },
     model: "",
-    style: l.symmetry,
+    // The indexer has no trading-style field; `symmetry` is a gen-art trait
+    // (e.g. "rot90", "mirror-x") and must NOT surface as the listing's style
+    // (operator QA: listings were displaying "rot90" as the style). The art
+    // itself keeps its symmetry — only this mislabeled text is dropped.
+    style: "",
     assets: [],
     // Part B: consume real perf metrics when the backend provides them.
-    // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
-    // with a code comment referencing bead xvision-ctkm.8.
     return30dPct: l.return30d_pct ?? 0,
     sharpe: l.sharpe ?? 0,
-    // Honest approximation: the chain only tells us how many licenses sold,
-    // not whether the buyer was a human or an agent — count them all as
-    // humans rather than inventing an agent split.
-    buyers: { humans: l.units_sold, agents: 0 },
+    // Honest split (xvision-ctkm.8): agents = purchases via the x402
+    // autonomous-agent rail (Sold.purchasePath == 1); humans = the rest
+    // (direct wallet purchases). Both are real on-chain counts.
+    buyers: {
+      humans: Math.max(0, l.units_sold - (l.units_sold_agents ?? 0)),
+      agents: l.units_sold_agents ?? 0,
+    },
     priceUsdc: l.price_usdc > 0 ? l.price_usdc : null,
     tier: l.tier === 1 ? "sealed" : "open",
     transferableLicense: l.transferable_license,
@@ -206,14 +217,16 @@ function toRow(l: IndexedListing): ListingRow {
     // verified; zero attestations renders no badge (never a negative mark).
     verification: l.attestation_count > 0 ? "verified" : "unverified",
     acceptsX402: true,
-    clones: 0,
     // QA11: fallback to String(listing_id) when gen_art_seed is absent so
     // the gen-art plate never renders with an empty seed.
     genArtSeed: l.gen_art_seed || String(l.listing_id),
   };
 }
 
-function toDetail(l: IndexedListing): ListingDetail {
+function toDetail(
+  l: IndexedListing,
+  networkSlug: string = activeNetworkSlug,
+): ListingDetail {
   return {
     ...toRow(l),
     // Chain metadata name is the only human-readable copy we have; it renders
@@ -248,7 +261,7 @@ function toDetail(l: IndexedListing): ListingDetail {
         bornAt: "",
         operatorSig: "",
         contract: "",
-        network: "mantle-sepolia",
+        network: networkSlug,
       },
       attestations: [],
       anchors: [],
@@ -331,7 +344,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      const detail = toDetail(l);
+      const detail = toDetail(l, (await getActiveNetworkConfigOrDefault()).slug);
       // For OPEN-tier listings, enrich the detail with the verified bundle
       // manifest. Tolerate failure — manifest unavailable must not throw the
       // detail page down.
@@ -439,7 +452,7 @@ export class ApiMarketplaceData implements MarketplaceData {
     const buyers = { humans: 0, agents: 0 };
     return {
       txHash: r.tx_hash,
-      network: "mantle-sepolia",
+      network: (await getActiveNetworkConfigOrDefault()).slug,
       at,
       buyer: r.buyer,
       listing: {
@@ -528,13 +541,19 @@ export class ApiMarketplaceData implements MarketplaceData {
           }),
         },
       );
-      return { txHash: out.tx_hash, network: "mantle-sepolia" };
+      return {
+        txHash: out.tx_hash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 503) throw e;
       // Relay unavailable — approve + buy directly from the wallet.
       await approveUsdc(price6);
       const txHash = await buyDirect(BigInt(listingId), addr);
-      return { txHash, network: "mantle-sepolia" };
+      return {
+        txHash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     }
   }
   /**
@@ -552,8 +571,29 @@ export class ApiMarketplaceData implements MarketplaceData {
   async importSealed(listingId: Id): Promise<{ agent_id: string }> {
     return importSealedListing(listingId);
   }
-  cloneIntent(listingId: Id): Promise<TxRef> {
-    return this.fallback.cloneIntent(listingId);
+  /**
+   * OPEN/free-tier finalize: POST `{address}` to the plain import route, which
+   * materializes the referenced agents server-side and returns the new local
+   * strategy `agent_id`. Mirrors the legacy InstallSteps.runImport apiFetch
+   * shape. Fixture slug ids delegate to the fixture client (deterministic fake).
+   */
+  async importListing(listingId: Id): Promise<{ agent_id: string }> {
+    if (!/^\d+$/.test(listingId)) {
+      return this.fallback.importListing(listingId);
+    }
+    const address = await currentAddress();
+    if (!address) throw new WalletRequiredError();
+    return apiFetch<{ agent_id: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import`,
+      { method: "POST", body: JSON.stringify({ address }) },
+    );
+  }
+  async setListingPrice(listingId: Id, priceUsdc: number): Promise<TxRef> {
+    const out = await apiFetch<{ listing_id: number; price_usdc: number; tx_hash: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/price`,
+      { method: "POST", body: JSON.stringify({ price_usdc: priceUsdc }) },
+    );
+    return { txHash: out.tx_hash, network: "mantle-sepolia" };
   }
 }
 
