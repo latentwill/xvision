@@ -2561,6 +2561,100 @@ pub async fn set_mechanistic_config(
     result
 }
 
+// ── set_agent_checkpoint (s3ph.27) ───────────────────────────────────────────
+
+/// Request body for `PUT /api/strategy/:id/agents/:role/checkpoint`.
+///
+/// Both `checkpoint` and `veto` are optional — `None` clears the field.
+/// Omitting a field in the JSON body therefore clears it; callers that want
+/// to leave a field unchanged must supply its current value.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SetAgentCheckpointReq {
+    /// Strategy ULID (from the URL path `:id`).
+    pub strategy_id: String,
+    /// Role of the target `AgentRef` (from the URL path `:role`).
+    pub role: String,
+    /// New checkpoint reference, or `None` to clear.
+    pub checkpoint: Option<crate::strategies::agent_ref::CheckpointRef>,
+    /// New veto setting, or `None` to clear.
+    pub veto: Option<bool>,
+}
+
+/// `PUT /api/strategy/:id/agents/:role/checkpoint` — set or clear the
+/// nanochat checkpoint and veto flag on a single `AgentRef` slot.
+///
+/// Runs the full `save_and_index` path (live_approved + indicator-compat
+/// gate, then filesystem persist + search-index refresh). Returns the
+/// updated `Strategy` on success.
+pub async fn set_agent_checkpoint(ctx: &ApiContext, req: SetAgentCheckpointReq) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+
+    let result = set_agent_checkpoint_inner(ctx, req).await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_agent_checkpoint",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    if result.is_ok() {
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+async fn set_agent_checkpoint_inner(ctx: &ApiContext, req: SetAgentCheckpointReq) -> ApiResult<Strategy> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    // Load — translate anyhow::Error to ApiError using existing helpers.
+    let mut strategy = store.load(&req.strategy_id).await.map_err(|e| {
+        if let Some(v) = strategy_id_validation_error(&e) {
+            v
+        } else if is_not_found(&e) {
+            ApiError::NotFound(format!("strategy '{}'", req.strategy_id))
+        } else {
+            ApiError::Internal(e.to_string())
+        }
+    })?;
+
+    // Locate the target AgentRef by canonical role.
+    let role_canon = req.role.trim().to_ascii_lowercase();
+    let agent = strategy
+        .agents
+        .iter_mut()
+        .find(|a| a.role.trim().to_ascii_lowercase() == role_canon)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "agent role {:?} not found in strategy {}",
+                req.role, req.strategy_id
+            ))
+        })?;
+
+    agent.checkpoint = req.checkpoint;
+    agent.veto = req.veto;
+
+    // Structural validation FIRST — catches checkpoint+model_override mutual
+    // exclusion (CheckpointAndModelOverrideConflict) and other invariants that
+    // save_and_index's nanochat gate does NOT cover.
+    crate::strategies::validate::validate_strategy(&strategy)
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
+    // Then the nanochat gate (live_approved + indicator-compat) + persist + index.
+    save_and_index(ctx, &strategy).await?;
+
+    Ok(strategy)
+}
+
 /// Re-load the strategy after a successful mutation and refresh its row in
 /// the search index. Best-effort: index failures are logged and never
 /// bubbled up — the mutation has already succeeded.

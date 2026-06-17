@@ -21,6 +21,7 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  useSetAgentCheckpoint,
   validateDraft,
   type AgentRef,
   type ClosePolicy,
@@ -519,10 +520,9 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const [renameRoleTo, setRenameRoleTo] = useState("");
 
   // Nanochat slot state — keyed by AgentRef role so multi-slot strategies
-  // each get independent checkpoint + veto selections. Initialised from the
-  // AgentRef.checkpoint / AgentRef.veto fields already on the strategy (if
-  // present). Local state only: wiring the PATCH call to persist these is
-  // deferred to the follow-up WU that adds the backend endpoint.
+  // each get independent checkpoint + veto selections. Hydrated from the
+  // AgentRef.checkpoint / AgentRef.veto fields on the strategy (persisted
+  // values from the server). onChange calls the mutation to persist immediately.
   const [nanochatCheckpoints, setNanochatCheckpoints] = useState<
     Record<string, string | null>
   >(() => {
@@ -541,6 +541,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
       return init;
     },
   );
+  const setCheckpointMut = useSetAgentCheckpoint(strategy.manifest.id);
 
   // ?attach_checkpoint=<model_id> — when present, the first filter-capable
   // AgentRef is the target slot. We read the param here (AgentsCard is the
@@ -752,15 +753,33 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                       availableIndicators={strategy.briefing_indicators ?? []}
                       checkpointModelId={nanochatCheckpoints[a.role] ?? null}
                       veto={nanochatVetos[a.role] ?? true}
-                      onCheckpointChange={(modelId) =>
+                      onCheckpointChange={(modelId) => {
                         setNanochatCheckpoints((prev) => ({
                           ...prev,
                           [a.role]: modelId,
-                        }))
-                      }
-                      onVetoChange={(v) =>
-                        setNanochatVetos((prev) => ({ ...prev, [a.role]: v }))
-                      }
+                        }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: modelId
+                              ? { model_id: modelId }
+                              : null,
+                            veto: nanochatVetos[a.role] ?? true,
+                          },
+                        });
+                      }}
+                      onVetoChange={(v) => {
+                        setNanochatVetos((prev) => ({ ...prev, [a.role]: v }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: nanochatCheckpoints[a.role]
+                              ? { model_id: nanochatCheckpoints[a.role]! }
+                              : null,
+                            veto: v,
+                          },
+                        });
+                      }}
                     />
                   )}
                 </div>

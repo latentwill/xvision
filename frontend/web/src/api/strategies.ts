@@ -4,6 +4,7 @@
 // if those land later, replace these with `import type { ... } from
 // "./types.gen"`.
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import {
   createTrace,
@@ -641,4 +642,53 @@ export function deleteStrategy(id: string): Promise<void> {
       });
       throw err;
     });
+}
+
+// ── s3ph.27: persist AgentRef.checkpoint / veto end-to-end ──────────────────
+
+/** Body for `PUT /api/strategy/:id/agents/:role/checkpoint`. */
+export type PatchAgentCheckpointBody = {
+  /** New checkpoint reference, or `null` to clear. */
+  checkpoint: CheckpointRef | null;
+  /** Veto mode, or `null` to clear. */
+  veto: boolean | null;
+};
+
+/** Persist a nanochat checkpoint selection on a strategy's `AgentRef` slot.
+ *  Calls `PUT /api/strategy/:id/agents/:role/checkpoint` → returns the
+ *  updated `Strategy`. The backend runs the full live_approved +
+ *  indicator-compat gate before saving. */
+export function patchAgentCheckpoint(
+  strategyId: string,
+  role: string,
+  body: PatchAgentCheckpointBody,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}/checkpoint`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** React Query mutation hook for `patchAgentCheckpoint`.
+ *
+ *  On success, invalidates the strategy detail query (and its validate
+ *  sibling) so the authoring page re-renders with the persisted state. */
+export function useSetAgentCheckpoint(strategyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      role,
+      body,
+    }: {
+      role: string;
+      body: PatchAgentCheckpointBody;
+    }) => patchAgentCheckpoint(strategyId, role, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: strategyKeys.detail(strategyId) });
+      void qc.invalidateQueries({ queryKey: strategyKeys.validate(strategyId) });
+    },
+  });
 }

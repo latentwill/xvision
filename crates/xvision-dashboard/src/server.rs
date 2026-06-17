@@ -33,6 +33,7 @@
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
 // 17e. PUT    /api/strategy/:id/mechanistic            strategies::put_mechanistic
+// 17f. PUT    /api/strategy/:id/agents/:role/checkpoint strategies::put_agent_checkpoint
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
@@ -662,6 +663,10 @@ fn mutating_router(state: AppState) -> Router {
             put(strategies::put_filter).delete(strategies::delete_filter),
         )
         .route("/api/strategy/:id/mechanistic", put(strategies::put_mechanistic))
+        .route(
+            "/api/strategy/:id/agents/:role/checkpoint",
+            put(strategies::put_agent_checkpoint),
+        )
         .route(
             "/api/strategy/:id/validate",
             post(strategies::post_validate)
