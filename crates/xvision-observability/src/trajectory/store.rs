@@ -712,6 +712,66 @@ impl TrajectoryStore {
     }
 
     // -------------------------------------------------------------------
+    // Tool HTTP cache (migration 069)
+    // -------------------------------------------------------------------
+
+    /// Persist an external-tool HTTP response for deterministic backtest replay.
+    ///
+    /// Keyed by `(recording_id, tool_name, input_hash)`; the caller must
+    /// include the injected `as_of_date` in `input_hash` so historical anchors
+    /// are frozen at record time.  Idempotent: a second write for the same PK
+    /// replaces the stored response (INSERT OR REPLACE).
+    pub async fn cache_tool_response(
+        &self,
+        recording_id: &RecordingId,
+        tool_name: &str,
+        input_hash: &str,
+        as_of_date: Option<&str>,
+        response: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let json = serde_json::to_string(response)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT OR REPLACE INTO tool_http_cache \
+             (recording_id, tool_name, input_hash, as_of_date, response_json, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&recording_id.0)
+        .bind(tool_name)
+        .bind(input_hash)
+        .bind(as_of_date)
+        .bind(json)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch a cached tool response, if recorded.
+    ///
+    /// Returns `Ok(None)` on a cache miss; `Ok(Some(value))` on a hit.
+    pub async fn get_cached_tool_response(
+        &self,
+        recording_id: &RecordingId,
+        tool_name: &str,
+        input_hash: &str,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT response_json FROM tool_http_cache \
+             WHERE recording_id = ? AND tool_name = ? AND input_hash = ?",
+        )
+        .bind(&recording_id.0)
+        .bind(tool_name)
+        .bind(input_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row {
+            Some((j,)) => Some(serde_json::from_str(&j)?),
+            None => None,
+        })
+    }
+
+    // -------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------
 

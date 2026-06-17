@@ -249,6 +249,8 @@ async fn seed_strategies(
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef::single(),
         regime_slot: None,

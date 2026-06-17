@@ -1532,4 +1532,69 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     );
     expect(screen.getAllByText("BUY").length).toBeGreaterThan(0);
   });
+
+  // ── Signals-used chip strip ─────────────────────────────────────────────────
+  // The `signals_used` field is an optional extension on `RunDetail` that the
+  // backend does not yet populate. The strip renders when the field is present
+  // and hides when it is absent or empty.
+
+  it("renders signal-tool chips when signals_used contains known tool names", async () => {
+    const runWithSignals = {
+      ...detail(),
+      signals_used: [
+        "nansen_smart_money_flow",
+        "elfa_smart_mentions",
+        // duplicate — only one chip should appear per unique name
+        "nansen_smart_money_flow",
+      ],
+    };
+    vi.mocked(evalApi.getRun).mockResolvedValue(runWithSignals as any);
+
+    renderDetail();
+
+    const strip = await screen.findByTestId("signals-used-strip");
+    expect(strip).toBeInTheDocument();
+
+    // Two distinct known signals → two chips
+    const chips = within(strip).getAllByTestId("signal-chip");
+    expect(chips).toHaveLength(2);
+
+    expect(
+      within(strip).getByText("Nansen: Smart-money flow"),
+    ).toBeInTheDocument();
+    expect(within(strip).getByText("Elfa: Smart mentions")).toBeInTheDocument();
+  });
+
+  it("does not render the signals-used strip when signals_used is absent", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+
+    renderDetail();
+
+    // Wait for the page to render (run id breadcrumb confirms load).
+    await screen.findByTestId("eval-run-id");
+    expect(screen.queryByTestId("signals-used-strip")).not.toBeInTheDocument();
+  });
+
+  it("does not render the signals-used strip when signals_used is an empty array", async () => {
+    const runNoSignals = { ...detail(), signals_used: [] };
+    vi.mocked(evalApi.getRun).mockResolvedValue(runNoSignals as any);
+
+    renderDetail();
+
+    await screen.findByTestId("eval-run-id");
+    expect(screen.queryByTestId("signals-used-strip")).not.toBeInTheDocument();
+  });
+
+  it("filters out unknown tool names and hides the strip when none of the known tools remain", async () => {
+    const runUnknown = {
+      ...detail(),
+      signals_used: ["some_custom_tool", "another_unknown"],
+    };
+    vi.mocked(evalApi.getRun).mockResolvedValue(runUnknown as any);
+
+    renderDetail();
+
+    await screen.findByTestId("eval-run-id");
+    expect(screen.queryByTestId("signals-used-strip")).not.toBeInTheDocument();
+  });
 });

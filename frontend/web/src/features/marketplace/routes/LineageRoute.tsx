@@ -619,6 +619,7 @@ export function LineageRoute() {
               palette: "",
               attestation_count: 0,
               units_sold: detail.buyers.humans + detail.buyers.agents,
+              units_sold_agents: detail.buyers.agents,
               earned_usdc: detail.paidToCreatorUsd,
             }}
             omitMeta

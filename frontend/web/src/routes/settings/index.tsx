@@ -43,9 +43,11 @@ const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
+  { to: "autoresearcher", label: "Autoresearcher" },
   // Marketplace tab removed (QA) — opt-in marketplace settings live on the
   // marketplace surface itself; the `/settings/marketplace` route is kept
   // registered so the legacy `identity` redirect and deep links still resolve.
+  { to: "tools", label: "Tools" },
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -109,6 +111,8 @@ export { SettingsDangerRoute } from "./danger";
 export { SettingsSkillsRoute } from "./skills";
 export { SettingsWalletRoute } from "./wallet";
 export { SettingsMarketplaceRoute } from "./marketplace";
+export { AutoresearcherSettingsRoute } from "./autoresearcher";
+export { SettingsToolsRoute } from "./tools";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Markets refresh card

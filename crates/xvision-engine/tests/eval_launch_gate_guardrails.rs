@@ -232,6 +232,8 @@ async fn launch_refused_for_missing_required_capability() {
             activates: Some(xvision_engine::agents::Capability::Router),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         vec!["router".into(), "submit_decision".into()],
     )
@@ -287,6 +289,8 @@ async fn launch_refused_missing_prompt() {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         vec![],
     )
@@ -336,6 +340,8 @@ async fn launch_does_not_treat_builtin_trader_tool_as_missing() {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         vec![], // no explicit ohlcv grant; built-in registry supplies it
     )
@@ -387,6 +393,8 @@ async fn launch_refused_provider_unavailable() {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         vec!["ohlcv".into()],
     )

@@ -100,7 +100,6 @@ export function buildApiPublishDraft(
       transferableLicense: false,
       verification: "unverified",
       acceptsX402: true,
-      clones: 0,
       genArtSeed: strategyId,
     },
   };

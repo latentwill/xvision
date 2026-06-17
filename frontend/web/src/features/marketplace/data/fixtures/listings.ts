@@ -9,37 +9,37 @@ export const NAMED_LISTINGS: ListingRow[] = [
     id: "sol-strategist-pro", lineageId: "sol-strategist", version: "v4.2", name: "SOL Strategist Pro", creator: vibe,
     model: "Claude · Haiku 4.5", style: "Day", assets: ["SOL"], return30dPct: 89.4, sharpe: 1.84,
     buyers: { humans: 412, agents: 38 }, priceUsdc: 79, tier: "sealed", verification: "verified",
-    acceptsX402: true, clones: 21, transferableLicense: false, genArtSeed: "sol-strategist-12fa",
+    acceptsX402: true, transferableLicense: false, genArtSeed: "sol-strategist-12fa",
   },
   {
     id: "meme-radar", lineageId: "meme-radar", version: "v1.0", name: "Meme Radar", creator: { address: "0xdead00beef", handle: "@degenray" },
     model: "GPT-5", style: "Momentum", assets: ["DOGE", "SOL"], return30dPct: 124.8, sharpe: 0.92,
     buyers: { humans: 88, agents: 12 }, priceUsdc: null, tier: "open", verification: "unverified",
-    acceptsX402: true, clones: 9, transferableLicense: true, genArtSeed: "meme-radar-77aa",
+    acceptsX402: true, transferableLicense: true, genArtSeed: "meme-radar-77aa",
   },
   {
     id: "doge-vol", lineageId: "doge-vol", version: "v1.1", name: "DOGE Volatility", creator: { address: "0xc0a4f3b2", handle: "@quantnext" },
     model: "Gemini 3 Pro", style: "Swing", assets: ["DOGE"], return30dPct: -2.3, sharpe: -0.18,
     buyers: { humans: 12, agents: 0 }, priceUsdc: 29, tier: "sealed", verification: "unverified",
-    acceptsX402: false, clones: 0, transferableLicense: false, genArtSeed: "doge-vol-3b22",
+    acceptsX402: false, transferableLicense: false, genArtSeed: "doge-vol-3b22",
   },
   {
     id: "btc-momentum-v3", lineageId: "btc-momentum", version: "v3.0", name: "BTC Momentum v3", creator: ed,
     model: "Claude · Haiku 4.5", style: "Day", assets: ["BTC"], return30dPct: 47.2, sharpe: 1.31,
     buyers: { humans: 247, agents: 14 }, priceUsdc: 49, tier: "sealed", verification: "verified",
-    acceptsX402: true, clones: 8, transferableLicense: false, genArtSeed: "btc-momentum-7a91-v3",
+    acceptsX402: true, transferableLicense: false, genArtSeed: "btc-momentum-7a91-v3",
   },
   {
     id: "btc-grid-v2", lineageId: "btc-grid", version: "v2.0", name: "BTC Grid v2", creator: ed,
     model: "Claude · Haiku 4.5", style: "Mean-reversion", assets: ["BTC"], return30dPct: 31.4, sharpe: 1.12,
     buyers: { humans: 134, agents: 9 }, priceUsdc: 39, tier: "sealed", verification: "verified",
-    acceptsX402: false, clones: 3, transferableLicense: false, genArtSeed: "btc-grid-6f5b",
+    acceptsX402: false, transferableLicense: false, genArtSeed: "btc-grid-6f5b",
   },
   {
     id: "eth-mr-v2", lineageId: "eth-mr", version: "v2.0", name: "ETH Mean-Reversion v2", creator: ed,
     model: "Claude · Haiku 4.5", style: "Mean-reversion", assets: ["ETH"], return30dPct: 12.8, sharpe: 0.74,
     buyers: { humans: 88, agents: 3 }, priceUsdc: 0, tier: "open", verification: "unverified",
-    acceptsX402: false, clones: 0, transferableLicense: true, genArtSeed: "eth-mr-3b22",
+    acceptsX402: false, transferableLicense: true, genArtSeed: "eth-mr-3b22",
   },
 ];
 
@@ -67,7 +67,7 @@ export function makeWallListings(n = 200): ListingRow[] {
       buyers: { humans: (i * 7) % 500, agents: i % 25 },
       priceUsdc: i % 5 === 0 ? null : 10 + (i % 20) * 5,
       tier: i % 5 === 0 ? "open" : "sealed", verification: i % 3 === 0 ? "verified" : "unverified",
-      acceptsX402: i % 2 === 0, clones: i % 12, transferableLicense: i % 7 === 0, genArtSeed: `wall-${i}-${(i * 2246822507 >>> 0).toString(36)}`,
+      acceptsX402: i % 2 === 0, transferableLicense: i % 7 === 0, genArtSeed: `wall-${i}-${(i * 2246822507 >>> 0).toString(36)}`,
     });
   }
   return out;

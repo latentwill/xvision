@@ -425,8 +425,6 @@ id for per-user overrides.
 
 | Verb | Effect |
 |---|---|
-| `xvn metrics --report <path> --treatment <arm> --baseline <arm>` | Compute pre-committed metrics from a `BacktestResult` JSON; emits JSON. |
-| `xvn gate --report <path> --treatment <arm> --baseline <arm>` | Apply the anti-overfit verdict to pre-committed metrics; emits JSON. |
 | `xvn store migrate [--db <path>]` | Open the SQLite flight recorder and apply pending migrations. |
 | `xvn store stats [--db <path>]` | Print row counts per table in the flight recorder. |
 | `xvn eod [--hours <n>]` | End-of-day operator report as markdown to stdout (default window: 24 h). |

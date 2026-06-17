@@ -222,6 +222,7 @@ async fn agent_slots_pipeline_emits_agent_plan_span_with_topology() {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         },
         ResolvedAgentSlot {
             role: "trader".into(),
@@ -241,6 +242,7 @@ async fn agent_slots_pipeline_emits_agent_plan_span_with_topology() {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         },
     ];
 

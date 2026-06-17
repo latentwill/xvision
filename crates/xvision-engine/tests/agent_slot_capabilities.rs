@@ -131,6 +131,8 @@ fn agent_ref_activates_round_trip_and_legacy_default() {
         activates: None,
         prompt_override: None,
         model_override: None,
+        checkpoint: None,
+        veto: None,
     };
     let s = serde_json::to_string(&r).unwrap();
     assert!(!s.contains("\"activates\""));

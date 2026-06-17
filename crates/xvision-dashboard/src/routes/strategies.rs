@@ -13,10 +13,10 @@ use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
-    set_mechanistic_config, set_pipeline, set_risk_config, update_inspector, update_metadata, update_slot,
-    validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, MarketplaceProvenance,
-    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategyRequirements,
-    StrategySummary,
+    set_agent_checkpoint, set_mechanistic_config, set_pipeline, set_risk_config, update_inspector,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq,
+    ListStrategiesRequest, MarketplaceProvenance, RemoveAgentReq, RenameAgentRoleReq,
+    SetAgentCheckpointReq, SetPipelineReq, StrategyAgentsOut, StrategyRequirements, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -715,6 +715,41 @@ pub async fn put_mechanistic(
         &id,
         body.decision_mode,
         body.mechanistic_config,
+    )
+    .await?;
+    Ok(Json(strategy))
+}
+
+// ── set_agent_checkpoint (s3ph.27) ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PutAgentCheckpointBody {
+    /// New checkpoint reference, or `null` / absent to clear.
+    #[serde(default)]
+    pub checkpoint: Option<xvision_engine::strategies::agent_ref::CheckpointRef>,
+    /// Veto mode: `true` = hard gate, `false` = advisory, `null` / absent = clear.
+    #[serde(default)]
+    pub veto: Option<bool>,
+}
+
+/// `PUT /api/strategy/:id/agents/:role/checkpoint` — persist a nanochat
+/// checkpoint + veto setting on the named `AgentRef` slot.
+///
+/// Runs the full save gate (live_approved + indicator-compat check) via
+/// `strategy::set_agent_checkpoint`. Returns the updated `Strategy`.
+pub async fn put_agent_checkpoint(
+    Path((id, role)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Json(body): Json<PutAgentCheckpointBody>,
+) -> Result<Json<Strategy>, DashboardError> {
+    let strategy = set_agent_checkpoint(
+        &state.api_context(),
+        SetAgentCheckpointReq {
+            strategy_id: id,
+            role,
+            checkpoint: body.checkpoint,
+            veto: body.veto,
+        },
     )
     .await?;
     Ok(Json(strategy))

@@ -334,6 +334,12 @@ pub struct RunDetail {
     pub filter_events: Vec<FilterEventV1>,
     #[serde(default)]
     pub filter_summaries: Vec<FilterSummary>,
+    /// Distinct signal tool names (Nansen + Elfa) actually called during this
+    /// run, sorted alphabetically. `None` when no signal tools were called or
+    /// when the trace data is unavailable (old runs, missing agent_runs rows).
+    /// Drives the "signals used" chip row in the cycle-detail UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signals_used: Option<Vec<String>>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1112,13 +1118,61 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
     enrich_run_summary_metadata(ctx, &mut summary).await;
     summary.filter_summaries = filter_summaries.clone();
 
+    // Best-effort: load signal tools from the observability trace. Returns
+    // None if the run predates the agent_runs trace path or called no signals.
+    let signals_used = load_signals_used(&ctx.db, id).await;
+
     Ok(RunDetail {
         summary,
         decisions,
         equity_curve,
         filter_events,
         filter_summaries,
+        signals_used,
     })
+}
+
+/// Derive the distinct set of signal tool names (Nansen + Elfa) from a slice
+/// of raw tool names (as recorded in `tool_calls.tool_name`). Returns `None`
+/// when no signal tools are present so the field is omitted from the JSON.
+/// The result is sorted alphabetically so the output is deterministic.
+pub fn signals_used_from_tool_names(tool_names: &[String]) -> Option<Vec<String>> {
+    let mut seen: std::collections::HashSet<String> = tool_names
+        .iter()
+        .filter(|n| crate::tools::signal_policy::signal_tool_policy(n.as_str()).is_some())
+        .cloned()
+        .collect();
+    if seen.is_empty() {
+        return None;
+    }
+    let mut result: Vec<String> = seen.drain().collect();
+    result.sort();
+    Some(result)
+}
+
+/// Load the distinct signal tool names called for an eval run from the
+/// `tool_calls` table (via the `agent_runs → spans` join path).
+/// Returns `None` on any error or when no signal tools were called.
+/// Best-effort: a missing/empty trace is not an error.
+async fn load_signals_used(pool: &sqlx::SqlitePool, eval_run_id: &str) -> Option<Vec<String>> {
+    let rows: Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT DISTINCT tc.tool_name \
+         FROM tool_calls tc \
+         JOIN spans s ON s.id = tc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => {
+            let names: Vec<String> = rows.into_iter().map(|(n,)| n).collect();
+            signals_used_from_tool_names(&names)
+        }
+        Err(_) => None,
+    }
 }
 
 async fn enrich_run_summary_metadata(ctx: &ApiContext, summary: &mut RunSummary) {
@@ -1367,7 +1421,8 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let skip_preflight = req.skip_preflight;
     let (dispatch_arc, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools_arc = Arc::new(ToolRegistry::default_with_builtins());
+    let sig_cfg = resolve_signal_tool_config(ctx);
+    let tools_arc = Arc::new(build_tool_registry(ctx, &sig_cfg));
     let run = run_with_deps(ctx, req, broker, dispatch_arc, findings_model, tools_arc).await?;
     let store = RunStore::new(ctx.db.clone());
     write_preflight_supervisor_notes(&store, &run.id, &provider_names, skip_preflight).await;
@@ -2188,6 +2243,38 @@ async fn resolve_agent_slots(
         // (identical ΔSharpe to the parent → always rejected). Centralized in
         // `apply_agent_ref_overrides` so both resolvers behave identically.
         crate::agent::pipeline::apply_agent_ref_overrides(&mut resolved, agent_ref);
+        // Nano DB lookup — only when AgentRef carries a CheckpointRef.
+        if let Some(checkpoint_ref) = agent_ref.checkpoint.as_ref() {
+            let nano_store = crate::nanochat::store::NanochatStore::new(ctx.db.clone());
+            let model = nano_store
+                .get_model(&checkpoint_ref.model_id)
+                .await
+                .map_err(|e| {
+                    ApiError::Internal(format!(
+                        "nanochat store error for {}: {e}",
+                        checkpoint_ref.model_id
+                    ))
+                })?
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!(
+                        "nanochat checkpoint {} not found in trained_models",
+                        checkpoint_ref.model_id
+                    ))
+                })?;
+            let input_spec: crate::agent::nano_dispatch::NanoInputSpec =
+                serde_json::from_str(&model.input_spec).map_err(|e| {
+                    ApiError::Validation(format!(
+                        "bad input_spec JSON for {}: {e}",
+                        checkpoint_ref.model_id
+                    ))
+                })?;
+            resolved.nano = Some(crate::agent::pipeline::NanoSlotConfig {
+                checkpoint: checkpoint_ref.clone(),
+                veto: agent_ref.veto,
+                input_spec,
+                weights_sha256: model.weights_sha256,
+            });
+        }
         out.push(resolved);
     }
     Ok(out)
@@ -2286,6 +2373,27 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str)
     )
 }
 
+/// Tool-response cache handle. Enables deterministic backtest re-runs by
+/// serving cached external tool responses (Nansen/Elfa) from the trajectory
+/// store instead of hitting the live network.
+///
+/// `replay = true`  → serve from cache, return Err on miss (loud — never
+///                    silently re-fetches on a miss; missing cache = broken
+///                    recording).
+/// `replay = false` → record path: forward to live tool, then write to cache
+///                    (best-effort; a cache write failure does NOT fail the run).
+///
+/// Production replay wiring (engine-eval replay mode) is a follow-up that
+/// lands alongside `RunTrajectoryMode::Replay`; at present only `record`
+/// (`replay: false`) is built into the `spawn_cline_ctx` path.
+#[derive(Clone)]
+struct ToolHttpCacheHandle {
+    store: std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore>,
+    recording_id: xvision_observability::trajectory::key::RecordingId,
+    /// `true` => replay (serve from cache, no HTTP); `false` => record (fetch then cache).
+    replay: bool,
+}
+
 /// Bridges sidecar tool callbacks to the engine's [`ToolRegistry`]. The
 /// Cline agent invokes registry-backed tools (indicators, ohlcv, …) over
 /// the callback socket; this adapter routes them to the same
@@ -2295,6 +2403,40 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str)
 struct ToolRegistryDispatch {
     tools: Arc<ToolRegistry>,
     current_asset: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// The run's mode. Drives the forward-only guard + the Nansen backtest
+    /// `as_of_date` injection in `invoke` (later tasks). `Copy`.
+    run_mode: crate::eval::run::RunMode,
+    /// Simulated-clock anchor for the current decision, written by the
+    /// executor per cycle (Task 1.4). `None` until the first decision.
+    as_of: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
+    /// Backtest lookahead lag (days). Default `DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS`.
+    nansen_lag_days: i64,
+    /// Tool-response cache for deterministic backtest re-runs. `None` => no
+    /// recording/replay (live/forward runs always fetch).
+    tool_cache: Option<ToolHttpCacheHandle>,
+    /// Per-run Nansen credit budget (D8/im2r.4). `None` => uncapped.
+    nansen_budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Per-run Elfa credit budget (im2r.4). `None` => uncapped.
+    elfa_budget: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+}
+
+/// True when `v` is a signal-tool degrade response (`{available: false, …}`).
+/// Used to avoid caching transient degrade responses (xvision-im2r.3).
+fn is_degrade(v: &serde_json::Value) -> bool {
+    v.get("available") == Some(&serde_json::Value::Bool(false))
+}
+
+/// Compute a stable SHA-256 hash over the canonical JSON of `input`, keyed by
+/// `name`. The canonical form sorts object keys so that `{"b":1,"a":2}` and
+/// `{"a":2,"b":1}` produce the same hash (deterministic across model runs).
+fn canonical_input_hash(name: &str, input: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let canon = crate::autooptimizer::canonicalize_json(input);
+    let mut h = Sha256::new();
+    h.update(name.as_bytes());
+    h.update([0u8]); // NUL separator — prevents name from bleeding into payload
+    h.update(serde_json::to_vec(&canon).unwrap_or_default());
+    format!("{:x}", h.finalize())
 }
 
 fn normalize_callback_asset_for_compare(asset: &str) -> String {
@@ -2340,6 +2482,134 @@ impl ToolDispatch for ToolRegistryDispatch {
             return Err(ToolDispatchError::Failed(message));
         }
 
+        // Compute the policy once — used for the forward-only gate below and
+        // for the cache gate later in this function (xvision-im2r.9).
+        let policy = crate::tools::signal_policy::signal_tool_policy(name);
+
+        // Forward-only gate (defense in depth — the advertisement filter (Task 1.6)
+        // already strips mode-forbidden tools, but a hand-crafted call must also fail).
+        if let Some(p) = policy {
+            let allowed = match self.run_mode {
+                crate::eval::run::RunMode::Live => p.live,
+                crate::eval::run::RunMode::Backtest => p.backtest,
+            };
+            if !allowed {
+                return Err(ToolDispatchError::Failed(format!(
+                    "{name} is forward-only; unavailable in backtest"
+                )));
+            }
+        }
+        // Anchor Nansen backtest calls to the simulated clock (overwrites any
+        // model-supplied as_of_date — the lookahead-safety invariant).
+        let input = self.inject_backtest_as_of_async(name, input).await?;
+
+        // D8 / im2r.4: per-provider per-run credit budget for signal tools.
+        // Replay is free. Credits are refunded if the downstream fetch Errors
+        // (im2r.5) so a failed/unknown-tool call doesn't permanently burn one.
+        let budget_arc: Option<std::sync::Arc<std::sync::atomic::AtomicU32>> =
+            match crate::tools::signal_policy::tool_provider(name) {
+                Some(crate::tools::signal_policy::SignalProvider::Nansen) => {
+                    self.nansen_budget.clone()
+                }
+                Some(crate::tools::signal_policy::SignalProvider::Elfa) => {
+                    self.elfa_budget.clone()
+                }
+                None => None,
+            };
+        let mut credit_consumed = false;
+        if let Some(budget) = &budget_arc {
+            let is_replay = self.tool_cache.as_ref().map(|c| c.replay).unwrap_or(false);
+            if !is_replay {
+                // Atomic check-and-decrement: consume one credit; if there was
+                // none, degrade. saturating_sub keeps it >= 0.
+                let prev = budget
+                    .fetch_update(
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                        |v| Some(v.saturating_sub(1)),
+                    )
+                    .unwrap_or(0);
+                if prev == 0 {
+                    return Ok(crate::tools::signal_policy::signal_unavailable("budget exhausted"));
+                }
+                credit_consumed = true;
+            }
+        }
+
+        // Deterministic replay / record of external (signal) tool responses.
+        if let Some(cache) = &self.tool_cache {
+            if policy.is_some() {
+                let hash = canonical_input_hash(name, &input);
+                let as_of_date = input
+                    .get("as_of_date")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if cache.replay {
+                    return match cache
+                        .store
+                        .get_cached_tool_response(&cache.recording_id, name, &hash)
+                        .await
+                    {
+                        Ok(Some(v)) => Ok(v),
+                        Ok(None) => Err(ToolDispatchError::Failed(format!(
+                            "replay: no cached response for {name} (hash {hash}) — \
+                             recording incomplete"
+                        ))),
+                        Err(e) => Err(ToolDispatchError::Failed(format!("replay store error: {e}"))),
+                    };
+                }
+                // Record path: fetch live, then cache before returning.
+                // Best-effort cache write — a write failure must NOT fail the run.
+                // Do NOT cache degrade responses: they are transient (budget
+                // exhausted, provider unavailable) and should not be replayed as
+                // authoritative results in future backtest re-runs (xvision-im2r.3).
+                let result = match self.dispatch_inner(name, input.clone()).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // im2r.5: refund the credit on a failed fetch so a network
+                        // error or unknown-tool call doesn't permanently burn one.
+                        if credit_consumed {
+                            if let Some(budget) = &budget_arc {
+                                budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        return Err(e);
+                    }
+                };
+                if !is_degrade(&result) {
+                    let _ = cache
+                        .store
+                        .cache_tool_response(&cache.recording_id, name, &hash, as_of_date.as_deref(), &result)
+                        .await;
+                }
+                return Ok(result);
+            }
+        }
+
+        // Uncached path (live run or non-signal tool).
+        match self.dispatch_inner(name, input).await {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // im2r.5: refund on error (no wasted credit for transient failures).
+                if credit_consumed {
+                    if let Some(budget) = &budget_arc {
+                        budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
+impl ToolRegistryDispatch {
+    /// Forward the call to the real tool registry. Shared by the cache record
+    /// path and the uncached live path.
+    async fn dispatch_inner(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolDispatchError> {
         match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
             Ok(s) => {
                 // Tool outputs are JSON-shaped strings; pass parsed JSON
@@ -2348,6 +2618,56 @@ impl ToolDispatch for ToolRegistryDispatch {
             }
             Err(e) => Err(ToolDispatchError::Failed(format!("{e:#}"))),
         }
+    }
+
+    /// For a Nansen tool under `RunMode::Backtest`, overwrite `as_of_date` with
+    /// the framework-computed anchor (the model cannot influence the backtest
+    /// anchor — lookahead-safety invariant).
+    ///
+    /// For a Nansen tool under `RunMode::Live`, strip any model-supplied
+    /// `as_of_date` — a hallucinated date would silently route the call to the
+    /// historical endpoint (xvision-im2r.2).
+    ///
+    /// Non-Nansen tools pass through unchanged.
+    /// Errors if a Nansen backtest call has no clock anchor set.
+    async fn inject_backtest_as_of_async(
+        &self,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolDispatchError> {
+        use crate::eval::run::RunMode;
+        use crate::tools::signal_policy::{is_nansen_tool, nansen_as_of_date};
+        if !is_nansen_tool(name) {
+            return Ok(input);
+        }
+        // Nansen live: strip any model-supplied as_of_date (xvision-im2r.2).
+        if self.run_mode != RunMode::Backtest {
+            let mut input = input;
+            if let Some(obj) = input.as_object_mut() {
+                obj.remove("as_of_date");
+            }
+            return Ok(input);
+        }
+        // Copy the Copy DateTime out of the read guard before consuming it.
+        let anchor: Option<chrono::DateTime<chrono::Utc>> = { *self.as_of.read().await };
+        let anchor = anchor.ok_or_else(|| {
+            ToolDispatchError::Failed(format!(
+                "{name}: no simulated-clock anchor set for backtest (executor did not publish as_of)"
+            ))
+        })?;
+        let date = nansen_as_of_date(anchor, self.nansen_lag_days);
+        let mut input = input;
+        match input.as_object_mut() {
+            Some(obj) => {
+                obj.insert("as_of_date".into(), serde_json::Value::String(date.to_string()));
+            }
+            None => {
+                return Err(ToolDispatchError::Failed(format!(
+                    "{name}: backtest input must be a JSON object to anchor as_of_date"
+                )));
+            }
+        }
+        Ok(input)
     }
 }
 
@@ -2367,6 +2687,7 @@ async fn spawn_cline_ctx(
     entry: ProviderEntry,
     tools: Arc<ToolRegistry>,
     recording_request: Option<RecordingRequest>,
+    run_mode: crate::eval::run::RunMode,
 ) -> ApiResult<(
     crate::agent::dispatch_capability::ClineDispatchCtx,
     Option<crate::agent::cline_recording::RunRecording>,
@@ -2427,9 +2748,36 @@ async fn spawn_cline_ctx(
     let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
 
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
+    let as_of_guard: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>> =
+        Arc::new(tokio::sync::RwLock::new(None));
+    // Build the record-mode cache handle from the minted recording (Task 3.3).
+    // Replay-mode wiring is intentionally deferred — production replay trigger
+    // (RunTrajectoryMode::Replay → replay: true) lands with the engine-eval
+    // replay follow-up; here we only wire the record path.
+    let tool_cache = recording.as_ref().map(|(store, rid, _)| ToolHttpCacheHandle {
+        store: store.clone(),
+        recording_id: rid.clone(),
+        replay: false,
+    });
+    // Read lag + budgets from the SignalToolConfig already embedded in the
+    // registry by build_tool_registry — no second xvn.toml parse (im2r.6).
+    let (nansen_lag_days, nansen_budget_arc, elfa_budget_arc) = {
+        let sig = tools
+            .signal_cfg
+            .as_deref()
+            .cloned()
+            .unwrap_or_default();
+        (sig.nansen_lag_days(), sig.nansen_budget_arc(), sig.elfa_budget_arc())
+    };
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
         tools: tools.clone(),
         current_asset: tool_asset_guard.clone(),
+        run_mode,
+        as_of: as_of_guard.clone(),
+        nansen_lag_days,
+        tool_cache,
+        nansen_budget: nansen_budget_arc,
+        elfa_budget: elfa_budget_arc,
     });
     let bus = ctx
         .obs_event_bus
@@ -2481,7 +2829,7 @@ async fn spawn_cline_ctx(
     }
 
     client
-        .register_tools(crate::tools::built_in_tool_descriptors())
+        .register_tools(crate::tools::sidecar_descriptors(&tools))
         .await
         .map_err(|e| ApiError::Internal(format!("register agentd tools: {e}")))?;
 
@@ -2506,6 +2854,8 @@ async fn spawn_cline_ctx(
             api_key,
             recording_slot_role,
             tool_asset_guard: Some(tool_asset_guard),
+            as_of_guard: Some(as_of_guard),
+            run_mode,
         },
         run_recording,
     ))
@@ -2572,6 +2922,100 @@ fn recording_persist_failed(client: &Option<Arc<AgentClient>>) -> bool {
 
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
     xvision_core::config::runtime_config_path(&ctx.xvn_home)
+}
+
+/// Parse `xvn.toml` once and return the resolved signal-tool configuration
+/// (enabled Nansen + Elfa entries). Best-effort: returns an empty/default
+/// `SignalToolConfig` when the config file is missing or malformed so a
+/// missing `xvn.toml` never prevents a run from starting.
+///
+/// Callers must invoke this ONCE per run and pass the result to both
+/// `build_tool_registry` and `spawn_cline_ctx` so `xvn.toml` is parsed
+/// only once per run (xvision-im2r.6).
+fn resolve_signal_tool_config(ctx: &ApiContext) -> crate::tools::signal_policy::SignalToolConfig {
+    /// Minimal TOML-deserializable wrapper that only reads `data_tools`, so
+    /// the full `RuntimeConfig` (with its required `runtime`/`trader`/`backtest`
+    /// sections) doesn't have to be valid.  Used solely inside
+    /// `resolve_signal_tool_config`.
+    #[derive(serde::Deserialize, Default)]
+    struct DataToolsOnly {
+        #[serde(default)]
+        data_tools: Vec<xvision_core::config::DataToolEntry>,
+    }
+
+    let cfg_path = runtime_config_path(ctx);
+    let data_tools: Vec<xvision_core::config::DataToolEntry> = std::fs::read_to_string(&cfg_path)
+        .ok()
+        .and_then(|s| toml::from_str::<DataToolsOnly>(&s).ok())
+        .map(|c| c.data_tools)
+        .unwrap_or_default();
+
+    let nansen_entry = data_tools
+        .iter()
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Nansen && e.enabled)
+        .cloned();
+    let elfa_entry = data_tools
+        .iter()
+        .find(|e| e.kind == xvision_core::config::DataToolKind::Elfa && e.enabled)
+        .cloned();
+
+    crate::tools::signal_policy::SignalToolConfig {
+        nansen_entry,
+        elfa_entry,
+    }
+}
+
+/// Build a `ToolRegistry` with builtins plus any enabled signal tools
+/// configured in `xvn.toml`. Accepts a pre-resolved `SignalToolConfig` so the
+/// config file is not read again (xvision-im2r.6). Best-effort: a missing or
+/// malformed `xvn.toml` is handled upstream in `resolve_signal_tool_config`,
+/// which returns an empty config so no signal tools are registered. The Nansen
+/// and Elfa API keys are resolved from the env vars named by
+/// `DataToolEntry.api_key_env`; an empty or missing var silently skips the
+/// tool.
+///
+/// The resolved `SignalToolConfig` is stored on the returned `ToolRegistry` so
+/// `spawn_cline_ctx` can read lag/budgets without re-parsing the config.
+fn build_tool_registry(
+    ctx: &ApiContext,
+    sig_cfg: &crate::tools::signal_policy::SignalToolConfig,
+) -> ToolRegistry {
+    let _ = ctx; // retained for future per-workspace overrides
+    let mut registry = ToolRegistry::default_with_builtins();
+
+    // Use the process-global client cache so identical config reuses the same
+    // Arc<NansenClient> / Arc<ElfaClient> (and thus the same in-memory rate
+    // limiter) across back-to-back runs (xvision-im2r.8).
+    let nansen_client = sig_cfg.nansen_entry.as_ref().and_then(|entry| {
+        let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
+        if api_key.is_empty() {
+            return None;
+        }
+        Some(xvision_data::client_cache::get_or_create_nansen(
+            &entry.base_url,
+            &api_key,
+            300u32,
+        ))
+    });
+
+    let elfa_client = sig_cfg.elfa_entry.as_ref().and_then(|entry| {
+        let api_key = std::env::var(&entry.api_key_env).unwrap_or_default();
+        if api_key.is_empty() {
+            return None;
+        }
+        Some(xvision_data::client_cache::get_or_create_elfa(
+            &entry.base_url,
+            &api_key,
+            60u32,
+        ))
+    });
+
+    registry.register_signal_tools(nansen_client, elfa_client);
+    // Store the resolved config on the registry so `spawn_cline_ctx` can read
+    // lag/budgets without re-parsing `xvn.toml` (xvision-im2r.6).
+    registry.signal_cfg = Some(std::sync::Arc::new(sig_cfg.clone()));
+
+    registry
 }
 
 /// Load every configured provider's cached catalog once per eval run.
@@ -2890,7 +3334,7 @@ async fn run_inner(
         } else {
             None
         };
-        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request).await?;
+        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request, req.mode).await?;
         (Some(cctx), rec)
     };
     // The recorder needs the spawned client's persist-failure flag at
@@ -4208,7 +4652,11 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
 
     let (dispatch, findings_model) =
         build_eval_dispatch(ctx, &strategy, &agent_slots, req.provider_override.as_ref()).await?;
-    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    // Resolve signal-tool config once; pass to both build_tool_registry and
+    // spawn_cline_ctx (via the registry) so xvn.toml is parsed only once per
+    // run start (xvision-im2r.6).
+    let sig_cfg = resolve_signal_tool_config(ctx);
+    let tools = Arc::new(build_tool_registry(ctx, &sig_cfg));
 
     // Other entry point (`run_with_deps_in_progress`) — observability
     // wiring is opt-in via the same ApiContext bus. The emitter is
@@ -4271,7 +4719,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                     u.hint
                 ))
             })?;
-        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None).await?;
+        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None, req.mode).await?;
         Some(cctx)
     };
 
@@ -5099,6 +5547,7 @@ pub async fn spawn_optimizer_cline_ctx(
     ctx: &ApiContext,
     provider_name: &str,
     tools: Arc<ToolRegistry>,
+    run_mode: crate::eval::run::RunMode,
 ) -> ApiResult<Option<crate::agent::dispatch_capability::ClineDispatchCtx>> {
     let cfg_path = runtime_config_path(ctx);
     let entry = crate::api::settings::providers::resolve_provider(ctx, &cfg_path, provider_name, None)
@@ -5113,7 +5562,7 @@ pub async fn spawn_optimizer_cline_ctx(
                 u.hint
             ))
         })?;
-    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None).await?;
+    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None, run_mode).await?;
     Ok(Some(cctx))
 }
 
@@ -5532,6 +5981,8 @@ mod tests {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
@@ -5596,6 +6047,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         let slots = runtime_slots(&strategy, &agent_slots);
@@ -5640,6 +6092,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         let err = validate_eval_trader_source(&strategy, &agent_slots).unwrap_err();
@@ -5675,6 +6128,7 @@ mod tests {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: true,
+            nano: None,
         }];
 
         validate_eval_trader_source(&strategy, &agent_slots).unwrap();
@@ -5840,7 +6294,8 @@ mod tests {
         std::env::remove_var("XVN_AGENTD_BIN");
 
         let tools = Arc::new(crate::tools::ToolRegistry::empty());
-        let result = spawn_optimizer_cline_ctx(&ctx, "anthropic", tools).await;
+        let result =
+            spawn_optimizer_cline_ctx(&ctx, "anthropic", tools, crate::eval::run::RunMode::Backtest).await;
         // ClineDispatchCtx has no Debug, so report only the Ok/Err shape.
         assert!(
             result.is_err(),
@@ -5991,6 +6446,426 @@ pub async fn get_live_deployment(
         .fetch_optional(&ctx.db)
         .await?;
     Ok(row.map(Into::into))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — ToolRegistryDispatch forward-only guard + Nansen as_of injection
+// (Task 1.5)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tool_registry_dispatch_tests {
+    use super::ToolRegistryDispatch;
+
+    fn test_dispatch(
+        mode: crate::eval::run::RunMode,
+        as_of: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ToolRegistryDispatch {
+        ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: mode,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(as_of)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: None,
+            elfa_budget: None,
+        }
+    }
+
+    fn test_dispatch_budget(mode: crate::eval::run::RunMode, budget: Option<u32>) -> ToolRegistryDispatch {
+        ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: mode,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: budget.map(|n| std::sync::Arc::new(std::sync::atomic::AtomicU32::new(n))),
+            elfa_budget: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn elfa_tool_rejected_in_backtest() {
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, None);
+        let err = d
+            .invoke("elfa_smart_mentions", serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("forward-only"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn nansen_backtest_injects_floored_as_of_overwriting_model_value() {
+        use chrono::{TimeZone, Utc};
+        let anchor = Utc.with_ymd_and_hms(2024, 3, 15, 14, 0, 0).unwrap();
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, Some(anchor));
+        // The model supplies a future date; the framework MUST overwrite it.
+        let injected = d
+            .inject_backtest_as_of_async(
+                "nansen_smart_money_flow",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(injected["as_of_date"], "2024-03-14");
+    }
+
+    #[tokio::test]
+    async fn nansen_backtest_without_anchor_is_error() {
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, None);
+        let err = d
+            .invoke("nansen_smart_money_flow", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("anchor"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn nansen_live_does_not_inject_as_of() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async("nansen_smart_money_flow", serde_json::json!({"asset": "BTC"}))
+            .await
+            .unwrap();
+        assert!(
+            out.get("as_of_date").is_none(),
+            "live must not inject a backtest anchor"
+        );
+    }
+
+    // FIX B — xvision-im2r.2: a model-hallucinated as_of_date in a live run
+    // must be stripped before forwarding to Nansen (would hit the historical
+    // endpoint otherwise).
+    #[tokio::test]
+    async fn nansen_live_strips_model_supplied_as_of_date() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async(
+                "nansen_smart_money_flow",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.get("as_of_date").is_none(),
+            "live run must strip any model-supplied as_of_date; got: {out}"
+        );
+        // Other fields must be preserved.
+        assert_eq!(out["asset"], "BTC");
+    }
+
+    // FIX B — non-Nansen tool (elfa) in live mode: as_of_date is irrelevant
+    // and the field passes through unchanged (no stripping for non-Nansen).
+    #[tokio::test]
+    async fn non_nansen_live_preserves_as_of_date() {
+        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let out = d
+            .inject_backtest_as_of_async(
+                "elfa_smart_mentions",
+                serde_json::json!({"asset": "BTC", "as_of_date": "2099-01-01"}),
+            )
+            .await
+            .unwrap();
+        // Not a Nansen tool → pass-through, field preserved.
+        assert_eq!(out["as_of_date"], "2099-01-01");
+    }
+
+    #[tokio::test]
+    async fn nansen_backtest_non_object_input_is_error() {
+        use chrono::Utc;
+        let d = test_dispatch(crate::eval::run::RunMode::Backtest, Some(Utc::now()));
+        let err = d
+            .inject_backtest_as_of_async("nansen_smart_money_flow", serde_json::json!("not-an-object"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("JSON object"), "got: {err}");
+    }
+
+    use xvision_agent_client::ToolDispatch as _;
+
+    // -----------------------------------------------------------------------
+    // Task 5.2 — D8 per-run credit budget tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn zero_budget_short_circuits_signal_tool_with_degrade() {
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let out = d
+            .invoke("nansen_token_screener", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap();
+        assert_eq!(out["available"], false);
+        assert!(out["reason"].as_str().unwrap().contains("budget"), "got: {out}");
+    }
+
+    #[tokio::test]
+    async fn budget_does_not_affect_builtins() {
+        // ohlcv is a built-in (no policy); a zero budget must NOT short-circuit it.
+        // With an empty registry the dispatch errors (tool not found) — that's
+        // proof the budget gate did NOT intercept (it would have returned a
+        // degrade Ok-value instead of an Err).
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let res = d.invoke("ohlcv", serde_json::json!({"asset":"BTC"})).await;
+        assert!(
+            res.is_err(),
+            "built-in must bypass the budget gate and hit dispatch"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FIX D — xvision-im2r.4: per-provider budget (Elfa ≠ Nansen pool)
+    // -----------------------------------------------------------------------
+
+    /// An Elfa call must NOT decrement the Nansen budget (and vice-versa).
+    #[tokio::test]
+    async fn elfa_call_does_not_consume_nansen_budget() {
+        // nansen_budget=1, elfa_budget=1. An Elfa call with zero elfa_budget
+        // degrades. But the nansen_budget must remain 1 after the Elfa call.
+        let nansen_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(1));
+        let elfa_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: Some(nansen_b.clone()),
+            elfa_budget: Some(elfa_b),
+        };
+        // Elfa call with zero elfa_budget → degrade.
+        let out = d
+            .invoke("elfa_smart_mentions", serde_json::json!({"asset":"BTC"}))
+            .await
+            .unwrap();
+        assert_eq!(out["available"], false, "elfa call with zero elfa_budget must degrade");
+        // Nansen budget must still be 1 — the Elfa call must not have touched it.
+        assert_eq!(
+            nansen_b.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "nansen_budget must be untouched by an Elfa call"
+        );
+    }
+
+    /// A failing signal fetch must refund the credit (im2r.5).
+    /// An empty registry causes dispatch_inner to Err (unknown tool), which
+    /// exercises the refund path. We set nansen_budget=5 and verify it's still
+    /// 5 after the error (not 4).
+    #[tokio::test]
+    async fn failing_signal_fetch_refunds_credit() {
+        let nansen_b = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(5));
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: None,
+            nansen_budget: Some(nansen_b.clone()),
+            elfa_budget: None,
+        };
+        // Empty registry → dispatch_inner Errs → credit must be refunded.
+        let res = d
+            .invoke("nansen_smart_money_flow", serde_json::json!({"asset":"BTC"}))
+            .await;
+        assert!(res.is_err(), "must error with empty registry");
+        assert_eq!(
+            nansen_b.load(std::sync::atomic::Ordering::Relaxed),
+            5,
+            "credit must be refunded after a failed fetch"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 3.3 — replay + canonical_input_hash tests
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal in-memory TrajectoryStore suitable for unit tests.
+    /// Mirrors the DDL from `crates/xvision-observability/tests/tool_cache_round_trip.rs`.
+    async fn make_test_store(
+        tmp: &tempfile::TempDir,
+    ) -> std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore> {
+        use sqlx::sqlite::SqlitePoolOptions;
+        use xvision_observability::trajectory::store::TrajectoryStore;
+        use xvision_observability::{BlobStore, RetentionMode};
+
+        let db_path = tmp.path().join("tool_cache_test.db");
+        let url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .expect("open sqlite");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS trajectory_recordings (
+              recording_id       TEXT PRIMARY KEY,
+              schema_version     INTEGER NOT NULL,
+              status             TEXT NOT NULL DEFAULT 'open',
+              key_fingerprint    TEXT NOT NULL UNIQUE,
+              cycle_id           TEXT NOT NULL,
+              slot_role          TEXT NOT NULL,
+              arm_scope          TEXT,
+              simulation_id      TEXT,
+              provider           TEXT NOT NULL,
+              model              TEXT NOT NULL,
+              model_version      TEXT,
+              system_prompt_hash TEXT NOT NULL,
+              recovery_reason    TEXT,
+              created_at         INTEGER NOT NULL,
+              completed_at       INTEGER,
+              expires_at         INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS trajectory_frames (
+              recording_id  TEXT    NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE,
+              slot_role     TEXT    NOT NULL,
+              step_index    INTEGER NOT NULL,
+              frame_index   INTEGER NOT NULL,
+              frame_kind    TEXT    NOT NULL,
+              ts_ms         INTEGER NOT NULL,
+              payload_hash  TEXT    NOT NULL,
+              payload_ref   TEXT,
+              PRIMARY KEY (recording_id, slot_role, step_index, frame_index)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tool_http_cache (
+              recording_id  TEXT NOT NULL REFERENCES trajectory_recordings(recording_id) ON DELETE CASCADE,
+              tool_name     TEXT NOT NULL,
+              input_hash    TEXT NOT NULL,
+              as_of_date    TEXT,
+              response_json TEXT NOT NULL,
+              created_at    INTEGER NOT NULL,
+              PRIMARY KEY (recording_id, tool_name, input_hash)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let blob = BlobStore::new(tmp.path().join("blobs"));
+        std::sync::Arc::new(TrajectoryStore::new(pool, blob, RetentionMode::HashOnly))
+    }
+
+    fn make_test_key() -> xvision_observability::trajectory::key::TrajectoryKey {
+        use xvision_observability::trajectory::key::{TrajectoryKey, TRAJECTORY_SCHEMA_VERSION};
+        TrajectoryKey::builder()
+            .cycle_id(uuid::Uuid::new_v4())
+            .slot_role("trader")
+            .arm_scope(None::<String>)
+            .simulation_id(None::<String>)
+            .provider("anthropic")
+            .model("claude-opus-4-7")
+            .model_version("2026-05")
+            .schema_version(TRAJECTORY_SCHEMA_VERSION)
+            .system_prompt_hash("sys")
+            .user_prompt_hash("usr")
+            .build()
+    }
+
+    /// Replay path: a `ToolRegistryDispatch` with `replay: true` and a seeded
+    /// cache entry must serve the cached response over an EMPTY tool registry
+    /// (a live fetch would fail → proves no HTTP call was made).
+    ///
+    /// Uses `RunMode::Live` so that `inject_backtest_as_of_async` is a no-op
+    /// and the hash over the seed input matches the hash computed in `invoke`
+    /// (a Backtest run would inject an `as_of_date`, changing the hash).
+    /// `nansen_token_screener` is `live: true` so the forward-only gate passes.
+    #[tokio::test]
+    async fn replay_serves_cache_without_invoking_tool() {
+        use super::{canonical_input_hash, ToolHttpCacheHandle, ToolRegistryDispatch};
+        use xvision_agent_client::ToolDispatch as _;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = make_test_store(&tmp).await;
+        let key = make_test_key();
+        let rec = store.begin_recording(&key).await.unwrap();
+
+        let input = serde_json::json!({"asset": "BTC"});
+        let hash = canonical_input_hash("nansen_token_screener", &input);
+        store
+            .cache_tool_response(
+                &rec,
+                "nansen_token_screener",
+                &hash,
+                None,
+                &serde_json::json!({"cached": true}),
+            )
+            .await
+            .unwrap();
+
+        let d = ToolRegistryDispatch {
+            tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
+            current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            // Live mode: no as_of injection → hash of input is stable and
+            // matches what we seeded above.  nansen_token_screener is live:true
+            // so the forward-only gate passes.  The key claim under test is
+            // that the cached value is served without touching the empty
+            // registry (which would panic on a real dispatch attempt).
+            run_mode: crate::eval::run::RunMode::Live,
+            as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            nansen_lag_days: 1,
+            tool_cache: Some(ToolHttpCacheHandle {
+                store: store.clone(),
+                recording_id: rec.clone(),
+                replay: true,
+            }),
+            nansen_budget: None,
+            elfa_budget: None,
+        };
+
+        let out = d.invoke("nansen_token_screener", input).await.unwrap();
+        assert_eq!(out["cached"], true, "replay must serve the cached response");
+    }
+
+    // FIX C — xvision-im2r.3: is_degrade helper
+    #[test]
+    fn is_degrade_true_when_available_false() {
+        use super::is_degrade;
+        assert!(is_degrade(&serde_json::json!({"available": false, "reason": "budget exhausted"})));
+        assert!(is_degrade(&serde_json::json!({"available": false})));
+    }
+
+    #[test]
+    fn is_degrade_false_for_normal_responses() {
+        use super::is_degrade;
+        assert!(!is_degrade(&serde_json::json!({"data": []})));
+        assert!(!is_degrade(&serde_json::json!({"available": true})));
+        assert!(!is_degrade(&serde_json::json!({})));
+        assert!(!is_degrade(&serde_json::json!(null)));
+    }
+
+    /// `canonical_input_hash` must be key-order-independent: the same logical
+    /// object with shuffled keys must hash identically.
+    #[test]
+    fn canonical_input_hash_is_deterministic_across_key_order() {
+        use super::canonical_input_hash;
+        let a = serde_json::json!({"asset": "BTC", "limit": 10, "as_of_date": "2024-03-14"});
+        let b = serde_json::json!({"limit": 10, "as_of_date": "2024-03-14", "asset": "BTC"});
+        assert_eq!(
+            canonical_input_hash("nansen_token_screener", &a),
+            canonical_input_hash("nansen_token_screener", &b),
+            "key order must not affect the hash"
+        );
+        // Different tool name → different hash even for same payload.
+        assert_ne!(
+            canonical_input_hash("nansen_token_screener", &a),
+            canonical_input_hash("elfa_trending", &a),
+            "tool name must be part of the hash"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6191,6 +7066,169 @@ mod broker_label_for_tests {
             broker_label_for(LiveVenue::Hyperliquid, None, None, Some("testnet")),
             VenueLabel::Testnet,
             "Hyperliquid + 'testnet' → Testnet"
+        );
+    }
+
+    // --- signals_used_from_tool_names (Task 6.3 backend) ---------------------
+
+    /// Signal tools are collected, deduplicated, and sorted. Non-signal tools
+    /// (ohlcv, submit_decision) are excluded.
+    #[test]
+    fn signals_used_collects_distinct_signal_tools() {
+        let names: Vec<String> = vec![
+            "ohlcv".into(),
+            "nansen_smart_money_flow".into(),
+            "nansen_smart_money_flow".into(), // duplicate → deduped
+            "elfa_smart_mentions".into(),
+            "submit_decision".into(),
+        ];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(
+            result,
+            Some(vec![
+                "elfa_smart_mentions".to_string(),
+                "nansen_smart_money_flow".to_string(),
+            ]),
+            "signal tools collected, deduped, sorted; non-signal tools excluded"
+        );
+    }
+
+    /// When only non-signal tools are present the result is `None`.
+    #[test]
+    fn signals_used_none_when_no_signal_tools() {
+        let names: Vec<String> = vec!["ohlcv".into(), "submit_decision".into()];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(result, None, "no signal tools → None (field omitted from JSON)");
+    }
+
+    /// Empty input also yields `None`.
+    #[test]
+    fn signals_used_none_when_empty() {
+        let result = super::signals_used_from_tool_names(&[]);
+        assert_eq!(result, None);
+    }
+
+    /// All six signal tools are recognised.
+    #[test]
+    fn signals_used_all_six_signal_tools_recognised() {
+        let names: Vec<String> = vec![
+            "nansen_smart_money_flow".into(),
+            "nansen_token_screener".into(),
+            "nansen_flow_intel".into(),
+            "elfa_smart_mentions".into(),
+            "elfa_trending_tokens".into(),
+            "elfa_trending_narratives".into(),
+        ];
+        let result = super::signals_used_from_tool_names(&names);
+        assert_eq!(
+            result,
+            Some(vec![
+                "elfa_smart_mentions".to_string(),
+                "elfa_trending_narratives".to_string(),
+                "elfa_trending_tokens".to_string(),
+                "nansen_flow_intel".to_string(),
+                "nansen_smart_money_flow".to_string(),
+                "nansen_token_screener".to_string(),
+            ]),
+            "all six signal tools recognised and sorted"
+        );
+    }
+
+    // --- resolve_signal_tool_config (xvision-im2r.6) -------------------------
+
+    /// Verify `resolve_signal_tool_config` returns the enabled entries and that
+    /// the resolved config is stored in the registry so `spawn_cline_ctx` reads
+    /// from it rather than parsing `xvn.toml` a second time.
+    #[tokio::test]
+    async fn signal_tool_config_resolved_once_and_stored_in_registry() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Config lives at xvn_home/config/default.toml (see runtime_config_path).
+        std::fs::create_dir_all(dir.path().join("config")).unwrap();
+        let cfg_path = dir.path().join("config").join("default.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        write!(
+            f,
+            r#"
+[[data_tools]]
+kind = "nansen"
+enabled = true
+base_url = "https://api.nansen.ai"
+api_key_env = "NANSEN_API_KEY"
+budget_credits_per_run = 10
+nansen_lookahead_lag_days = 2
+
+[[data_tools]]
+kind = "elfa"
+enabled = true
+base_url = "https://api.elfa.ai"
+api_key_env = "ELFA_API_KEY"
+budget_credits_per_run = 5
+"#
+        )
+        .unwrap();
+
+        let ctx = crate::api::ApiContext::open(
+            dir.path(),
+            crate::api::Actor::Cli { user: "test".into() },
+        )
+        .await
+        .unwrap();
+
+        let sig_cfg = super::resolve_signal_tool_config(&ctx);
+
+        // Nansen entry parsed correctly.
+        assert!(sig_cfg.nansen_entry.is_some(), "nansen entry must be present");
+        let n = sig_cfg.nansen_entry.as_ref().unwrap();
+        assert_eq!(n.base_url, "https://api.nansen.ai");
+        assert_eq!(sig_cfg.nansen_lag_days(), 2);
+        assert!(sig_cfg.nansen_budget_arc().is_some());
+
+        // Elfa entry parsed correctly.
+        assert!(sig_cfg.elfa_entry.is_some(), "elfa entry must be present");
+        let e = sig_cfg.elfa_entry.as_ref().unwrap();
+        assert_eq!(e.base_url, "https://api.elfa.ai");
+        assert!(sig_cfg.elfa_budget_arc().is_some());
+
+        // The registry stores a clone of the SAME resolved config — spawn_cline_ctx
+        // reads from here instead of re-parsing xvn.toml.
+        let registry = super::build_tool_registry(&ctx, &sig_cfg);
+        let stored = registry
+            .signal_cfg
+            .as_ref()
+            .expect("signal_cfg must be stored in registry");
+        assert_eq!(stored.nansen_lag_days(), sig_cfg.nansen_lag_days());
+        assert_eq!(
+            stored.nansen_entry.as_ref().map(|e| e.base_url.as_str()),
+            sig_cfg.nansen_entry.as_ref().map(|e| e.base_url.as_str()),
+        );
+    }
+
+    /// When no xvn.toml exists, resolve_signal_tool_config returns an empty/default config
+    /// and build_tool_registry succeeds (builtins only, no signal tools).
+    #[tokio::test]
+    async fn signal_tool_config_empty_when_no_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::api::ApiContext::open(
+            dir.path(),
+            crate::api::Actor::Cli { user: "test".into() },
+        )
+        .await
+        .unwrap();
+        let sig_cfg = super::resolve_signal_tool_config(&ctx);
+        assert!(sig_cfg.nansen_entry.is_none());
+        assert!(sig_cfg.elfa_entry.is_none());
+        assert_eq!(
+            sig_cfg.nansen_lag_days(),
+            crate::tools::signal_policy::DEFAULT_NANSEN_LOOKAHEAD_LAG_DAYS
+        );
+        let registry = super::build_tool_registry(&ctx, &sig_cfg);
+        // No signal tools registered when config is absent.
+        let names: Vec<String> = registry.list().iter().map(|n| n.as_str().to_string()).collect();
+        assert!(
+            names.iter().all(|n| !n.starts_with("nansen_") && !n.starts_with("elfa_")),
+            "no signal tools expected without config: {names:?}"
         );
     }
 

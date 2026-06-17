@@ -113,6 +113,11 @@ pub struct AppState {
     /// `xvn optimizer mutate-once --ipc-socket` connects; the SSE handler
     /// at `GET /api/autooptimizer/events` subscribes per request.
     pub autooptimizer_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
+    /// Broadcast channel for autoresearch training subprocess stdout lines.
+    /// The run harness publishes one `AutoresearchStdoutLine` per stdout line;
+    /// `GET /api/autoresearch/runs/:id/stream` subscribes and filters by run_id.
+    pub autoresearch_stdout_tx:
+        tokio::sync::broadcast::Sender<crate::sse::autoresearch_sse::AutoresearchStdoutLine>,
     /// F28: registry of cooperative cancel flags for in-flight optimizer cycles,
     /// keyed by `cycle_id`. `start_cycle` registers a flag and passes it into
     /// `run_cycle`; `POST /cycles/:id/cancel` sets it so the cycle stops
@@ -369,6 +374,7 @@ impl AppState {
         }
 
         let (autooptimizer_tx, _) = tokio::sync::broadcast::channel(256);
+        let (autoresearch_stdout_tx, _) = tokio::sync::broadcast::channel(512);
 
         Ok(Self {
             pool,
@@ -387,6 +393,7 @@ impl AppState {
             cli_runner,
             safety_manager,
             autooptimizer_tx,
+            autoresearch_stdout_tx,
             autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
             marketplace_snapshot: Default::default(),

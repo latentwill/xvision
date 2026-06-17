@@ -47,6 +47,8 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
             activates: Some(xvision_engine::agents::Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef {
             kind: PipelineKind::Single,

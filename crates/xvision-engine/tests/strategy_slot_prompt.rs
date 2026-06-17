@@ -88,6 +88,8 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
@@ -131,6 +133,8 @@ async fn validate_draft_passes_with_bound_agent_ref() {
         activates: None,
         prompt_override: None,
         model_override: None,
+        checkpoint: None,
+        veto: None,
     });
     store.save(&strategy).await.expect("save strategy");
 

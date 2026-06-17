@@ -4,6 +4,7 @@
 // if those land later, replace these with `import type { ... } from
 // "./types.gen"`.
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import {
   createTrace,
@@ -75,6 +76,13 @@ export type EdgePredicate =
   | { any: EdgePredicate[] }
   | { not: EdgePredicate };
 
+/** FK reference to a trained nanochat checkpoint. Mirrors
+ *  `CheckpointRef` in `crates/xvision-engine/src/strategies/agent_ref.rs`
+ *  (added in WU-1.1). Absent from the wire for non-nanochat slots. */
+export type CheckpointRef = {
+  model_id: string;
+};
+
 export type AgentRef = {
   agent_id: string;
   role: string;
@@ -83,6 +91,14 @@ export type AgentRef = {
   /// every legacy slot. Set to `"filter"` by the inline composer when
   /// adding a Filter agent to a strategy.
   activates?: Capability | null;
+  /** When present, this slot runs a local nanochat checkpoint as a
+   *  pre-filter. Absent (undefined) = omitted from wire → existing
+   *  strategy hashes remain byte-stable. Added in WU-8.3. */
+  checkpoint?: CheckpointRef | null;
+  /** Hard-gate mode: true = block trade on NEUTRAL output (default for
+   *  nanochat filter slots), false = advisory only.
+   *  Absent (undefined) = omitted from wire. Added in WU-8.3. */
+  veto?: boolean | null;
 };
 export type PipelineEdge = {
   from_role: string;
@@ -626,4 +642,53 @@ export function deleteStrategy(id: string): Promise<void> {
       });
       throw err;
     });
+}
+
+// ── s3ph.27: persist AgentRef.checkpoint / veto end-to-end ──────────────────
+
+/** Body for `PUT /api/strategy/:id/agents/:role/checkpoint`. */
+export type PatchAgentCheckpointBody = {
+  /** New checkpoint reference, or `null` to clear. */
+  checkpoint: CheckpointRef | null;
+  /** Veto mode, or `null` to clear. */
+  veto: boolean | null;
+};
+
+/** Persist a nanochat checkpoint selection on a strategy's `AgentRef` slot.
+ *  Calls `PUT /api/strategy/:id/agents/:role/checkpoint` → returns the
+ *  updated `Strategy`. The backend runs the full live_approved +
+ *  indicator-compat gate before saving. */
+export function patchAgentCheckpoint(
+  strategyId: string,
+  role: string,
+  body: PatchAgentCheckpointBody,
+): Promise<Strategy> {
+  return apiFetch<Strategy>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/agents/${encodeURIComponent(role)}/checkpoint`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** React Query mutation hook for `patchAgentCheckpoint`.
+ *
+ *  On success, invalidates the strategy detail query (and its validate
+ *  sibling) so the authoring page re-renders with the persisted state. */
+export function useSetAgentCheckpoint(strategyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      role,
+      body,
+    }: {
+      role: string;
+      body: PatchAgentCheckpointBody;
+    }) => patchAgentCheckpoint(strategyId, role, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: strategyKeys.detail(strategyId) });
+      void qc.invalidateQueries({ queryKey: strategyKeys.validate(strategyId) });
+    },
+  });
 }

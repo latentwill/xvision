@@ -1428,22 +1428,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--baseline",
-        "--block-size",
-        "--help",
-        "--n-resamples",
-        "--report",
-        "--treatment"
-      ],
-      "mutates": false,
-      "path": [
-        "gate"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -1988,16 +1972,6 @@
       "mutates": false,
       "path": [
         "help",
-        "gate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
         "help"
       ]
     },
@@ -2349,16 +2323,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "metrics"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2668,16 +2632,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "report"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2880,16 +2834,6 @@
       "path": [
         "help",
         "show-decision"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "show-metrics"
       ]
     },
     {
@@ -4148,22 +4092,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--baseline",
-        "--block-size",
-        "--help",
-        "--n-resamples",
-        "--report",
-        "--treatment"
-      ],
-      "mutates": false,
-      "path": [
-        "metrics"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -5088,19 +5016,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--input",
-        "--output"
-      ],
-      "mutates": false,
-      "path": [
-        "report"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -5605,18 +5520,6 @@
       "mutates": false,
       "path": [
         "show-decision"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--report"
-      ],
-      "mutates": false,
-      "path": [
-        "show-metrics"
       ]
     },
     {

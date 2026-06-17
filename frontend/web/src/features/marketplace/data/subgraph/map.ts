@@ -185,7 +185,6 @@ export function mapListingRow(
     transferableLicense: false, // off-chain: not in the index (contract view)
     verification: verificationOf(l.agent),
     acceptsX402,
-    clones: 0, // off-chain: no clone event indexed
     genArtSeed, // deterministic seed from the agent id
   };
 }

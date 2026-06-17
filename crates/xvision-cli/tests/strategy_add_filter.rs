@@ -115,6 +115,8 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 activates: Some(Capability::Trader),
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,

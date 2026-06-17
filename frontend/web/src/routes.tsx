@@ -43,6 +43,8 @@ const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) =
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
+const AutoresearcherSettingsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.AutoresearcherSettingsRoute })));
+const SettingsToolsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolsRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -263,8 +265,10 @@ export const router = createBrowserRouter([
           { path: "skills", element: <Navigate to="/agents/skills" replace /> },
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
+          { path: "autoresearcher", element: page(<AutoresearcherSettingsRoute />) },
           { path: "tool-policy", element: <Navigate to="/agents" replace /> },
           { path: "identity", element: <Navigate to="/settings/marketplace" replace /> },
+          { path: "tools", element: page(<SettingsToolsRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

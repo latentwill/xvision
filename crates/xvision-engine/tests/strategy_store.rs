@@ -33,6 +33,8 @@ fn sample_strategy(id: &str) -> Strategy {
             activates: None,
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: Default::default(),
         regime_slot: None,

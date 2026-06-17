@@ -28,7 +28,7 @@ describe("fixtures", () => {
     expect(CREATORS["@ed"].strategies.every((s) => "status" in s)).toBe(true);
   });
   it("slices + receipts present", () => {
-    expect(SLICES.length).toBeGreaterThanOrEqual(7);
+    expect(SLICES.length).toBeGreaterThanOrEqual(6);
     expect(RECEIPTS["0xdemo-tx"].license.netToCreatorUsdc).toBeCloseTo(46.55);
   });
   it("publish draft flags missing assets", () => {

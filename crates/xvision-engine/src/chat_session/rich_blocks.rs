@@ -740,6 +740,7 @@ mod tests {
             ],
             filter_events: vec![],
             filter_summaries: vec![],
+            signals_used: None,
         };
 
         let block = inline_equity_chart_from_run_detail(&detail).expect("equity card");

@@ -21,7 +21,6 @@ const SORTERS: Record<SortKey, (a: ListingRow, b: ListingRow) => number> = {
   return30d: (a, b) => b.return30dPct - a.return30dPct,
   sharpe: (a, b) => b.sharpe - a.sharpe,
   buyers: (a, b) => totalBuyers(b) - totalBuyers(a),
-  mostCloned: (a, b) => b.clones - a.clones,
   newest: (a, b) => b.id.localeCompare(a.id), // fixture proxy; real impl uses publishedAt
 };
 

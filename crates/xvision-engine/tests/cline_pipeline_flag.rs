@@ -75,6 +75,8 @@ fn trader_strategy() -> Strategy {
             activates: Some(Capability::Trader),
             prompt_override: None,
             model_override: None,
+            checkpoint: None,
+            veto: None,
         }],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
@@ -112,6 +114,7 @@ fn trader_slot() -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
+        nano: None,
     }
 }
 
@@ -177,6 +180,8 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
             api_key: Some("test-key".into()),
             recording_slot_role: None,
             tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
         }),
         model_call_span_id: None,
     })

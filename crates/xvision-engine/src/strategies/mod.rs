@@ -502,6 +502,8 @@ mod tests {
                 activates: None,
                 prompt_override: None,
                 model_override: None,
+                checkpoint: None,
+                veto: None,
             }],
             pipeline: PipelineDef::sequential(),
             ..strategy

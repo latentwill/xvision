@@ -64,6 +64,7 @@ tempfile           = "3"
 tokio              = { workspace = true, features = ["rt", "macros"] }
 tracing-subscriber = { workspace = true }
 wiremock           = "0.6"
+mockito            = "1"
 ulid               = { version = "1", features = ["serde"] }
 uuid               = { workspace = true }
 

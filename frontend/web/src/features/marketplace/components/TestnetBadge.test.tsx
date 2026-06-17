@@ -45,12 +45,12 @@ describe("on a mainnet build", () => {
     expect(screen.queryByText(/testnet/i)).not.toBeInTheDocument();
   });
 
-  it("TestnetBanner shows an accurate real-funds notice, not the simulated-testnet copy", () => {
+  it("TestnetBanner renders nothing on mainnet (no mainnet banner — operator decision)", () => {
     vi.stubEnv("VITE_MARKETPLACE_NETWORK", "mainnet");
-    render(<TestnetBanner />);
-    expect(screen.getByText(/Mantle mainnet/i)).toBeInTheDocument();
-    expect(screen.getByText(/real USDC/i)).toBeInTheDocument();
-    expect(screen.queryByText(/simulated/i)).not.toBeInTheDocument();
+    const { container } = render(<TestnetBanner />);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText(/Mantle mainnet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/real USDC/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Mantle Sepolia testnet/i)).not.toBeInTheDocument();
   });
 });
@@ -101,12 +101,16 @@ describe("runtime network (backend-driven, not the build-time flag)", () => {
     );
   });
 
-  it("TestnetBanner switches to the real-funds notice when the backend is mainnet", async () => {
+  it("TestnetBanner hides once the backend reports mainnet (no mainnet banner)", async () => {
     stubMainnetStatus();
     render(<TestnetBanner />);
+    // Initially shows the testnet warning; once the backend resolves to mainnet
+    // the banner unmounts entirely — no mainnet banner is shown.
     await waitFor(() =>
-      expect(screen.getByText(/real USDC/i)).toBeInTheDocument(),
+      expect(
+        screen.queryByText(/Mantle Sepolia testnet/i),
+      ).not.toBeInTheDocument(),
     );
-    expect(screen.queryByText(/simulated/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/real USDC/i)).not.toBeInTheDocument();
   });
 });

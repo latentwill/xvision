@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
@@ -21,6 +21,7 @@ import {
   setRiskConfig,
   setStrategyPipeline,
   strategyKeys,
+  useSetAgentCheckpoint,
   validateDraft,
   type AgentRef,
   type ClosePolicy,
@@ -45,6 +46,7 @@ import { ModelPicker } from "@/components/ModelPicker";
 import { TimeframeSelect } from "@/components/TimeframeSelect";
 import type { ProviderRow } from "@/api/types.gen";
 import { safeStorageGet, safeStorageSet } from "@/lib/storage";
+import { NanochatSlotCard } from "@/features/autooptimizer/ui/NanochatSlotCard";
 
 const AGENT_COLLAPSE_KEY_PREFIX = "xvn:authoring:agent-collapsed";
 
@@ -517,6 +519,36 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
   const [renameRoleFrom, setRenameRoleFrom] = useState<string | null>(null);
   const [renameRoleTo, setRenameRoleTo] = useState("");
 
+  // Nanochat slot state — keyed by AgentRef role so multi-slot strategies
+  // each get independent checkpoint + veto selections. Hydrated from the
+  // AgentRef.checkpoint / AgentRef.veto fields on the strategy (persisted
+  // values from the server). onChange calls the mutation to persist immediately.
+  const [nanochatCheckpoints, setNanochatCheckpoints] = useState<
+    Record<string, string | null>
+  >(() => {
+    const init: Record<string, string | null> = {};
+    for (const ref of strategy.agents ?? []) {
+      if (ref.checkpoint) init[ref.role] = ref.checkpoint.model_id;
+    }
+    return init;
+  });
+  const [nanochatVetos, setNanochatVetos] = useState<Record<string, boolean>>(
+    () => {
+      const init: Record<string, boolean> = {};
+      for (const ref of strategy.agents ?? []) {
+        if (ref.checkpoint) init[ref.role] = ref.veto ?? true;
+      }
+      return init;
+    },
+  );
+  const setCheckpointMut = useSetAgentCheckpoint(strategy.manifest.id);
+
+  // ?attach_checkpoint=<model_id> — when present, the first filter-capable
+  // AgentRef is the target slot. We read the param here (AgentsCard is the
+  // section that owns slot rendering) so NanochatSlotCard can consume it.
+  const [searchParams] = useSearchParams();
+  const attachCheckpointParam = searchParams.get("attach_checkpoint");
+
   const attached = strategy.agents ?? [];
   const pipeline = strategy.pipeline ?? { kind: "single" as const, edges: [] };
   const agentById = useMemo(() => {
@@ -686,28 +718,73 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           </p>
         ) : (
           <div className="space-y-2">
-            {attached.map((a, idx) => (
-              <AttachedAgentRow
-                key={`${a.agent_id}:${a.role}`}
-                strategyId={strategy.manifest.id}
-                agentRef={a}
-                index={idx + 1}
-                agent={agentById.get(a.agent_id)}
-                onRenameRole={() => {
-                  setRenameRoleFrom(a.role);
-                  setRenameRoleTo(a.role);
-                }}
-                onRemove={() => removeMut.mutate(a.role)}
-                allRefs={attached}
-                pipeline={pipeline}
-                filterCandidates={filterCandidates}
-                providers={providers.data?.providers ?? []}
-                onFiringChanged={async () => {
-                  await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
-                  invalidateStrategy();
-                }}
-              />
-            ))}
+            {attached.map((a, idx) => {
+              // Show the nanochat slot card when:
+              //   (a) the AgentRef already carries a checkpoint from the server, OR
+              //   (b) the ?attach_checkpoint param is present and this is a filter slot.
+              const showNanochat =
+                !!a.checkpoint ||
+                (attachCheckpointParam != null && a.activates === "filter");
+              return (
+                <div key={`${a.agent_id}:${a.role}`} className="space-y-2">
+                  <AttachedAgentRow
+                    strategyId={strategy.manifest.id}
+                    agentRef={a}
+                    index={idx + 1}
+                    agent={agentById.get(a.agent_id)}
+                    onRenameRole={() => {
+                      setRenameRoleFrom(a.role);
+                      setRenameRoleTo(a.role);
+                    }}
+                    onRemove={() => removeMut.mutate(a.role)}
+                    allRefs={attached}
+                    pipeline={pipeline}
+                    filterCandidates={filterCandidates}
+                    providers={providers.data?.providers ?? []}
+                    onFiringChanged={async () => {
+                      await qc.invalidateQueries({ queryKey: ["agents", "pool"] });
+                      invalidateStrategy();
+                    }}
+                  />
+                  {showNanochat && (
+                    <NanochatSlotCard
+                      strategyId={strategy.manifest.id}
+                      agentRefRole={a.role}
+                      availableIndicators={strategy.briefing_indicators ?? []}
+                      checkpointModelId={nanochatCheckpoints[a.role] ?? null}
+                      veto={nanochatVetos[a.role] ?? true}
+                      onCheckpointChange={(modelId) => {
+                        setNanochatCheckpoints((prev) => ({
+                          ...prev,
+                          [a.role]: modelId,
+                        }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: modelId
+                              ? { model_id: modelId }
+                              : null,
+                            veto: nanochatVetos[a.role] ?? true,
+                          },
+                        });
+                      }}
+                      onVetoChange={(v) => {
+                        setNanochatVetos((prev) => ({ ...prev, [a.role]: v }));
+                        setCheckpointMut.mutate({
+                          role: a.role,
+                          body: {
+                            checkpoint: nanochatCheckpoints[a.role]
+                              ? { model_id: nanochatCheckpoints[a.role]! }
+                              : null,
+                            veto: v,
+                          },
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
