@@ -206,6 +206,7 @@ use crate::routes::{
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
     marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    nanochat,
     optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
     settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
     tools as tools_route,
@@ -295,6 +296,12 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/export", get(eval_runs::export))
         .route("/api/eval/runs/:id/chart", get(eval_runs::chart))
+        // ── Nanochat checkpoints (read) ───────────────────────────────────
+        .route("/api/nanochat/checkpoints", get(nanochat::list_checkpoints))
+        .route(
+            "/api/nanochat/checkpoints/:model_id",
+            get(nanochat::get_checkpoint),
+        )
         .route("/api/eval/runs/:id/stream", get(eval_runs::stream))
         .route("/api/eval/compare", get(eval_runs::compare))
         .route("/api/eval/scenarios", get(eval_runs::list_scenarios))
@@ -565,6 +572,11 @@ fn mutating_router(state: AppState) -> Router {
     let import_body_limit = (MAX_IMPORT_BYTES + 1024 * 1024) as usize;
 
     Router::new()
+        // ── Nanochat checkpoints (mutating) ───────────────────────────────
+        .route(
+            "/api/nanochat/checkpoints/:model_id/approve",
+            post(nanochat::approve_checkpoint),
+        )
         // ── Agents ────────────────────────────────────────────────────────
         .route("/api/agents", post(agents::create))
         .route(

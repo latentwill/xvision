@@ -25,6 +25,7 @@ pub mod marketplace;
 pub mod marketplace_auth;
 pub mod marketplace_read;
 pub mod memory;
+pub mod nanochat;
 pub mod optimizations;
 pub mod publish_receipts;
 pub mod safety;
