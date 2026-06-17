@@ -8,6 +8,7 @@
 //! - `GET  /api/autoresearch/runs/:run_id/experiments` — experiment log, ASC (readonly)
 
 use std::convert::Infallible;
+use std::time::Duration;
 
 use axum::{
     extract::{Path, State},
@@ -212,6 +213,17 @@ pub async fn start_run(
     .execute(&state.pool)
     .await
     .map_err(|e| DashboardError::Internal(anyhow::anyhow!("insert autoresearch_runs: {e}")))?;
+
+    // Spawn the training executor detached. The HTTP 201 is returned immediately
+    // and the run lifecycle (completed/failed) is managed inside the spawned task.
+    tokio::spawn(crate::autoresearch_runner::execute_training_run(
+        state.pool.clone(),
+        state.autoresearch_stdout_tx.clone(),
+        run_id.clone(),
+        wt.path().to_path_buf(),
+        config_path.clone(),
+        Duration::from_secs(run_config.train_wall_clock_sec),
+    ));
 
     Ok((
         StatusCode::CREATED,
