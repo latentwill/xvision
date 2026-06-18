@@ -12,6 +12,37 @@ container reports must match the tag pulled.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-06-18
+
+Native PC distribution: `xvn` now ships as a standalone binary for macOS
+(arm64 + x86_64), Linux (x86_64-musl), and Windows (x86_64-msvc) — no Docker
+required. The SPA dashboard is baked into the binary via rust-embed.
+
+### Added
+
+- **Native binary distribution** — tagged releases build and publish
+  per-platform tarballs + SHA256 checksums as GitHub Release assets, and
+  auto-update the Homebrew formula (`brew install latentwill/xvision/xvn`).
+- **`xvn update`** — self-update command that fetches and installs the latest
+  release binary in place.
+- `scripts/install.sh` one-line installer and `scripts/smoke-test.sh` for
+  post-release verification.
+- Marketplace x402 autonomous purchases — self-hosted facilitator + non-custodial
+  MCP client on Mantle (#1086, #1089).
+- Nanochat Filter Agent — trained GPT2-scale model filter slot + Autoresearcher (#1090).
+- Byreal Solana spot trading — gated one-shot swaps and poll-only live marks.
+
+### Changed
+
+- Marketplace network is resolved at runtime from the backend
+  (`/api/marketplace/status`); one prebuilt image serves either network.
+
+### Fixed
+
+- Optimizer QA fixes — anti-patterns schema, `response_format` fallback, and
+  cross-provider handling (#1096).
+
+
 ## [0.36.0] - 2026-06-15
 
 The first image-release train since the `0.21.0` baseline, covering ~four
