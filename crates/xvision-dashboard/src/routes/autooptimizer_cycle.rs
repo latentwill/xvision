@@ -296,7 +296,7 @@ pub async fn start_cycle(
     // F22/F26: fail fast with guidance instead of a confusing cross-provider 400
     // when the strategy's trader would route to a provider other than the cycle's.
     // Shared with the CLI via `autooptimizer::preflight` — no parallel guard.
-    preflight_trader_provider(&pool, &strategy, strategy_id, &cycle_provider, false)
+    preflight_trader_provider(&pool, &strategy, strategy_id, &cycle_provider, false, false)
         .await
         .map_err(|e| DashboardError::Validation {
             field: "strategy_id".into(),

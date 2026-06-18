@@ -19,6 +19,7 @@ import {
   useOptimizerStats,
   useOptimizerStatus,
 } from "@/features/autooptimizer/api";
+import { useAutoresearchRuns } from "@/api/nanochat";
 import {
   cumulativeSpendUsd,
   cycleTrend,
@@ -154,12 +155,11 @@ function CycleTrendBars({
   );
 }
 
-// ─── main component ──────────────────────────────────────────────────────────
-
 export function OptimizerPanel() {
   const ladder = useLadder();
   const stats = useOptimizerStats();
   const status = useOptimizerStatus();
+  const arRuns = useAutoresearchRuns();
 
   const scores = ladder.data ?? [];
   const rows = stats.data ?? [];
@@ -168,8 +168,9 @@ export function OptimizerPanel() {
   const trend = cycleTrend(rows, 12);
   const spend = cumulativeSpendUsd(rows);
   const last = lastCycle(rows);
-
   const session = status?.active_session ?? null;
+  const arRunsList = arRuns.data ?? [];
+  const arActive = arRunsList.find((r) => r.status === "running") ?? null;
   const isLoading = ladder.isPending && stats.isPending;
   const hasData = scores.length > 0 || rows.length > 0;
 
@@ -203,6 +204,21 @@ export function OptimizerPanel() {
             Open Optimizer →
           </Link>
         </div>
+
+        {/* Autoresearcher status strip */}
+        {arActive && (
+          <div className="flex items-center gap-3 px-5 py-2 border-b border-border-soft bg-surface-panel/50">
+            <span className="text-[12px] text-text-3">Autoresearcher</span>
+            <Pill tone="gold" animated data-testid="optimizer-ar-status-pill">
+              running · {arActive.run_tag}
+            </Pill>
+            {arActive.source_strategy_id && (
+              <span className="text-[12px] text-text-4 font-mono truncate max-w-[16rem]">
+                {arActive.source_strategy_id}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Body */}
         {isLoading ? (
