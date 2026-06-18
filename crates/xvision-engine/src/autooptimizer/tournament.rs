@@ -21,18 +21,54 @@ use crate::strategies::Strategy;
 
 const ADVERSARIAL_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-adversarial-v1.md");
 const SYNTHESIS_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-synthesis-v1.md");
-const JUDGE_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-judge-v1.md");
+const JUDGE_NUMERIC_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-judge-numeric-v1.md");
+const JUDGE_CONSISTENCY_PROMPT: &str =
+    include_str!("../../prompts/autooptimizer/tournament-judge-consistency-v1.md");
+const JUDGE_RISK_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-judge-risk-v1.md");
 
 pub const CANDIDATE_COUNT: usize = 3;
 const JUDGE_COUNT: usize = 3;
 const MAX_PARAMS_APPLY: usize = 64;
 
+/// Judge persona — each evaluates candidates through a different lens.
+/// Maps to the multi-persona review pattern from the AutoResearch self-play paper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgePersona {
+    Numeric,
+    Consistency,
+    Risk,
+}
+
+impl JudgePersona {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Numeric => "numeric",
+            Self::Consistency => "consistency",
+            Self::Risk => "risk",
+        }
+    }
+
+    fn prompt(&self) -> &'static str {
+        match self {
+            Self::Numeric => JUDGE_NUMERIC_PROMPT,
+            Self::Consistency => JUDGE_CONSISTENCY_PROMPT,
+            Self::Risk => JUDGE_RISK_PROMPT,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateKind {
     Incumbent,
     Adversarial,
     Synthesis,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BordaVote {
+    /// Candidate indices ordered best-first. `ranking[0]` = 1st place.
+    pub ranking: [usize; CANDIDATE_COUNT],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,18 +79,14 @@ pub struct TournamentCandidate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BordaVote {
-    /// Candidate indices ordered best-first. `ranking[0]` = 1st place.
-    pub ranking: [usize; CANDIDATE_COUNT],
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TournamentResult {
     pub winner_kind: CandidateKind,
     pub winner_diff: MutationDiff,
     pub winner_strategy: Strategy,
     pub incumbent_wins: bool,
     pub borda_scores: [u32; CANDIDATE_COUNT],
+    /// Per-persona rankings from each judge (Numeric, Consistency, Risk).
+    pub per_persona_votes: Vec<(JudgePersona, BordaVote)>,
 }
 
 pub struct TournamentRunner {
@@ -206,25 +238,34 @@ impl TournamentRunner {
         anyhow::bail!("tournament propose failed after {max_attempts} attempt(s)")
     }
 
-    pub async fn borda_vote(&self, candidates: &[TournamentCandidate]) -> Result<Vec<BordaVote>> {
+    pub async fn borda_vote(
+        &self,
+        candidates: &[TournamentCandidate],
+    ) -> Result<(Vec<BordaVote>, Vec<(JudgePersona, BordaVote)>)> {
         assert_eq!(
             candidates.len(),
             CANDIDATE_COUNT,
             "borda_vote requires {CANDIDATE_COUNT} candidates"
         );
         let summary = build_candidate_summary(candidates);
-        let (v0, v1, v2) = tokio::try_join!(
-            self.one_judge_vote(&summary),
-            self.one_judge_vote(&summary),
-            self.one_judge_vote(&summary),
+        // Dispatch 3 persona-differentiated judges in parallel.
+        let (v_numeric, v_consistency, v_risk) = tokio::try_join!(
+            self.one_judge_vote(&summary, JudgePersona::Numeric),
+            self.one_judge_vote(&summary, JudgePersona::Consistency),
+            self.one_judge_vote(&summary, JudgePersona::Risk),
         )?;
-        Ok(vec![v0, v1, v2])
+        let per_persona = vec![
+            (JudgePersona::Numeric, v_numeric.clone()),
+            (JudgePersona::Consistency, v_consistency.clone()),
+            (JudgePersona::Risk, v_risk.clone()),
+        ];
+        Ok((vec![v_numeric, v_consistency, v_risk], per_persona))
     }
 
-    async fn one_judge_vote(&self, candidate_summary: &str) -> Result<BordaVote> {
+    async fn one_judge_vote(&self, candidate_summary: &str, persona: JudgePersona) -> Result<BordaVote> {
         let req = LlmRequest {
             model: self.model.clone(),
-            system_prompt: JUDGE_PROMPT.to_string(),
+            system_prompt: persona.prompt().to_string(),
             messages: vec![Message::user_text(candidate_summary.to_string())],
             max_tokens: None,
             tools: vec![],
@@ -268,7 +309,7 @@ impl TournamentRunner {
             .generate_candidates(parent, config, resolved_agent_prompts)
             .await?;
         assert_eq!(candidates.len(), CANDIDATE_COUNT);
-        let votes = self.borda_vote(&candidates).await?;
+        let (votes, per_persona_votes) = self.borda_vote(&candidates).await?;
         let borda_scores = Self::tally(&votes);
         let winner_index = pick_winner(&borda_scores);
         let winner = &candidates[winner_index];
@@ -278,6 +319,7 @@ impl TournamentRunner {
             winner_strategy: winner.strategy.clone(),
             incumbent_wins: winner.kind == CandidateKind::Incumbent,
             borda_scores,
+            per_persona_votes,
         })
     }
 }

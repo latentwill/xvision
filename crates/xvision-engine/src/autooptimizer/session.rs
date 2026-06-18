@@ -344,6 +344,9 @@ pub async fn run_session<F, Fut>(
     budget_cap: Option<f64>,
     loosening_thresholds: Vec<f64>,
     max_consecutive_errors: u32,
+    // After this many consecutive cycles with 0 kept candidates, halt the session
+    // with a diagnostic. `None` or `0` disables the guard (never halts). Default: 3.
+    max_consecutive_no_keep: Option<u32>,
     cost_so_far: Arc<dyn Fn() -> f64 + Send + Sync>,
     cancel_flag: Arc<AtomicBool>,
     pause_flag: Arc<AtomicBool>,
@@ -360,6 +363,8 @@ where
     // the loop continues; only `max_consecutive_errors` consecutive cycle
     // failures stop the run (transition `failed` + a halt error).
     let mut session_breaker = crate::autooptimizer::cycle::ConsecutiveErrors::new(max_consecutive_errors);
+    // Early-termination: consecutive cycles with 0 kept candidates.
+    let mut consecutive_zero_keep: u32 = 0;
 
     loop {
         // 1. Check cancel flag.
@@ -427,6 +432,26 @@ where
         // Count a *successful* cycle (the errored branch already incremented).
         if cycle_result.is_ok() {
             increment_cycle_completed(pool, session_id, &outcome_bucket).await?;
+        }
+
+        if cycle_result.is_ok() && outcome_bucket.as_str() == "dropped" {
+            consecutive_zero_keep += 1;
+        } else {
+            consecutive_zero_keep = 0;
+        }
+        // If the guard trips, halt with a diagnostic.
+        if let Some(max) = max_consecutive_no_keep {
+            if max > 0 && consecutive_zero_keep >= max {
+                let msg = format!(
+                    "optimizer halted: {consecutive_zero_keep} consecutive cycles produced 0 kept candidates. \
+                     All candidates were dropped — the mutator cannot generate winning mutations for \
+                     this strategy given the current evaluation windows. \
+                     Suggestions: widen scenario windows, loosen the strategy filter, \
+                     switch the mutator model, or try a different parent strategy."
+                );
+                transition_state(pool, session_id, "failed", Some(&msg)).await?;
+                anyhow::bail!(msg);
+            }
         }
 
         // 5. Fetch updated cycles_completed.
@@ -790,6 +815,7 @@ mod tests {
             None,
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -842,6 +868,7 @@ mod tests {
             None,
             vec![],
             0,                // breaker disabled
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -894,6 +921,7 @@ mod tests {
             None,
             vec![],
             2,                // trips on the 2nd consecutive error
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -949,6 +977,7 @@ mod tests {
             Some(5.0), // budget cap $5
             vec![],
             0,                 // breaker DISABLED — only the budget can stop this
+            None,              // max_consecutive_no_keep: disabled
             Arc::new(|| 10.0), // live cumulative spend already over the cap
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1050,6 +1079,7 @@ mod tests {
             None,
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1109,6 +1139,7 @@ mod tests {
             Some(0.12),
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1169,6 +1200,7 @@ mod tests {
             None,
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1229,6 +1261,7 @@ mod tests {
             None,
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1285,6 +1318,7 @@ mod tests {
             None,
             vec![0.05, 0.02], // 2-step loosening schedule
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1475,6 +1509,7 @@ mod tests {
             None,
             vec![],
             0,                // max_consecutive_errors: session breaker disabled in this test
+            None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
             Arc::clone(&cancel),
             Arc::clone(&pause),
@@ -1537,6 +1572,7 @@ mod tests {
                 Some(0.12),
                 vec![],
                 0,                // max_consecutive_errors: session breaker disabled in this test
+                None,             // max_consecutive_no_keep: disabled
                 Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
                 Arc::clone(&cancel),
                 Arc::clone(&pause),

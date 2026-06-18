@@ -57,6 +57,10 @@ pub enum Op {
     /// (code 2) when any agent has an error-severity diagnostic, making it
     /// usable as a CI gate. Use `--json` for machine-readable output.
     Lint(LintArgs),
+    /// Update an agent's first slot's system prompt in-place. Keeps the
+    /// agent's ULID so strategy references don't break. Reads the new
+    /// prompt from a file (`--from-file`).
+    SetPrompt(SetPromptArgs),
 }
 
 #[derive(Args, Debug)]
@@ -106,6 +110,19 @@ pub struct SetToolsArgs {
     /// Output format for the updated agent.
     #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
     pub format: ObjectFormat,
+}
+
+/// Arguments for `xvn agent set-prompt`.
+#[derive(Args, Debug)]
+pub struct SetPromptArgs {
+    /// Agent id (ULID) from the workspace library.
+    pub agent_id: String,
+    /// Path to the new system prompt file.
+    #[arg(long)]
+    pub from_file: PathBuf,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
 }
 
 /// Output format for `xvn agent ls`. Extends `ObjectFormat` by adding a
@@ -233,6 +250,7 @@ pub async fn run(cmd: AgentCmd) -> CliResult<()> {
         Op::SetTools(args) => run_set_tools(args).await,
         Op::Ls(args) => run_ls(args).await,
         Op::Lint(args) => run_lint(args).await,
+        Op::SetPrompt(args) => run_set_prompt(args).await,
     }
 }
 
@@ -670,6 +688,48 @@ fn api_to_cli(prefix: &str, e: ApiError) -> CliError {
     }
 }
 
+async fn run_set_prompt(args: SetPromptArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home).await.exit_with(XvnExit::Upstream)?;
+
+    // Read the new prompt.
+    let prompt_text = std::fs::read_to_string(&args.from_file)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", args.from_file.display())))?;
+
+    // Fetch the existing agent.
+    let agent = agents_api::get(&ctx, &args.agent_id)
+        .await
+        .map_err(|e| api_to_cli("agent set-prompt (get)", e))?;
+
+    // Update the first slot's system_prompt.
+    let mut slots = agent.slots;
+    if slots.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "agent {} has no slots to update",
+            args.agent_id
+        )));
+    }
+    slots[0].system_prompt = prompt_text;
+
+    // Persist the update.
+    let updated = agents_api::update(
+        &ctx,
+        &args.agent_id,
+        xvision_engine::api::agents::UpdateAgentRequest {
+            slots: Some(slots),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("agent set-prompt (update)", e))?;
+
+    let out = serde_json::json!({
+        "agent_id": updated.agent_id,
+        "name": updated.name,
+        "updated": true,
+    });
+    print_json(&out)?;
+    Ok(())
+}
 #[cfg(test)]
 pub mod get {
     //! Shape: `cargo test -p xvision-cli agent::get::json` (per the

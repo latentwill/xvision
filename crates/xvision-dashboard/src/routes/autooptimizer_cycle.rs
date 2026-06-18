@@ -30,6 +30,7 @@ use xvision_engine::autooptimizer::{
     mutator::Mutator,
     parent_policy::ParentPolicy,
     preflight::preflight_trader_provider,
+    preflight_cycle,
     progress::CycleProgressEvent,
     scenario_synthesis::{synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario},
 };
@@ -301,6 +302,12 @@ pub async fn start_cycle(
             field: "strategy_id".into(),
             msg: e.message,
         })?;
+    preflight_cycle::preflight_cycle(&pool, &strategy, strategy_id, false)
+        .await
+        .map_err(|e| DashboardError::Validation {
+            field: "strategy_id".into(),
+            msg: e.message,
+        })?;
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];
@@ -367,6 +374,18 @@ pub async fn start_cycle(
     // `POST /cycles/:id/pause` can suspend it and `POST /cycles/:id/resume`
     // can continue it. Deregistered when the cycle ends.
     let pause_flag = state.autooptimizer_register_pause(&cycle_id);
+    // Heartbeat TTL: register and tick so the UI can detect crashed cycles.
+    state.autooptimizer_register_heartbeat(&cycle_id);
+    let heartbeat_state = state.clone();
+    let heartbeat_cycle_id = cycle_id.clone();
+    let heartbeat = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            heartbeat_state.autooptimizer_heartbeat(&heartbeat_cycle_id);
+        }
+    });
     let state_for_dereg = state.clone();
     // Cortex memory: capture the recorder Arc (gated, config-backed default
     // ON; env override wins) before the spawn so the cycle can recall/record
@@ -394,6 +413,13 @@ pub async fn start_cycle(
                     provider: cfg.mutator.provider.clone(),
                     candidates: cfg.gepa_candidates,
                     generations: cfg.gepa_generations,
+                    reflection_dispatch: None,
+                    reflection_model: None,
+                    selection_strategy: xvision_engine::autooptimizer::gepa::GepaSelectionStrategy::Pareto,
+                    reflection_minibatch_size: 3,
+                    skip_perfect: true,
+                    use_merge: true,
+                    merge_frequency: 3,
                 }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
@@ -508,6 +534,9 @@ pub async fn start_cycle(
         state_for_dereg.autooptimizer_deregister_cancel(&cycle_id);
         // P4: drop the pause flag now the cycle is finished.
         state_for_dereg.autooptimizer_deregister_pause(&cycle_id);
+        // Stop the heartbeat ticker and drop the heartbeat entry.
+        heartbeat.abort();
+        state_for_dereg.autooptimizer_deregister_heartbeat(&cycle_id);
         // F34: release the workspace cycle lock so the next cycle can run.
         let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_id).await;
         // F23/F26/F35: persist the FINAL per-cycle tokens + cost so the panel and
@@ -540,6 +569,25 @@ pub async fn cancel_cycle(
     State(state): State<AppState>,
     Path(cycle_id): Path<String>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    // Check if the cycle's heartbeat is stale (process died without cleanup).
+    if state.autooptimizer_is_stale(&cycle_id) {
+        let _ = state
+            .autooptimizer_tx
+            .send(CycleProgressEvent::SessionStateChanged {
+                session_id: cycle_id.clone(),
+                state: "crashed".to_string(),
+            });
+        return Ok((
+            StatusCode::GONE,
+            Json(StartCycleResponse {
+                started: false,
+                message: format!(
+                    "Cycle '{cycle_id}' has no heartbeat — it likely crashed. Flags cleaned up."
+                ),
+                session_id: None,
+            }),
+        ));
+    }
     if state.autooptimizer_request_cancel(&cycle_id) {
         // P4: also clear the pause flag so a paused cycle wakes and sees the
         // cancel rather than looping forever waiting for resume.

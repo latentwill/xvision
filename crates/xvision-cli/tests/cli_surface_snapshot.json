@@ -137,6 +137,17 @@
       "path": [
         "agent",
         "help",
+        "set-prompt"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "agent",
+        "help",
         "set-tools"
       ]
     },
@@ -185,6 +196,20 @@
       "path": [
         "agent",
         "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--from-file",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "agent",
+        "set-prompt"
       ]
     },
     {
@@ -1498,6 +1523,17 @@
         "help",
         "agent",
         "ls"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "agent",
+        "set-prompt"
       ]
     },
     {
@@ -4743,11 +4779,16 @@
         "--export",
         "--help",
         "--ipc-socket",
+        "--judge-model",
+        "--judge-provider",
         "--max-consecutive-errors",
+        "--max-consecutive-zero-keep",
         "--max-cycles",
         "--max-output-tokens",
         "--mock",
         "--model",
+        "--mutator-model",
+        "--mutator-provider",
         "--objective",
         "--provider",
         "--session-id",
@@ -6164,6 +6205,7 @@
         "--dry-run",
         "--execution-mode",
         "--family",
+        "--filter-from",
         "--from-file",
         "--help",
         "--hypothesis",

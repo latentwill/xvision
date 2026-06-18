@@ -166,6 +166,11 @@ enum StrategyAction {
         /// a usage code on invalid input. No strategy or agent is created.
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+        /// Path to a filter JSON file (see `xvn strategy filter-catalog --json`).
+        /// Only used in atomic mode (--prompt). Attaches the filter so the created
+        /// strategy is filter-gated out of the box — no separate `set-filter` step.
+        #[arg(long)]
+        filter_from: Option<PathBuf>,
     },
     /// Edit a saved strategy. v1 ships only the firing-filter
     /// acknowledgement toggle; other edits go through the dedicated
@@ -553,6 +558,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             target_regime,
             avoid_regime,
             hypothesis_file,
+            filter_from,
             no_filter_warning,
             dry_run,
         } => {
@@ -577,6 +583,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
                 execution_mode,
                 timeframe,
                 hypothesis_flags,
+                filter_from,
                 no_filter_warning,
                 dry_run,
             )
@@ -1004,6 +1011,7 @@ pub fn build_atomic_create_output(
     provider: &str,
     model: &str,
     warnings: Vec<String>,
+    filter_attached: bool,
 ) -> serde_json::Value {
     let eval_ready = warnings.is_empty();
     serde_json::json!({
@@ -1013,6 +1021,7 @@ pub fn build_atomic_create_output(
         "provider": provider,
         "model": model,
         "warnings": warnings,
+        "filter_attached": filter_attached,
     })
 }
 
@@ -1031,6 +1040,7 @@ async fn new(
     execution_mode: String,
     timeframe: Option<String>,
     _hypothesis_flags: HypothesisFlags,
+    filter_from: Option<PathBuf>,
     no_filter_warning: bool,
     dry_run: bool,
 ) -> CliResult<()> {
@@ -1047,6 +1057,7 @@ async fn new(
             assets,
             execution_mode,
             timeframe,
+            filter_from,
             json,
             no_filter_warning,
             dry_run,
@@ -1063,6 +1074,12 @@ async fn new(
         if provider_override.is_some() || model_override.is_some() {
             return Err(CliError::usage(anyhow::anyhow!(
                 "--provider and --model only apply to --prompt atomic mode and cannot be combined with --from-file. Edit the strategy file directly to change agent provider/model."
+            )));
+        }
+        if filter_from.is_some() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--filter-from only applies to --prompt atomic mode and cannot be combined with --from-file. \
+                 Edit the strategy file directly or use `xvn strategy set-filter` after importing."
             )));
         }
         let mut strategy = load_strategy_file(&path)?;
@@ -1183,6 +1200,7 @@ async fn new_atomic(
     assets: Vec<String>,
     execution_mode: String,
     timeframe: Option<String>,
+    filter_from: Option<PathBuf>,
     json: bool,
     no_filter_warning: bool,
     dry_run: bool,
@@ -1269,10 +1287,14 @@ async fn new_atomic(
             "asset_universe": asset_universe,
             "decision_cadence_minutes": cadence_minutes,
             "creator": creator,
+            "filter_from": filter_from.as_ref().map(|p| p.display().to_string()),
         });
         if json {
             crate::io::print_json(&preview)?;
         } else {
+            if let Some(ref fp) = filter_from {
+                eprintln!("note: --filter-from {} would be attached", fp.display());
+            }
             eprintln!(
                 "DRY RUN — would create strategy '{}' (provider: {}, model: {}, role: {}, assets: {})",
                 name,
@@ -1305,7 +1327,7 @@ async fn new_atomic(
 
     // 2. Build the strategy with the agent wired in.
     let strategy_id = Ulid::new().to_string();
-    let strategy = xvision_engine::strategies::Strategy {
+    let mut strategy = xvision_engine::strategies::Strategy {
         manifest: xvision_engine::strategies::manifest::PublicManifest {
             id: strategy_id.clone(),
             display_name: name.clone(),
@@ -1347,6 +1369,22 @@ async fn new_atomic(
         tunable_bounds: Vec::new(),
     };
 
+    // 2b. If --filter-from was provided, load and attach the filter.
+    if let Some(filter_path) = &filter_from {
+        let raw = std::fs::read_to_string(filter_path).map_err(|e| {
+            CliError::usage(anyhow::anyhow!(
+                "failed to read filter JSON `{}`: {e}",
+                filter_path.display()
+            ))
+        })?;
+        let raw_value: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("--filter-from must contain valid JSON: {e}")))?;
+        let filter = filter_from_strategy_json(raw_value, &strategy_id, None)?;
+        strategy.activation_mode = xvision_engine::strategies::ActivationMode::FilterGated;
+        strategy.filter = Some(filter);
+        strategy.acknowledge_no_filter = true; // filter is present, suppress no-filter warning
+    }
+
     // 3. Validate shape.
     let preflight = preflight_validate(&strategy, None);
     if !preflight.errors.is_empty() {
@@ -1373,7 +1411,14 @@ async fn new_atomic(
         warnings.push(warn);
     }
     if json {
-        let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
+        let out = build_atomic_create_output(
+            &strategy_id,
+            &agent_id,
+            &provider,
+            &model,
+            warnings,
+            filter_from.is_some(),
+        );
         crate::io::print_json(&out)?;
     } else {
         if let Some(warn) = cot_warning {
@@ -3650,7 +3695,14 @@ pub mod atomic_create {
 
     #[test]
     fn atomic_output_eval_ready_true_when_no_warnings_or_errors() {
-        let out = build_atomic_create_output("strategy-123", "agent-456", "openrouter", "kimi-k2", vec![]);
+        let out = build_atomic_create_output(
+            "strategy-123",
+            "agent-456",
+            "openrouter",
+            "kimi-k2",
+            vec![],
+            false,
+        );
         assert_eq!(out["strategy_id"], "strategy-123");
         assert_eq!(out["agent_id"], "agent-456");
         assert_eq!(out["eval_ready"], true);
@@ -3667,6 +3719,7 @@ pub mod atomic_create {
             "p",
             "m",
             vec!["prompt mentions ETH but scenario asset is SOL/USD".to_string()],
+            false,
         );
         assert_eq!(out["eval_ready"], false);
         assert_eq!(out["warnings"].as_array().unwrap().len(), 1);

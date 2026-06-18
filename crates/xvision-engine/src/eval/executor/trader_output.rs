@@ -539,26 +539,26 @@ impl TraderOutput {
         // past the schema. Only validated when present — the fields are
         // optional and `None` is the back-compatible default.
         if let Some(sl) = self.stop_loss_pct {
-            if !sl.is_finite() || !(0.1..=20.0).contains(&sl) {
+            if !sl.is_finite() || !(0.001..=20.0).contains(&sl) {
                 return Err(TraderOutputError::build(
                     TraderFailureKind::InvalidField,
                     run_id,
                     decision_index,
                     response,
                     Some(raw),
-                    format!("trader output stop_loss_pct must be between 0.1 and 20.0 (got {sl})"),
+                    format!("trader output stop_loss_pct must be between 0.001 and 20.0 (got {sl})"),
                 ));
             }
         }
         if let Some(tp) = self.take_profit_pct {
-            if !tp.is_finite() || !(0.1..=50.0).contains(&tp) {
+            if !tp.is_finite() || !(0.001..=50.0).contains(&tp) {
                 return Err(TraderOutputError::build(
                     TraderFailureKind::InvalidField,
                     run_id,
                     decision_index,
                     response,
                     Some(raw),
-                    format!("trader output take_profit_pct must be between 0.1 and 50.0 (got {tp})"),
+                    format!("trader output take_profit_pct must be between 0.001 and 50.0 (got {tp})"),
                 ));
             }
         }

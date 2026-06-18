@@ -277,24 +277,53 @@ pub struct RunCycleArgs {
     /// Token budget in USD for this cycle (overrides config).
     #[arg(long, help = "Token budget in USD for this cycle (overrides config)")]
     pub budget: Option<f64>,
-    /// LLM provider for BOTH the experiment writer (mutator) and the judge,
-    /// overriding `mutator.provider`/`judge.*` from autooptimizer.toml. Must
-    /// name a provider registered in `$XVN_HOME/config/default.toml`
-    /// (e.g. `openrouter`).
+    /// Shared fallback LLM provider for the mutator AND judge, overriding
+    /// config. Use `--mutator-provider`/`--judge-provider` to set each role
+    /// separately. Must name a registered provider in
+    /// `$XVN_HOME/config/default.toml`.
     #[arg(
         long,
-        help = "Provider for mutator+judge (overrides config); must be registered in default.toml"
+        help = "Shared fallback provider for mutator+judge; overrides config. See --mutator-provider/--judge-provider."
     )]
     pub provider: Option<String>,
-    /// LLM model for BOTH the experiment writer (mutator) and the judge,
-    /// overriding `mutator.model`/`judge.*` from autooptimizer.toml
-    /// (e.g. `google/gemini-3.1-flash-lite`). Requires `--provider`.
+    /// Shared fallback LLM model for the mutator AND judge, overriding config.
+    /// Use `--mutator-model`/`--judge-model` to set each role separately.
     #[arg(
         long,
-        requires = "provider",
-        help = "Model for mutator+judge (overrides config); requires --provider"
+        help = "Shared fallback model for mutator+judge; overrides config. See --mutator-model/--judge-model."
     )]
     pub model: Option<String>,
+    /// LLM provider for the mutator (experiment writer), overriding
+    /// `mutator.provider` from autooptimizer.toml. When omitted, falls back
+    /// to `--provider` (the shared cycle provider). Must name a registered
+    /// provider in `$XVN_HOME/config/default.toml`.
+    #[arg(
+        long,
+        help = "Provider for the mutator (experiment writer); overrides config. Falls back to --provider."
+    )]
+    pub mutator_provider: Option<String>,
+    /// LLM model for the mutator (experiment writer), overriding
+    /// `mutator.model` from autooptimizer.toml. Requires `--mutator-provider`.
+    #[arg(
+        long,
+        requires = "mutator_provider",
+        help = "Model for the mutator; requires --mutator-provider"
+    )]
+    pub mutator_model: Option<String>,
+    /// LLM provider override for the judge (reviewer). When omitted, reuses
+    /// the mutator's provider (or --provider). Must name a registered provider.
+    #[arg(
+        long,
+        help = "Provider for the judge (reviewer); defaults to the mutator's provider"
+    )]
+    pub judge_provider: Option<String>,
+    /// LLM model override for the judge. Requires `--judge-provider`.
+    #[arg(
+        long,
+        requires = "judge_provider",
+        help = "Model for the judge; requires --judge-provider"
+    )]
+    pub judge_model: Option<String>,
     /// Override the day-window (primary evaluation) start date (YYYY-MM-DD).
     /// The config default spans ~20 months of 1h bars (~16k bars fetched per
     /// candidate, on the day + baseline windows combined); narrow it here to
@@ -344,6 +373,16 @@ pub struct RunCycleArgs {
         help = "Halt after N consecutive candidate eval failures (default 3)"
     )]
     pub max_consecutive_errors: Option<u32>,
+    /// Halt the session after N consecutive cycles that produce 0 kept
+    /// candidates (all dropped). Catches a broken mutator model or evaluation
+    /// windows that never trigger the strategy. 0 disables the guard (never
+    /// halts). Default: 3.
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Halt after N consecutive zero-keep cycles (default 3; 0 to disable)"
+    )]
+    pub max_consecutive_zero_keep: Option<u32>,
     /// WS-11c: directory to auto-write a cycle document into when each cycle of
     /// this run completes. Each completed cycle is exported as
     /// `<DIR>/<cycle_id>.md` — the same high-fidelity, agent-feedable artifact
@@ -616,67 +655,110 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let binding = build_dispatch(
+    // ── Resolve effective provider/model per role ─────────────────────────
+    // Precedence: role-specific CLI flag > --provider/--model > config.
+    let effective_mutator_provider = args
+        .mutator_provider
+        .as_deref()
+        .or(args.provider.as_deref())
+        .unwrap_or(&cfg.mutator.provider);
+    let effective_mutator_model = args
+        .mutator_model
+        .as_deref()
+        .or(args.model.as_deref())
+        .unwrap_or(&cfg.mutator.model);
+    let effective_judge_provider = args
+        .judge_provider
+        .as_deref()
+        .or(args.mutator_provider.as_deref())
+        .or(args.provider.as_deref())
+        .unwrap_or(&cfg.mutator.provider);
+    let effective_judge_model = args
+        .judge_model
+        .as_deref()
+        .or(args.mutator_model.as_deref())
+        .or(args.model.as_deref())
+        .unwrap_or(&cfg.mutator.model);
+
+    // Build dispatches. When provider+model match, the second dispatch call
+    // reuses the same connection pool — no meaningful overhead.
+    let mutator_binding = build_dispatch(
         args.mock,
         Some(&xvn_home),
-        &cfg.mutator.provider,
-        &cfg.mutator.model,
+        effective_mutator_provider,
+        effective_mutator_model,
     )
     .await?;
-    // Strict per-call output-token cap (run-cycle --max-output-tokens):
-    // wrap the raw provider dispatch so EVERY cycle LLM call (paper-test
-    // trader decisions, experiment writer/mutator, judge) has its
-    // `max_tokens` forced to the operator's cap at the provider boundary.
-    // The cost meter wraps this layer so it still tallies real token usage
-    // from the response. When the flag is unset, behaviour is unchanged.
-    let raw_dispatch: Arc<dyn LlmDispatch + Send + Sync> = match args.max_output_tokens {
-        Some(cap) => Arc::new(
-            xvision_engine::autooptimizer::metering_dispatch::MaxTokensCapDispatch::new(
-                Arc::clone(&binding.dispatch),
-                cap,
-            ),
-        ),
-        None => Arc::clone(&binding.dispatch),
+    let judge_binding = if effective_judge_provider == effective_mutator_provider
+        && effective_judge_model == effective_mutator_model
+    {
+        DispatchBinding {
+            provider: mutator_binding.provider.clone(),
+            model: mutator_binding.model.clone(),
+            dispatch: Arc::clone(&mutator_binding.dispatch),
+        }
+    } else {
+        build_dispatch(
+            args.mock,
+            Some(&xvn_home),
+            effective_judge_provider,
+            effective_judge_model,
+        )
+        .await?
     };
 
     // F11/F23: one shared meter for the whole cycle.
     let meter: Arc<std::sync::Mutex<CycleMeter>> = Arc::new(std::sync::Mutex::new(CycleMeter::default()));
 
-    let metering_catalogs = load_metering_catalogs(&xvn_home, &binding.provider).await;
-
-    // B2: --budget gates on spent_usd, which stays 0 for providers with no
-    // pricing catalog. Fail fast so the operator isn't surprised by a cycle
-    // that runs forever (until_budget) or silently ignores the cap (run-cycle).
-    if let Some(budget) = args.budget {
-        if metering_catalogs.is_empty() {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "--budget ${budget:.4} requires a provider with catalog pricing, but provider \
-                 '{}' has no cached pricing catalog ($XVN_HOME/catalogs/{}.json). Cost \
-                 tracking is unavailable — use --mode once or --mode n_experiments to bound \
-                 cycle count, or run `xvn provider catalog fetch --name {}` to populate the \
-                 catalog if supported.",
-                binding.provider,
-                binding.provider,
-                binding.provider,
-            )));
-        }
-    }
-
-    let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
-        Arc::clone(&raw_dispatch),
-        metering_catalogs,
+    // Wrap mutator dispatch with output-token cap + cost metering.
+    let mutator_raw: Arc<dyn LlmDispatch + Send + Sync> = match args.max_output_tokens {
+        Some(cap) => Arc::new(
+            xvision_engine::autooptimizer::metering_dispatch::MaxTokensCapDispatch::new(
+                Arc::clone(&mutator_binding.dispatch),
+                cap,
+            ),
+        ),
+        None => Arc::clone(&mutator_binding.dispatch),
+    };
+    let mutator_catalogs = load_metering_catalogs(&xvn_home, effective_mutator_provider).await;
+    let metered_mutator: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
+        mutator_raw,
+        mutator_catalogs,
         Arc::clone(&meter),
     ));
+
+    // Wrap judge dispatch. If it shares the raw dispatch, reuse the mutator wrapper.
+    let metered_judge: Arc<dyn LlmDispatch + Send + Sync> =
+        if std::sync::Arc::ptr_eq(&mutator_binding.dispatch, &judge_binding.dispatch) {
+            Arc::clone(&metered_mutator)
+        } else {
+            let judge_raw: Arc<dyn LlmDispatch + Send + Sync> = match args.max_output_tokens {
+                Some(cap) => Arc::new(
+                    xvision_engine::autooptimizer::metering_dispatch::MaxTokensCapDispatch::new(
+                        Arc::clone(&judge_binding.dispatch),
+                        cap,
+                    ),
+                ),
+                None => Arc::clone(&judge_binding.dispatch),
+            };
+            let judge_catalogs = load_metering_catalogs(&xvn_home, effective_judge_provider).await;
+            Arc::new(CostMeteringDispatch::new(
+                judge_raw,
+                judge_catalogs,
+                Arc::clone(&meter),
+            ))
+        };
+
     let mutator = Mutator {
-        provider: binding.provider.clone(),
-        model: binding.model.clone(),
-        dispatch: Arc::clone(&metered_dispatch),
+        provider: effective_mutator_provider.to_string(),
+        model: effective_mutator_model.to_string(),
+        dispatch: Arc::clone(&metered_mutator),
         max_retries: cfg.mutator.max_retries,
     };
     let judge = Judge {
-        dispatch: Arc::clone(&metered_dispatch),
-        provider: binding.provider.clone(),
-        model: binding.model.clone(),
+        dispatch: metered_judge,
+        provider: effective_judge_provider.to_string(),
+        model: effective_judge_model.to_string(),
     };
 
     let mut opt_mem: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>> = None;
@@ -719,7 +801,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         // always returns Some on success and Err on failure — never Ok(None).
         let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
             &ctx,
-            &binding.provider,
+            effective_mutator_provider,
             Arc::clone(&tools),
             xvision_engine::eval::run::RunMode::Backtest,
         )
@@ -736,7 +818,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             ))
         })?;
         Box::new(
-            CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_dispatch), tools)
+            CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_mutator), tools)
                 .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
         )
     };
@@ -757,7 +839,15 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             &pool,
             &strategy,
             strategy_id,
-            &cfg.mutator.provider,
+            effective_mutator_provider,
+            args.mock,
+        )
+        .await
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+        xvision_engine::autooptimizer::preflight_cycle::preflight_cycle(
+            &pool,
+            &strategy,
+            strategy_id,
             args.mock,
         )
         .await
@@ -774,8 +864,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         },
         mutations_per_parent: cfg.experiments_per_cycle as usize,
         sabotage_seed: 42,
-        judge_provider: binding.provider.clone(),
-        judge_model: binding.model.clone(),
+        judge_provider: effective_judge_provider.to_string(),
+        judge_model: effective_judge_model.to_string(),
         prompt_version: "v1".into(),
         sustained_no_pass_cycles: 0,
         day_scenario,
@@ -820,11 +910,18 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
         let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
             std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
-                dispatch: std::sync::Arc::clone(&metered_dispatch),
-                model: cfg.mutator.model.clone(),
-                provider: cfg.mutator.provider.clone(),
+                dispatch: std::sync::Arc::clone(&metered_mutator),
+                model: effective_mutator_model.to_string(),
+                provider: effective_mutator_provider.to_string(),
                 candidates: cfg.gepa_candidates,
                 generations: cfg.gepa_generations,
+                reflection_dispatch: None,
+                reflection_model: None,
+                selection_strategy: xvision_engine::autooptimizer::gepa::GepaSelectionStrategy::Pareto,
+                reflection_minibatch_size: 3,
+                skip_perfect: true,
+                use_merge: true,
+                merge_frequency: 3,
             });
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
@@ -899,7 +996,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // expensive setup above is built once and shared across cycles.
     let sustained = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let pause = Arc::new(std::sync::atomic::AtomicBool::new(false)); // no CLI pause surface
-    let provider_label = cfg.mutator.provider.clone();
+    let provider_label = effective_mutator_provider.to_string();
     let pool_ref = &pool;
     let sbs_ref = &strategy_blob_store;
     let cfg_ref = &cfg;
@@ -928,6 +1025,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         args.budget,
         Vec::new(),
         cycle_config.max_consecutive_errors,
+        // Default: max_consecutive_zero_keep from CLI arg, or 3.
+        args.max_consecutive_zero_keep.or(Some(3)),
         // Live cumulative spend so the --budget ceiling trips even on cycles
         // that errored after spending (the session-cumulative cost meter).
         Arc::new({

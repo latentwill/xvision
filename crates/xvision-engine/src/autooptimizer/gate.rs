@@ -1,3 +1,4 @@
+use crate::autooptimizer::mutator::MutationDiff;
 use crate::eval::MetricsSummary;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -202,6 +203,42 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
         GateVerdict::Fail {
             reason: failures.join("; "),
         }
+    }
+}
+
+/// Per-dimension candidate quality gates (Phase 2: binding-constraint pattern).
+///
+/// Each dimension must pass. Any failing dimension causes rejection with a
+/// structured reason. This is the "theorist as binding constraint" pattern from
+/// the AutoResearch self-play paper — the weakest dimension determines the outcome.
+
+/// Maximum total changes (params + prose + tools + filter) a candidate may carry.
+/// Beyond this, the mutation is flagged as parameter explosion — too many knobs
+/// changed at once to attribute improvement to any single hypothesis.
+const MAX_TOTAL_CHANGES: usize = 8;
+
+/// Check simplicity: the candidate must not change too many things at once.
+/// Parameter explosion without clear justification is an overfitting smell.
+pub fn check_dimension_simplicity(diff: &MutationDiff) -> GateVerdict {
+    let total = diff.params.len()
+        + diff.prose.len()
+        + diff.tools.added.len()
+        + diff.tools.removed.len()
+        + diff.filter.len();
+    if total > MAX_TOTAL_CHANGES {
+        GateVerdict::Fail {
+            reason: format!(
+                "simplicity: candidate changes {total} items (params={p}, prose={r}, \
+                 tools={t}, filter={f}) exceeding the {MAX_TOTAL_CHANGES}-item limit. \
+                 Split the experiment into smaller, focused changes with clear hypotheses.",
+                p = diff.params.len(),
+                r = diff.prose.len(),
+                t = diff.tools.added.len() + diff.tools.removed.len(),
+                f = diff.filter.len(),
+            ),
+        }
+    } else {
+        GateVerdict::Pass
     }
 }
 
