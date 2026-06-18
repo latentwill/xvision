@@ -8059,7 +8059,6 @@ version = "0.36.0"
 dependencies = [
  "alloy",
  "anyhow",
- "async-trait",
  "blake3",
  "chrono",
  "clap",
@@ -8067,6 +8066,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "tokio",
