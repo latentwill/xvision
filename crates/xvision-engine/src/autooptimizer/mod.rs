@@ -47,6 +47,7 @@ pub mod mutator_ladder;
 pub mod parent_policy;
 pub mod pattern_snapshot;
 pub mod preflight;
+pub mod preflight_cycle;
 pub mod program_view;
 pub mod progress;
 pub mod random_baseline;
@@ -101,3 +102,4 @@ pub use session::{
     transition_state, CycleRunOutcome, OptimizerSession,
 };
 pub use validator::{validate_mutation_diff, ValidationError};
+pub mod anti_pattern;

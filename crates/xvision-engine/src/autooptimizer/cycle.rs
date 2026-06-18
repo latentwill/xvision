@@ -592,7 +592,7 @@ async fn process_parent_mutations<F>(
     paper_tester: &dyn PaperTestRunner,
     baseline_cache: &BaselineCache,
     progress: &F,
-    findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
+    _findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
@@ -817,6 +817,7 @@ where
             detail: "Experiment writer proposing candidate".to_string(),
         });
         let writer_t0 = Instant::now();
+        let mut tournament_votes: Option<Vec<(crate::autooptimizer::tournament::JudgePersona, crate::autooptimizer::tournament::BordaVote)>> = None;
         let diff_result: Option<crate::autooptimizer::mutator::MutationDiff> = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
@@ -842,7 +843,10 @@ where
                     });
                     continue;
                 }
-                Ok(r) => Some(r.winner_diff),
+                Ok(r) => {
+                    tournament_votes = Some(r.per_persona_votes);
+                    Some(r.winner_diff)
+                }
                 Err(e) => {
                     no_candidate_count += 1;
                     progress(CycleProgressEvent::PhaseFinished {
@@ -899,6 +903,22 @@ where
             }
         };
         let diff = diff_result.expect("diff_result is None only on continue paths above");
+        // Phase 2 dimension gate: simplicity — reject parameter explosions before
+        // spending backtest tokens. The numeric gate still runs afterward for
+        // candidates that pass this dimension.
+        {
+            let simplicity_verdict = crate::autooptimizer::gate::check_dimension_simplicity(&diff);
+            if let GateVerdict::Fail { reason } = &simplicity_verdict {
+                progress(CycleProgressEvent::NoCandidate {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: parent_node.bundle_hash.to_hex(),
+                    reason: format!("dimension gate (simplicity): {reason}"),
+                });
+                no_candidate_count += 1;
+                continue;
+            }
+        }
         progress(CycleProgressEvent::PhaseFinished {
             session_id: String::new(),
             cycle_id: cycle_id.to_string(),
@@ -1185,7 +1205,7 @@ where
                     detail: "Reviewer evaluating active candidate".to_string(),
                 });
                 let reviewer_t0 = Instant::now();
-                let findings = run_judge(
+                let mut findings = run_judge(
                     judge,
                     parent_strategy,
                     &outcome.child,
@@ -1202,6 +1222,34 @@ where
                     phase: Phase::ReviewerRunning,
                     duration_ms: reviewer_t0.elapsed().as_millis() as u64,
                 });
+                // Phase 5a: emit JUDGE_MISMATCH findings when persona rankings
+                // disagree with the numeric gate verdict.
+                if let Some(votes) = tournament_votes.take() {
+                    let _gate_active = true; // LineageStatus::Active block — only active candidates get here
+                    for (persona, vote) in &votes {
+                        let label = persona.label();
+                        let judge_top = vote.ranking[0];
+                        let persona_preferred_winner = judge_top == 0;
+                        if !persona_preferred_winner {
+                            findings.push(crate::autooptimizer::judge::Finding {
+                                code: "JUDGE_MISMATCH".to_string(),
+                                severity: crate::autooptimizer::judge::FindingSeverity::Warn,
+                                summary: format!(
+                                    "{label} persona ranked candidate index {judge_top} as #1 \
+                                     but the numeric gate kept the winner \
+                                     (Δsharpe={:.4})",
+                                    outcome.delta_sharpe,
+                                ),
+                                detail: Some(format!(
+                                    "persona={label} judge_top={judge_top} winner=0 \
+                                     delta_sharpe={:.4} min_improvement={:.4}",
+                                    outcome.delta_sharpe,
+                                    min_improvement,
+                                )),
+                            });
+                        }
+                    }
+                }
                 for f in &findings {
                     progress(CycleProgressEvent::JudgeFinding {
                         session_id: String::new(),
@@ -1210,8 +1258,7 @@ where
                         severity: format!("{:?}", f.severity),
                         code: f.code.clone(),
                     });
-                    // P2-W2: persist each finding to autooptimizer_findings so the
-                    // GET /findings/:hash endpoint can return real data. Best-effort.
+                    // P2-W2: persist each finding to autooptimizer_findings.
                     let judge_model = format!("{}/{}", judge.provider, judge.model);
                     if let Err(e) =
                         persist_finding(pool, &outcome.child_hash.to_hex(), f, Some(judge_model.as_str()))
@@ -1258,7 +1305,17 @@ where
                         pattern_id,
                     });
                 }
-                findings_by_node.insert(outcome.child_hash, findings);
+                // Phase 7: record findings in the anti-pattern registry.
+                for f in &findings {
+                    if f.code == "parse_error" {
+                        continue;
+                    }
+                    if let Err(e) =
+                        crate::autooptimizer::anti_pattern::record_finding(pool, &f.code, &f.summary).await
+                    {
+                        tracing::warn!("anti-pattern recording failed (best-effort): {e}");
+                    }
+                }
                 active.push(node);
             }
             LineageStatus::Quarantined => {

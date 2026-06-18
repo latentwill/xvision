@@ -129,6 +129,12 @@ pub struct AppState {
     /// safe checkpoint; `POST /cycles/:id/resume` clears it to continue.
     /// Entries are removed when the cycle ends (same lifecycle as cancel flags).
     autooptimizer_pauses: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Heartbeat registry for in-flight optimizer cycles. Updated every ~5s by the
+    /// cycle's heartbeat ticker; stale entries (>30s) are swept by the background
+    /// sweeper which emits `SessionStateChanged { state: "crashed" }` SSE events
+    /// so the UI transitions to a terminal state even when the cycle process died
+    /// without deregistering its cancel/pause flags.
+    autooptimizer_heartbeats: Arc<Mutex<HashMap<String, Instant>>>,
     /// Marketplace indexer snapshot — written by the background poller
     /// (`marketplace_index::spawn_indexer`), read by the
     /// `/api/marketplace/*` read routes. Defaults to the empty snapshot; the
@@ -273,6 +279,74 @@ impl AppState {
             map.remove(cycle_id);
         }
     }
+
+    // ── heartbeat registry (stale-flag cleanup) ───────────────────────────
+
+    /// Register a new heartbeat entry for a cycle.
+    pub fn autooptimizer_register_heartbeat(&self, cycle_id: &str) {
+        if let Ok(mut map) = self.autooptimizer_heartbeats.lock() {
+            map.insert(cycle_id.to_string(), Instant::now());
+        }
+    }
+
+    /// Update the heartbeat timestamp for a running cycle.
+    pub fn autooptimizer_heartbeat(&self, cycle_id: &str) {
+        if let Ok(mut map) = self.autooptimizer_heartbeats.lock() {
+            if let Some(entry) = map.get_mut(cycle_id) {
+                *entry = Instant::now();
+            }
+        }
+    }
+
+    /// Check whether a cycle's heartbeat is stale (>30s without update).
+    pub fn autooptimizer_is_stale(&self, cycle_id: &str) -> bool {
+        match self.autooptimizer_heartbeats.lock() {
+            Ok(map) => map
+                .get(cycle_id)
+                .map(|last| last.elapsed() > Duration::from_secs(30))
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    }
+
+    /// Sweep stale heartbeat entries: deregister cancel/pause flags and return
+    /// the cycle ids that were cleaned up.
+    pub fn autooptimizer_sweep_stale(&self) -> Vec<String> {
+        let mut swept = Vec::new();
+        let now = Instant::now();
+        if let Ok(mut hb) = self.autooptimizer_heartbeats.lock() {
+            hb.retain(|cycle_id, last| {
+                if now.duration_since(*last) > Duration::from_secs(30) {
+                    swept.push(cycle_id.clone());
+                    if let Ok(mut c) = self.autooptimizer_cancels.lock() {
+                        c.remove(cycle_id);
+                    }
+                    if let Ok(mut p) = self.autooptimizer_pauses.lock() {
+                        p.remove(cycle_id);
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        swept
+    }
+
+    /// Drop a cycle's heartbeat entry once it has finished.
+    pub fn autooptimizer_deregister_heartbeat(&self, cycle_id: &str) {
+        if let Ok(mut map) = self.autooptimizer_heartbeats.lock() {
+            map.remove(cycle_id);
+        }
+    }
+
+    /// Whether any heartbeat entries exist.
+    pub fn autooptimizer_has_heartbeats(&self) -> bool {
+        self.autooptimizer_heartbeats
+            .lock()
+            .map(|m| !m.is_empty())
+            .unwrap_or(false)
+    }
     /// Open `xvn.db` under `xvn_home` (creating both if missing) and run the
     /// engine API migrations. Safe to call from `xvn dashboard serve` and from
     /// integration tests against a tempdir.
@@ -396,6 +470,7 @@ impl AppState {
             autoresearch_stdout_tx,
             autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
+            autooptimizer_heartbeats: Arc::new(Mutex::new(HashMap::new())),
             marketplace_snapshot: Default::default(),
             marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             marketplace_chain: None,

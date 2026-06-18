@@ -67,7 +67,6 @@ switch to `xvision-dev`.
 - `flywheel` — observability over memory + Optimizer activity (velocity / health cards).
 - `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
 - `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
-- `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
 - `store` — SQLite flight-recorder (`xvn.db`) migrate / stats.
 - `eod` — end-of-day operator report (markdown to stdout).
 - `doctor` — print effective `$XVN_HOME` / config / db / provider / template targets.
