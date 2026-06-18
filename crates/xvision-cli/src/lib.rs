@@ -249,6 +249,12 @@ pub enum Command {
         #[arg(long, default_value_t = 1usize)]
         n: usize,
     },
+    /// Self-update xvn to the latest GitHub Release binary.
+    ///
+    /// Downloads the platform-appropriate binary, verifies SHA256, and replaces
+    /// the running binary in-place. Use `--check` to only report whether an
+    /// update is available.
+    Update(commands::update::UpdateCmd),
     /// Get or set operator config keys (`autoresearch.*`).
     ///
     /// Examples:
@@ -359,6 +365,7 @@ impl Cli {
             } => commands::last::run(xvn_home, strategy, json, n)
                 .await
                 .map_err(Into::into),
+            Command::Update(cmd) => commands::update::run(cmd).await.map_err(Into::into),
             Command::Config(cmd) => commands::config::run(cmd).await.map_err(Into::into),
         }
     }

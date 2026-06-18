@@ -1,0 +1,139 @@
+name: release
+
+# Build native binaries for macOS (arm64 + x86_64), Linux (x86_64-musl), and
+# Windows (x86_64-msvc) on tag push. Uploads tarballs + SHA256 checksums as
+# GitHub Release assets. Also uploads artifacts for manual smoke-testing before
+# publishing the release.
+#
+# The SPA frontend is built with Node 20 + pnpm and baked into the dashboard
+# binary via rust-embed (`crates/xvision-dashboard/static/`).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: xvn-aarch64-apple-darwin
+            ext: ""
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: xvn-x86_64-apple-darwin
+            ext: ""
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            artifact: xvn-x86_64-linux-musl
+            ext: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: xvn-x86_64-windows-msvc
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── frontend build ──────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install pnpm
+        run: corepack enable
+      - name: Install + build frontend
+        working-directory: frontend/web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+        env:
+          VITE_MARKETPLACE_SUBGRAPH_URL: ""
+
+      # ── Rust toolchain ──────────────────────────────────────────────────
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95"
+          targets: "${{ matrix.target }}"
+
+      # ── platform-specific build deps ────────────────────────────────────
+      - name: Install Linux musl build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools \
+            perl \
+            make \
+            cmake \
+            clang \
+            libclang-dev \
+            pkg-config
+          # libsqlite3-dev NOT needed — sqlx/sqlite-bundled compiles its own
+
+      - name: Install macOS build deps
+        if: runner.os == 'macOS'
+        run: |
+          # Xcode CLT provides the linker. cmake/pcre2 may be needed for polars.
+          brew install cmake pcre2 2>/dev/null || true
+
+      # ── cargo build ─────────────────────────────────────────────────────
+      - name: Build
+        run: |
+          cargo build \
+            --release \
+            --target "${{ matrix.target }}" \
+            --bin xvn \
+            --features xvision-engine/sqlite-bundled
+        env:
+          CARGO_INCREMENTAL: 0
+          CARGO_TERM_COLOR: always
+
+      # ── package ─────────────────────────────────────────────────────────
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd "target/${{ matrix.target }}/release"
+          tar czf "${{ matrix.artifact }}.tar.gz" "xvn${{ matrix.ext }}"
+          sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd "target/${{ matrix.target }}/release"
+          Compress-Archive -Path "xvn${{ matrix.ext }}" -DestinationPath "${{ matrix.artifact }}.zip"
+          certutil -hashfile "${{ matrix.artifact }}.zip" SHA256 > "${{ matrix.artifact }}.zip.sha256"
+
+      # ── upload artifacts (for smoke testing before release) ─────────────
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "${{ matrix.artifact }}"
+          path: |
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+          if-no-files-found: error
+
+      # ── upload to GitHub Release (only on tag push) ─────────────────────
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
