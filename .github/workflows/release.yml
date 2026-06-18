@@ -117,8 +117,23 @@ jobs:
           cd "target/${{ matrix.target }}/release"
           Compress-Archive -Path "xvn${{ matrix.ext }}" -DestinationPath "${{ matrix.artifact }}.zip"
           certutil -hashfile "${{ matrix.artifact }}.zip" SHA256 > "${{ matrix.artifact }}.zip.sha256"
+      - name: Export SHA256 (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd "target/${{ matrix.target }}/release"
+          cp "${{ matrix.artifact }}.tar.gz.sha256" sha256.txt
 
-      # ── upload artifacts (for smoke testing before release) ─────────────
+      - name: Export SHA256 (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd "target/${{ matrix.target }}/release"
+          copy "${{ matrix.artifact }}.zip.sha256" sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "sha256-${{ matrix.artifact }}"
+          path: target/${{ matrix.target }}/release/sha256.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: "${{ matrix.artifact }}"
@@ -137,3 +152,66 @@ jobs:
             target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # ── update Homebrew formula with actual SHA256 values ───────────────────
+  update-formula:
+    name: Update Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sha256-*
+          path: checksums
+
+      - name: Update formula checksums
+        run: |
+          set -eu
+
+          # Each platform uploaded its SHA256 as a separate artifact named
+          # sha256-<artifact>. download-artifact creates checksums/sha256-<artifact>/sha256.txt.
+          get_sha() {
+            local f="checksums/sha256-$1/sha256.txt"
+            if [ -f "$f" ]; then
+              awk '{print $1}' "$f"
+            else
+              echo "MISSING"
+            fi
+          }
+
+          ARM64_SHA=$(get_sha "xvn-aarch64-apple-darwin")
+          X86_SHA=$(get_sha "xvn-x86_64-apple-darwin")
+          LINUX_SHA=$(get_sha "xvn-x86_64-linux-musl")
+          WIN_SHA=$(get_sha "xvn-x86_64-windows-msvc")
+
+          echo "arm64:  $ARM64_SHA"
+          echo "x86_64: $X86_SHA"
+          echo "linux:  $LINUX_SHA"
+          echo "windows: $WIN_SHA"
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          FORMULA="scripts/homebrew/xvn.rb"
+
+          sed -i "s|REPLACE_WITH_ACTUAL_SHA256_ARM64|$ARM64_SHA|" "$FORMULA"
+          sed -i "s|REPLACE_WITH_ACTUAL_SHA256_X86_64|$X86_SHA|" "$FORMULA"
+          sed -i "s|REPLACE_WITH_ACTUAL_SHA256_LINUX|$LINUX_SHA|" "$FORMULA"
+          sed -i "s/version ".*"/version "$VERSION"/" "$FORMULA"
+          sed -i "s|/download/v[0-9.]*/|/download/${TAG}/|g" "$FORMULA"
+
+          echo "::group::Updated formula"
+          cat "$FORMULA"
+          echo "::endgroup::"
+
+      - name: Commit and push formula update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scripts/homebrew/xvn.rb
+          git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${GITHUB_REF#refs/tags/}"
+          git push
