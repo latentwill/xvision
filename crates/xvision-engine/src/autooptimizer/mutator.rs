@@ -1155,22 +1155,67 @@ impl Mutator {
             // and retried — instead of propagating immediately and aborting the
             // experiment. On exhaustion the loop bails and the cycle absorbs it
             // as `no_candidate`; cycle-level isolation (R3) then seals the cycle.
-            let resp = match self.dispatch.complete(req).await {
-                Ok(resp) => resp,
+            // F35 (two-tier dispatch): try structured output first, then fall
+            // back to plain JSON if the provider doesn't support response_format.
+            let mut resp = None;
+            let mut fallback_err: Option<anyhow::Error> = None;
+            match self.dispatch.complete(req.clone()).await {
+                Ok(r) => resp = Some(r),
                 Err(e) => {
-                    tracing::warn!(
-                        target: "xvision::autooptimizer",
-                        attempt,
-                        error = %e,
-                        "mutator dispatch errored; retrying within the attempt budget (R3)"
-                    );
+                    // Check if this is a response_format unsupported error so we
+                    // can retry without schema before consuming an attempt.
+                    let is_response_format_unsupported = e
+                        .downcast_ref::<crate::agent::llm::OpenAiCompatError>()
+                        .map_or(false, |rfe| {
+                            matches!(rfe, crate::agent::llm::OpenAiCompatError::ResponseFormatUnsupported { .. })
+                        });
+                    if is_response_format_unsupported {
+                        tracing::info!(
+                            target: "xvision::autooptimizer",
+                            attempt,
+                            "response_format unsupported by provider; retrying as plain JSON (F35)"
+                        );
+                        let fallback_req = LlmRequest {
+                            response_schema: None,
+                            system_prompt: build_system_prompt(dsr_prefix)
+                                + "\n\nIMPORTANT: Respond with valid JSON only. No markdown fences, no commentary. Your entire response must be parseable by JSON.parse().",
+                            ..req
+                        };
+                        match self.dispatch.complete(fallback_req).await {
+                            Ok(r) => resp = Some(r),
+                            Err(fb_err) => {
+                                tracing::warn!(
+                                    target: "xvision::autooptimizer",
+                                    attempt,
+                                    error = %fb_err,
+                                    "mutator plain-JSON fallback also failed (F35)"
+                                );
+                                fallback_err = Some(fb_err);
+                            }
+                        }
+                    } else {
+                        // Not a response_format issue — treat as transient error (R3).
+                        tracing::warn!(
+                            target: "xvision::autooptimizer",
+                            attempt,
+                            error = %e,
+                            "mutator dispatch errored; retrying within the attempt budget (R3)"
+                        );
+                        fallback_err = Some(e);
+                    }
+                }
+            };
+            let resp = match (resp, fallback_err) {
+                (Some(r), _) => r,
+                (None, Some(err)) => {
                     last_errors = Some(vec![ValidationError {
                         code: "dispatch_error".into(),
-                        message: format!("experiment-writer dispatch failed: {e:#}"),
+                        message: format!("experiment-writer dispatch failed: {err:#}"),
                         path: None,
                     }]);
                     continue;
                 }
+                (None, None) => unreachable!("dispatch must return success or error"),
             };
             let raw_text = resp.text();
             last_raw = Some(raw_text.clone());

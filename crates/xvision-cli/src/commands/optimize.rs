@@ -835,12 +835,19 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some((bundle_hash, strategy)) = seed_parent {
         // B9: strategy already loaded above to derive scenario granularity; reuse it.
         let strategy_id = args.strategy.as_deref().expect("seed_parent implies --strategy");
+        // F33: when the operator explicitly sets --mutator-provider different from
+        // --provider, skip the provider-consistency check — they've opted into a
+        // cross-provider setup (e.g. ollama paper-test + deepseek mutator).
+        let skip_provider_check = args.mutator_provider.is_some()
+            && args.provider.is_some()
+            && args.mutator_provider.as_deref() != args.provider.as_deref();
         xvision_engine::autooptimizer::preflight::preflight_trader_provider(
             &pool,
             &strategy,
             strategy_id,
             effective_mutator_provider,
             args.mock,
+            skip_provider_check,
         )
         .await
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;

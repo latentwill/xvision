@@ -46,8 +46,12 @@ pub async fn preflight_trader_provider(
     strategy_id: &str,
     cycle_provider: &str,
     mock: bool,
+    // F33: when true, skip the provider-consistency check entirely. The operator
+    // has explicitly requested a different mutator provider (--mutator-provider)
+    // from the paper-test provider (--provider) and accepts the risk.
+    skip_provider_check: bool,
 ) -> Result<(), PreflightReject> {
-    if mock || strategy.decision_mode == DecisionMode::Mechanistic {
+    if mock || strategy.decision_mode == DecisionMode::Mechanistic || skip_provider_check {
         return Ok(());
     }
     // The optimizer paper-test routes EVERY trader decision through the cycle's
