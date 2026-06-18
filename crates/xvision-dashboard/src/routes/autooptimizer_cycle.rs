@@ -308,6 +308,13 @@ pub async fn start_cycle(
             field: "strategy_id".into(),
             msg: e.message,
         })?;
+    // Extract the trader provider before moving strategy into parent_strategies.
+    // The Cline sidecar needs the trader's provider (not the mutator's) because
+    // the sidecar dispatches TRADER LLM calls; mutator+judge use separate dispatch.
+    let sidecar_provider = strategy.trader_slot.as_ref()
+        .and_then(|s| s.provider.as_deref())
+        .unwrap_or(&cfg.mutator.provider)
+        .to_string();
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];
@@ -433,11 +440,11 @@ pub async fn start_cycle(
         None
     };
     // WU-6: the Cline sidecar is mandatory for the trader (LlmDispatch retired).
-    // Fail the cycle launch with an actionable error if the sidecar cannot be
-    // spawned — never fall back silently.
+    // The sidecar dispatches TRADER LLM calls; mutator+judge use separate dispatch.
+    // sidecar_provider was resolved from the strategy before it was moved.
     let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
         &api_ctx,
-        &cfg.mutator.provider, // TODO: prefer the strategy's resolved trader provider (select_eval_provider parity)
+        &sidecar_provider,
         Arc::new(ToolRegistry::default_with_builtins()),
         xvision_engine::eval::run::RunMode::Backtest,
     )

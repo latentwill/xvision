@@ -799,9 +799,14 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let tools = Arc::new(ToolRegistry::default_with_builtins());
         // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
         // always returns Some on success and Err on failure — never Ok(None).
+        // The sidecar handles the paper-test TRADER's LLM calls. The mutator and
+        // judge use separate LlmDispatch instances, so the sidecar provider must
+        // be the trader's provider, not the mutator's. When --provider is set,
+        // use it explicitly; otherwise fall back to the mutator provider.
+        let sidecar_provider = args.provider.as_deref().unwrap_or(effective_mutator_provider);
         let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
             &ctx,
-            effective_mutator_provider,
+            sidecar_provider,
             Arc::clone(&tools),
             xvision_engine::eval::run::RunMode::Backtest,
         )

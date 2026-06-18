@@ -2788,24 +2788,46 @@ async fn spawn_cline_ctx(
         .as_ref()
         .map(|(store, rid, _)| (store.clone(), rid.clone()));
 
-    let client = match AgentClient::spawn_with_event_sink(
-        std::path::Path::new(&bin),
-        &main_sock,
-        &cb_sock,
-        &ev_sock,
-        dispatch,
-        bus,
-        sink_recording,
-    )
-    .await
-    {
-        Ok(client) => client,
+    // Bug 2: the sidecar can intermittently fail to start (timing race or
+    // cold Node start). Retry up to 3 times with a short delay — the gist
+    // repro says retry "usually succeeds on second attempt".
+    let mut client_result: Result<AgentClient, xvision_agent_client::AgentClientError> = Err(xvision_agent_client::AgentClientError::TransportClosed);
+    for attempt in 1..=3u32 {
+        match AgentClient::spawn_with_event_sink(
+            std::path::Path::new(&bin),
+            &main_sock,
+            &cb_sock,
+            &ev_sock,
+            dispatch.clone(),
+            bus.clone(),
+            sink_recording.clone(),
+        )
+        .await
+        {
+            Ok(client) => {
+                client_result = Ok(client);
+                break;
+            }
+            Err(e) if attempt < 3 => {
+                tracing::warn!(
+                    target: "xvision_engine::cline",
+                    attempt,
+                    error = %e,
+                    "sidecar spawn failed, retrying (Bug 2)"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            Err(e) => client_result = Err(e),
+        }
+    }
+    let client = match client_result {
+        Ok(c) => c,
         Err(e) => {
             if let Some((store, recording_id, _)) = recording.as_ref() {
                 let _ = store.mark_corrupt(recording_id, rec::RECOVERY_RUN_FAILED).await;
             }
             return Err(ApiError::Internal(format!(
-                "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}): {e}"
+                "failed to spawn xvision-agentd sidecar (XVN_AGENTD_BIN={bin}) after 3 attempts: {e}"
             )));
         }
     };
