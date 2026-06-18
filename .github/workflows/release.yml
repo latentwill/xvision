@@ -67,7 +67,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95"
+          # Must exactly match rust-toolchain.toml's channel ("1.95.0"). If it
+          # doesn't, dtolnay installs the cross-target std onto a separate
+          # toolchain ("1.95") while cargo runs under the rust-toolchain.toml
+          # override ("1.95.0"), which then lacks the target std → musl/windows
+          # builds fail with "can't find crate for `core`/`std`".
+          toolchain: "1.95.0"
           targets: "${{ matrix.target }}"
 
       # ── platform-specific build deps ────────────────────────────────────
