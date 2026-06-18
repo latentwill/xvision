@@ -48,9 +48,10 @@ uuid       = { workspace = true, features = ["serde", "v4"] }
 tracing-subscriber = { workspace = true }
 sqlx               = { workspace = true }
 
-[dev-dependencies]
-async-trait = { workspace = true }
+sha2     = "0.10"
 tempfile = "3"
+
+[dev-dependencies]
 tokio    = { workspace = true, features = ["rt", "macros"] }
 
 [features]

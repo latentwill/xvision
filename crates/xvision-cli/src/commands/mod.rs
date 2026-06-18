@@ -33,3 +33,4 @@ pub mod strategy;
 pub mod tool_policy;
 pub mod trajectory;
 pub mod venue;
+pub mod update;
