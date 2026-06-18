@@ -397,16 +397,44 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
         return Ok(bars);
     }
 
-    // 3. Fetch from upstream.
-    let bars = ctx
-        .alpaca_fetcher()
-        .fetch_crypto_bars(&args.asset_pair, args.granularity, args.start, args.end)
-        .await
-        .map_err(|e| ApiError::Validation(format!("alpaca fetch: {e}")))?;
+    // 3. Cache miss — check whether the requested window is covered by
+    //    OTHER cache entries (same asset, granularity, data_source) that
+    //    overlap or abut the request. Fetch only the uncovered gaps instead
+    //    of re-downloading bars we already have on disk.
+    let coverage = check_bar_coverage(
+        ctx,
+        &args.asset_pair,
+        args.granularity,
+        args.start,
+        args.end,
+        &args.data_source_tag,
+    )
+    .await
+    .map_err(|e| ApiError::Internal(format!("coverage check: {e}")))?;
 
-    // 3a. Candle integrity pre-pass: hard-fail on structural corruption,
-    //     warn on gaps. Runs on cache-miss so every uncached window is
-    //     validated before being committed to the bar cache.
+    let bars = if coverage.fully_covered {
+        // All bars already cached — merge from overlapping cache entries.
+        load_and_merge_cached_bars(ctx, &coverage.covered, args.start, args.end).await?
+    } else if !coverage.covered.is_empty() {
+        // Partial coverage — read cached bars, fetch only gaps from Alpaca,
+        // merge everything into one contiguous window.
+        load_cached_and_fetch_gaps(
+            ctx,
+            args,
+            &coverage.covered,
+            &coverage.gaps,
+        )
+        .await?
+    } else {
+        // No coverage at all — fetch the full window from Alpaca (original path).
+        ctx.alpaca_fetcher()
+            .fetch_crypto_bars(&args.asset_pair, args.granularity, args.start, args.end)
+            .await
+            .map_err(|e| ApiError::Validation(format!("alpaca fetch: {e}")))?
+    };
+
+    // 4. Candle integrity pre-pass: hard-fail on structural corruption,
+    //    warn on gaps.
     {
         let ohlcv_check: Vec<Ohlcv> = bars.iter().map(|b| market_bar_to_ohlcv(b.clone())).collect();
         let gap_findings = crate::eval::candle_integrity::validate_bar_series(
@@ -425,7 +453,7 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
         }
     }
 
-    // 4. Persist — uncompressed for small windows, gzip above threshold.
+    // 5. Persist — uncompressed for small windows, gzip above threshold.
     let raw = serialise_bars(&bars);
     let (blob, compression) = if bars.len() > GZIP_THRESHOLD_BARS {
         (gzip(&raw), "gzip")
@@ -449,6 +477,89 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
     Ok(bars)
 }
 
+/// Load bars from overlapping cache entries and slice to the requested window.
+/// Used when `check_bar_coverage` reports full coverage — no Alpaca fetch needed.
+async fn load_and_merge_cached_bars(
+    ctx: &ApiContext,
+    covered: &[CoverageSegment],
+    req_start: DateTime<Utc>,
+    req_end: DateTime<Utc>,
+) -> ApiResult<Vec<MarketBar>> {
+    let mut all_bars: Vec<MarketBar> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for seg in covered {
+        for ck in &seg.cache_keys {
+            if !seen_keys.insert(ck.clone()) {
+                continue; // same cache entry covers multiple gaps — read once
+            }
+            if let Some(bars) = read_bars_cache(ctx, ck).await? {
+                all_bars.extend(bars);
+            }
+        }
+    }
+
+    // Sort by timestamp and deduplicate (overlapping entries may have
+    // duplicate bars at the boundary).
+    all_bars.sort_by_key(|b| b.timestamp);
+    all_bars.dedup_by_key(|b| b.timestamp);
+
+    // Slice to the requested window.
+    let start_idx = all_bars
+        .binary_search_by_key(&req_start, |b| b.timestamp)
+        .unwrap_or_else(|i| i);
+    let end_idx = all_bars
+        .binary_search_by_key(&req_end, |b| b.timestamp)
+        .unwrap_or_else(|i| i);
+
+    Ok(all_bars[start_idx..end_idx].to_vec())
+}
+
+/// Load cached bars from covered segments, fetch only the uncovered gaps from
+/// Alpaca, merge everything, and sort/dedup. Used when coverage is partial.
+async fn load_cached_and_fetch_gaps(
+    ctx: &ApiContext,
+    args: &BarCacheArgs,
+    covered: &[CoverageSegment],
+    gaps: &[CoverageGap],
+) -> ApiResult<Vec<MarketBar>> {
+    // 1. Load cached bars from covered segments.
+    let mut all_bars: Vec<MarketBar> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for seg in covered {
+        for ck in &seg.cache_keys {
+            if !seen_keys.insert(ck.clone()) {
+                continue;
+            }
+            if let Some(bars) = read_bars_cache(ctx, ck).await? {
+                all_bars.extend(bars);
+            }
+        }
+    }
+
+    // 2. Fetch each gap from Alpaca.
+    for gap in gaps {
+        let gap_bars = ctx
+            .alpaca_fetcher()
+            .fetch_crypto_bars(&args.asset_pair, args.granularity, gap.start, gap.end)
+            .await
+            .map_err(|e| ApiError::Validation(format!("alpaca fetch (gap): {e}")))?;
+        all_bars.extend(gap_bars);
+    }
+
+    // 3. Sort + dedup + slice to the requested window.
+    all_bars.sort_by_key(|b| b.timestamp);
+    all_bars.dedup_by_key(|b| b.timestamp);
+
+    let start_idx = all_bars
+        .binary_search_by_key(&args.start, |b| b.timestamp)
+        .unwrap_or_else(|i| i);
+    let end_idx = all_bars
+        .binary_search_by_key(&args.end, |b| b.timestamp)
+        .unwrap_or_else(|i| i);
+
+    Ok(all_bars[start_idx..end_idx].to_vec())
+}
 async fn read_bars_cache(ctx: &ApiContext, cache_key: &str) -> ApiResult<Option<Vec<MarketBar>>> {
     let row: Option<(Vec<u8>, String)> =
         sqlx::query_as("SELECT bars_blob, compression FROM bars_cache WHERE cache_key = ?")
