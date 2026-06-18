@@ -173,7 +173,7 @@ async fn list_runs_returns_empty_array_initially() {
     let res = server.get("/api/autoresearch/runs").await;
     assert_eq!(res.status_code(), StatusCode::OK);
     let body: Value = res.json();
-    assert_eq!(body["runs"].as_array().unwrap().len(), 0);
+    assert_eq!(body.as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -231,7 +231,7 @@ async fn experiments_returned_in_created_at_asc_order() {
     let res = server.get("/api/autoresearch/runs/run-ord-01/experiments").await;
     assert_eq!(res.status_code(), StatusCode::OK);
     let body: Value = res.json();
-    let exps = body["experiments"].as_array().unwrap();
+    let exps = body.as_array().unwrap();
     assert_eq!(exps.len(), 2);
     // ASC order: exp-a (00:01) before exp-b (00:02).
     assert_eq!(exps[0]["experiment_id"], "exp-a");

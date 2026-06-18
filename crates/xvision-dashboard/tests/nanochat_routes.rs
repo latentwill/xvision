@@ -74,7 +74,7 @@ async fn list_returns_only_promoted_checkpoints() {
     let res = server.get("/api/nanochat/checkpoints").await;
     assert_eq!(res.status_code(), StatusCode::OK);
     let body: Value = res.json();
-    let items = body["checkpoints"].as_array().expect("checkpoints array");
+    let items = body.as_array().expect("checkpoints array");
     assert_eq!(items.len(), 1, "only promoted checkpoints returned");
     assert_eq!(items[0]["model_id"], "model-promoted-01");
 }
@@ -87,7 +87,7 @@ async fn list_empty_when_no_promoted_checkpoints() {
     let res = server.get("/api/nanochat/checkpoints").await;
     assert_eq!(res.status_code(), StatusCode::OK);
     let body: Value = res.json();
-    assert_eq!(body["checkpoints"].as_array().unwrap().len(), 0);
+    assert_eq!(body.as_array().unwrap().len(), 0);
 }
 
 // ── GET /api/nanochat/checkpoints/:model_id ──────────────────────────────────
