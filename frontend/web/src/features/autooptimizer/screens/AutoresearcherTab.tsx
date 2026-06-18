@@ -16,6 +16,8 @@ import {
   type AutoresearchExperiment,
   type StartRunRequest,
 } from "@/api/nanochat";
+import { useQuery } from "@tanstack/react-query";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import { useAutoresearchStream } from "../hooks/useAutoresearchStream";
 
 // ─── run_tag validation ────────────────────────────────────────────────────────
@@ -63,16 +65,25 @@ function PromotionToast({
 function RunLauncher({
   isRunning,
   activeRunId,
+  isStarting,
+  startError,
+  isStopping,
   onStart,
   onStop,
 }: {
   isRunning: boolean;
   activeRunId: string | null;
+  isStarting: boolean;
+  startError: Error | null;
+  isStopping: boolean;
   onStart: (req: StartRunRequest) => void;
   onStop: () => void;
 }) {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const [sourceStrategyId, setSourceStrategyId] = useState("");
+  const [strategySearch, setStrategySearch] = useState("");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [hoverIndex, setHoverIndex] = useState(-1);
   const [labelStrategy, setLabelStrategy] = useState<
     "price_forward" | "outcome_imitation"
   >("price_forward");
@@ -80,8 +91,25 @@ function RunLauncher({
   const [customFilter, setCustomFilter] = useState("");
   const [runTag, setRunTag] = useState(`run${today}`);
   const [tagError, setTagError] = useState<string | null>(null);
-  const startMutation = useStartRun();
-  const stopMutation = useStopRun();
+
+  const { data: strategies } = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+    staleTime: 120_000,
+  });
+
+  const selectedName = strategies?.find(
+    (s) => s.agent_id === sourceStrategyId,
+  )?.display_name ?? "";
+
+  const filtered = (strategies ?? []).filter((s) => {
+    if (!strategySearch) return true;
+    const q = strategySearch.toLowerCase();
+    return (
+      s.display_name.toLowerCase().includes(q) ||
+      s.agent_id.toLowerCase().includes(q)
+    );
+  });
 
   function handleRunTagChange(v: string) {
     setRunTag(v);
@@ -114,6 +142,8 @@ function RunLauncher({
     });
   }
 
+  const inp = "min-h-9 rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text placeholder:text-text-4";
+
   return (
     <section className="space-y-3">
       <h2 className="m-0 text-[13px] uppercase tracking-widest text-text-4">
@@ -127,7 +157,7 @@ function RunLauncher({
           <button
             type="button"
             onClick={onStop}
-            disabled={stopMutation.isPending}
+            disabled={isStopping}
             className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60"
           >
             Stop
@@ -138,21 +168,90 @@ function RunLauncher({
           onSubmit={handleStart}
           className="space-y-3 rounded-md border border-border bg-surface-card p-4"
         >
-          <div className="flex flex-col gap-1">
+          {/* Strategy dropdown with built-in search */}
+          <div className="flex flex-col gap-1 relative">
             <label
               htmlFor="ar-source-strategy"
               className="text-[12px] text-text-3"
             >
               Source strategy
             </label>
-            <input
-              id="ar-source-strategy"
-              type="text"
-              value={sourceStrategyId}
-              onChange={(e) => setSourceStrategyId(e.target.value)}
-              placeholder="Strategy ID (ULID)"
-              className="rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text placeholder:text-text-4"
-            />
+            <div className="relative">
+              <input
+                id="ar-source-strategy"
+                type="text"
+                value={dropdownOpen ? strategySearch : selectedName || strategySearch}
+                placeholder="Search strategies…"
+                autoComplete="off"
+                onFocus={() => { setDropdownOpen(true); setHoverIndex(-1); }}
+                onChange={(e) => {
+                  setStrategySearch(e.target.value);
+                  setDropdownOpen(true);
+                  setHoverIndex(-1);
+                  if (e.target.value === "") setSourceStrategyId("");
+                }}
+                onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+                onKeyDown={(e) => {
+                  if (!dropdownOpen || filtered.length === 0) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHoverIndex((i) => Math.min(i + 1, filtered.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHoverIndex((i) => Math.max(i - 1, -1));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (hoverIndex >= 0 && hoverIndex < filtered.length) {
+                      const s = filtered[hoverIndex];
+                      setSourceStrategyId(s.agent_id);
+                      setStrategySearch("");
+                      setDropdownOpen(false);
+                    }
+                  } else if (e.key === "Escape") {
+                    setDropdownOpen(false);
+                  }
+                }}
+                className={`${inp} w-full pr-7`}
+              />
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-4">
+                {dropdownOpen ? "▲" : "▼"}
+              </span>
+              {dropdownOpen && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-0.5 max-h-56 overflow-y-auto rounded border border-border bg-surface-elev shadow-lg">
+                  {filtered.length === 0 ? (
+                    <div className="px-3 py-2 text-[12px] text-text-4">
+                      No strategies found
+                    </div>
+                  ) : (
+                    filtered.map((s, i) => (
+                      <div
+                        key={s.agent_id}
+                        onMouseDown={() => {
+                          setSourceStrategyId(s.agent_id);
+                          setStrategySearch("");
+                          setDropdownOpen(false);
+                        }}
+                        onMouseEnter={() => setHoverIndex(i)}
+                        className={`flex items-center justify-between px-3 py-1.5 cursor-pointer text-[13px] ${
+                          i === hoverIndex
+                            ? "bg-accent/10 text-text"
+                            : s.agent_id === sourceStrategyId
+                              ? "bg-gold/5 text-text"
+                              : "text-text-2 hover:bg-surface-panel"
+                        }`}
+                      >
+                        <span className="truncate flex-1">{s.display_name}</span>
+                        {s.model && (
+                          <span className="ml-2 shrink-0 text-[11px] text-text-4 font-mono">
+                            {s.model}
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-1">
@@ -171,7 +270,7 @@ function RunLauncher({
                   e.target.value as "price_forward" | "outcome_imitation",
                 )
               }
-              className="rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text"
+              className={`${inp} w-full`}
             >
               <option value="price_forward">
                 price_forward — price movement baseline
@@ -246,15 +345,15 @@ function RunLauncher({
 
           <button
             type="submit"
-            disabled={startMutation.isPending || tagError != null}
+            disabled={isStarting || tagError != null}
             className="rounded bg-accent px-4 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {startMutation.isPending ? "Starting…" : "Start"}
+            {isStarting ? "Starting…" : "Start"}
           </button>
 
-          {startMutation.error instanceof Error && (
+          {startError && (
             <p className="text-[12px] text-danger">
-              {startMutation.error.message}
+              {startError.message}
             </p>
           )}
         </form>
@@ -569,6 +668,9 @@ export function AutoresearcherTab() {
       <RunLauncher
         isRunning={activeRunId != null}
         activeRunId={activeRunId}
+        isStarting={startMutation.isPending}
+        startError={startMutation.error instanceof Error ? startMutation.error : null}
+        isStopping={stopMutation.isPending}
         onStart={handleStart}
         onStop={handleStop}
       />

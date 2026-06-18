@@ -14,6 +14,7 @@ import {
   useOptimizerStatus,
   useSessionList,
 } from "@/features/autooptimizer/api";
+import { useAutoresearchRuns } from "@/api/nanochat";
 import { OptimizerPanel } from "./OptimizerPanel";
 
 vi.mock("@/features/autooptimizer/api", () => ({
@@ -21,6 +22,10 @@ vi.mock("@/features/autooptimizer/api", () => ({
   useOptimizerStats: vi.fn(),
   useOptimizerStatus: vi.fn(),
   useSessionList: vi.fn(),
+}));
+
+vi.mock("@/api/nanochat", () => ({
+  useAutoresearchRuns: vi.fn(),
 }));
 
 // 8wn: the nested OptimizerDigestStrip now pulls the operator budget cap via a
@@ -103,6 +108,10 @@ function setHooks({
   vi.mocked(useSessionList).mockReturnValue({
     data: [],
   } as unknown as ReturnType<typeof useSessionList>);
+  vi.mocked(useAutoresearchRuns).mockReturnValue({
+    data: [],
+    isPending: false,
+  } as unknown as ReturnType<typeof useAutoresearchRuns>);
 }
 
 function renderPanel() {
