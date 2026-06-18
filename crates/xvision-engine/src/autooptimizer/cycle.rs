@@ -817,7 +817,12 @@ where
             detail: "Experiment writer proposing candidate".to_string(),
         });
         let writer_t0 = Instant::now();
-        let mut tournament_votes: Option<Vec<(crate::autooptimizer::tournament::JudgePersona, crate::autooptimizer::tournament::BordaVote)>> = None;
+        let mut tournament_votes: Option<
+            Vec<(
+                crate::autooptimizer::tournament::JudgePersona,
+                crate::autooptimizer::tournament::BordaVote,
+            )>,
+        > = None;
         let diff_result: Option<crate::autooptimizer::mutator::MutationDiff> = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
@@ -1243,8 +1248,7 @@ where
                                 detail: Some(format!(
                                     "persona={label} judge_top={judge_top} winner=0 \
                                      delta_sharpe={:.4} min_improvement={:.4}",
-                                    outcome.delta_sharpe,
-                                    min_improvement,
+                                    outcome.delta_sharpe, min_improvement,
                                 )),
                             });
                         }

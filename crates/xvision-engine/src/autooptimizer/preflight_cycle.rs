@@ -34,10 +34,7 @@ pub async fn preflight_cycle(
 
 /// Check 4 (Phase 7): Block strategies that match known anti-patterns
 /// promoted to auto-reject after ≥ 3 recurrences.
-async fn check_anti_patterns(
-    pool: &SqlitePool,
-    strategy_id: &str,
-) -> Result<(), PreflightReject> {
+async fn check_anti_patterns(pool: &SqlitePool, strategy_id: &str) -> Result<(), PreflightReject> {
     let patterns = crate::autooptimizer::anti_pattern::load_auto_reject_patterns(pool)
         .await
         .map_err(|e| PreflightReject {
@@ -50,7 +47,8 @@ async fn check_anti_patterns(
 
     let mut blockers = Vec::new();
     for p in &patterns {
-        blockers.push(format!("  [{code}] {desc} (seen {count}x)",
+        blockers.push(format!(
+            "  [{code}] {desc} (seen {count}x)",
             code = p.code,
             desc = p.description.chars().take(120).collect::<String>(),
             count = p.occurrence_count,

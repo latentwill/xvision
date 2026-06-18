@@ -83,7 +83,10 @@ impl ScoreWithFeedback {
         if indices.is_empty() {
             return 0.0;
         }
-        let sum: f64 = indices.iter().map(|&i| self.scores.get(i).copied().unwrap_or(0.0)).sum();
+        let sum: f64 = indices
+            .iter()
+            .map(|&i| self.scores.get(i).copied().unwrap_or(0.0))
+            .sum();
         sum / indices.len() as f64
     }
 }
@@ -137,9 +140,7 @@ impl DspyBridge for GepaBridge {
             let _gen_obs_text = active_indices
                 .iter()
                 .enumerate()
-                .map(|(j, &orig_i)| {
-                    format!("{}. {}", j + 1, observations[orig_i].1.trim())
-                })
+                .map(|(j, &orig_i)| format!("{}. {}", j + 1, observations[orig_i].1.trim()))
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -158,16 +159,11 @@ impl DspyBridge for GepaBridge {
             };
 
             // ── Stage 1: REFLECT (uses reflection dispatch if available) ──
-            let reflection_text = format!(
-                "{obs_list}{feedback_hint}"
-            );
+            let reflection_text = format!("{obs_list}{feedback_hint}");
             let reflection = self.reflect(&reflection_text, &mut provenance).await?;
 
             // ── Stage 2+3: PROPOSE + SCORE with minibatch → full eval ──
-            let mb_size = self
-                .reflection_minibatch_size
-                .min(active_indices.len())
-                .max(2);
+            let mb_size = self.reflection_minibatch_size.min(active_indices.len()).max(2);
 
             // Minibatch indices: first `mb_size` active indices (for cheap cull)
             let mb_indices: Vec<usize> = active_indices.iter().copied().take(mb_size).collect();
@@ -178,11 +174,8 @@ impl DspyBridge for GepaBridge {
 
             // Track per-observation best scores for Pareto frontier (4a).
             let mut per_obs_best: Vec<f64> = vec![f64::NEG_INFINITY; observations.len()];
-            let mut frontier_candidates: Vec<(
-                String,
-                ScoreWithFeedback,
-                /* frontier_count */ usize,
-            )> = Vec::with_capacity(n_candidates);
+            let mut frontier_candidates: Vec<(String, ScoreWithFeedback, /* frontier_count */ usize)> =
+                Vec::with_capacity(n_candidates);
 
             for i in 0..n_candidates {
                 let instruction = self
@@ -227,11 +220,7 @@ impl DspyBridge for GepaBridge {
                 // are tied for best. The generation winner gets frontier priority.
                 let mut frontier_count = 0usize;
                 for &orig_i in &active_indices {
-                    let s = scores
-                        .scores
-                        .get(orig_i)
-                        .copied()
-                        .unwrap_or(0.0);
+                    let s = scores.scores.get(orig_i).copied().unwrap_or(0.0);
                     if (s - per_obs_best[orig_i]).abs() < 1e-6 {
                         frontier_count += 1;
                     }
@@ -246,9 +235,10 @@ impl DspyBridge for GepaBridge {
             // Pareto-weighted selection: candidate with highest frontier count wins.
             // Falls back to max-mean if frontier counts are all equal.
             let winner = match self.selection_strategy {
-                GepaSelectionStrategy::Pareto => frontier_candidates
-                    .iter()
-                    .max_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap())),
+                GepaSelectionStrategy::Pareto => frontier_candidates.iter().max_by(|a, b| {
+                    a.2.cmp(&b.2)
+                        .then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap())
+                }),
                 GepaSelectionStrategy::CurrentBest => frontier_candidates
                     .iter()
                     .max_by(|a, b| a.1.mean().partial_cmp(&b.1.mean()).unwrap()),
@@ -271,8 +261,10 @@ impl DspyBridge for GepaBridge {
                 && frontier_candidates.len() >= 2
             {
                 // Pick two best candidates by frontier count.
-                frontier_candidates
-                    .sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap()));
+                frontier_candidates.sort_by(|a, b| {
+                    b.2.cmp(&a.2)
+                        .then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap())
+                });
                 let parent_a = &frontier_candidates[0].0;
                 let parent_b = &frontier_candidates[1].0;
                 if let Ok(merged) = self.merge(parent_a, parent_b, &mut provenance).await {
@@ -319,10 +311,7 @@ impl DspyBridge for GepaBridge {
 impl GepaBridge {
     /// REFLECT uses the reflection dispatch (or falls back to the main dispatch).
     async fn reflect(&self, obs_list: &str, provenance: &mut Provenance) -> anyhow::Result<String> {
-        let dispatch = self
-            .reflection_dispatch
-            .as_ref()
-            .unwrap_or(&self.dispatch);
+        let dispatch = self.reflection_dispatch.as_ref().unwrap_or(&self.dispatch);
         let model = self.reflection_model.as_deref().unwrap_or(&self.model);
 
         let user_text = format!(
@@ -397,9 +386,7 @@ impl GepaBridge {
         let obs_text = indices
             .iter()
             .enumerate()
-            .map(|(j, &orig_i)| {
-                format!("{}. {}", j + 1, all_observations[orig_i].1.trim())
-            })
+            .map(|(j, &orig_i)| format!("{}. {}", j + 1, all_observations[orig_i].1.trim()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -440,14 +427,8 @@ impl GepaBridge {
 
         for (idx_pos, &orig_idx) in indices.iter().enumerate() {
             if let Some(entry) = results.get(idx_pos) {
-                full_scores[orig_idx] = entry["score"]
-                    .as_f64()
-                    .unwrap_or(0.5)
-                    .clamp(0.0, 1.0);
-                full_feedback[orig_idx] = entry["why"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                full_scores[orig_idx] = entry["score"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
+                full_feedback[orig_idx] = entry["why"].as_str().unwrap_or("").to_string();
             }
         }
 
@@ -498,9 +479,7 @@ mod tests {
 
     fn to_response(text: impl Into<String>) -> LlmResponse {
         LlmResponse {
-            content: vec![ContentBlock::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentBlock::Text { text: text.into() }],
             stop_reason: StopReason::EndTurn,
             input_tokens: 1,
             output_tokens: 1,
@@ -542,15 +521,18 @@ mod tests {
         // 4. PROPOSE candidate 1
         // 5. SCORE candidate 1
         let responses = vec![
-            "reflection: favor wider stops".to_string(),          // reflect
-            "Use wider ATR-based stops".to_string(),              // propose 0
-            r#"{"results":[{"score":0.9,"why":"good"},{"score":0.3,"why":"meh"}]}"#.to_string(),  // score 0
-            "Tighten stops, use momentum".to_string(),            // propose 1
-            r#"{"results":[{"score":0.2,"why":"bad"},{"score":0.1,"why":"worse"}]}"#.to_string(),  // score 1
+            "reflection: favor wider stops".to_string(), // reflect
+            "Use wider ATR-based stops".to_string(),     // propose 0
+            r#"{"results":[{"score":0.9,"why":"good"},{"score":0.3,"why":"meh"}]}"#.to_string(), // score 0
+            "Tighten stops, use momentum".to_string(),   // propose 1
+            r#"{"results":[{"score":0.2,"why":"bad"},{"score":0.1,"why":"worse"}]}"#.to_string(), // score 1
         ];
         let gepa = mock_gepa(responses);
         let result = gepa
-            .compile("ns", &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())])
+            .compile(
+                "ns",
+                &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+            )
             .await
             .unwrap();
         assert!(!result.instruction.is_empty());

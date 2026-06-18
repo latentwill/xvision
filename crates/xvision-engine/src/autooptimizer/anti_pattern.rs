@@ -44,11 +44,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
 
 /// Record a finding in the anti-pattern registry. If the same pattern has
 /// been seen ≥ 3 times, it is promoted to `auto_reject = true`.
-pub async fn record_finding(
-    pool: &SqlitePool,
-    code: &str,
-    summary: &str,
-) -> anyhow::Result<()> {
+pub async fn record_finding(pool: &SqlitePool, code: &str, summary: &str) -> anyhow::Result<()> {
     let hash = hash_finding(code, summary);
     let now = Utc::now().to_rfc3339();
 
@@ -139,7 +135,11 @@ fn hash_finding(code: &str, summary: &str) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     code.hash(&mut h);
     // Canonicalize: lowercase, trim, collapse whitespace
-    let canonical = summary.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let canonical = summary
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     canonical.hash(&mut h);
     format!("{:016x}", h.finish())
 }
@@ -167,7 +167,9 @@ mod tests {
     async fn third_occurrence_promotes() {
         let pool = test_pool().await;
         for _ in 0..3 {
-            record_finding(&pool, "SIMPLICITY", "parameter explosion").await.unwrap();
+            record_finding(&pool, "SIMPLICITY", "parameter explosion")
+                .await
+                .unwrap();
         }
         let all = load_auto_reject_patterns(&pool).await.unwrap();
         assert_eq!(all.len(), 1);
