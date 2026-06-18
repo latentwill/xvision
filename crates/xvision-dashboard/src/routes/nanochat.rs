@@ -61,16 +61,11 @@ pub struct CheckpointDetail {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ListCheckpointsResponse {
-    pub checkpoints: Vec<CheckpointSummary>,
-}
-
 // ─── GET /api/nanochat/checkpoints ───────────────────────────────────────────
 
 pub async fn list_checkpoints(
     State(state): State<AppState>,
-) -> Result<Json<ListCheckpointsResponse>, DashboardError> {
+) -> Result<Json<Vec<CheckpointSummary>>, DashboardError> {
     let rows = sqlx::query_as::<
         _,
         (
@@ -137,7 +132,7 @@ pub async fn list_checkpoints(
         )
         .collect();
 
-    Ok(Json(ListCheckpointsResponse { checkpoints }))
+    Ok(Json(checkpoints))
 }
 
 // ─── GET /api/nanochat/checkpoints/:model_id ─────────────────────────────────

@@ -59,11 +59,6 @@ pub struct RunSummary {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ListRunsResponse {
-    pub runs: Vec<RunSummary>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct ExperimentRow {
     pub experiment_id: String,
     pub run_id: String,
@@ -75,11 +70,6 @@ pub struct ExperimentRow {
     pub status: String,
     pub description: String,
     pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ListExperimentsResponse {
-    pub experiments: Vec<ExperimentRow>,
 }
 
 #[derive(Debug, Serialize)]
@@ -273,7 +263,7 @@ pub async fn stop_run(
 
 // ─── GET /api/autoresearch/runs ───────────────────────────────────────────────
 
-pub async fn list_runs(State(state): State<AppState>) -> Result<Json<ListRunsResponse>, DashboardError> {
+pub async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<RunSummary>>, DashboardError> {
     let rows = sqlx::query_as::<
         _,
         (
@@ -334,7 +324,7 @@ pub async fn list_runs(State(state): State<AppState>) -> Result<Json<ListRunsRes
         )
         .collect();
 
-    Ok(Json(ListRunsResponse { runs }))
+    Ok(Json(runs))
 }
 
 // ─── GET /api/autoresearch/runs/:run_id ──────────────────────────────────────
@@ -431,7 +421,7 @@ pub async fn stream_run(
 pub async fn list_experiments(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
-) -> Result<Json<ListExperimentsResponse>, DashboardError> {
+) -> Result<Json<Vec<ExperimentRow>>, DashboardError> {
     let rows = sqlx::query_as::<
         _,
         (
@@ -488,5 +478,5 @@ pub async fn list_experiments(
         )
         .collect();
 
-    Ok(Json(ListExperimentsResponse { experiments }))
+    Ok(Json(experiments))
 }
