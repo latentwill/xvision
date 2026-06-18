@@ -22,6 +22,7 @@ permissions:
 
 jobs:
   rustfmt:
+    if: false  # disabled 2026-06-18 — local pre-commit hook suffices
     name: cargo fmt --check
     runs-on: ubuntu-latest
     timeout-minutes: 10
