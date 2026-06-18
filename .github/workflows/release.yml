@@ -83,7 +83,8 @@ jobs:
             clang \
             libclang-dev \
             pkg-config
-          # libsqlite3-dev NOT needed — sqlx/sqlite-bundled compiles its own
+          # libsqlite3-dev NOT needed — sqlx's "sqlite" feature already enables
+          # sqlx-sqlite/bundled, which compiles libsqlite3 from source.
 
       - name: Install macOS build deps
         if: runner.os == 'macOS'
@@ -97,8 +98,7 @@ jobs:
           cargo build \
             --release \
             --target "${{ matrix.target }}" \
-            --bin xvn \
-            --features xvision-engine/sqlite-bundled
+            --bin xvn
         env:
           CARGO_INCREMENTAL: 0
           CARGO_TERM_COLOR: always
