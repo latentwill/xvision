@@ -99,11 +99,10 @@ jobs:
 
       # ── cargo build ─────────────────────────────────────────────────────
       - name: Build
-        run: |
-          cargo build \
-            --release \
-            --target "${{ matrix.target }}" \
-            --bin xvn
+        # Single line on purpose: this step runs on Windows too, where the
+        # default shell is PowerShell and bash-style "\" line continuations are
+        # a parse error ("Missing expression after unary operator '--'").
+        run: cargo build --release --target "${{ matrix.target }}" --bin xvn
         env:
           CARGO_INCREMENTAL: 0
           CARGO_TERM_COLOR: always
