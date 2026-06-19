@@ -96,7 +96,14 @@ async fn inject_snapshot(state: &AppState, listings: Vec<IndexedListing>) {
 }
 
 /// Creates a strategy through the API and returns `(id, canonical, hash)` —
-/// the exact bytes the publish route would pin and their content hash.
+/// the bare-Strategy canonical bytes + their content hash. Used by the
+/// bundle-read tests, which serve these exact bytes and assert the bare
+/// `manifest.manifest` shape.
+///
+/// NOTE: the sealed/open PUBLISH route seals/pins/hashes the self-contained
+/// EXPORT envelope (Strategy + the Agent definitions its `AgentRef`s point
+/// at), NOT this bare Strategy — see `export_canonical` for that shape, which
+/// the sealed-publish test asserts against.
 async fn seed_strategy(server: &TestServer, state: &AppState) -> (String, String, String) {
     let response = server
         .post("/api/strategies")
@@ -112,6 +119,16 @@ async fn seed_strategy(server: &TestServer, state: &AppState) -> (String, String
     let canonical = canonical_json(&value);
     let hash = manifest_hash_hex(&canonical);
     (id, canonical, hash)
+}
+
+/// The canonical bytes the PUBLISH route actually seals/pins/hashes: the
+/// self-contained export envelope (`StrategyExport` = Strategy + the full Agent
+/// definitions its `AgentRef`s point at), not the bare Strategy.
+async fn export_canonical(state: &AppState, id: &str) -> String {
+    let export = xvision_engine::api::strategy::export_strategy(&state.api_context(), id)
+        .await
+        .unwrap();
+    canonical_json(&serde_json::to_value(&export).unwrap())
 }
 
 // ── GET /api/marketplace/listings/:id/bundle ────────────────────────────────
@@ -566,7 +583,7 @@ async fn publish_sealed_encrypts_canonical_before_pin() {
     let fake = FakeCrypto::new();
     let state = state.with_sealed_crypto(fake.clone());
     let server = TestServer::new(build_router(state.clone())).unwrap();
-    let (id, canonical, _hash) = seed_strategy(&server, &state).await;
+    let (id, _canonical, _hash) = seed_strategy(&server, &state).await;
 
     let response = server
         .post("/api/marketplace/publish")
@@ -575,13 +592,16 @@ async fn publish_sealed_encrypts_canonical_before_pin() {
         }))
         .await;
 
-    // The pin fails fast (empty JWT) → 503, but the encrypt already ran.
+    // The pin fails fast (empty JWT) → 503, but the encrypt already ran. The
+    // sealed publish path encrypts the EXPORT envelope (Strategy + Agents),
+    // not the bare Strategy — so assert against that exact canonical.
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    let expected = export_canonical(&state, &id).await;
     let recorded = fake.last_plaintext.lock().unwrap().clone();
     assert_eq!(
         recorded.as_deref(),
-        Some(canonical.as_str()),
-        "sealed publish must encrypt the canonical plaintext before pinning"
+        Some(expected.as_str()),
+        "sealed publish must encrypt the canonical EXPORT-envelope plaintext before pinning"
     );
 }
 
