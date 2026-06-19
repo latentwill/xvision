@@ -25,8 +25,8 @@
 use std::path::PathBuf;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::UnixListener;
 use tokio::sync::broadcast::Sender;
+use xvision_ipc::{LocalListener, LocalStream};
 
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 
@@ -43,12 +43,9 @@ pub fn spawn_autooptimizer_subscriber(
     socket_path: PathBuf,
     tx: Sender<CycleProgressEvent>,
 ) -> anyhow::Result<()> {
-    // Remove stale socket file from a previous run.
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
-    }
-
-    let listener = UnixListener::bind(&socket_path)?;
+    // `LocalListener::bind` best-effort removes a stale unix socket from a
+    // previous run; on windows it arms the first named-pipe instance.
+    let mut listener = LocalListener::bind(&socket_path)?;
     tracing::info!(
         path = %socket_path.display(),
         "autooptimizer IPC socket listening",
@@ -57,7 +54,7 @@ pub fn spawn_autooptimizer_subscriber(
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok(stream) => {
                     let tx = tx.clone();
                     tokio::spawn(async move {
                         handle_ipc_client(stream, tx).await;
@@ -79,7 +76,7 @@ pub fn spawn_autooptimizer_subscriber(
 
 /// Read newline-delimited JSON `CycleProgressEvent` from one connected client
 /// and broadcast each event into `tx`. Returns when the client disconnects.
-async fn handle_ipc_client(stream: tokio::net::UnixStream, tx: Sender<CycleProgressEvent>) {
+async fn handle_ipc_client(stream: LocalStream, tx: Sender<CycleProgressEvent>) {
     let reader = BufReader::new(stream);
     let mut lines = reader.lines();
 

@@ -27,6 +27,7 @@ xvision-engine        = { path = "../xvision-engine" }
 xvision-filters       = { path = "../xvision-filters" }
 xvision-dashboard     = { path = "../xvision-dashboard" }
 xvision-observability = { path = "../xvision-observability" }
+xvision-ipc           = { path = "../xvision-ipc" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-marketplace   = { path = "../xvision-marketplace" }
 # Chain-backed marketplace reads (list under MARKETPLACE_DRIVER=onchain,

@@ -1,0 +1,15 @@
+[package]
+name        = "xvision-ipc"
+description = "Cross-platform local IPC: Unix domain sockets (unix) / named pipes (windows)."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

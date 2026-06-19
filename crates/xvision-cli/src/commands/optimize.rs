@@ -588,18 +588,29 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     {
         let cancel_sig = Arc::clone(&cancel);
         tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
-            let mut sigint = match signal(SignalKind::interrupt()) {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            let mut sigterm = match signal(SignalKind::terminate()) {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            tokio::select! {
-                _ = sigint.recv() => {}
-                _ = sigterm.recv() => {}
+            // Wait for an OS shutdown signal. Unix has SIGINT/SIGTERM; Windows
+            // has no POSIX signals, so Ctrl-C is the analog.
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigint = match signal(SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                let mut sigterm = match signal(SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                tokio::select! {
+                    _ = sigint.recv() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    return;
+                }
             }
             eprintln!("\nreceived shutdown signal — sealing the current cycle and exiting…");
             cancel_sig.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -953,17 +964,31 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         Some(p) if p.as_os_str().is_empty() => None,
         Some(p) => Some(p.clone()),
         None => {
-            let default = PathBuf::from("/tmp/xvn-optimizer.sock");
-            if default.exists() {
-                Some(default)
-            } else {
-                None
+            // Auto-connect to the conventional dashboard socket when present.
+            #[cfg(unix)]
+            {
+                let default = PathBuf::from("/tmp/xvn-optimizer.sock");
+                if default.exists() {
+                    Some(default)
+                } else {
+                    None
+                }
+            }
+            // Named pipes aren't filesystem entries, so there's nothing to
+            // probe — try the conventional pipe and let a missing dashboard
+            // fail silently at connect time below.
+            #[cfg(windows)]
+            {
+                Some(xvision_ipc::local_socket_path(
+                    std::path::Path::new(""),
+                    "xvn-optimizer.sock",
+                ))
             }
         }
     };
-    let mut ipc_stream: Option<tokio::net::UnixStream> = None;
+    let mut ipc_stream: Option<xvision_ipc::LocalStream> = None;
     if let Some(p) = &ipc_path {
-        match tokio::net::UnixStream::connect(p).await {
+        match xvision_ipc::LocalStream::connect(p).await {
             Ok(s) => {
                 eprintln!("streaming live events to the dashboard via {}", p.display());
                 ipc_stream = Some(s);
@@ -1244,7 +1269,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 }
 
 /// Send a `CycleProgressEvent` as a newline-delimited JSON line to the IPC socket.
-async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CycleProgressEvent) {
+async fn ipc_send_event(stream: &mut Option<xvision_ipc::LocalStream>, ev: CycleProgressEvent) {
     let Some(ref mut s) = stream else { return };
     let Ok(mut line) = serde_json::to_string(&ev) else {
         return;

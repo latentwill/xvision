@@ -21,8 +21,8 @@ use chrono::Utc;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
+use xvision_ipc::LocalListener;
 use xvision_observability::{
     AssistantTextDeltaEvent, BackpressureDroppedEvent, EngineEvent, ModelCallFinishedEvent, RunEvent,
     RunEventBus, RunFinishedEvent, RunInterruptedEvent, RunStartedEvent, SidecarErrorEvent,
@@ -93,14 +93,14 @@ pub async fn start_event_sink(
     fingerprint: SidecarFingerprint,
     frame_sink: Option<TrajectoryFrameSink>,
 ) -> std::io::Result<EventSinkHandle> {
-    // Best-effort unlink — same pattern as the callback socket.
-    let _ = std::fs::remove_file(socket_path);
-    let listener = UnixListener::bind(socket_path)?;
+    // `LocalListener::bind` best-effort unlinks a stale unix socket (same
+    // pattern as the callback socket); on windows it arms the first named pipe.
+    let mut listener = LocalListener::bind(socket_path)?;
     let socket_buf = socket_path.to_path_buf();
 
     let handle = tokio::spawn(async move {
         loop {
-            let Ok((conn, _)) = listener.accept().await else {
+            let Ok(conn) = listener.accept().await else {
                 continue;
             };
             let bus = bus.clone();

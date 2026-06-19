@@ -33,18 +33,26 @@ jobs:
             target: aarch64-apple-darwin
             artifact: xvn-aarch64-apple-darwin
             ext: ""
-          - os: macos-13
+            archive: tar.gz
+          # Cross-compiled on Apple Silicon (macos-latest): GitHub's Intel
+          # macos-13 runners are deprecated and their queue is unreliable.
+          # Apple clang cross-targets x86_64 natively, so this builds the
+          # Intel-mac binary without an Intel runner.
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: xvn-x86_64-apple-darwin
             ext: ""
+            archive: tar.gz
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             artifact: xvn-x86_64-linux-musl
             ext: ""
+            archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: xvn-x86_64-windows-msvc
             ext: ".exe"
+            archive: zip
 
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +75,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95"
+          # Must exactly match rust-toolchain.toml's channel ("1.95.0"). If it
+          # doesn't, dtolnay installs the cross-target std onto a separate
+          # toolchain ("1.95") while cargo runs under the rust-toolchain.toml
+          # override ("1.95.0"), which then lacks the target std → musl/windows
+          # builds fail with "can't find crate for `core`/`std`".
+          toolchain: "1.95.0"
           targets: "${{ matrix.target }}"
 
       # ── platform-specific build deps ────────────────────────────────────
@@ -83,7 +96,8 @@ jobs:
             clang \
             libclang-dev \
             pkg-config
-          # libsqlite3-dev NOT needed — sqlx/sqlite-bundled compiles its own
+          # libsqlite3-dev NOT needed — sqlx's "sqlite" feature already enables
+          # sqlx-sqlite/bundled, which compiles libsqlite3 from source.
 
       - name: Install macOS build deps
         if: runner.os == 'macOS'
@@ -93,12 +107,10 @@ jobs:
 
       # ── cargo build ─────────────────────────────────────────────────────
       - name: Build
-        run: |
-          cargo build \
-            --release \
-            --target "${{ matrix.target }}" \
-            --bin xvn \
-            --features xvision-engine/sqlite-bundled
+        # Single line on purpose: this step runs on Windows too, where the
+        # default shell is PowerShell and bash-style "\" line continuations are
+        # a parse error ("Missing expression after unary operator '--'").
+        run: cargo build --release --target "${{ matrix.target }}" --bin xvn
         env:
           CARGO_INCREMENTAL: 0
           CARGO_TERM_COLOR: always
@@ -138,8 +150,8 @@ jobs:
         with:
           name: "${{ matrix.artifact }}"
           path: |
-            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
-            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.${{ matrix.archive }}
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.${{ matrix.archive }}.sha256
           if-no-files-found: error
 
       # ── upload to GitHub Release (only on tag push) ─────────────────────
@@ -148,8 +160,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz
-            target/${{ matrix.target }}/release/${{ matrix.artifact }}.tar.gz.sha256
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.${{ matrix.archive }}
+            target/${{ matrix.target }}/release/${{ matrix.artifact }}.${{ matrix.archive }}.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
 
