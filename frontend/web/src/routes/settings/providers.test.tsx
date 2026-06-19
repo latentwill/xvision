@@ -203,8 +203,7 @@ describe("SettingsProvidersRoute", () => {
     });
     vi.mocked(settingsApi.testProviderConnection).mockResolvedValue({
       ok: true,
-      status: 200,
-      duration_ms: 10,
+      latency_ms: 10,
       model_count: 1,
       error: null,
     });
