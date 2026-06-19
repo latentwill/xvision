@@ -714,15 +714,22 @@ fn append_wrapped_candidates(out: &mut Vec<String>, value: &serde_json::Value) {
     // small models) emit the decision payload mixed with tool-call metadata
     // keys at the same level, e.g. {"name":"submit_decision","action":"long_open",...}
     // or {"tool":"submit_decision","arguments":{...}}. If the object carries
-    // a tool-name key, emit a stripped copy without it so the serde
-    // `deny_unknown_fields` guard on `TraderOutput` accepts the payload.
-    // The separate `arguments`/`parameters` unwrap above handles the
-    // nested-object case; this handles the flattened case where the
-    // decision fields and the tool-name key share the same object.
-    for name_key in ["name", "tool", "function"] {
-        if obj.contains_key(name_key) {
-            let mut stripped = obj.clone();
-            stripped.remove(name_key);
+    // a tool-name key, emit a single stripped copy with ALL tool-name keys
+    // removed (not one per key — a per-key clone would leave other unknown
+    // keys and fail #[serde(deny_unknown_fields)]). The separate
+    // "arguments"/"parameters" unwrap above handles the nested-object case;
+    // this handles the flattened case where the decision fields and the
+    // tool-name key share the same object.
+    let tool_name_keys: &[&str] = &["name", "tool", "function"];
+    if tool_name_keys.iter().any(|k| obj.contains_key(*k)) {
+        let mut stripped = obj.clone();
+        for k in tool_name_keys {
+            stripped.remove(*k);
+        }
+        // Guard: if the object consisted only of tool-name keys (e.g.
+        // {"name":"submit_decision"}), stripping produces an empty object —
+        // don't emit a candidate that can never parse as TraderOutput.
+        if !stripped.is_empty() {
             push_candidate(out, &serde_json::Value::Object(stripped).to_string());
         }
     }
@@ -1485,6 +1492,7 @@ mod tests {
             .expect("flattened function-call wrapper must strip name key");
         assert_eq!(parsed.action, "short_open");
         assert_eq!(parsed.conviction, 0.75);
+        assert_eq!(parsed.justification, "bearish engulfing on 5m");
     }
 
     #[test]
@@ -1495,6 +1503,7 @@ mod tests {
             .expect("function-call wrapper with 'parameters' key must be unwrapped");
         assert_eq!(parsed.action, "flat");
         assert_eq!(parsed.conviction, 0.3);
+        assert_eq!(parsed.justification, "no clear signal");
     }
 
     #[test]
@@ -1505,5 +1514,47 @@ mod tests {
             .expect("flattened wrapper with 'tool' key must be stripped");
         assert_eq!(parsed.action, "hold");
         assert_eq!(parsed.conviction, 0.5);
+        assert_eq!(parsed.justification, "waiting for breakout");
+    }
+
+    #[test]
+    fn function_key_stripped_from_flattened_wrapper() {
+        // OpenAI-style function_call wrappers use "function" as the key.
+        let wrapper = r#"{"function":"submit_decision","action":"flat","conviction":0.2,"justification":"no edge"}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("flattened wrapper with 'function' key must be stripped");
+        assert_eq!(parsed.action, "flat");
+        assert_eq!(parsed.conviction, 0.2);
+        assert_eq!(parsed.justification, "no edge");
+    }
+
+    #[test]
+    fn multiple_tool_name_keys_stripped_in_single_pass() {
+        // If a model emits both "name" and "tool" keys, a single-pass strip
+        // must remove ALL of them — a per-key clone would leave the other
+        // unknown key and fail #[serde(deny_unknown_fields)].
+        let wrapper = r#"{"name":"submit_decision","tool":"make_trade","action":"long_open","conviction":0.6,"justification":"multi-key wrapper"}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("multiple tool-name keys must all be stripped in one pass");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.6);
+        assert_eq!(parsed.justification, "multi-key wrapper");
+    }
+
+    #[test]
+    fn tool_name_only_object_rejected_not_default_parsed() {
+        // An object with only a tool-name key and no decision fields must
+        // still be rejected — the empty-object guard prevents emitting a
+        // candidate that could accidentally parse as TraderOutput::default().
+        let err = TraderOutput::parse_strict(
+            r#"{"name":"submit_decision"}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("tool-name-only object must be rejected");
+        assert!(matches!(
+            err.kind,
+            TraderFailureKind::InvalidJson | TraderFailureKind::MissingField
+        ));
     }
 }
