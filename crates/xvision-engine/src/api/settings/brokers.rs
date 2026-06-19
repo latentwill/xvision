@@ -37,6 +37,7 @@ pub struct BrokersReport {
     pub alpaca: BrokerEntry,
     pub orderly: BrokerEntry,
     pub byreal: BrokerEntry,
+    pub byreal_spot: BrokerEntry,
     pub degen_arena: BrokerEntry,
     pub hyperliquid: BrokerEntry,
 }
@@ -112,6 +113,21 @@ pub struct ByrealCredentials {
     /// Optional account id forwarded to the CLI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+}
+
+/// Persisted Byreal Solana spot credentials. Lives in
+/// `$XVN_HOME/secrets/brokers.toml` under the `[byreal_spot]` table.
+/// The `private_key` MUST be a Solana trading-only agent/API wallet key
+/// (cannot withdraw). Never returned through the read API; only a `last4`
+/// suffix surfaces. Distinct from [`ByrealCredentials`] — perps routes to
+/// Hyperliquid; spot routes to Solana via `byreal-cli`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ByrealSpotCredentials {
+    /// Solana trading-only agent private key. Trade scope, no withdraw.
+    pub private_key: String,
+    /// `mainnet` / `testnet`. `None` ⇒ the CLI default (mainnet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
 }
 
 /// Persisted Degen Arena credentials. Lives in `$XVN_HOME/secrets/brokers.toml`
@@ -222,14 +238,16 @@ pub struct OrderlyCredentials {
     pub base_url: Option<String>,
 }
 
-/// On-disk file containing optional `[alpaca]` / `[byreal]` / `[degen_arena]`
-/// / `[hyperliquid]` / `[orderly]` sections.
+/// On-disk file containing optional `[alpaca]` / `[byreal]` / `[byreal_spot]`
+/// / `[degen_arena]` / `[hyperliquid]` / `[orderly]` sections.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BrokersSecretsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     alpaca: Option<AlpacaCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     byreal: Option<ByrealCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    byreal_spot: Option<ByrealSpotCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     degen_arena: Option<DegenArenaCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -270,6 +288,24 @@ pub struct SetByrealReq {
 /// Successful set/clear response for byreal — redacted summary only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ByrealStored {
+    pub stored: bool,
+    pub stored_key_id_suffix: Option<String>,
+    pub network: Option<String>,
+}
+
+/// Request body for `set_byreal_spot`. The `private_key` must be a Solana
+/// trading-only agent key (cannot withdraw). Spot has no `account` field
+/// (unlike perps) — the CLI resolves the wallet from the keystore.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetByrealSpotReq {
+    pub private_key: String,
+    #[serde(default)]
+    pub network: Option<String>,
+}
+
+/// Successful set/clear response for byreal spot — redacted summary only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ByrealSpotStored {
     pub stored: bool,
     pub stored_key_id_suffix: Option<String>,
     pub network: Option<String>,
@@ -327,6 +363,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
         alpaca: alpaca_entry(stored.alpaca.as_ref()),
         orderly: orderly_entry(stored.orderly.as_ref()),
         byreal: byreal_entry(stored.byreal.as_ref()),
+        byreal_spot: byreal_spot_entry(stored.byreal_spot.as_ref()),
         degen_arena: degen_arena_entry(stored.degen_arena.as_ref()),
         hyperliquid: hyperliquid_entry(stored.hyperliquid.as_ref()),
     })
@@ -409,6 +446,43 @@ fn byreal_entry(stored: Option<&ByrealCredentials>) -> BrokerEntry {
             "Live execution venue (Hyperliquid perps) — not available for paper/backtest. \
              Testnet supported for live-eval (set network=testnet). Use a trading-only \
              agent key (cannot withdraw)."
+                .into(),
+        ),
+    }
+}
+
+fn byreal_spot_entry(stored: Option<&ByrealSpotCredentials>) -> BrokerEntry {
+    // Surface the BYREAL_SPOT_* vars for debuggability. The signing key
+    // (`BYREAL_SPOT_PRIVATE_KEY`) gates a connection; `BYREAL_SPOT_NETWORK`
+    // defaults to mainnet and is optional. Spot has no account field
+    // (unlike perps) — the CLI resolves the wallet from the keystore.
+    let credentials = vec![
+        cred("BYREAL_SPOT_PRIVATE_KEY"),
+        cred("BYREAL_SPOT_NETWORK"),
+    ];
+    let env_configured = credentials
+        .iter()
+        .find(|c| c.env_var == "BYREAL_SPOT_PRIVATE_KEY")
+        .map(|c| c.is_set)
+        .unwrap_or(false);
+    let stored_present = stored.is_some();
+    let stored_key_id_suffix = stored.map(|c| last4(&c.private_key));
+    let base_url = stored
+        .and_then(|c| c.network.clone())
+        .or_else(|| env::var("BYREAL_SPOT_NETWORK").ok().filter(|s| !s.is_empty()));
+    BrokerEntry {
+        name: "Byreal Spot".into(),
+        kind: "byreal_spot".into(),
+        credentials,
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix,
+        base_url,
+        note: Some(
+            "Solana spot trading (curated SPL + xStocks) via byreal-cli. \
+             Long/Flat only — no shorting, no leverage. Testnet supported \
+             for live-eval (set network=testnet). Use a trading-only agent \
+             key (cannot withdraw)."
                 .into(),
         ),
     }
@@ -909,6 +983,91 @@ async fn clear_byreal_inner(xvn_home: &Path) -> ApiResult<ByrealStored> {
     file.byreal = None;
     save_brokers_secrets(xvn_home, &file).await?;
     Ok(ByrealStored {
+        stored: false,
+        stored_key_id_suffix: None,
+        network: None,
+    })
+}
+
+// ── Byreal Spot credential store ─────────────────────────────────────────────
+
+/// Persist Byreal Solana spot credentials, overwriting any existing entry.
+/// The key MUST be a Solana trading-only agent key (cannot withdraw).
+pub async fn set_byreal_spot(ctx: &ApiContext, req: SetByrealSpotReq) -> ApiResult<ByrealSpotStored> {
+    let started = Instant::now();
+    let result = set_byreal_spot_inner(&ctx.xvn_home, req.clone()).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log WITHOUT the key — only the redacted suffix + network land.
+    let args_json = serde_json::json!({
+        "private_key_suffix": last4(&req.private_key),
+        "network": req.network,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_byreal_spot",
+        Some("byreal_spot"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_byreal_spot_inner(xvn_home: &Path, req: SetByrealSpotReq) -> ApiResult<ByrealSpotStored> {
+    if req.private_key.trim().is_empty() {
+        return Err(ApiError::Validation("private_key is empty".into()));
+    }
+    let network = req
+        .network
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = ByrealSpotCredentials {
+        private_key: req.private_key.trim().to_string(),
+        network: network.clone(),
+    };
+    file.byreal_spot = Some(creds.clone());
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(ByrealSpotStored {
+        stored: true,
+        stored_key_id_suffix: Some(last4(&creds.private_key)),
+        network,
+    })
+}
+
+/// Remove the stored Byreal Spot credentials. No-op if none were stored.
+pub async fn clear_byreal_spot(ctx: &ApiContext) -> ApiResult<ByrealSpotStored> {
+    let started = Instant::now();
+    let result = clear_byreal_spot_inner(&ctx.xvn_home).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_byreal_spot",
+        Some("byreal_spot"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_byreal_spot_inner(xvn_home: &Path) -> ApiResult<ByrealSpotStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.byreal_spot = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(ByrealSpotStored {
         stored: false,
         stored_key_id_suffix: None,
         network: None,

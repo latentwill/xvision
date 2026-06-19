@@ -7,18 +7,18 @@ import { Pill } from "@/components/primitives/Pill";
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import {
-  clearAlpacaCredentials,
   clearByrealCredentials,
+  clearByrealSpotCredentials,
   clearDegenArenaCredentials,
   clearHyperliquidCredentials,
   clearOrderlyCredentials,
   getBrokers,
   setAlpacaCredentials,
   setByrealCredentials,
+  setByrealSpotCredentials,
   setDegenArenaCredentials,
   setHyperliquidCredentials,
   setOrderlyCredentials,
-  settingsKeys,
   testAlpacaConnection,
 } from "@/api/settings";
 import type { AlpacaTestReport, BrokerEntry } from "@/api/types.gen";
@@ -98,8 +98,8 @@ export function SettingsBrokersRoute() {
           <AlpacaBrokerCard entry={data.alpaca} />
           <OrderlyBrokerCard entry={data.orderly} />
           <ByrealBrokerCard entry={data.byreal} />
+          <ByrealSpotBrokerCard entry={data.byreal_spot} />
           <DegenArenaBrokerCard entry={data.degen_arena} />
-          <HyperliquidBrokerCard entry={data.hyperliquid} />
           <MarketsRefreshCard />
         </div>
       )}
@@ -682,6 +682,184 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
               onChange={(e) => setAccount(e.target.value)}
               placeholder=""
               className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          {errorMsg ? (
+            <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>
+          ) : null}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={save.isPending}
+              className="px-3 py-1.5 rounded text-[13px] font-medium border border-gold text-gold hover:bg-gold/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {save.isPending ? "Saving…" : entry.stored ? "Save replacement" : "Save"}
+            </button>
+            {entry.stored ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setErrorMsg(null);
+                }}
+                className="px-3 py-1.5 rounded text-[13px] text-text-2 hover:text-text"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+    </Card>
+  );
+}
+
+// Byreal Solana spot (curated SPL + xStocks). Mirrors the ByrealBrokerCard
+// but uses the /api/settings/brokers/byreal-spot endpoint and has no
+// `account` field (spot resolves the wallet from the byreal-cli keystore).
+function ByrealSpotBrokerCard({ entry }: { entry: BrokerEntry }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(!entry.stored);
+  const [privateKey, setPrivateKey] = useState("");
+  const [network, setNetwork] = useState("testnet");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      setByrealSpotCredentials({
+        private_key: privateKey.trim(),
+        network: network.trim() ? network.trim() : null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setPrivateKey("");
+      setErrorMsg(null);
+      setEditing(false);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const clear = useMutation({
+    mutationFn: clearByrealSpotCredentials,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.brokers() });
+      setErrorMsg(null);
+      setEditing(true);
+    },
+    onError: (err) => {
+      const detail =
+        err instanceof ApiError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setErrorMsg(detail);
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!privateKey.trim()) {
+      setErrorMsg("Trading-only agent key is required");
+      return;
+    }
+    save.mutate();
+  };
+
+  const showForm = editing || !entry.stored;
+  const showStored = entry.stored && !editing;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
+            {entry.name}
+          </h3>
+          {entry.note ? (
+            <p className="m-0 mt-1 text-text-3 text-[12px]">{entry.note}</p>
+          ) : null}
+        </div>
+        {entry.configured ? (
+          <Pill tone="gold">
+            <span className="w-1.5 h-1.5 rounded-full bg-gold" /> configured
+          </Pill>
+        ) : (
+          <Pill tone="warn">
+            <span className="w-1.5 h-1.5 rounded-full bg-warn" /> not configured
+          </Pill>
+        )}
+      </div>
+
+      {showStored ? (
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-3 px-3 py-2 bg-surface-elev border border-border-soft rounded">
+            <div className="text-[13px] text-text-2">
+              Stored agent key ending in{" "}
+              <code className="font-mono text-text">
+                ••••{entry.stored_key_id_suffix ?? "····"}
+              </code>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(true);
+                  setErrorMsg(null);
+                }}
+                className="text-[12px] text-text-2 hover:text-text underline-offset-2 hover:underline"
+              >
+                Edit replacement
+              </button>
+              <button
+                type="button"
+                onClick={() => clear.mutate()}
+                disabled={clear.isPending}
+                className="text-[12px] text-danger hover:underline disabled:opacity-50"
+              >
+                {clear.isPending ? "clearing…" : "clear"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showForm ? (
+        <form onSubmit={onSubmit} className="space-y-3">
+          <p className="m-0 text-[12px] text-text-3 leading-snug">
+            Use a{" "}
+            <strong className="text-text-2">trading-only agent / API wallet key</strong>{" "}
+            (cannot withdraw) — never your master account key.
+          </p>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">
+              Trading-only agent key
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              placeholder="Solana private key…"
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono placeholder:text-text-3 focus:outline-none focus:border-text-3"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] text-text-2 mb-1">Network</label>
+            <SignalSelectMenu
+              value={network}
+              options={NETWORK_OPTIONS}
+              onChange={setNetwork}
+              minWidth={180}
             />
           </div>
           {errorMsg ? (

@@ -289,6 +289,52 @@ export function clearByrealCredentials(): Promise<void> {
   });
 }
 
+// Byreal Spot stored creds (Solana spot via byreal-cli). Mirrors the engine
+// `SetByrealSpotReq` / `ByrealSpotStored`. Uses `/api/settings/brokers/byreal-spot`.
+// Distinct from Byreal perps — spot has no `account` field.
+export type SetByrealSpotRequest = {
+  private_key: string;
+  network: string | null;
+};
+
+export type ByrealSpotStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  network: string | null;
+};
+
+export function setByrealSpotCredentials(
+  body: SetByrealSpotRequest,
+): Promise<ByrealSpotStored> {
+  const trace = createTrace("settings", { broker: "byreal_spot", network: body.network });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<ByrealSpotStored>("/api/settings/brokers/byreal-spot", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearByrealSpotCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/byreal-spot", {
+    method: "DELETE",
+  });
+}
+
 // Hyperliquid (direct perps) stored creds. `api_key` MUST be a Hyperliquid
 // trade-only agent key (`0x` + 64 hex, cannot withdraw); `account_address` is
 // the master account (`0x` + 40 hex). Mirrors the engine `SetHyperliquidReq` /

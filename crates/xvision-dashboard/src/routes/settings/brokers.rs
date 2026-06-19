@@ -10,8 +10,9 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored, HyperliquidStored,
-    OrderlyStored, SetAlpacaReq, SetByrealReq, SetDegenArenaReq, SetHyperliquidReq, SetOrderlyReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealSpotStored, ByrealStored,
+    DegenArenaStored, HyperliquidStored, OrderlyStored, SetAlpacaReq, SetByrealReq,
+    SetByrealSpotReq, SetDegenArenaReq, SetHyperliquidReq, SetOrderlyReq,
 };
 
 use crate::error::DashboardError;
@@ -48,6 +49,25 @@ pub async fn set_byreal(
 /// DELETE `/api/settings/brokers/byreal` — drop stored byreal creds.
 pub async fn delete_byreal(State(state): State<AppState>) -> Result<impl IntoResponse, DashboardError> {
     brokers::clear_byreal(&state.api_context()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST `/api/settings/brokers/byreal-spot` — persist a byreal spot Solana
+/// trading-only agent key (+ optional network). The key never comes back
+/// through `GET`.
+pub async fn set_byreal_spot(
+    State(state): State<AppState>,
+    Json(req): Json<SetByrealSpotReq>,
+) -> Result<(StatusCode, Json<ByrealSpotStored>), DashboardError> {
+    let stored = brokers::set_byreal_spot(&state.api_context(), req).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
+}
+
+/// DELETE `/api/settings/brokers/byreal-spot` — drop stored byreal spot creds.
+pub async fn delete_byreal_spot(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, DashboardError> {
+    brokers::clear_byreal_spot(&state.api_context()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
