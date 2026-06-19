@@ -61,7 +61,7 @@ pub fn require_training_enabled() -> Result<()> {
             // GPU + uv present — training can run. Log the auto-detection
             // so operators know why they don't need the env var.
             tracing::info!(
-                "local training auto-enabled: CUDA GPU detected, uv available"
+                "local training auto-enabled: GPU detected, uv available"
             );
             Ok(())
         }
@@ -71,7 +71,8 @@ pub fn require_training_enabled() -> Result<()> {
                  GPU: {reason}. \
                  Python runner: `uv` not found on PATH. \
                  Install `uv` (https://docs.astral.sh/uv/) and ensure a \
-                 CUDA GPU with ≥ 4 GB VRAM is available. \
+                 CUDA GPU with ≥ 4 GB VRAM or an Apple Silicon Mac with \
+                 ≥ 8 GB unified memory is available. \
                  Set XVN_ENABLE_LOCAL_TRAINING=1 to bypass this check."
             )
         }
@@ -84,7 +85,8 @@ pub fn require_training_enabled() -> Result<()> {
         }
         (GpuStatus::Unavailable { reason }, true) => {
             bail!(
-                "local training requires a CUDA GPU with ≥ 4 GB VRAM, but \
+                "local training requires a CUDA GPU with ≥ 4 GB VRAM or an \
+                 Apple Silicon Mac with ≥ 8 GB unified memory, but \
                  {reason}. Set XVN_ENABLE_LOCAL_TRAINING=1 to bypass \
                  this check (training will fall back to CPU, which may be \
                  extremely slow)."
@@ -101,7 +103,8 @@ enum GpuStatus {
     Unavailable { reason: String },
 }
 
-/// Detect a CUDA-capable GPU with ≥ 4 GB VRAM.
+/// Detect a GPU suitable for local training: CUDA via `nvidia-smi`, or
+/// Apple Silicon (M1–M4) via `sysctl` unified-memory probe.
 fn detect_gpu() -> GpuStatus {
     // 1. Try `nvidia-smi` — fast, reliable on any CUDA machine.
     if let Ok(out) = std::process::Command::new("nvidia-smi")
@@ -112,7 +115,7 @@ fn detect_gpu() -> GpuStatus {
         for line in text.lines() {
             if let Ok(mb) = line.trim().parse::<u64>() {
                 if mb >= 4096 {
-                    return GpuStatus::Available { vram_mb: mb, };
+                    return GpuStatus::Available { vram_mb: mb };
                 }
                 return GpuStatus::Unavailable {
                     reason: format!("found GPU with only {mb} MB VRAM (need ≥ 4096 MB)"),
@@ -121,26 +124,39 @@ fn detect_gpu() -> GpuStatus {
         }
     }
 
-    // 2. Try `system_profiler` on macOS (Apple Silicon GPU).
+    // 2. On macOS, detect Apple Silicon via `sysctl -n hw.memsize` (numeric-only
+    //    output — no colon / field-name prefix to parse). Apple Silicon GPUs
+    //    share unified memory; we report available VRAM as half of total RAM
+    //    (conservative: PyTorch MPS typically gets ~70%). The belt-and-suspenders
+    //    `machdep.cpu.brand_string` check confirms it's actually Apple Silicon
+    //    (not an Intel Mac with a GPU).
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = std::process::Command::new("sysctl")
-            .args(["hw.memsize"])
+            .args(["-n", "hw.memsize"])
             .output()
         {
             let text = String::from_utf8_lossy(&out.stdout);
-            if let Some(rest) = text.split(':').nth(1) {
-                if let Ok(bytes) = rest.trim().parse::<u64>() {
-                    let mb = bytes / 1_048_576;
-                    // Apple Silicon shares system RAM — assume 8 GB usable for GPU.
-                    // Training works on M-series with ≥ 16 GB unified memory.
-                    if mb >= 16_384 {
-                        return GpuStatus::Available { vram_mb: mb / 2 };
+            if let Ok(total_bytes) = text.trim().parse::<u64>() {
+                let total_mb = total_bytes / 1_048_576;
+                // Confirm Apple Silicon: CPU brand contains "Apple".
+                let is_apple_silicon = std::process::Command::new("sysctl")
+                    .args(["-n", "machdep.cpu.brand_string"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).contains("Apple"))
+                    .unwrap_or(false);
+                if is_apple_silicon {
+                    // MPS works on any Apple Silicon Mac; 8 GB is the practical
+                    // floor for small-model training (GPT2-124M fits in ~2 GB).
+                    if total_mb >= 8_192 {
+                        return GpuStatus::Available {
+                            vram_mb: total_mb / 2,
+                        };
                     }
                     return GpuStatus::Unavailable {
                         reason: format!(
-                            "Apple Silicon requires ≥ 16 GB unified memory \
-                             (detected {mb} MB)"
+                            "Apple Silicon requires ≥ 8 GB unified memory \
+                             (detected {total_mb} MB)"
                         ),
                     };
                 }
@@ -237,6 +253,7 @@ mod tests {
             Self { key, prior }
         }
 
+
         fn remove(key: &'static str) -> Self {
             let prior = std::env::var(key).ok();
             std::env::remove_var(key);
@@ -251,5 +268,23 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+
+    #[test]
+    fn apple_silicon_detected_on_macos_arm64() {
+        // On this developer Mac (M4 Max, 36 GB), detect_gpu() must succeed.
+        let gpu = detect_gpu();
+        match &gpu {
+            GpuStatus::Available { vram_mb } => {
+                eprintln!("Apple Silicon GPU detected: {vram_mb} MB VRAM (unified memory proxy)");
+            }
+            GpuStatus::Unavailable { reason } => {
+                eprintln!("GPU NOT detected: {reason}");
+            }
+        }
+        assert!(
+            matches!(gpu, GpuStatus::Available { .. }),
+            "Apple Silicon GPU must be detected on this dev Mac"
+        );
     }
 }
