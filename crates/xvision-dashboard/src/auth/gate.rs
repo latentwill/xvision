@@ -90,21 +90,20 @@ impl AuthState {
     }
 
     /// Decide the auth posture for a given bind address by consulting
-    /// the `XVN_DASHBOARD_TOKEN` env var. Returns `Err` if the bind is
-    /// non-loopback AND the env var is unset/empty — the server refuses
-    /// to start in that case rather than silently accept unauth'd
-    /// traffic.
+    /// the `XVN_DASHBOARD_TOKEN` env var. If the env var is set and
+    /// non-empty, the outer gate is active. Otherwise, no gate applies
+    /// (the dashboard is open — the inner `require_auth_middleware`
+    /// still checks the DB-stored password for mutating routes).
+    ///
+    /// The server no longer refuses to start without the env var;
+    /// the operator can set a dashboard password later via Settings UI.
     pub fn from_env(addr: &SocketAddr) -> anyhow::Result<Self> {
         if is_loopback(addr) {
             return Ok(Self::loopback_only());
         }
         match std::env::var(AUTH_TOKEN_ENV) {
             Ok(token) if !token.is_empty() => Ok(Self::with_required_token(token)),
-            _ => Err(anyhow::anyhow!(
-                "{AUTH_TOKEN_ENV} must be set to a non-empty secret when the \
-                 dashboard binds to a non-loopback address ({addr}). See \
-                 docs/runbook/dashboard-auth.md for details."
-            )),
+            _ => Ok(Self::loopback_only()),
         }
     }
 
@@ -475,13 +474,15 @@ mod tests {
     }
 
     #[test]
-    fn from_env_non_loopback_without_token_errors() {
+    fn from_env_non_loopback_without_token_is_open() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let addr: SocketAddr = "203.0.113.5:8788".parse().unwrap();
         let prev = std::env::var(AUTH_TOKEN_ENV).ok();
         std::env::remove_var(AUTH_TOKEN_ENV);
-        let err = AuthState::from_env(&addr).unwrap_err();
-        assert!(err.to_string().contains(AUTH_TOKEN_ENV));
+        // No longer an error — the server starts open and the operator
+        // can set a password later via Settings UI.
+        let state = AuthState::from_env(&addr).unwrap();
+        assert!(!state.is_gated());
         match prev {
             Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
             None => std::env::remove_var(AUTH_TOKEN_ENV),

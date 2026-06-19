@@ -27,6 +27,7 @@
 
 pub mod context;
 pub mod gate;
+pub mod login;
 pub mod require_auth;
 pub mod session;
 

@@ -8143,6 +8143,7 @@ dependencies = [
  "tracing",
  "ulid",
  "url",
+ "urlencoding",
  "xvision-core",
  "xvision-engine",
  "xvision-filters",

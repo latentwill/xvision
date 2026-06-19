@@ -763,6 +763,25 @@ impl AppState {
         .await
         .context("create auth_audit session_token_hash index")?;
 
+        // dashboard_auth: single-row table holding the operator-chosen
+        // dashboard password hash. When password_hash is NULL the dashboard
+        // is open (no auth required). When set, all mutating routes require
+        // the password via Bearer token or xvn_dashboard_password cookie.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dashboard_auth (
+                id            INTEGER PRIMARY KEY CHECK (id = 1),
+                password_hash TEXT
+            )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("create dashboard_auth table")?;
+
+        // Seed the single row if it doesn't exist (password_hash = NULL = open).
+        let _ = sqlx::query("INSERT OR IGNORE INTO dashboard_auth (id, password_hash) VALUES (1, NULL)")
+            .execute(&self.pool)
+            .await;
+
         // publish_receipts: idempotency key for marketplace publishing
         // (bead xvision-4dn). One row per published agent_id (the strategy
         // ULID / NFT token id); the publish handler short-circuits a
