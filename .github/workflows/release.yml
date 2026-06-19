@@ -75,7 +75,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95"
+          # Must exactly match rust-toolchain.toml's channel ("1.95.0"). If it
+          # doesn't, dtolnay installs the cross-target std onto a separate
+          # toolchain ("1.95") while cargo runs under the rust-toolchain.toml
+          # override ("1.95.0"), which then lacks the target std → musl/windows
+          # builds fail with "can't find crate for `core`/`std`".
+          toolchain: "1.95.0"
           targets: "${{ matrix.target }}"
 
       # ── platform-specific build deps ────────────────────────────────────
@@ -91,7 +96,8 @@ jobs:
             clang \
             libclang-dev \
             pkg-config
-          # libsqlite3-dev NOT needed — sqlx/sqlite-bundled compiles its own
+          # libsqlite3-dev NOT needed — sqlx's "sqlite" feature already enables
+          # sqlx-sqlite/bundled, which compiles libsqlite3 from source.
 
       - name: Install macOS build deps
         if: runner.os == 'macOS'
@@ -101,12 +107,10 @@ jobs:
 
       # ── cargo build ─────────────────────────────────────────────────────
       - name: Build
-        run: |
-          cargo build \
-            --release \
-            --target "${{ matrix.target }}" \
-            --bin xvn \
-            --features xvision-engine/sqlite-bundled
+        # Single line on purpose: this step runs on Windows too, where the
+        # default shell is PowerShell and bash-style "\" line continuations are
+        # a parse error ("Missing expression after unary operator '--'").
+        run: cargo build --release --target "${{ matrix.target }}" --bin xvn
         env:
           CARGO_INCREMENTAL: 0
           CARGO_TERM_COLOR: always
