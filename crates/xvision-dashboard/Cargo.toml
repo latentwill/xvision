@@ -52,6 +52,7 @@ sha2            = "0.10"
 # getrandom: cryptographically random bytes for session token generation.
 # Already a transitive dep via ulid; declared explicitly for clarity.
 getrandom       = "0.2"
+urlencoding     = "2"
 # reqwest: used by POST /api/assets/refresh to fetch live Orderly market data.
 reqwest         = { workspace = true }
 # alloy + url: chain primitives (U256/B256/Address, PrivateKeySigner) and the

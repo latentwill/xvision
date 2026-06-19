@@ -8,6 +8,7 @@
 pub mod brokers;
 pub mod daemon;
 pub mod danger;
+pub mod dashboard_auth;
 pub mod data_tools;
 pub mod identity;
 pub mod memory;

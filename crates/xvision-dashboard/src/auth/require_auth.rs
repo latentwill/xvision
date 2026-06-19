@@ -4,21 +4,18 @@
 //!
 //! `require_auth` is an axum `from_fn`-compatible middleware that:
 //!
-//! 1. Extracts the session token from the `Authorization: Bearer` header or
-//!    the `xvn_session` cookie.
-//! 2. Verifies it against the `dashboard_sessions` table via a constant-time
-//!    hash comparison.
-//! 3. Inserts an `auth_audit` row recording the outcome.
+//! 1. Reads the operator-chosen dashboard password hash from the
+//!    `dashboard_auth` table.
+//! 2. If no password is set (hash is NULL), all requests pass through.
+//! 3. If a password IS set, the request must present it via
+//!    `Authorization: Bearer <password>`, the `x-xvision-token` header,
+//!    or the `xvn_dashboard_password` cookie.
 //! 4. On failure returns `{"error": "unauthenticated"}` with HTTP 401.
-//! 5. On success sets an `x-session-id` response extension so downstream
-//!    handlers can read the verified session identity without a second DB hit.
 //!
 //! ## Loopback exemption
 //!
 //! Requests from a loopback IP (127.0.0.1, ::1) are allowed through
-//! without a session token. The audit row is still written with
-//! `source = "localhost"`. This preserves frictionless local dev while
-//! ensuring every mutating operation is recorded.
+//! without a password. This preserves frictionless local dev.
 //!
 //! ## Usage in `server.rs`
 //!
@@ -32,61 +29,57 @@
 //! ))
 //! ```
 //!
-//! Read-only GET routes should NOT have this layer; they remain open on
-//! loopback binds (see the read/write split comment in each route file).
+//! Read-only GET routes should NOT have this layer; they remain open.
 
 use std::net::SocketAddr;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use chrono::Utc;
 use sqlx::SqlitePool;
 
-use super::context::AuthContext;
-use super::session::{extract_session_token, find_session_by_hash, hash_token};
+use super::gate::{AUTH_TOKEN_HEADER, AUTH_TOKEN_QUERY_PARAM};
+use super::session::hash_token;
+
+/// Cookie name for the dashboard password (set after a successful header/query
+/// bootstrap so the browser doesn't need to re-send the password on every
+/// request). Named to avoid collision with the legacy session cookie.
+const PASSWORD_COOKIE_NAME: &str = "xvn_dashboard_password";
 
 // ---------------------------------------------------------------------------
-// Audit log
+// Password hash helpers
 // ---------------------------------------------------------------------------
 
-/// Write one row to `auth_audit`.
-async fn write_audit_row(
-    pool: &SqlitePool,
-    route: &str,
-    method: &str,
-    session_token_hash: &str,
-    source_ip: &str,
-    response_status: u16,
-) {
-    let timestamp = Utc::now().to_rfc3339();
-    let status_i64 = i64::from(response_status);
-    if let Err(e) = sqlx::query(
-        "INSERT INTO auth_audit (timestamp, route, method, session_token_hash, source_ip, response_status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )
-    .bind(&timestamp)
-    .bind(route)
-    .bind(method)
-    .bind(session_token_hash)
-    .bind(source_ip)
-    .bind(status_i64)
-    .execute(pool)
-    .await
-    {
-        // Audit failures are not fatal but always logged.
-        tracing::warn!(error = %e, "failed to write auth_audit row");
-    }
+/// Hash a plaintext password with SHA-256 (hex-encoded).
+/// Uses the same `hash_token` digest as sessions.
+fn hash_password(plaintext: &str) -> String {
+    hash_token(plaintext)
+}
+
+/// Verify a plaintext candidate against the stored hash.
+fn verify_password(plaintext: &str, hash: &str) -> bool {
+    let candidate = hash_password(plaintext);
+    // Simple comparison — the hash values are hex strings, and the
+    // candidate is produced locally. For a local dashboard, timing
+    // attacks on the password are not a practical concern.
+    candidate == hash
+}
+async fn get_password_hash(pool: &SqlitePool) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT password_hash FROM dashboard_auth WHERE id = 1")
+        .fetch_one(pool)
+        .await
+        .ok()
+        .flatten()
 }
 
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
 
-/// Axum middleware that enforces session-token auth on mutating routes.
+/// Axum middleware that enforces dashboard password auth on mutating routes.
 ///
 /// Attach via `.route_layer(axum::middleware::from_fn_with_state(pool, require_auth_middleware))`.
 pub async fn require_auth_middleware(
@@ -95,69 +88,98 @@ pub async fn require_auth_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    let method = request.method().as_str().to_uppercase();
     let path = request.uri().path().to_string();
-    // Default to localhost when ConnectInfo is not injected (e.g. in unit tests).
-    let peer = peer_opt
-        .map(|ci| ci.0)
-        .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
-    let source_ip = peer.ip().to_string();
-    let is_loopback = peer.ip().is_loopback();
+    let method = request.method().to_string();
 
-    // Loopback clients are always allowed through; write audit row with
-    // the "localhost" identity and proceed.
-    if is_loopback {
-        let ctx = AuthContext::from_loopback();
-        let mut req = request;
-        req.extensions_mut().insert(ctx);
-        let response = next.run(req).await;
-        let status = response.status().as_u16();
-        write_audit_row(&pool, &path, &method, "localhost", "localhost", status).await;
-        return response;
+    // Always exempt loopback.
+    if let Some(ConnectInfo(peer)) = &peer_opt {
+        if peer.ip().is_loopback() {
+            return next.run(request).await;
+        }
     }
 
-    let headers = request.headers().clone();
-    let token = match extract_session_token(&headers) {
-        Some(t) => t,
-        None => {
-            let status: u16 = 401;
-            write_audit_row(&pool, &path, &method, "no-token", &source_ip, status).await;
-            return unauthenticated();
-        }
+    // Read the stored password hash. If none is set, dashboard is open.
+    let stored_hash = match get_password_hash(&pool).await {
+        Some(h) => h,
+        // No password set → dashboard is open, allow all.
+        None => return next.run(request).await,
     };
 
-    let token_hash = hash_token(&token);
-    match find_session_by_hash(&pool, &token_hash).await {
-        Ok(Some(session)) => {
-            let ctx = AuthContext::from_session(&session.session_id);
-            let mut req = request;
-            req.extensions_mut().insert(ctx);
-            let response = next.run(req).await;
-            let status = response.status().as_u16();
-            write_audit_row(&pool, &path, &method, &token_hash[..16], &source_ip, status).await;
-            response
+    let headers = request.headers();
+
+    // Try each channel: Bearer, custom header, cookie, query.
+    let candidate = extract_bearer_token(headers)
+        .or_else(|| extract_header_token(headers, AUTH_TOKEN_HEADER))
+        .or_else(|| extract_cookie_token(headers, PASSWORD_COOKIE_NAME))
+        .or_else(|| extract_query_token(request.uri().query(), AUTH_TOKEN_QUERY_PARAM));
+
+    match candidate {
+        Some(token) if verify_password(&token, &stored_hash) => {
+            // Set the password cookie on success so the browser can use
+            // it for subsequent requests without re-sending the header.
+            let mut resp = next.run(request).await;
+            set_password_cookie(&mut resp, &token);
+            resp
         }
-        Ok(None) => {
-            let status: u16 = 401;
-            write_audit_row(
-                &pool,
-                &path,
-                &method,
-                &token_hash[..16.min(token_hash.len())],
-                &source_ip,
-                status,
-            )
-            .await;
+        _ => {
+            // Log the rejection.
+            tracing::warn!(
+                path = %path,
+                method = %method,
+                peer = ?peer_opt.map(|ci| ci.0.to_string()),
+                "require_auth: rejected (password mismatch or missing)"
+            );
             unauthenticated()
         }
-        Err(e) => {
-            tracing::error!(error = %e, "session lookup failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({"error": "internal error"})),
-            )
-                .into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Token extraction (shared with gate.rs patterns)
+// ---------------------------------------------------------------------------
+
+fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    value.strip_prefix("Bearer ").map(|t| t.to_string())
+}
+
+fn extract_header_token(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get(name)?.to_str().ok().map(|s| s.to_string())
+}
+
+fn extract_cookie_token(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
+    for part in cookie_header.split(';') {
+        let kv = part.trim();
+        if let Some(value) = kv.strip_prefix(&format!("{name}=")) {
+            return Some(value.to_string());
         }
+    }
+    None
+}
+
+fn extract_query_token(query: Option<&str>, param: &str) -> Option<String> {
+    let query = query?;
+    for part in query.split('&') {
+        let kv = part.trim();
+        if let Some(value) = kv.strip_prefix(&format!("{param}=")) {
+            let decoded = urlencoding::decode(value).ok()?;
+            return Some(decoded.into_owned());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn set_password_cookie(response: &mut Response, token: &str) {
+    let encoded = urlencoding::encode(token);
+    let cookie_value =
+        format!("{PASSWORD_COOKIE_NAME}={encoded}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400");
+    if let Ok(value) = cookie_value.parse() {
+        response.headers_mut().insert(header::SET_COOKIE, value);
     }
 }
 

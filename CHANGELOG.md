@@ -12,6 +12,18 @@ container reports must match the tag pulled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard auth is now opt-in** — the server no longer requires
+  `XVN_DASHBOARD_TOKEN` to start on non-loopback binds. By default,
+  the dashboard is open. Set a password via Settings → General →
+  Dashboard Password to enable authentication. The env var is still
+  supported for backward compatibility.
+- **Simplified login flow** — the "Start session" two-step gate is
+  replaced with a direct password form. No session tokens needed.
+- **Settings UI** — new Dashboard Password card on the General settings
+  page (set, change, or remove the password).
+
 ## [0.37.0] - 2026-06-18
 
 Native PC distribution: `xvn` now ships as a standalone binary for macOS

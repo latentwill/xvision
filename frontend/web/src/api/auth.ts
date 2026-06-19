@@ -1,11 +1,18 @@
-// Dashboard session auth API.
+// Dashboard auth API.
 //
 // Endpoints:
-//   POST   /api/auth/session          → create session, returns SessionResponse
-//   GET    /api/auth/session/current   → validate token, returns CurrentSession
-//   DELETE /api/auth/session           → revoke token, returns 204
+//   POST   /api/auth/login              → verify password, set cookie
+//   POST   /api/auth/session            → create session, returns SessionResponse
+//   GET    /api/auth/session/current    → validate token, returns CurrentSession
+//   DELETE /api/auth/session            → revoke token, returns 204
 
 import { apiFetch } from "./client";
+
+export type LoginResponse = {
+  ok: boolean;
+  password_set: boolean;
+  message: string;
+};
 
 export type SessionResponse = {
   token: string;
@@ -19,6 +26,14 @@ export type CurrentSession = {
   created_ip: string | null;
   label: string | null;
 };
+
+/// Verify the dashboard password and get a session cookie.
+export async function login(password: string): Promise<LoginResponse> {
+  return apiFetch<LoginResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
 
 /// Create a new dashboard session. Returns the bearer token.
 export async function createSession(): Promise<SessionResponse> {

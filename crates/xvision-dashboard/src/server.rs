@@ -219,12 +219,13 @@ use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::search as api_search;
 
-/// Build the read-only router.
+/// Build the dashboard read-only API router.
 ///
-/// These routes are accessible without a session token. They remain open on
-/// loopback binds (local dev). The outer `auth_middleware` gate still applies
-/// on non-loopback binds (XVN_DASHBOARD_TOKEN required).
+/// These routes are open when no dashboard password is configured. Once the
+/// operator sets a password, the same DB-backed auth middleware gates them so
+/// read APIs do not leak dashboard data.
 fn readonly_router(state: AppState) -> Router {
+    let pool = state.pool.clone();
     Router::new()
         .route("/api/health", get(health))
         .route("/api/version", get(version))
@@ -582,6 +583,13 @@ fn readonly_router(state: AppState) -> Router {
             "/api/marketplace/listings/:id/import-challenge",
             get(marketplace_route::get_import_challenge),
         )
+        // ── Apply password auth middleware to dashboard read routes ────────
+        // If no dashboard password is configured this layer is a no-op.
+        // Auth/session/bootstrap routes live in `auth_router` and stay open.
+        .route_layer(axum::middleware::from_fn_with_state(
+            pool,
+            require_auth_middleware,
+        ))
         .with_state(state)
 }
 
@@ -983,14 +991,19 @@ fn mutating_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Build the auth session router (no require_auth — manages its own auth).
+/// Build the auth router (no require_auth — manages its own auth).
 fn auth_router(state: AppState) -> Router {
     Router::new()
+        .route("/api/auth/login", post(crate::auth::login::login))
         .route(
             "/api/auth/session",
             post(session::create_session).delete(session::delete_session),
         )
         .route("/api/auth/session/current", get(session::current_session))
+        .route(
+            "/api/settings/dashboard-auth",
+            get(settings::dashboard_auth::get).put(settings::dashboard_auth::put),
+        )
         .with_state(state)
 }
 
@@ -1186,17 +1199,17 @@ pub async fn serve(
         eprintln!("WARNING: dashboard bound to {addr}; ensure firewall/Tailscale ACL restricts access");
     }
 
-    // Resolve auth posture from bind address + env. Refuses to start
-    // on a non-loopback bind without a configured shared secret. See
-    // `crates/xvision-dashboard/src/auth/gate.rs` and the runbook.
+    // Resolve auth posture from bind address + optional env var.
+    // By default (no XVN_DASHBOARD_TOKEN set), the dashboard is open —
+    // the operator can set a password later via Settings → Dashboard Auth.
     let auth = AuthState::from_env(&addr)?;
     if auth.is_gated() {
         tracing::info!(
             %addr,
-            "xvision-dashboard auth gate ACTIVE (XVN_DASHBOARD_TOKEN required for non-loopback clients)",
+            "xvision-dashboard auth gate ACTIVE (XVN_DASHBOARD_TOKEN env var set)",
         );
     } else {
-        tracing::info!(%addr, "xvision-dashboard auth gate inactive (loopback-only bind)");
+        tracing::info!(%addr, "xvision-dashboard auth gate inactive (no token configured)");
     }
 
     let app = wrap_with_auth(build_router(state), auth);
