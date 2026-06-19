@@ -46,8 +46,12 @@ pub async fn preflight_trader_provider(
     strategy_id: &str,
     cycle_provider: &str,
     mock: bool,
+    // F33: when true, skip the provider-consistency check entirely. The operator
+    // has explicitly requested a different mutator provider (--mutator-provider)
+    // from the paper-test provider (--provider) and accepts the risk.
+    skip_provider_check: bool,
 ) -> Result<(), PreflightReject> {
-    if mock || strategy.decision_mode == DecisionMode::Mechanistic {
+    if mock || strategy.decision_mode == DecisionMode::Mechanistic || skip_provider_check {
         return Ok(());
     }
     // The optimizer paper-test routes EVERY trader decision through the cycle's
@@ -98,13 +102,12 @@ pub async fn preflight_trader_provider(
                      (model '{model}'), which differs from this cycle's provider '{cycle_provider}'. \
                      The paper-test reuses the strategy's own trader model (so optimized winners stay \
                      interchangeable), so it would send a '{slot_provider}'-format model id to \
-                     '{cycle_provider}' and fail with a cross-provider error. Fix: re-author the \
-                     strategy's trader onto a registered provider — '{cycle_provider}' is already \
-                     registered here, so point the trader at it (the seeded examples were previously \
-                     hardcoded to 'anthropic', which an openrouter-only node can't dispatch — see F30). \
-                     If '{slot_provider}' really is a provider you have registered, run the cycle with \
-                     that provider instead; or convert the strategy to a mechanistic (non-LLM) \
-                     decision mode."
+                     '{cycle_provider}' and fail with a cross-provider error.\n\
+                     Fix: set --provider {slot_provider} to route the paper-test trader through \
+                     its own provider (and keep --mutator-provider {cycle_provider} if you set that \
+                     separately). Or re-author the strategy's trader onto provider '{cycle_provider}' \
+                     (if the strategy's trader uses '{cycle_provider}', it can share the cycle's \
+                     dispatcher). Or convert the strategy to a mechanistic (non-LLM) decision mode."
                 ),
             });
         }

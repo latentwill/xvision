@@ -35,6 +35,13 @@ pub async fn preflight_cycle(
 /// Check 4 (Phase 7): Block strategies that match known anti-patterns
 /// promoted to auto-reject after ≥ 3 recurrences.
 async fn check_anti_patterns(pool: &SqlitePool, strategy_id: &str) -> Result<(), PreflightReject> {
+    // F30: ensure the table exists before querying — on a fresh deploy the
+    // migration may not have been applied before the first preflight run.
+    crate::autooptimizer::anti_pattern::ensure_schema(pool)
+        .await
+        .map_err(|e| PreflightReject {
+            message: format!("preflight: failed to ensure anti-patterns schema: {e}"),
+        })?;
     let patterns = crate::autooptimizer::anti_pattern::load_auto_reject_patterns(pool)
         .await
         .map_err(|e| PreflightReject {

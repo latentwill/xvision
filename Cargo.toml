@@ -28,7 +28,7 @@ default-members = [
 # Bumped per image deploy while pre-1.0. Minor is the release train
 # (0.21.0 -> 0.22.0 -> ...); patch is reserved for same-train hotfixes.
 # See docs/VERSIONING.md and bump via `scripts/bump-version.sh <new-version>`.
-version = "0.36.0"
+version = "0.37.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0"

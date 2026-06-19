@@ -242,6 +242,15 @@ pub enum OpenAiCompatError {
         url: String,
         body: String,
     },
+    /// Provider returned 400 Bad Request indicating the `response_format`
+    /// (JSON Schema) is unsupported. DeepSeek, OpenAI strict mode, and
+    /// some local/Ollama models reject `json_schema` response_format. The
+    /// caller can retry with `response_schema: None` and rely on JSON
+    /// parsing (F31/F35).
+    ResponseFormatUnsupported {
+        url: String,
+        body: String,
+    },
 }
 
 impl OpenAiCompatError {
@@ -252,6 +261,7 @@ impl OpenAiCompatError {
             Self::RateLimited { .. } => "provider_rate_limited",
             Self::MissingChoicesArray { .. } => "provider_missing_choices",
             Self::ContextOverflow { .. } => "context_overflow",
+            Self::ResponseFormatUnsupported { .. } => "response_format_unsupported",
         }
     }
 }
@@ -280,6 +290,10 @@ impl fmt::Display for OpenAiCompatError {
             Self::ContextOverflow { provider, url, body } => write!(
                 f,
                 "{provider} API context_overflow at {url}: {body}"
+            ),
+            Self::ResponseFormatUnsupported { url, body } => write!(
+                f,
+                "OpenAI-compat API response_format unsupported at {url}: {body}"
             ),
         }
     }
@@ -490,7 +504,10 @@ impl ResponseSchema {
         // `filter` (path edits that tune an existing filter). Validated
         // server-side via the filter crate's own validator, so the shape here is
         // an intentionally permissive nullable object (like the `any` fields).
-        let create_filter_prop = || serde_json::json!({ "type": ["object", "null"] });
+        // F34: OpenAI strict mode requires additionalProperties: false on every
+        // schema object. Without it, create_filter yields 400. Filter objects are
+        // validated server-side; the schema just needs to satisfy the provider.
+        let create_filter_prop = || serde_json::json!({ "type": ["object", "null"], "additionalProperties": false });
         Self {
             name: "mutation_diff".into(),
             schema: serde_json::json!({
@@ -1633,6 +1650,16 @@ impl OpenaiCompatDispatch {
                 if status.as_u16() == 400 && body_indicates_context_overflow(&text) {
                     return OpenAiAttempt::Fatal(anyhow::Error::new(OpenAiCompatError::ContextOverflow {
                         provider: "openai-compat".to_string(),
+                        url: url.to_string(),
+                        body: text,
+                    }));
+                }
+                // F31/F35: detect when the provider rejects `response_format`
+                // (JSON Schema). DeepSeek returns "This response_format type is
+                // unavailable now"; OpenAI strict mode returns errors about
+                // additionalProperties. Both mention "response_format" in the body.
+                if status.as_u16() == 400 && text.to_lowercase().contains("response_format") {
+                    return OpenAiAttempt::Fatal(anyhow::Error::new(OpenAiCompatError::ResponseFormatUnsupported {
                         url: url.to_string(),
                         body: text,
                     }));
