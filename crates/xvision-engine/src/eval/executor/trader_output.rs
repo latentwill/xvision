@@ -704,9 +704,26 @@ fn append_wrapped_candidates(out: &mut Vec<String>, value: &serde_json::Value) {
         }
     }
 
-    for key in ["decision", "trader_output", "arguments"] {
+    for key in ["decision", "trader_output", "arguments", "parameters"] {
         if let Some(v) = obj.get(key).filter(|v| v.is_object()) {
             push_candidate(out, &v.to_string());
+        }
+    }
+
+    // Function-call wrapper stripping: some models (especially ollama-hosted
+    // small models) emit the decision payload mixed with tool-call metadata
+    // keys at the same level, e.g. {"name":"submit_decision","action":"long_open",...}
+    // or {"tool":"submit_decision","arguments":{...}}. If the object carries
+    // a tool-name key, emit a stripped copy without it so the serde
+    // `deny_unknown_fields` guard on `TraderOutput` accepts the payload.
+    // The separate `arguments`/`parameters` unwrap above handles the
+    // nested-object case; this handles the flattened case where the
+    // decision fields and the tool-name key share the same object.
+    for name_key in ["name", "tool", "function"] {
+        if obj.contains_key(name_key) {
+            let mut stripped = obj.clone();
+            stripped.remove(name_key);
+            push_candidate(out, &serde_json::Value::Object(stripped).to_string());
         }
     }
 }
@@ -1443,5 +1460,50 @@ mod tests {
             assert_eq!(err.kind, TraderFailureKind::Truncated);
             assert!(!err.to_string().contains("reasoning-class model"));
         }
+    }
+
+    #[test]
+    fn function_call_wrapper_unwrapped_via_arguments_key() {
+        // Repro: ollama models output the function-call wrapper format
+        // {"name":"submit_decision","arguments":{...}} as raw text.
+        // try_nodecision_recovery extracts this as decision_json, and
+        // trader_output_candidates must unwrap the "arguments" key.
+        let wrapper = r#"{"name":"submit_decision","arguments":{"action":"long_open","conviction":0.8,"justification":"RSI oversold bounce setup"}}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("function-call wrapper must be unwrapped via arguments key");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.8);
+        assert_eq!(parsed.justification, "RSI oversold bounce setup");
+    }
+
+    #[test]
+    fn flattened_function_call_stripped_of_name_key() {
+        // Variant where the model emits the tool-call metadata at the same
+        // level as the decision fields — no nested "arguments" object.
+        let wrapper = r#"{"name":"submit_decision","action":"short_open","conviction":0.75,"justification":"bearish engulfing on 5m"}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("flattened function-call wrapper must strip name key");
+        assert_eq!(parsed.action, "short_open");
+        assert_eq!(parsed.conviction, 0.75);
+    }
+
+    #[test]
+    fn function_call_wrapper_unwrapped_via_parameters_key() {
+        // Some APIs/agents use "parameters" instead of "arguments".
+        let wrapper = r#"{"name":"submit_decision","parameters":{"action":"flat","conviction":0.3,"justification":"no clear signal"}}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("function-call wrapper with 'parameters' key must be unwrapped");
+        assert_eq!(parsed.action, "flat");
+        assert_eq!(parsed.conviction, 0.3);
+    }
+
+    #[test]
+    fn tool_key_stripped_from_flattened_wrapper() {
+        // Models might use "tool" instead of "name" as the tool-call key.
+        let wrapper = r#"{"tool":"submit_decision","action":"hold","conviction":0.5,"justification":"waiting for breakout"}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("flattened wrapper with 'tool' key must be stripped");
+        assert_eq!(parsed.action, "hold");
+        assert_eq!(parsed.conviction, 0.5);
     }
 }
