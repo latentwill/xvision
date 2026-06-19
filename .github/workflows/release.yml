@@ -34,7 +34,11 @@ jobs:
             artifact: xvn-aarch64-apple-darwin
             ext: ""
             archive: tar.gz
-          - os: macos-13
+          # Cross-compiled on Apple Silicon (macos-latest): GitHub's Intel
+          # macos-13 runners are deprecated and their queue is unreliable.
+          # Apple clang cross-targets x86_64 natively, so this builds the
+          # Intel-mac binary without an Intel runner.
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: xvn-x86_64-apple-darwin
             ext: ""
