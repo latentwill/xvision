@@ -8,6 +8,13 @@ use crate::agent::llm::{LlmResponse, StopReason};
 #[serde(deny_unknown_fields)]
 pub(crate) struct TraderOutput {
     pub(crate) action: String,
+    /// Trader's confidence in the decision, 0.0–1.0.
+    ///
+    /// Ollama-hosted small models consistently omit this field while making
+    /// sound action/justification calls. Defaulting to 0.5 (neutral/medium
+    /// conviction) accepts the decision without a wasted schema-patch repair
+    /// round-trip that the same model would also fail.
+    #[serde(default = "default_conviction")]
     pub(crate) conviction: f64,
     pub(crate) justification: String,
     #[serde(default)]
@@ -47,6 +54,14 @@ pub(crate) struct TraderOutput {
     pub(crate) coerced_action: Option<(String, String)>,
 }
 
+
+/// Serde default for `conviction`. Ollama small models consistently omit
+/// this field; defaulting to 0.5 (neutral/medium confidence) lets us accept
+/// decisions that carry a valid `action` + `justification` without a wasted
+/// schema-patch repair attempt the same model would also fail.
+fn default_conviction() -> f64 {
+    0.5
+}
 /// Outcome of mapping a raw trader `action` string onto the canonical
 /// vocabulary (`long_open` / `short_open` / `flat` / `hold`).
 enum ActionCoercion {
@@ -906,17 +921,18 @@ mod tests {
     }
 
     #[test]
-    fn problem_fields_extracts_missing_conviction() {
-        let err =
-            TraderOutput::parse_strict(r#"{"action":"hold","justification":"hold pattern"}"#, "01TEST", 0)
-                .expect_err("missing conviction must fail");
-        assert_eq!(err.kind, TraderFailureKind::MissingField);
-        let fields = err.problem_fields();
-        assert!(
-            fields.iter().any(|f| f == "conviction"),
-            "expected conviction in {fields:?}; detail={}",
-            err.detail,
-        );
+    fn missing_conviction_defaults_to_0_5() {
+        // Ollama small models consistently omit conviction.
+        // The serde default (0.5) lets us accept these decisions.
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"hold","justification":"hold pattern"}"#,
+            "01TEST",
+            0,
+        )
+        .expect("missing conviction must default to 0.5, not fail");
+        assert_eq!(parsed.action, "hold");
+        assert_eq!(parsed.conviction, 0.5);
+        assert_eq!(parsed.justification, "hold pattern");
     }
 
     #[test]
@@ -994,11 +1010,10 @@ mod tests {
             err.problem_fields(),
         );
     }
-
     #[test]
-    fn merge_and_reparse_recovers_when_patch_supplies_missing_field() {
+    fn merge_and_reparse_patch_overrides_defaulted_conviction() {
         use super::merge_and_reparse_trader_output;
-        // Original was missing conviction; patch supplies it.
+        // Original parses fine with default conviction 0.5; patch overrides it.
         let merged = merge_and_reparse_trader_output(
             r#"{"action":"hold","justification":"range chop"}"#,
             r#"{"conviction":0.7}"#,
@@ -1028,15 +1043,15 @@ mod tests {
     #[test]
     fn merge_and_reparse_still_fails_when_patch_is_incomplete() {
         use super::merge_and_reparse_trader_output;
-        // Both original and patch are missing `conviction`. Merge fails.
+        // Both original and patch are missing `action`. Merge fails.
         let err = merge_and_reparse_trader_output(
-            r#"{"action":"hold","justification":"x"}"#,
+            r#"{"conviction":0.7,"justification":"x"}"#,
             r#"{"justification":"better explanation"}"#,
             "01TEST",
             0,
         )
         .expect_err("merge must still fail when patch is incomplete");
-        // The remaining failure is still MissingField (conviction).
+        // The remaining failure is still MissingField (action).
         assert_eq!(err.kind, TraderFailureKind::MissingField);
     }
 
