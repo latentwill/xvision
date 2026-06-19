@@ -169,6 +169,53 @@ describe("SettingsProvidersRoute", () => {
     expect(ids.slice(2)).toEqual(["gpt-3.5-turbo", "gpt-4o", "o1-preview"]);
   });
 
+  it("renders a true empty state on fresh install with zero providers", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [],
+      default_model: null,
+      invalid: [],
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText("New provider")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save provider" }),
+    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  });
+
+  it("shows Ollama rows as no auth rather than missing key", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        provider({
+          name: "ollama",
+          kind: "ollama",
+          base_url: "http://localhost:11434",
+          api_key_env: "",
+          api_key_set: false,
+          is_default: false,
+          enabled_models: ["qwen2.5-coder:7b"],
+        }),
+      ],
+      default_model: null,
+      invalid: [],
+    });
+    vi.mocked(settingsApi.testProviderConnection).mockResolvedValue({
+      ok: true,
+      latency_ms: 10,
+      model_count: 1,
+      error: null,
+    });
+
+    renderRoute();
+
+    await screen.findByRole("button", { name: "Test" });
+    expect(screen.queryAllByText("ollama").length).toBeGreaterThan(0);
+    expect(screen.getByText("no auth")).toBeInTheDocument();
+    expect(screen.queryByText("○ missing")).not.toBeInTheDocument();
+  });
+
   it("offers Gemini, Nous Research, and vLLM presets and validates custom names inline", async () => {
     renderRoute();
     await screen.findByText("openai");

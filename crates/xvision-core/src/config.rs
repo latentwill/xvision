@@ -1495,25 +1495,21 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(cfg.providers[0].kind, ProviderKind::LocalCandle);
         assert_eq!(cfg.providers[0].base_url, "");
     }
-
     #[test]
-    fn repo_default_toml_ships_with_seeded_starter_providers() {
-        // The repo's default config seeds two key-less OpenAI-compatible
-        // starters (gemini, nous-research). Operators paste keys to enable
-        // them; any further providers are added via Settings -> Providers
-        // (or `xvn provider add`).
+    fn repo_default_toml_ships_no_seeded_providers() {
+        // The repo's default config intentionally ships with zero
+        // pre-seeded providers. Operators add providers via
+        // Settings → Providers (or `xvn provider add`).
         let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
-        let mut user_rows: Vec<&str> = cfg
+        let user_rows: Vec<&str> = cfg
             .providers
             .iter()
             .map(|p| p.name.as_str())
             .filter(|n| !n.starts_with('_'))
             .collect();
-        user_rows.sort_unstable();
-        assert_eq!(
-            user_rows,
-            vec!["gemini", "nous-research"],
-            "default.toml should ship the two seeded starters, got {user_rows:?}"
+        assert!(
+            user_rows.is_empty(),
+            "default.toml should ship with zero seeded providers, got {user_rows:?}"
         );
         assert!(
             cfg.providers.iter().all(|p| p.name != "_default_llm"),

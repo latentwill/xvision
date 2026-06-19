@@ -19,25 +19,8 @@ mode        = "backtest"        # backtest | paper | live
 executor    = "alpaca"          # alpaca | orderly
 random_seed = 42
 
-# Registered LLM providers. Two OpenAI-compatible starters (Gemini and Nous
-# Research) ship seeded but key-less — they appear in Settings → Providers as
-# "missing key" until you paste a key (stored in
-# `$XVN_HOME/secrets/providers.toml`, mode 0600, and loaded into the process env
-# at startup). Add more via Settings → Providers (or `xvn provider add …`).
-
-[[providers]]
-name        = "gemini"
-kind        = "openai-compat"
-# Google Gemini's OpenAI-compatible endpoint. Chat posts to
-# `{base}/chat/completions`; the catalog is at `{base}/models`.
-base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
-api_key_env = "GEMINI_API_KEY"
-
-[[providers]]
-name        = "nous-research"
-kind        = "openai-compat"
-base_url    = "https://inference-api.nousresearch.com/v1"
-api_key_env = "NOUS_API_KEY"
+# Registered LLM providers. Add via Settings → Providers (or `xvn provider add …`).
+# No providers are seeded — start from an empty list on fresh install.
 
 [default_llm]
 # Workspace-level default LLM. Used by the chat rail, the setup wizard, and
