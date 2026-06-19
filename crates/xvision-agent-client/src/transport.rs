@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tokio::sync::Mutex;
+use xvision_ipc::LocalStream;
 
 use crate::errors::{AgentClientError, Result};
 use crate::protocol::{JsonRpcErrorBody, JsonRpcRequest, JsonRpcResponse};
@@ -16,13 +16,13 @@ pub struct UdsTransport {
 }
 
 struct TransportInner {
-    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
-    writer: tokio::net::unix::OwnedWriteHalf,
+    reader: BufReader<tokio::io::ReadHalf<LocalStream>>,
+    writer: tokio::io::WriteHalf<LocalStream>,
 }
 
 impl UdsTransport {
     pub async fn connect(socket_path: impl AsRef<Path>) -> Result<Self> {
-        let stream = UnixStream::connect(socket_path).await?;
+        let stream = LocalStream::connect(socket_path).await?;
         let (r, w) = stream.into_split();
         Ok(Self {
             inner: Mutex::new(TransportInner {

@@ -8050,6 +8050,7 @@ dependencies = [
  "uuid",
  "xvision-core",
  "xvision-engine",
+ "xvision-ipc",
  "xvision-observability",
 ]
 
@@ -8082,6 +8083,7 @@ dependencies = [
  "xvision-execution",
  "xvision-filters",
  "xvision-identity",
+ "xvision-ipc",
  "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
@@ -8145,6 +8147,7 @@ dependencies = [
  "xvision-engine",
  "xvision-filters",
  "xvision-identity",
+ "xvision-ipc",
  "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
@@ -8228,6 +8231,7 @@ dependencies = [
  "xvision-execution",
  "xvision-filters",
  "xvision-identity",
+ "xvision-ipc",
  "xvision-memory",
  "xvision-observability",
 ]
@@ -8305,6 +8309,14 @@ dependencies = [
  "url",
  "uuid",
  "xvision-core",
+]
+
+[[package]]
+name = "xvision-ipc"
+version = "0.37.0"
+dependencies = [
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

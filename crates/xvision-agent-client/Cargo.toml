@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 tokio = { workspace = true }
+xvision-ipc = { path = "../xvision-ipc" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

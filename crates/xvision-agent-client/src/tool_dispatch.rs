@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixListener;
+use xvision_ipc::LocalListener;
 
 /// Implemented by anything that can resolve a tool name to a JSON-in/JSON-out
 /// callable. The engine crate provides an impl over its existing
@@ -65,16 +65,13 @@ pub async fn serve_callbacks(
     socket_path: &Path,
     dispatch: Arc<dyn ToolDispatch>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
-    // Best-effort unlink: a prior process may have crashed before cleanup
-    // and left this socket file behind, which would make bind() fail with
-    // EADDRINUSE. The ENOENT case (clean state) is ignored. We do not
-    // attempt to distinguish stale sockets from a concurrent live server
-    // — the caller picks unique paths (typically under a TempDir).
-    let _ = std::fs::remove_file(socket_path);
-    let listener = UnixListener::bind(socket_path)?;
+    // `LocalListener::bind` best-effort unlinks a stale unix socket left by a
+    // crashed prior process (the caller picks unique paths, typically under a
+    // TempDir); on windows it creates the first named-pipe instance.
+    let mut listener = LocalListener::bind(socket_path)?;
     let handle = tokio::spawn(async move {
         loop {
-            let Ok((conn, _)) = listener.accept().await else {
+            let Ok(conn) = listener.accept().await else {
                 continue;
             };
             let dispatch = dispatch.clone();

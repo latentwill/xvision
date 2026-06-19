@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 xvision-agent-client  = { path = "../xvision-agent-client" }
 xvision-core          = { path = "../xvision-core" }
+xvision-ipc           = { path = "../xvision-ipc" }
 xvision-data          = { path = "../xvision-data" }
 xvision-eval          = { path = "../xvision-eval" }
 xvision-execution     = { path = "../xvision-execution" }

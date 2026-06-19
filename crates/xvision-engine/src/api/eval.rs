@@ -2741,9 +2741,9 @@ async fn spawn_cline_ctx(
     std::fs::create_dir_all(&sock_dir)
         .map_err(|e| ApiError::Internal(format!("create sidecar socket dir: {e}")))?;
     let uniq = ulid::Ulid::new().to_string();
-    let main_sock = sock_dir.join(format!("agentd-{uniq}.sock"));
-    let cb_sock = sock_dir.join(format!("agentd-{uniq}.cb.sock"));
-    let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
+    let main_sock = xvision_ipc::local_socket_path(&sock_dir, &format!("agentd-{uniq}.sock"));
+    let cb_sock = xvision_ipc::local_socket_path(&sock_dir, &format!("agentd-{uniq}.cb.sock"));
+    let ev_sock = xvision_ipc::local_socket_path(&sock_dir, &format!("agentd-{uniq}.ev.sock"));
 
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
     let as_of_guard: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>> =
