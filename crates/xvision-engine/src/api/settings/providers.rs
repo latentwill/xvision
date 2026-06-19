@@ -1647,8 +1647,8 @@ pub fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
     match kind {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY".to_string(),
         ProviderKind::OpenaiCompat if name == "openai" => "OPENAI_API_KEY".to_string(),
-        // Conventional env vars for the seeded openai-compat starters so the
-        // add-flow env matches the names in config/default.toml + the UI presets.
+        // Conventional env vars for named OpenAI-compatible presets so the
+        // add-flow env matches the UI presets without seeding provider rows.
         ProviderKind::OpenaiCompat if name == "gemini" => "GEMINI_API_KEY".to_string(),
         ProviderKind::OpenaiCompat if name == "nous-research" => "NOUS_API_KEY".to_string(),
         ProviderKind::OpenaiCompat => {
@@ -1673,7 +1673,7 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
             "groq" => Some("llama-3.3-70b-versatile"),
             "openrouter" => Some("anthropic/claude-3.5-sonnet"),
             "openai" => Some("gpt-4o-mini"),
-            // Seeded starters — pick a current default so "Set as default"
+            // Named presets — pick a current default so "Set as default"
             // yields a working model without a manual catalog pick. Operators
             // can override via Settings → Providers → Manage models.
             "gemini" => Some("gemini-2.5-flash"),
@@ -1900,6 +1900,42 @@ probes = "data/probes"
 sqlite_url = "sqlite://x.db"
 "#;
 
+    const MIN_CONFIG_NO_PROVIDERS: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[default_llm]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+
     // Mirrors the live xvn default.toml that reproduces the UI 500: a
     // [default_llm] referencing a provider absent from [[providers]], two
     // openai-compat providers (one with a `~`-prefixed enabled model).
@@ -1973,8 +2009,14 @@ enabled_models = ["deepseek-v4-pro", "deepseek-v4-flash"]
         p
     }
 
+    fn write_min_config_no_providers(dir: &TempDir) -> std::path::PathBuf {
+        let p = dir.path().join("default.toml");
+        std::fs::write(&p, MIN_CONFIG_NO_PROVIDERS).unwrap();
+        p
+    }
+
     #[tokio::test]
-    async fn list_returns_seeded_anthropic_row() {
+    async fn list_returns_configured_anthropic_row() {
         let dir = TempDir::new().unwrap();
         let path = write_min_config(&dir);
         let ctx = ctx_in(&dir).await;
@@ -1985,6 +2027,41 @@ enabled_models = ["deepseek-v4-pro", "deepseek-v4-flash"]
         assert_eq!(p.kind, "anthropic");
         assert!(p.is_default);
         assert!(!p.synthetic);
+    }
+
+    #[tokio::test]
+    async fn list_returns_no_rows_when_config_has_no_providers() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config_no_providers(&dir);
+        let ctx = ctx_in(&dir).await;
+        let report = list(&ctx, &path).await.unwrap();
+        assert!(report.providers.is_empty());
+        assert_eq!(report.default_model.as_deref(), Some("x"));
+    }
+
+    #[tokio::test]
+    async fn add_creates_first_provider_when_config_has_no_providers_block() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config_no_providers(&dir);
+        let ctx = ctx_in(&dir).await;
+        let row = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "ollama".into(),
+                kind: "ollama".into(),
+                base_url: "".into(),
+                api_key_env: "".into(),
+                api_key: None,
+            },
+        )
+        .await
+        .expect("first provider add must create [[providers]]");
+        assert_eq!(row.name, "ollama");
+        assert_eq!(row.base_url, "http://localhost:11434");
+        let report = list(&ctx, &path).await.unwrap();
+        assert_eq!(report.providers.len(), 1);
+        assert_eq!(report.providers[0].name, "ollama");
     }
 
     #[tokio::test]
