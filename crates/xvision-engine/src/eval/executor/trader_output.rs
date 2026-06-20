@@ -54,7 +54,6 @@ pub(crate) struct TraderOutput {
     pub(crate) coerced_action: Option<(String, String)>,
 }
 
-
 /// Serde default for `conviction`. Ollama small models consistently omit
 /// this field; defaulting to 0.5 (neutral/medium confidence) lets us accept
 /// decisions that carry a valid `action` + `justification` without a wasted
@@ -412,6 +411,14 @@ impl TraderOutput {
                     // `self.action` therefore show the normalized form the
                     // parser actually tested.
                     parsed.action = parsed.action.to_ascii_lowercase();
+                    // Small local models often report confidence as an integer
+                    // percentage while the engine contract uses a unit interval.
+                    if parsed.conviction > 1.0
+                        && parsed.conviction <= 100.0
+                        && parsed.conviction.fract() == 0.0
+                    {
+                        parsed.conviction /= 100.0;
+                    }
                     // R1: coerce non-canonical action synonyms BEFORE
                     // validating. A recognized synonym keeps the model's
                     // conviction; an unrecognized value becomes `hold` with
@@ -458,10 +465,14 @@ impl TraderOutput {
                     return Ok(parsed);
                 }
                 Err(e) => {
-                    if first_error.is_none() {
+                    let terminal_decision = is_terminal_trader_output_candidate(&candidate);
+                    if first_error.is_none() || terminal_decision {
                         let msg = e.to_string();
                         let missing_field = msg.contains("missing field");
                         first_error = Some((trader_output_error_detail(&e), missing_field));
+                    }
+                    if terminal_decision {
+                        break;
                     }
                 }
             }
@@ -554,26 +565,26 @@ impl TraderOutput {
         // past the schema. Only validated when present — the fields are
         // optional and `None` is the back-compatible default.
         if let Some(sl) = self.stop_loss_pct {
-            if !sl.is_finite() || !(0.001..=20.0).contains(&sl) {
+            if !sl.is_finite() || !(0.1..=20.0).contains(&sl) {
                 return Err(TraderOutputError::build(
                     TraderFailureKind::InvalidField,
                     run_id,
                     decision_index,
                     response,
                     Some(raw),
-                    format!("trader output stop_loss_pct must be between 0.001 and 20.0 (got {sl})"),
+                    format!("trader output stop_loss_pct must be between 0.1 and 20.0 (got {sl})"),
                 ));
             }
         }
         if let Some(tp) = self.take_profit_pct {
-            if !tp.is_finite() || !(0.001..=50.0).contains(&tp) {
+            if !tp.is_finite() || !(0.1..=50.0).contains(&tp) {
                 return Err(TraderOutputError::build(
                     TraderFailureKind::InvalidField,
                     run_id,
                     decision_index,
                     response,
                     Some(raw),
-                    format!("trader output take_profit_pct must be between 0.001 and 50.0 (got {tp})"),
+                    format!("trader output take_profit_pct must be between 0.1 and 50.0 (got {tp})"),
                 ));
             }
         }
@@ -687,8 +698,17 @@ fn trader_output_candidates(raw: &str) -> Vec<String> {
     if let Some(stripped) = strip_code_fence(raw.trim()) {
         push_candidate(&mut out, stripped.trim());
     }
-    if let Some(extracted) = extract_first_json_object(raw) {
+    for extracted in extract_json_objects(raw).into_iter().rev() {
+        let start = out.len();
         push_candidate(&mut out, &extracted);
+        let mut i = start;
+        while i < out.len() {
+            let candidate = out[i].clone();
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&candidate) {
+                append_wrapped_candidates(&mut out, &value);
+            }
+            i += 1;
+        }
     }
 
     let mut i = 0;
@@ -713,7 +733,7 @@ fn append_wrapped_candidates(out: &mut Vec<String>, value: &serde_json::Value) {
             if let Some(stripped) = strip_code_fence(s.trim()) {
                 push_candidate(out, stripped.trim());
             }
-            if let Some(extracted) = extract_first_json_object(s) {
+            for extracted in extract_json_objects(s).into_iter().rev() {
                 push_candidate(out, &extracted);
             }
         }
@@ -771,14 +791,20 @@ fn strip_code_fence(raw: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-pub(crate) fn extract_first_json_object(raw: &str) -> Option<String> {
-    for (start, ch) in raw.char_indices() {
-        if ch != '{' {
-            continue;
-        }
+pub(crate) fn extract_json_objects(raw: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < raw.len() {
+        let Some(rel_start) = raw[cursor..].find('{') else {
+            break;
+        };
+        let start = cursor + rel_start;
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escaped = false;
+        let mut found_end = None;
+
         for (offset, c) in raw[start..].char_indices() {
             if in_string {
                 if escaped {
@@ -796,14 +822,85 @@ pub(crate) fn extract_first_json_object(raw: &str) -> Option<String> {
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(raw[start..start + offset + c.len_utf8()].to_string());
+                        found_end = Some(start + offset + c.len_utf8());
+                        break;
                     }
                 }
                 _ => {}
             }
         }
+
+        if let Some(end) = found_end {
+            objects.push(raw[start..end].to_string());
+            cursor = end;
+        } else {
+            cursor = start + 1;
+        }
     }
-    None
+
+    objects
+}
+
+fn has_direct_trader_output_field(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    [
+        "action",
+        "conviction",
+        "justification",
+        "stop_loss_pct",
+        "take_profit_pct",
+        "trailing_stop_pct",
+        "breakeven_trigger_pct",
+        "breakeven_offset_pct",
+        "fade_sl_bars",
+        "fade_sl_start_pct",
+        "fade_sl_end_pct",
+        "max_bars_held",
+        "sl_atr_mult",
+        "tp_atr_mult",
+        "tp1_pct",
+        "tp1_close_fraction",
+        "tp2_pct",
+    ]
+    .iter()
+    .any(|key| obj.contains_key(*key))
+}
+
+fn is_terminal_trader_output_candidate(candidate: &str) -> bool {
+    let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(candidate) else {
+        return false;
+    };
+    has_direct_trader_output_field(&obj)
+        && !["name", "tool", "function"]
+            .iter()
+            .any(|key| obj.contains_key(*key))
+}
+
+fn is_trader_output_candidate(candidate: &str) -> bool {
+    let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(candidate) else {
+        return false;
+    };
+    has_direct_trader_output_field(&obj)
+        || ["decision", "trader_output", "arguments", "parameters"]
+            .iter()
+            .any(|key| {
+                obj.get(*key)
+                    .and_then(|v| v.as_object())
+                    .is_some_and(has_direct_trader_output_field)
+            })
+        || ["output", "text", "content", "response"].iter().any(|key| {
+            obj.get(*key).and_then(|v| v.as_str()).is_some_and(|s| {
+                extract_json_objects(s)
+                    .into_iter()
+                    .any(|candidate| is_trader_output_candidate(&candidate))
+            })
+        })
+}
+
+pub(crate) fn extract_last_trader_output_json(raw: &str) -> Option<String> {
+    extract_json_objects(raw)
+        .into_iter()
+        .rev()
+        .find(|candidate| is_trader_output_candidate(candidate))
 }
 
 fn trader_output_error_detail(error: &serde_json::Error) -> String {
@@ -891,6 +988,18 @@ mod tests {
     }
 
     #[test]
+    fn nonzero_out_of_range_take_profit_pct_still_rejected() {
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","take_profit_pct":0.05}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("nonzero out-of-range take_profit_pct must still be rejected");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert!(err.to_string().contains("take_profit_pct must be between"));
+    }
+
+    #[test]
     fn out_of_range_take_profit_pct_is_rejected() {
         let err = TraderOutput::parse_strict(
             r#"{"action":"long_open","conviction":0.7,"justification":"breakout","take_profit_pct":99.0}"#,
@@ -924,12 +1033,9 @@ mod tests {
     fn missing_conviction_defaults_to_0_5() {
         // Ollama small models consistently omit conviction.
         // The serde default (0.5) lets us accept these decisions.
-        let parsed = TraderOutput::parse_strict(
-            r#"{"action":"hold","justification":"hold pattern"}"#,
-            "01TEST",
-            0,
-        )
-        .expect("missing conviction must default to 0.5, not fail");
+        let parsed =
+            TraderOutput::parse_strict(r#"{"action":"hold","justification":"hold pattern"}"#, "01TEST", 0)
+                .expect("missing conviction must default to 0.5, not fail");
         assert_eq!(parsed.action, "hold");
         assert_eq!(parsed.conviction, 0.5);
         assert_eq!(parsed.justification, "hold pattern");
@@ -1535,12 +1641,143 @@ mod tests {
     #[test]
     fn function_key_stripped_from_flattened_wrapper() {
         // OpenAI-style function_call wrappers use "function" as the key.
-        let wrapper = r#"{"function":"submit_decision","action":"flat","conviction":0.2,"justification":"no edge"}"#;
+        let wrapper =
+            r#"{"function":"submit_decision","action":"flat","conviction":0.2,"justification":"no edge"}"#;
         let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
             .expect("flattened wrapper with 'function' key must be stripped");
         assert_eq!(parsed.action, "flat");
         assert_eq!(parsed.conviction, 0.2);
         assert_eq!(parsed.justification, "no edge");
+    }
+
+    #[test]
+    fn reasoning_prose_uses_later_decision_object_after_example_object() {
+        let raw = r#"The expected JSON structure is {"action":"long_open"}.
+Final decision:
+{"action":"long_open","conviction":0.9,"justification":"RSI oversold bounce setup"}"#;
+        let parsed = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect("parser must skip earlier non-decision JSON and use the later decision object");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.9);
+        assert_eq!(parsed.justification, "RSI oversold bounce setup");
+    }
+
+    #[test]
+    fn reasoning_prose_prefers_later_decision_over_valid_example() {
+        let raw = r#"Example: {"action":"hold","conviction":0.5,"justification":"example only"}.
+Final decision:
+{"action":"short_open","conviction":0.8,"justification":"breakdown confirmed"}"#;
+        let parsed = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect("parser must prefer the final decision over an earlier valid example");
+        assert_eq!(parsed.action, "short_open");
+        assert_eq!(parsed.conviction, 0.8);
+        assert_eq!(parsed.justification, "breakdown confirmed");
+    }
+
+    #[test]
+    fn trailing_metadata_nested_example_does_not_override_final_decision() {
+        let raw = r#"{"action":"short_open","conviction":0.8,"justification":"breakdown confirmed"}
+{"metadata":{"example":{"action":"hold","conviction":0.5,"justification":"schema example"}}}"#;
+        let parsed = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect("nested examples inside trailing metadata must not override the real decision");
+        assert_eq!(parsed.action, "short_open");
+        assert_eq!(parsed.conviction, 0.8);
+        assert_eq!(parsed.justification, "breakdown confirmed");
+    }
+
+    #[test]
+    fn invalid_final_decision_is_not_replaced_by_earlier_example() {
+        let raw = r#"Example: {"action":"hold","conviction":0.5,"justification":"example only"}.
+Final decision:
+{"action":"short_open","conviction":90.5,"justification":"breakdown confirmed"}"#;
+        let extracted = super::extract_last_trader_output_json(raw)
+            .expect("decision-shaped final JSON should be selected even when validation fails");
+        let err = TraderOutput::parse_strict(&extracted, "01TEST", 0)
+            .expect_err("invalid final decision should surface as invalid, not fall back to example");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert!(err.to_string().contains("conviction must be between"));
+    }
+
+    #[test]
+    fn final_decision_with_unknown_field_is_not_replaced_by_earlier_example() {
+        let raw = r#"Example: {"action":"hold","conviction":0.5,"justification":"example only"}.
+Final decision:
+{"action":"short_open","conviction":0.8,"justification":"breakdown confirmed","metadata":{}}"#;
+        let err = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect_err("invalid final decision should not fall back to an earlier example");
+        assert_eq!(err.kind, TraderFailureKind::InvalidJson);
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn final_direct_decision_with_wrapper_key_is_not_replaced_by_earlier_example() {
+        let raw = r#"Example: {"action":"hold","conviction":0.5,"justification":"example only"}.
+Final decision:
+{"action":"short_open","conviction":0.8,"justification":"breakdown confirmed","arguments":{}}"#;
+        let err = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect_err("invalid direct final decision should remain terminal despite wrapper key");
+        assert_eq!(err.kind, TraderFailureKind::InvalidJson);
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn trailing_wrapper_metadata_is_not_recovered_as_decision() {
+        let raw = r#"{"action":"long_open","conviction":0.7,"justification":"valid decision"}
+{"arguments":{"example":{"action":"hold","conviction":0.5,"justification":"schema"}}}"#;
+        let extracted = super::extract_last_trader_output_json(raw)
+            .expect("recovery helper must skip wrapper-shaped metadata");
+        let parsed = TraderOutput::parse_strict(&extracted, "01TEST", 0)
+            .expect("extracted JSON must be the valid trader decision");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.7);
+        assert_eq!(parsed.justification, "valid decision");
+    }
+
+    #[test]
+    fn trailing_string_metadata_is_not_recovered_as_decision() {
+        let raw = r#"{"action":"long_open","conviction":0.7,"justification":"valid decision"}
+{"output":"debug trace"}"#;
+        let extracted = super::extract_last_trader_output_json(raw)
+            .expect("recovery helper must skip string metadata without decision JSON");
+        let parsed = TraderOutput::parse_strict(&extracted, "01TEST", 0)
+            .expect("extracted JSON must be the valid trader decision");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.7);
+        assert_eq!(parsed.justification, "valid decision");
+    }
+
+    #[test]
+    fn final_function_call_wrapper_beats_earlier_valid_example() {
+        let raw = r#"Example: {"action":"hold","conviction":0.5,"justification":"example only"}.
+Final decision:
+{"name":"submit_decision","arguments":{"action":"short_open","conviction":0.8,"justification":"wrapped final decision"}}"#;
+        let parsed = TraderOutput::parse_strict(raw, "01TEST", 0)
+            .expect("final wrapper arguments must be tried before earlier examples");
+        assert_eq!(parsed.action, "short_open");
+        assert_eq!(parsed.conviction, 0.8);
+        assert_eq!(parsed.justification, "wrapped final decision");
+    }
+
+    #[test]
+    fn last_json_recovery_ignores_trailing_non_decision_object() {
+        let raw = r#"{"action":"long_open","conviction":0.7,"justification":"valid decision"}
+{"note":"not a decision"}"#;
+        let extracted = super::extract_last_trader_output_json(raw)
+            .expect("recovery helper must find the last parseable trader decision");
+        let parsed = TraderOutput::parse_strict(&extracted, "01TEST", 0)
+            .expect("extracted JSON must be a valid trader decision");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.7);
+        assert_eq!(parsed.justification, "valid decision");
+    }
+    #[test]
+    fn conviction_percentage_is_normalized_to_unit_interval() {
+        let wrapper = r#"{"name":"submitDecision","arguments":{"action":"long_open","conviction":90,"justification":"RSI oversold bounce setup"}}"#;
+        let parsed = TraderOutput::parse_strict(wrapper, "01TEST", 0)
+            .expect("small-model 0-100 conviction scale must be accepted");
+        assert_eq!(parsed.action, "long_open");
+        assert_eq!(parsed.conviction, 0.9);
+        assert_eq!(parsed.justification, "RSI oversold bounce setup");
     }
 
     #[test]
@@ -1561,12 +1798,8 @@ mod tests {
         // An object with only a tool-name key and no decision fields must
         // still be rejected — the empty-object guard prevents emitting a
         // candidate that could accidentally parse as TraderOutput::default().
-        let err = TraderOutput::parse_strict(
-            r#"{"name":"submit_decision"}"#,
-            "01TEST",
-            0,
-        )
-        .expect_err("tool-name-only object must be rejected");
+        let err = TraderOutput::parse_strict(r#"{"name":"submit_decision"}"#, "01TEST", 0)
+            .expect_err("tool-name-only object must be rejected");
         assert!(matches!(
             err.kind,
             TraderFailureKind::InvalidJson | TraderFailureKind::MissingField

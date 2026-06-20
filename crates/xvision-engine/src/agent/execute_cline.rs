@@ -35,7 +35,7 @@
 //!   against the recorded one and surface divergence as a typed error.
 
 use crate::agent::llm::{ContentBlock, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason};
-use crate::eval::executor::trader_output::extract_first_json_object;
+use crate::eval::executor::trader_output::extract_last_trader_output_json;
 use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
 use xvision_agent_client::provider_map::{map_provider, ProviderMapError};
@@ -759,17 +759,15 @@ async fn try_nodecision_recovery(
                 .await;
         }
     }
-    if let Some(json_str) = extract_first_json_object(&cleaned) {
-        if serde_json::from_str::<serde_json::Value>(&json_str).is_ok() {
-            tracing::info!(
-                event = "nodecision_recovery_succeeded",
-                run_id = %run_id,
-                role = %role,
-                method = "output_text_json_scan",
-            );
-            step.decision_json = Some(json_str);
-            return step;
-        }
+    if let Some(json_str) = extract_last_trader_output_json(&cleaned) {
+        tracing::info!(
+            event = "nodecision_recovery_succeeded",
+            run_id = %run_id,
+            role = %role,
+            method = "output_text_json_scan",
+        );
+        step.decision_json = Some(json_str);
+        return step;
     }
 
     // Method 2: repair step — request raw JSON output with no tool-call dependency.
@@ -797,7 +795,7 @@ async fn try_nodecision_recovery(
                             .await;
                     }
                 }
-                extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
+                extract_last_trader_output_json(&c)
             }
         };
         if found.is_some() {
