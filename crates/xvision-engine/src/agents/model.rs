@@ -56,9 +56,10 @@ pub fn looks_like_cot_model(model_id: &str) -> bool {
 
     // Family stems whose models lead with a chain-of-thought prefix. Kept
     // deliberately broad: any deepseek-r* (r1, r1-distill, future r2), the
-    // qwq reasoning line, and the gemma family (many community gemma builds
-    // emit verbose reasoning and exhaust a 1k budget).
-    const COT_PREFIXES: &[&str] = &["deepseek-r", "qwq", "gemma"];
+    // qwq reasoning line, Qwen3 thinking models, Fino/VibeThinker local
+    // trader models, and the gemma family (many community gemma builds emit
+    // verbose reasoning and exhaust a 1k budget).
+    const COT_PREFIXES: &[&str] = &["deepseek-r", "qwq", "qwen3", "fino", "vibethinker", "gemma"];
     COT_PREFIXES.iter().any(|p| stem.starts_with(p))
 }
 
@@ -602,6 +603,12 @@ mod tests {
         // Sanity-check a few more to confirm both code paths fire.
         assert_eq!(default_reasoning_effort("qwq:32b"), Some("medium".to_string()));
         assert_eq!(default_reasoning_effort("claude-sonnet-4-6"), None);
+        assert_eq!(default_reasoning_effort("Fino1-8B"), Some("medium".to_string()));
+        assert_eq!(default_reasoning_effort("Qwen3-4B"), Some("medium".to_string()));
+        assert_eq!(
+            default_reasoning_effort("VibeThinker-3B"),
+            Some("medium".to_string())
+        );
     }
 
     #[test]
@@ -618,6 +625,10 @@ mod tests {
         assert!(looks_like_cot_model("openrouter/deepseek-r1"));
         // Case-insensitive.
         assert!(looks_like_cot_model("DeepSeek-R1:8B"));
+        // Frontier/ORB bakeoff local models also lead with CoT prose.
+        assert!(looks_like_cot_model("Fino1-8B"));
+        assert!(looks_like_cot_model("Qwen3-4B"));
+        assert!(looks_like_cot_model("VibeThinker-3B"));
     }
 
     #[test]
