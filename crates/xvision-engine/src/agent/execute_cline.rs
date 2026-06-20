@@ -331,6 +331,14 @@ pub struct ClineSlotInput<'a> {
     pub reasoning_effort: Option<String>,
 }
 
+fn cline_decision_instruction() -> &'static str {
+    "Follow the slot instructions. You may call tools to fetch additional data \
+     for the current decision asset only. Prefer calling the submit_decision \
+     tool with your decision as a JSON argument. If your model cannot call that \
+     tool reliably, output exactly one JSON object matching the decision schema; \
+     no prose or markdown."
+}
+
 impl ClineSlotInput<'_> {
     fn role(&self) -> &str {
         &self.slot.role
@@ -359,14 +367,9 @@ impl ClineSlotInput<'_> {
     /// model sees the same inputs shape regardless of runtime.
     fn render_prompt(&self) -> anyhow::Result<String> {
         Ok(format!(
-            "Inputs:\n{}\n\nFollow the slot instructions. You may call tools \
-             to fetch additional data for the current decision asset only. \
-             You MUST reply by calling the submit_decision tool with your \
-             decision as a JSON argument. Do NOT output prose, raw JSON, or \
-             code fences in your reply — only the submit_decision tool call \
-             is accepted. Outputting text instead of calling the tool will \
-             fail the cycle.",
-            serde_json::to_string_pretty(&self.upstream_inputs)?
+            "Inputs:\n{}\n\n{}",
+            serde_json::to_string_pretty(&self.upstream_inputs)?,
+            cline_decision_instruction(),
         ))
     }
 }
@@ -1120,6 +1123,15 @@ mod tests {
 
         let already = plus(vec![SUBMIT_DECISION_TOOL.into()]);
         assert_eq!(already.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(), 1);
+    }
+
+    #[test]
+    fn cline_decision_instruction_allows_raw_json_for_weak_tool_callers() {
+        let instruction = cline_decision_instruction();
+        assert!(instruction.contains("submit_decision"));
+        assert!(instruction.contains("JSON object"));
+        assert!(!instruction.contains("Do NOT output prose, raw JSON"));
+        assert!(!instruction.contains("Outputting text instead of calling the tool will fail"));
     }
 
     #[test]

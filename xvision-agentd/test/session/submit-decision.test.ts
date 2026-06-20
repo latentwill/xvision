@@ -14,6 +14,15 @@ import { resetRegistry } from "../../src/methods/tool-registry.js"
 import { resetForTesting, setEventSocketPath } from "../../src/transport/event-client.js"
 
 const BUDGET = { max_input_tokens: 1000, max_output_tokens: 1000, max_wall_ms: 10000 }
+const TRADER_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string" },
+    conviction: { type: "number" },
+    justification: { type: "string" },
+  },
+}
+
 
 describe("submit_decision lifecycle tool", () => {
   let tmpDir: string | undefined
@@ -184,6 +193,86 @@ describe("submit_decision lifecycle tool", () => {
         budget_limits: BUDGET,
       }),
     ).toThrow(/decision_context/)
+  })
+
+  it("accepts final decision JSON text when the model does not call the tool", async () => {
+    setMockScript([
+      {
+        text:
+          "Reasoning before the final answer.\n" +
+          "{\"action\":\"long_open\",\"conviction\":90,\"justification\":\"oversold bounce\"}",
+      },
+    ])
+    handleSessionStartRun({
+      run_id: "r-json-text",
+      provider_id: "xvision-mock",
+      model_id: "mock",
+      system_prompt: "decide",
+      allowed_tools: ["submit_decision"],
+      decision_schema: TRADER_SCHEMA,
+      budget_limits: BUDGET,
+    })
+    const r = await handleSessionStep({ run_id: "r-json-text", prompt: "go" })
+    expect(r.status).toBe("completed")
+    expect(r.decision_json).toBeDefined()
+    expect(JSON.parse(r.decision_json!)).toEqual({
+      action: "long_open",
+      conviction: 90,
+      justification: "oversold bounce",
+    })
+  })
+
+  it("accepts final submitDecision wrapper JSON text when the model does not call the tool", async () => {
+    setMockScript([
+      {
+        text:
+          "Final answer:\n" +
+          "{\"name\":\"submitDecision\",\"arguments\":{\"action\":\"hold\",\"conviction\":75,\"justification\":\"wait for confirmation\"}}",
+      },
+    ])
+    handleSessionStartRun({
+      run_id: "r-wrapper-json-text",
+      provider_id: "xvision-mock",
+      model_id: "mock",
+      system_prompt: "decide",
+      allowed_tools: ["submit_decision"],
+      decision_schema: TRADER_SCHEMA,
+      budget_limits: BUDGET,
+    })
+    const r = await handleSessionStep({ run_id: "r-wrapper-json-text", prompt: "go" })
+    expect(r.status).toBe("completed")
+    expect(r.decision_json).toBeDefined()
+    expect(JSON.parse(r.decision_json!)).toEqual({
+      name: "submitDecision",
+      arguments: {
+        action: "hold",
+        conviction: 75,
+        justification: "wait for confirmation",
+      },
+    })
+  })
+
+  it("does not accept schema-shaped example JSON when it is not the final answer", async () => {
+    setMockScript([
+      {
+        text:
+          "I am not ready to decide. An example would be " +
+          "{\"action\":\"hold\",\"conviction\":50,\"justification\":\"example only\"}. " +
+          "Need more data before submitting.",
+      },
+    ])
+    handleSessionStartRun({
+      run_id: "r-example-json-text",
+      provider_id: "xvision-mock",
+      model_id: "mock",
+      system_prompt: "decide",
+      allowed_tools: ["submit_decision"],
+      decision_schema: TRADER_SCHEMA,
+      budget_limits: BUDGET,
+    })
+    const r = await handleSessionStep({ run_id: "r-example-json-text", prompt: "go" })
+    expect(r.status).toBe("completed")
+    expect(r.decision_json).toBeUndefined()
   })
 
   it("leaves decision_json undefined when the agent never submits", async () => {

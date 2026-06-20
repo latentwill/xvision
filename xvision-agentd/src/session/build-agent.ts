@@ -5,9 +5,9 @@ const CONFLICTING_JSON_RE =
   /output[^\n]*json[^\n]*only|strict\s+json|json\s+only|output\s+json/i
 
 const CORRECTION_NOTE =
-  "\n\nIMPORTANT: Ignore any earlier instructions to output raw JSON. You MUST call the submit_decision tool to submit your decision — outputting JSON text is not accepted and will fail the cycle."
+  "\n\nIMPORTANT: Prefer the submit_decision tool when your model can call tools. JSON text is also accepted: if you cannot call the tool, output exactly one JSON object matching the decision schema, with no prose or markdown."
 
-const CORRECTION_MARKER = "You MUST call the submit_decision tool"
+const CORRECTION_MARKER = "JSON text is also accepted"
 
 export function sanitizeSystemPrompt(prompt: string): string {
   if (prompt.includes(CORRECTION_MARKER)) return prompt

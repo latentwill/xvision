@@ -302,7 +302,7 @@ interface StepResult {
     total_cost?: number
   }
   error?: string
-  /** JSON the agent submitted via `submit_decision`, if it called the tool. */
+  /** Decision JSON from `submit_decision`, or final JSON text for weak tool-callers. */
   decision_json?: string
 }
 
@@ -324,6 +324,127 @@ function abortedStepResult(reason: BudgetAbortReason): StepResult {
     },
     error: reason,
   }
+}
+
+function schemaPropertyNames(schema: Record<string, unknown> | undefined): string[] {
+  const props = schema?.properties
+  if (!props || typeof props !== "object" || Array.isArray(props)) return []
+  return Object.keys(props as Record<string, unknown>)
+}
+
+function objectMatchesDecisionSchema(
+  value: unknown,
+  schema: Record<string, unknown> | undefined,
+  depth = 0,
+): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) return false
+  const propertyNames = schemaPropertyNames(schema)
+  const obj = value as Record<string, unknown>
+  if (
+    propertyNames.length === 0 ||
+    propertyNames.some((name) => Object.prototype.hasOwnProperty.call(obj, name))
+  ) {
+    return true
+  }
+
+  for (const key of ["arguments", "parameters", "decision", "trader_output"]) {
+    if (objectMatchesDecisionSchema(obj[key], schema, depth + 1)) return true
+  }
+
+  for (const key of ["output", "text", "content", "response"]) {
+    const nested = obj[key]
+    if (typeof nested !== "string") continue
+    const span = extractFinalJsonObject(nested)
+    if (!span) continue
+    try {
+      if (objectMatchesDecisionSchema(JSON.parse(span.text), schema, depth + 1)) return true
+    } catch {
+      // Ignore malformed wrapper strings.
+    }
+  }
+
+  return false
+}
+
+interface JsonObjectSpan {
+  text: string
+  start: number
+  end: number
+}
+
+function extractJsonObjectSpans(raw: string): JsonObjectSpan[] {
+  const objects: JsonObjectSpan[] = []
+  let cursor = 0
+
+  while (cursor < raw.length) {
+    const start = raw.indexOf("{", cursor)
+    if (start === -1) break
+
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let end = -1
+
+    for (let i = start; i < raw.length; i++) {
+      const c = raw[i]
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (c === "\\") {
+          escaped = true
+        } else if (c === "\"") {
+          inString = false
+        }
+        continue
+      }
+
+      if (c === "\"") {
+        inString = true
+      } else if (c === "{") {
+        depth += 1
+      } else if (c === "}") {
+        depth -= 1
+        if (depth === 0) {
+          end = i + 1
+          break
+        }
+      }
+    }
+
+    if (end !== -1) {
+      objects.push({ text: raw.slice(start, end), start, end })
+      cursor = end
+    } else {
+      cursor = start + 1
+    }
+  }
+
+  return objects
+}
+
+function finalJsonSuffixIsAllowed(raw: string, end: number): boolean {
+  const suffix = raw.slice(end).trim()
+  return suffix === "" || suffix === "```"
+}
+
+function extractFinalJsonObject(raw: string): JsonObjectSpan | undefined {
+  const spans = extractJsonObjectSpans(raw)
+  const span = spans.at(-1)
+  if (!span || !finalJsonSuffixIsAllowed(raw, span.end)) return undefined
+  return span
+}
+
+function decisionJsonFromOutputText(raw: string, schema: Record<string, unknown> | undefined): string | undefined {
+  const candidate = extractFinalJsonObject(raw)
+  if (!candidate) return undefined
+  try {
+    const value = JSON.parse(candidate.text)
+    if (objectMatchesDecisionSchema(value, schema)) return candidate.text
+  } catch {
+    // The final JSON-looking block is malformed; do not promote older
+    // schema-shaped examples from the reasoning text into a decision.
+  }
+  return undefined
 }
 
 export async function handleSessionStep(raw: unknown): Promise<StepResult> {
@@ -459,7 +580,14 @@ export async function handleSessionStep(raw: unknown): Promise<StepResult> {
       })
     }
 
-    const decisionJson = store.getDecisionJson(runId)
+    // Tool calls win. If a weak local model only emitted final JSON text,
+    // promote that text to decision_json here so Rust sees a first-class
+    // decision and does not need its output_text_json_scan recovery path.
+    const decisionJson =
+      store.getDecisionJson(runId) ??
+      (session.config.allowed_tools.includes(SUBMIT_DECISION_TOOL)
+        ? decisionJsonFromOutputText(result.outputText, session.config.decision_schema)
+        : undefined)
     // exactOptionalPropertyTypes: omit total_cost / error / decision_json when undefined.
     return {
       status,
