@@ -252,6 +252,35 @@ describe("submit_decision lifecycle tool", () => {
     })
   })
 
+  it("accepts final-labeled decision JSON even with trailing prose", async () => {
+    setMockScript([
+      {
+        text:
+          "Long chain-of-thought omitted.\n" +
+          "Final decision JSON:\n" +
+          "{\"action\":\"long_open\",\"conviction\":88,\"justification\":\"ORB breakout confirmed\"}\n" +
+          "I would submit this decision now.",
+      },
+    ])
+    handleSessionStartRun({
+      run_id: "r-final-labeled-json-text",
+      provider_id: "xvision-mock",
+      model_id: "mock",
+      system_prompt: "decide",
+      allowed_tools: ["submit_decision"],
+      decision_schema: TRADER_SCHEMA,
+      budget_limits: BUDGET,
+    })
+    const r = await handleSessionStep({ run_id: "r-final-labeled-json-text", prompt: "go" })
+    expect(r.status).toBe("completed")
+    expect(r.decision_json).toBeDefined()
+    expect(JSON.parse(r.decision_json!)).toEqual({
+      action: "long_open",
+      conviction: 88,
+      justification: "ORB breakout confirmed",
+    })
+  })
+
   it("does not accept schema-shaped example JSON when it is not the final answer", async () => {
     setMockScript([
       {

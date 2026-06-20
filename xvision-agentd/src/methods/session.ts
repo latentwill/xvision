@@ -427,10 +427,27 @@ function finalJsonSuffixIsAllowed(raw: string, end: number): boolean {
   return suffix === "" || suffix === "```"
 }
 
+function finalJsonPrefixIsAllowed(raw: string, start: number): boolean {
+  const lines = raw
+    .slice(0, start)
+    .split(/\r?\n/)
+    .map((line) => line.trim().toLowerCase())
+    .filter((line) => line.length > 0)
+  const line = lines.at(-1) ?? ""
+  return (
+    line.includes("submit_decision") ||
+    line.includes("submitdecision") ||
+    (line.includes("final") && (line.includes("decision") || line.includes("answer") || line.includes("json")))
+  )
+}
+
 function extractFinalJsonObject(raw: string): JsonObjectSpan | undefined {
   const spans = extractJsonObjectSpans(raw)
   const span = spans.at(-1)
-  if (!span || !finalJsonSuffixIsAllowed(raw, span.end)) return undefined
+  if (!span) return undefined
+  if (!finalJsonSuffixIsAllowed(raw, span.end) && !finalJsonPrefixIsAllowed(raw, span.start)) {
+    return undefined
+  }
   return span
 }
 
