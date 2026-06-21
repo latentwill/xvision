@@ -80,6 +80,14 @@ function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase()
 }
 
+function explicitPort(baseUrl: string): string | undefined {
+  try {
+    return new URL(baseUrl).port || undefined
+  } catch {
+    return undefined
+  }
+}
+
 function providerIdForOpenAiCompatibleBaseUrl(
   baseUrl: string | undefined,
   knownProviders: readonly string[],
@@ -100,6 +108,9 @@ function providerIdForOpenAiCompatibleBaseUrl(
     if (!knownProviders.includes(candidate) || !config.baseUrl) continue
     if (normalizeBaseUrl(config.baseUrl) === normalizedBaseUrl) return candidate
   }
+  const port = explicitPort(baseUrl)
+  if (port === "11434" && knownProviders.includes("ollama")) return "ollama"
+  if (port === "1234" && knownProviders.includes("lmstudio")) return "lmstudio"
 
   if (knownProviders.includes(GENERIC_OPENAI_COMPAT_PROVIDER)) {
     return GENERIC_OPENAI_COMPAT_PROVIDER
@@ -153,6 +164,11 @@ function suppressNativeReasoning(providerId: string): boolean {
   )
 }
 
+function defaultsReasoningDisabled(providerId: string): boolean {
+  const normalizedProviderId = Llms.normalizeProviderId(providerId)
+  return normalizedProviderId === "ollama" || normalizedProviderId === "lmstudio"
+}
+
 function catalogSupportsReasoning(
   modelId: string,
   catalogModels: readonly CatalogModel[] | undefined,
@@ -169,6 +185,9 @@ export function resolveGatewayReasoning(
   catalogModels?: readonly CatalogModel[],
 ): GatewayReasoning | undefined {
   if (opts.reasoningEffort === "none") return { enabled: false }
+  if (opts.reasoningEffort === undefined && defaultsReasoningDisabled(opts.providerId)) {
+    return { enabled: false }
+  }
   if (suppressNativeReasoning(opts.providerId)) return undefined
   if (opts.reasoningEffort !== undefined) return { effort: opts.reasoningEffort }
   if (catalogSupportsReasoning(opts.modelId, catalogModels)) return { effort: "medium" }
@@ -220,9 +239,9 @@ export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel 
   // method — structurally compatible with our AgentModel interface.
   // The optional second arg follows Cline SDK's model-catalog defaults:
   // explicit caller choice wins; otherwise a catalog model advertising the
-  // semantic `reasoning` capability gets medium effort. Local/generic
-  // OpenAI-compatible providers keep normal text CoT output unless explicitly
-  // disabled with `none`.
+  // semantic `reasoning` capability gets medium effort. Ollama/LM Studio
+  // default to Cline's provider-specific disabled-reasoning shape so local
+  // models that expose visible CoT do not drown structured JSON output.
   const reasoning = resolveGatewayReasoning(
     {
       providerId,

@@ -67,9 +67,15 @@ fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
         "fireworks"
     } else if lower.contains("api.mistral.ai") {
         "mistral"
-    } else if lower.contains("localhost:11434") || lower.contains("127.0.0.1:11434") {
+    } else if lower.contains("localhost:11434")
+        || lower.contains("127.0.0.1:11434")
+        || lower.contains(":11434")
+    {
         "ollama"
-    } else if lower.contains("localhost:1234") || lower.contains("127.0.0.1:1234") {
+    } else if lower.contains("localhost:1234")
+        || lower.contains("127.0.0.1:1234")
+        || lower.contains(":1234")
+    {
         "lmstudio"
     } else {
         CLINE_PROVIDER_LITELLM
@@ -190,6 +196,17 @@ mod tests {
         .unwrap();
         assert_eq!(m.provider_id, "ollama");
         assert_eq!(m.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn openai_compat_remote_ollama_port_maps_to_cline_ollama() {
+        let m = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "http://100.90.135.112:11434/"),
+            "hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q4_K_XL",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "ollama");
+        assert_eq!(m.base_url.as_deref(), Some("http://100.90.135.112:11434/v1"));
     }
 
     #[test]
