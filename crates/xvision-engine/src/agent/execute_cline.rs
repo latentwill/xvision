@@ -323,11 +323,11 @@ pub struct ClineSlotInput<'a> {
     /// pass `None` today; the field is the seam for a future WS that adds
     /// one.
     pub model_call_span_id: Option<String>,
-    /// Reasoning effort hint forwarded to the sidecar for CoT reasoning
-    /// models (deepseek-r1, qwq, etc.) via `StartRunParams::reasoning_effort`.
-    /// Derived at the Cline dispatch site via
-    /// `crate::agents::model::default_reasoning_effort(&slot.effective_model())`.
-    /// `None` for non-CoT models (field omitted on the wire).
+    /// Optional native reasoning-effort override forwarded to the sidecar via
+    /// `StartRunParams::reasoning_effort`.
+    /// `None` lets `xvision-agentd` follow Cline SDK catalog defaults and
+    /// protocol-level reasoning parsing instead of engine-side model-id
+    /// classification.
     pub reasoning_effort: Option<String>,
 }
 

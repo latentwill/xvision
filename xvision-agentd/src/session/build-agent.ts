@@ -138,7 +138,7 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
     ...(config.api_key !== undefined ? { apiKey: config.api_key } : {}),
     ...(config.base_url !== undefined ? { baseUrl: config.base_url } : {}),
     ...(config.reasoning_effort !== undefined
-      ? { reasoning: { effort: config.reasoning_effort as "low" | "medium" | "high" } }
+      ? { reasoningEffort: config.reasoning_effort as "none" | "low" | "medium" | "high" }
       : {}),
   })
 

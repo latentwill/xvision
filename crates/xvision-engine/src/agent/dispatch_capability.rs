@@ -662,11 +662,12 @@ async fn execute_slot_for_runtime(
             // keeps the reasoning span top-level — it still reaches the
             // trace.
             model_call_span_id: input.model_call_span_id.clone(),
-            // Derive reasoning_effort from model metadata so CoT models
-            // (deepseek-r1, qwq, etc.) get an explicit effort hint forwarded
-            // to the provider gateway. Non-CoT models produce None (field
-            // omitted on the wire).
-            reasoning_effort: crate::agents::model::default_reasoning_effort(&input.slot.effective_model()),
+            // Do not classify model ids here. Cline's SDK owns provider
+            // reasoning defaults from its catalog and parses reasoning chunks
+            // at the protocol layer. The engine only preserves an explicit
+            // future operator override; today there is no override field, so
+            // omit the hint and let the sidecar resolve provider behavior.
+            reasoning_effort: None,
         })
         .await;
     }
