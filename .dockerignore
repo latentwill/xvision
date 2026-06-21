@@ -21,6 +21,11 @@ crates/xvision-dashboard/static
 !crates/xvision-dashboard/static/.gitkeep
 !crates/xvision-dashboard/static/js
 coverage
+
+# Sidecar dependency/build outputs
+xvision-agentd/node_modules
+xvision-agentd/dist
+xvision-agentd/*.tsbuildinfo
 **/coverage
 
 # Runtime data (never ship as part of the image), except packaged probe assets.
