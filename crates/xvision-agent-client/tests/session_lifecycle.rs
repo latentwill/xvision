@@ -130,6 +130,7 @@ async fn full_session_round_trip() {
             decision_schema: None,
             record: false,
             slot_role: None,
+            reasoning_effort: None,
         })
         .await
         .expect("start_run");

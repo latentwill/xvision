@@ -13,6 +13,8 @@ const KNOWN_PROVIDERS = [
   "groq",
   "litellm",
   "openrouter",
+  "ollama",
+  "lmstudio",
 ]
 
 describe("buildProviderModel — Cline gateway provider registration", () => {
@@ -60,6 +62,16 @@ describe("buildProviderModel — Cline gateway provider registration", () => {
       baseUrl: "https://proxy.example/v1",
     })
     expect(typeof model?.stream).toBe("function")
+  })
+
+  it("routes OpenAI-compatible Ollama port URLs to Cline's Ollama provider", () => {
+    expect(
+      resolveGatewayProviderId(
+        "openai-compatible",
+        "http://100.90.135.112:11434/v1",
+        KNOWN_PROVIDERS,
+      ),
+    ).toBe("ollama")
   })
 
   it("rescues unknown provider ids with a base_url through the generic carrier", () => {
@@ -135,6 +147,15 @@ describe("resolveGatewayReasoning — provider-aware Cline reasoning options", (
         reasoningEffort: "medium",
       }),
     ).toBeUndefined()
+  })
+
+  it("defaults Ollama to Cline's disabled reasoning shape when no effort is configured", () => {
+    expect(
+      resolveGatewayReasoning({
+        providerId: "ollama",
+        modelId: "hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q4_K_XL",
+      }),
+    ).toEqual({ enabled: false })
   })
 
   it("maps explicit none to Cline's reasoning disable shape, including Ollama", () => {
