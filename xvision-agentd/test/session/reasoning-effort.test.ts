@@ -141,7 +141,7 @@ describe("session.start_run — reasoning_effort validation errors", () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4 — buildProviderModel accepts the reasoning option without errors
+// 4 — buildProviderModel accepts provider-aware reasoning_effort without errors
 //
 // The Llms namespace object is a sealed ESM module namespace that cannot be
 // reassigned or spied upon (vi.spyOn requires configurable, direct assignment
@@ -149,35 +149,31 @@ describe("session.start_run — reasoning_effort validation errors", () => {
 // at minimum cover the validateStartRun → StartRunConfig propagation."
 //
 // We instead verify the live code path: buildProviderModel accepts a
-// `reasoning` option and forwards it to the gateway without blowing up.
-// The existing provider-model.test.ts already confirms the two-arg
-// gateway.createAgentModel call compiles and runs correctly against real
-// providers (anthropic, openrouter, litellm). This test pins that adding
-// `reasoning` doesn't break anything.
+// `reasoningEffort` request and maps it through the provider-aware Cline SDK
+// gateway option resolver without blowing up.
 // ---------------------------------------------------------------------------
 
 describe("buildProviderModel — reasoning option accepted without error", () => {
-  it("returns a model with stream() when reasoning: { effort: 'high' } is passed to anthropic", () => {
+  it("returns a model with stream() when reasoningEffort: 'high' is passed to anthropic", () => {
     const model = buildProviderModel({
       providerId: "anthropic",
       modelId: "claude-opus-4-7",
       apiKey: "sk-ant-test",
-      reasoning: { effort: "high" },
+      reasoningEffort: "high",
     })
     expect(typeof model?.stream).toBe("function")
   })
 
-  it("returns a model with stream() when reasoning: { effort: 'medium' } is passed to a litellm endpoint", () => {
+  it("returns a model with stream() when reasoningEffort is suppressed for an Ollama endpoint", () => {
     const model = buildProviderModel({
       providerId: "openai-compatible",
       modelId: "deepseek-r1",
       apiKey: "sk-test",
       baseUrl: "http://localhost:11434/v1",
-      reasoning: { effort: "medium" },
+      reasoningEffort: "medium",
     })
     expect(typeof model?.stream).toBe("function")
   })
-
   it("returns a model with stream() when no reasoning option is passed (regression guard)", () => {
     const model = buildProviderModel({
       providerId: "anthropic",

@@ -39,6 +39,26 @@ import { Llms, OPENAI_COMPATIBLE_PROVIDERS } from "@cline/sdk"
 const OPENAI_COMPAT_ALIASES = new Set(["openai-compatible", "openai-compat"])
 const GENERIC_OPENAI_COMPAT_PROVIDER = "litellm"
 
+type ReasoningEffort = "none" | "low" | "medium" | "high"
+
+type GatewayReasoning = {
+  enabled?: boolean
+  effort?: "low" | "medium" | "high"
+  budgetTokens?: number
+}
+
+type CatalogModel = {
+  id: string
+  capabilities?: readonly string[]
+}
+
+interface ResolveGatewayReasoningOptions {
+  providerId: string
+  modelId: string
+  baseUrl?: string
+  reasoningEffort?: ReasoningEffort
+}
+
 export interface BuildProviderModelOptions {
   /** Provider ID as sent by the xvision engine (e.g. "anthropic", "openai-native"). */
   providerId: string
@@ -49,15 +69,11 @@ export interface BuildProviderModelOptions {
   /** Custom base URL — used for openai-compatible and self-hosted endpoints. */
   baseUrl?: string
   /**
-   * Reasoning options forwarded to the gateway as `GatewayModelHandleOptions.reasoning`.
-   * Supports CoT models (e.g. deepseek-r1 via Ollama) where setting effort to "medium"
-   * prevents reasoning tokens from starving the JSON answer.
+   * Optional engine request for native provider reasoning. The gateway option
+   * is resolved provider-aware inside this module instead of blindly mapping
+   * every CoT-looking model id to a `thinking` parameter.
    */
-  reasoning?: {
-    enabled?: boolean
-    effort?: "low" | "medium" | "high"
-    budgetTokens?: number
-  }
+  reasoningEffort?: ReasoningEffort
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -127,6 +143,38 @@ export function resolveGatewayProviderId(
   return normalizedProviderId
 }
 
+
+function suppressNativeReasoning(providerId: string): boolean {
+  const normalizedProviderId = Llms.normalizeProviderId(providerId)
+  return (
+    normalizedProviderId === "ollama" ||
+    normalizedProviderId === "lmstudio" ||
+    normalizedProviderId === GENERIC_OPENAI_COMPAT_PROVIDER
+  )
+}
+
+function catalogSupportsReasoning(
+  modelId: string,
+  catalogModels: readonly CatalogModel[] | undefined,
+): boolean {
+  return (
+    catalogModels?.some(
+      (model) => model.id === modelId && model.capabilities?.includes("reasoning") === true,
+    ) === true
+  )
+}
+
+export function resolveGatewayReasoning(
+  opts: ResolveGatewayReasoningOptions,
+  catalogModels?: readonly CatalogModel[],
+): GatewayReasoning | undefined {
+  if (opts.reasoningEffort === "none") return { enabled: false }
+  if (suppressNativeReasoning(opts.providerId)) return undefined
+  if (opts.reasoningEffort !== undefined) return { effort: opts.reasoningEffort }
+  if (catalogSupportsReasoning(opts.modelId, catalogModels)) return { effort: "medium" }
+  return undefined
+}
+
 /**
  * Build a wrappable AgentModel for a real (non-mock) provider.
  *
@@ -170,14 +218,26 @@ export function buildProviderModel(opts: BuildProviderModelOptions): AgentModel 
 
   // Build the AgentModel. The gateway returns a handle object with a stream()
   // method — structurally compatible with our AgentModel interface.
-  // The optional second arg forwards reasoning options (effort, budgetTokens)
-  // to the gateway for CoT models that support native reasoning_effort (e.g.
-  // deepseek-r1 via Ollama).
+  // The optional second arg follows Cline SDK's model-catalog defaults:
+  // explicit caller choice wins; otherwise a catalog model advertising the
+  // semantic `reasoning` capability gets medium effort. Local/generic
+  // OpenAI-compatible providers keep normal text CoT output unless explicitly
+  // disabled with `none`.
+  const reasoning = resolveGatewayReasoning(
+    {
+      providerId,
+      modelId,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+      ...(opts.reasoningEffort !== undefined ? { reasoningEffort: opts.reasoningEffort } : {}),
+    },
+    gateway.listModels(providerId),
+  )
+
   let model: AgentModel
   try {
     model = gateway.createAgentModel(
       { providerId, modelId },
-      opts.reasoning ? { reasoning: opts.reasoning } : undefined,
+      reasoning ? { reasoning } : undefined,
     ) as AgentModel
   } catch (err) {
     throw new Error(
