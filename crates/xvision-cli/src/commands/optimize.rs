@@ -22,6 +22,7 @@
 //!   step verbs (a single operator surface; GH #966).
 //! * **ls** — list recent optimizer cycles from the lineage store (D3).
 //! * **show** — inspect a single cycle's gated candidates + counts.
+//! * **diff** — diff a candidate strategy blob against its parent.
 //! * **lineage** — lineage graph inspection (ls / show).
 //! * **unlock** — force-clear a wedged cycle lock (explicit escape hatch; the
 //!   normal kill→restart path now auto-clears a stale lock — GH #967).
@@ -35,7 +36,7 @@
 //! * `14` validation failure — bad enum, missing corpus file, signature error.
 //! * `15` persistence failure — store write failed.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,6 +118,8 @@ enum OptimizeAction {
     Ls(LsArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
     Show(ShowArgs),
+    /// Diff a candidate strategy blob against its lineage parent.
+    Diff(DiffArgs),
     /// Export a complete optimizer cycle as a high-fidelity, agent-feedable
     /// document (every event + per-experiment outcomes + honesty check + reviewer
     /// findings + the compiled prompt pattern). Markdown or JSON; to a file or
@@ -165,7 +168,25 @@ pub struct ShowArgs {
     /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
+    /// Lineage blob root. Defaults to `$XVN_HOME/lineage/blobs`.
+    #[arg(long)]
+    pub blob_root: Option<PathBuf>,
     /// Emit the cycle detail as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DiffArgs {
+    /// Experiment/candidate hash to diff against its parent.
+    pub experiment_hash: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Lineage blob root. Defaults to `$XVN_HOME/lineage/blobs`.
+    #[arg(long)]
+    pub blob_root: Option<PathBuf>,
+    /// Emit the diff as JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -402,6 +423,7 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
+        Some(OptimizeAction::Diff(args)) => run_diff(args).await,
         Some(OptimizeAction::Export(args)) => run_export(args).await,
         Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
             LineageOp::Ls(args) => lineage_ls(args).await,
@@ -1373,12 +1395,444 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
     if args.json {
         print_json(&detail)?;
     } else {
-        print_cycle_detail(&detail);
+        let blob_root = args.blob_root.unwrap_or(default_lineage_blob_root()?);
+        let mutation_summaries = load_cycle_mutation_summaries(&blob_root, &detail).await;
+        print_cycle_detail(&detail, &mutation_summaries);
     }
     Ok(())
 }
 
-fn print_cycle_detail(detail: &CycleRunDetail) {
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+struct FieldChange {
+    path: String,
+    before: Option<serde_json::Value>,
+    after: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, PartialEq, Eq)]
+struct StrategyMutationDiff {
+    filter: Vec<FieldChange>,
+    risk_params: Vec<FieldChange>,
+    agents: Vec<FieldChange>,
+    prompt: Vec<FieldChange>,
+    other: Vec<FieldChange>,
+}
+
+impl StrategyMutationDiff {
+    fn is_empty(&self) -> bool {
+        self.filter.is_empty()
+            && self.risk_params.is_empty()
+            && self.agents.is_empty()
+            && self.prompt.is_empty()
+            && self.other.is_empty()
+    }
+
+    fn kind(&self) -> &'static str {
+        if !self.risk_params.is_empty() {
+            "param"
+        } else if !self.filter.is_empty() {
+            "filter"
+        } else if !self.prompt.is_empty() {
+            "prose"
+        } else if !self.agents.is_empty() {
+            "agent"
+        } else if !self.other.is_empty() {
+            "other"
+        } else {
+            "unchanged"
+        }
+    }
+
+    fn summary(&self) -> String {
+        self.risk_params
+            .first()
+            .or_else(|| self.filter.first())
+            .or_else(|| self.prompt.first())
+            .or_else(|| self.agents.first())
+            .or_else(|| self.other.first())
+            .map(format_change_compact)
+            .unwrap_or_else(|| "unchanged".to_string())
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OptimizeDiffOutput {
+    experiment_hash: String,
+    parent_hash: String,
+    status: String,
+    cycle_id: Option<String>,
+    diff: StrategyMutationDiff,
+}
+
+async fn run_diff(args: DiffArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
+    let experiment_hash = resolve_experiment_hash(&pool, &args.experiment_hash).await?;
+    let lineage = LineageStore::new(pool);
+    let node = lineage
+        .get(&experiment_hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("load experiment lineage: {e}")))?
+        .ok_or_else(|| {
+            CliError::not_found(anyhow::anyhow!("experiment {} not found", args.experiment_hash))
+        })?;
+    let parent_hash = node.parent_hash.ok_or_else(|| {
+        CliError::usage(anyhow::anyhow!(
+            "experiment {} has no parent; choose a candidate node, not a lineage root",
+            args.experiment_hash
+        ))
+    })?;
+    let blob_root = args.blob_root.unwrap_or(default_lineage_blob_root()?);
+    let blobs = BlobStore::new(blob_root);
+    let parent_json = blobs
+        .get_json(&parent_hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("load parent blob {parent_hash}: {e}")))?;
+    let child_json = blobs
+        .get_json(&experiment_hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("load experiment blob {experiment_hash}: {e}")))?;
+    let diff = summarize_strategy_json_diff(&parent_json, &child_json);
+    let out = OptimizeDiffOutput {
+        experiment_hash: experiment_hash.to_hex(),
+        parent_hash: parent_hash.to_hex(),
+        status: display_lineage_status(&node.status).to_string(),
+        cycle_id: node.cycle_id.clone(),
+        diff,
+    };
+    if args.json {
+        print_json(&out)?;
+    } else {
+        print_optimize_diff(&out);
+    }
+    Ok(())
+}
+
+async fn resolve_experiment_hash(pool: &SqlitePool, raw: &str) -> CliResult<ContentHash> {
+    let trimmed = raw.trim();
+    if trimmed.len() == 64 {
+        return ContentHash::from_hex(trimmed)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("invalid experiment_hash: {e}")));
+    }
+    if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "experiment_hash must be a hex hash or unique hex prefix"
+        )));
+    }
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash LIKE ? ORDER BY created_at DESC LIMIT 2",
+    )
+    .bind(format!("{trimmed}%"))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve experiment hash prefix: {e}")))?;
+    match rows.as_slice() {
+        [hash] => ContentHash::from_hex(hash)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("stored bundle_hash is invalid: {e}"))),
+        [] => Err(CliError::not_found(anyhow::anyhow!(
+            "no experiment hash matches prefix {trimmed}"
+        ))),
+        _ => Err(CliError::usage(anyhow::anyhow!(
+            "experiment hash prefix {trimmed} is ambiguous; pass the full hash"
+        ))),
+    }
+}
+
+async fn load_cycle_mutation_summaries(
+    blob_root: &Path,
+    detail: &CycleRunDetail,
+) -> HashMap<String, StrategyMutationDiff> {
+    let blobs = BlobStore::new(blob_root.to_path_buf());
+    let mut out = HashMap::new();
+    for cn in &detail.nodes {
+        let Some(parent_hash) = cn.node.parent_hash else {
+            continue;
+        };
+        let child_hash = cn.node.bundle_hash;
+        let Ok(parent_json) = blobs.get_json(&parent_hash).await else {
+            continue;
+        };
+        let Ok(child_json) = blobs.get_json(&child_hash).await else {
+            continue;
+        };
+        let diff = summarize_strategy_json_diff(&parent_json, &child_json);
+        if !diff.is_empty() {
+            out.insert(child_hash.to_hex(), diff);
+        }
+    }
+    out
+}
+
+fn default_lineage_blob_root() -> CliResult<PathBuf> {
+    crate::commands::home::resolve_xvn_home(None)
+        .map(|home| home.join("lineage").join("blobs"))
+        .map_err(|e| CliError::usage(anyhow::anyhow!("resolve XVN_HOME for lineage blobs: {e}")))
+}
+
+fn summarize_strategy_json_diff(
+    parent: &serde_json::Value,
+    child: &serde_json::Value,
+) -> StrategyMutationDiff {
+    let mut diff = StrategyMutationDiff::default();
+    collect_leaf_changes(parent.get("filter"), child.get("filter"), "", &mut diff.filter);
+    collect_leaf_changes(parent.get("risk"), child.get("risk"), "", &mut diff.risk_params);
+    collect_agent_changes(
+        parent.get("agents"),
+        child.get("agents"),
+        &mut diff.agents,
+        &mut diff.prompt,
+    );
+
+    let mut top_keys = BTreeSet::new();
+    if let Some(obj) = parent.as_object() {
+        top_keys.extend(obj.keys().cloned());
+    }
+    if let Some(obj) = child.as_object() {
+        top_keys.extend(obj.keys().cloned());
+    }
+    for key in top_keys {
+        if matches!(key.as_str(), "filter" | "risk" | "agents") {
+            continue;
+        }
+        collect_leaf_changes(parent.get(&key), child.get(&key), &key, &mut diff.other);
+    }
+
+    diff
+}
+
+fn collect_leaf_changes(
+    before: Option<&serde_json::Value>,
+    after: Option<&serde_json::Value>,
+    path: &str,
+    out: &mut Vec<FieldChange>,
+) {
+    match (before, after) {
+        (Some(serde_json::Value::Object(a)), Some(serde_json::Value::Object(b))) => {
+            let keys = union_keys(a.keys(), b.keys());
+            for key in keys {
+                let child_path = join_path(path, &key);
+                collect_leaf_changes(a.get(&key), b.get(&key), &child_path, out);
+            }
+        }
+        (None, Some(serde_json::Value::Object(b))) => {
+            for key in sorted_keys(b.keys()) {
+                let child_path = join_path(path, &key);
+                collect_leaf_changes(None, b.get(&key), &child_path, out);
+            }
+        }
+        (Some(serde_json::Value::Object(a)), None) => {
+            for key in sorted_keys(a.keys()) {
+                let child_path = join_path(path, &key);
+                collect_leaf_changes(a.get(&key), None, &child_path, out);
+            }
+        }
+        (Some(serde_json::Value::Array(a)), Some(serde_json::Value::Array(b))) => {
+            let len = a.len().max(b.len());
+            for i in 0..len {
+                let child_path = join_path(path, &i.to_string());
+                collect_leaf_changes(a.get(i), b.get(i), &child_path, out);
+            }
+        }
+        (None, Some(serde_json::Value::Array(b))) => {
+            for i in 0..b.len() {
+                let child_path = join_path(path, &i.to_string());
+                collect_leaf_changes(None, b.get(i), &child_path, out);
+            }
+        }
+        (Some(serde_json::Value::Array(a)), None) => {
+            for i in 0..a.len() {
+                let child_path = join_path(path, &i.to_string());
+                collect_leaf_changes(a.get(i), None, &child_path, out);
+            }
+        }
+        (before, after) if before != after => out.push(FieldChange {
+            path: path.to_string(),
+            before: before.cloned(),
+            after: after.cloned(),
+        }),
+        _ => {}
+    }
+}
+
+fn collect_agent_changes(
+    parent: Option<&serde_json::Value>,
+    child: Option<&serde_json::Value>,
+    agents: &mut Vec<FieldChange>,
+    prompt: &mut Vec<FieldChange>,
+) {
+    let parent_order = agent_role_order(parent);
+    let child_order = agent_role_order(child);
+    if parent_order != child_order {
+        agents.push(FieldChange {
+            path: "agents.order".to_string(),
+            before: Some(serde_json::Value::Array(
+                parent_order.into_iter().map(serde_json::Value::String).collect(),
+            )),
+            after: Some(serde_json::Value::Array(
+                child_order.into_iter().map(serde_json::Value::String).collect(),
+            )),
+        });
+    }
+    let parent_agents = agents_by_role(parent);
+    let child_agents = agents_by_role(child);
+    let mut roles = BTreeSet::new();
+    roles.extend(parent_agents.keys().cloned());
+    roles.extend(child_agents.keys().cloned());
+    for role in roles {
+        let before = parent_agents.get(&role).copied();
+        let after = child_agents.get(&role).copied();
+        for field in ["agent_id", "model_override", "checkpoint", "activates", "veto"] {
+            let path = format!("{role}.{field}");
+            collect_leaf_changes(
+                before.and_then(|v| v.get(field)),
+                after.and_then(|v| v.get(field)),
+                &path,
+                agents,
+            );
+        }
+        let prompt_path = format!("{role}.prompt_override");
+        collect_leaf_changes(
+            before.and_then(|v| v.get("prompt_override")),
+            after.and_then(|v| v.get("prompt_override")),
+            &prompt_path,
+            prompt,
+        );
+    }
+}
+
+fn agent_role_order(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::Array(agents)) => agents
+            .iter()
+            .enumerate()
+            .map(|(idx, agent)| {
+                agent
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| idx.to_string())
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn agents_by_role(value: Option<&serde_json::Value>) -> BTreeMap<String, &serde_json::Value> {
+    let mut out = BTreeMap::new();
+    if let Some(serde_json::Value::Array(agents)) = value {
+        for (idx, agent) in agents.iter().enumerate() {
+            let role = agent
+                .get("role")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| idx.to_string());
+            out.insert(role, agent);
+        }
+    }
+    out
+}
+
+fn union_keys<'a>(a: impl Iterator<Item = &'a String>, b: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut keys = BTreeSet::new();
+    keys.extend(a.cloned());
+    keys.extend(b.cloned());
+    keys.into_iter().collect()
+}
+
+fn sorted_keys<'a>(keys: impl Iterator<Item = &'a String>) -> Vec<String> {
+    keys.cloned().collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+fn join_path(parent: &str, child: &str) -> String {
+    if parent.is_empty() {
+        child.to_string()
+    } else {
+        format!("{parent}.{child}")
+    }
+}
+
+fn format_change_compact(change: &FieldChange) -> String {
+    match (&change.before, &change.after) {
+        (None, Some(after)) => format!("+{}={}", change.path, format_json_value(after)),
+        (Some(before), None) => format!("-{}={}", change.path, format_json_value(before)),
+        (Some(before), Some(after)) => format!(
+            "~{}:{}→{}",
+            change.path,
+            format_json_value(before),
+            format_json_value(after)
+        ),
+        (None, None) => change.path.clone(),
+    }
+}
+
+fn format_change_human(change: &FieldChange) -> String {
+    match (&change.before, &change.after) {
+        (None, Some(after)) => format!("+ {} = {}", change.path, format_json_value(after)),
+        (Some(before), None) => format!("- {} = {}", change.path, format_json_value(before)),
+        (Some(before), Some(after)) => format!(
+            "~ {}: {} → {}",
+            change.path,
+            format_json_value(before),
+            format_json_value(after)
+        ),
+        (None, None) => change.path.clone(),
+    }
+}
+
+fn format_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
+    }
+}
+
+fn truncate_for_table(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() && max_chars > 1 {
+        format!("{}…", truncated.chars().take(max_chars - 1).collect::<String>())
+    } else {
+        truncated
+    }
+}
+
+fn display_lineage_status(status: &LineageStatus) -> &'static str {
+    match status {
+        LineageStatus::Active => "kept",
+        LineageStatus::Quarantined => "suspect",
+        LineageStatus::Rejected => "dropped",
+    }
+}
+
+fn print_optimize_diff(out: &OptimizeDiffOutput) {
+    let exp_short = out.experiment_hash.get(..8).unwrap_or(&out.experiment_hash);
+    let parent_short = out.parent_hash.get(..8).unwrap_or(&out.parent_hash);
+    println!(
+        "Experiment {exp_short} ({}, {}) vs parent {parent_short}:",
+        out.status,
+        out.diff.kind()
+    );
+    print_diff_section("Filter", &out.diff.filter);
+    print_diff_section("Risk params", &out.diff.risk_params);
+    print_diff_section("Agent", &out.diff.agents);
+    print_diff_section("Prompt", &out.diff.prompt);
+    if !out.diff.other.is_empty() {
+        print_diff_section("Other", &out.diff.other);
+    }
+}
+
+fn print_diff_section(label: &str, changes: &[FieldChange]) {
+    println!("\n  {label}:");
+    if changes.is_empty() {
+        println!("    (unchanged)");
+    } else {
+        for change in changes {
+            println!("    {}", format_change_human(change));
+        }
+    }
+}
+
+fn print_cycle_detail(detail: &CycleRunDetail, mutation_summaries: &HashMap<String, StrategyMutationDiff>) {
     let s = &detail.summary;
     println!("optimizer cycle: {}", s.cycle_id);
     println!(
@@ -1411,8 +1865,8 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
 
     println!("\nNodes:");
     println!(
-        "  {:<12}  {:<8}  {:<12}  {:<9}  {:<9}  {}",
-        "Experiment", "Status", "Parent", "Day Shrp", "Hold Shrp", "Mutator"
+        "  {:<12}  {:<8}  {:<12}  {:<8}  {:<28}  {:<9}  {:<9}  {}",
+        "Experiment", "Status", "Parent", "Kind", "Summary", "Day Shrp", "Hold Shrp", "Mutator"
     );
     for cn in &detail.nodes {
         let n = &cn.node;
@@ -1424,11 +1878,7 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
             .map(|h| h.to_hex())
             .unwrap_or_else(|| "—".to_string());
         let parent_short = parent.get(..10).unwrap_or(&parent);
-        let status = match n.status {
-            LineageStatus::Active => "kept",
-            LineageStatus::Quarantined => "suspect",
-            LineageStatus::Rejected => "dropped",
-        };
+        let status = display_lineage_status(&n.status);
         let day_sharpe = cn
             .metrics_day
             .as_ref()
@@ -1444,12 +1894,20 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
             .as_ref()
             .map(|p| format!("{}/{}", p.provider, p.model))
             .unwrap_or_else(|| "—".to_string());
+        let mutation = mutation_summaries.get(&exp);
+        let kind = mutation.map(StrategyMutationDiff::kind).unwrap_or("—");
+        let summary = mutation
+            .map(StrategyMutationDiff::summary)
+            .unwrap_or_else(|| "—".to_string());
+        let summary_short = truncate_for_table(&summary, 28);
         println!(
-            "  {exp_short:<12}  {status:<8}  {parent_short:<12}  {day_sharpe:<9}  {hold_sharpe:<9}  {mutator}"
+            "  {exp_short:<12}  {status:<8}  {parent_short:<12}  {kind:<8}  {summary_short:<28}  {day_sharpe:<9}  {hold_sharpe:<9}  {mutator}"
         );
     }
     println!(
-        "\nCandidate strategy JSON: `GET /api/autooptimizer/blob/<experiment-hash>`. \
+        "\nInspect mutations with `xvn optimize diff <experiment-hash>`. \
+         Candidate strategy JSON is also available via dashboard API \
+         `GET /api/autooptimizer/blob/<experiment-hash>` (requires dashboard auth). \
          Full genealogy: `xvn optimize lineage ls --cycle {}`.",
         s.cycle_id
     );
@@ -2346,5 +2804,168 @@ sqlite_url = "sqlite://x.db"
             "default lineage db must be the shared $XVN_HOME/xvn.db (F8 convergence)"
         );
         assert!(default_db.starts_with(&home));
+    }
+
+    #[test]
+    fn mutation_diff_summary_reports_added_filter_leaf() {
+        let parent = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Strategy",
+                "plain_summary": "Minimal filter strategy.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000A",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        let mut child = parent.clone();
+        child["filter"]["max_wakeups_per_day"] = serde_json::json!(3);
+
+        let diff = summarize_strategy_json_diff(&parent, &child);
+
+        assert_eq!(diff.kind(), "filter");
+        assert_eq!(diff.summary(), "+max_wakeups_per_day=3");
+        assert_eq!(diff.filter.len(), 1);
+        assert_eq!(diff.filter[0].path, "max_wakeups_per_day");
+        assert_eq!(diff.filter[0].before, None);
+        assert_eq!(diff.filter[0].after, Some(serde_json::json!(3)));
+    }
+
+    #[test]
+    fn mutation_diff_summary_separates_risk_agent_and_prompt_changes() {
+        let parent = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Apply Test Strategy",
+                "plain_summary": "Minimal strategy.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{
+                "agent_id": "01HZAGENT0000000000000000A",
+                "role": "trader",
+                "prompt_override": "old prompt",
+                "model_override": "provider/old"
+            }],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            }
+        });
+        let mut child = parent.clone();
+        child["risk"]["risk_pct_per_trade"] = serde_json::json!(0.02);
+        child["agents"][0]["prompt_override"] = serde_json::json!("new prompt");
+        child["agents"][0]["model_override"] = serde_json::json!("provider/new");
+
+        let diff = summarize_strategy_json_diff(&parent, &child);
+
+        assert_eq!(diff.kind(), "param");
+        assert_eq!(diff.summary(), "~risk_pct_per_trade:0.01→0.02");
+        assert_eq!(diff.risk_params.len(), 1);
+        assert_eq!(diff.agents.len(), 1);
+        assert_eq!(diff.agents[0].path, "trader.model_override");
+        assert_eq!(diff.prompt.len(), 1);
+        assert_eq!(diff.prompt[0].path, "trader.prompt_override");
+    }
+
+    #[test]
+    fn mutation_diff_summary_reports_agent_order_changes() {
+        let parent = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000B",
+                "display_name": "Ordered Strategy",
+                "plain_summary": "Minimal ordered strategy.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "pipeline": { "kind": "sequential", "edges": [] },
+            "agents": [
+                {"agent_id": "01HZFILTER0000000000000001", "role": "filter"},
+                {"agent_id": "01HZTRADER0000000000000001", "role": "trader"}
+            ],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            }
+        });
+        let mut child = parent.clone();
+        child["agents"] = serde_json::json!([
+            {"agent_id": "01HZTRADER0000000000000001", "role": "trader"},
+            {"agent_id": "01HZFILTER0000000000000001", "role": "filter"}
+        ]);
+
+        let diff = summarize_strategy_json_diff(&parent, &child);
+
+        assert_eq!(diff.kind(), "agent");
+        assert_eq!(diff.agents.len(), 1);
+        assert_eq!(diff.agents[0].path, "agents.order");
+    }
+
+    #[tokio::test]
+    async fn resolve_experiment_hash_accepts_unique_short_prefix() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        ensure_lineage_schema(&pool).await.unwrap();
+        let node = LineageNode {
+            bundle_hash: ContentHash::from_hex(
+                "6db4e6085deb0000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            parent_hash: Some(
+                ContentHash::from_hex("e232fa9900000000000000000000000000000000000000000000000000000000")
+                    .unwrap(),
+            ),
+            gate_verdict: GateVerdict::Pass,
+            status: LineageStatus::Active,
+            cycle_id: Some("cycle-test".to_string()),
+            created_at: Utc::now(),
+            diversity_score: None,
+        };
+        LineageStore::new(pool.clone()).insert(&node).await.unwrap();
+
+        let resolved = resolve_experiment_hash(&pool, "6db4e6085deb").await.unwrap();
+
+        assert_eq!(resolved, node.bundle_hash);
     }
 }
