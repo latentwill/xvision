@@ -55,12 +55,12 @@ pub struct CycleRunSummary {
     pub strategy_id: Option<String>,
 }
 
-/// F35.3: the live (or final) per-cycle cost + token totals, read straight from
-/// the `cycle_cost` row the cycle's background ticker persists every ~10s. Unlike
-/// [`get_cycle_run`], this does **not** require any `lineage_nodes` row to exist
-/// yet — so the Live tab can show climbing spend from the first tick, before the
-/// first candidate commits (the runaway-token case the operator hit). All fields
-/// are `None`/`false` until the first persist (or for a cycle that never ran).
+/// F35.3: the live (or final) per-cycle cost + token totals. Reads the
+/// `cycle_cost` row the cycle's background ticker persists and folds in
+/// optimizer-spawned eval-run `actual_*_tokens` linked from cycle events. The
+/// latter covers sidecar-backed trader decisions whose usage is persisted on
+/// `eval_runs` rather than in the cycle meter. All fields are `None`/`false`
+/// until either source has data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleCost {
     pub cycle_id: String,
@@ -74,12 +74,15 @@ pub struct CycleCost {
     pub recorded: bool,
 }
 
-/// Read the persisted cost/token totals for `cycle_id` directly from
-/// `cycle_cost`, independent of whether any lineage node exists yet. Best-effort:
-/// a missing table or row yields an all-`None`, `recorded: false` record rather
-/// than an error, so the Live-tab poll degrades gracefully.
+/// Read the persisted token/cost totals for `cycle_id`, independent of whether
+/// any lineage node exists yet. Best-effort: a missing table or row yields an
+/// all-`None`, `recorded: false` record rather than an error, so the Live-tab
+/// poll degrades gracefully.
 pub async fn get_cycle_cost(pool: &SqlitePool, cycle_id: &str) -> CycleCost {
-    let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
+    let (cost_usd, cycle_input, cycle_output, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
+    let (eval_input, eval_output) = load_cycle_eval_usage(pool, cycle_id).await;
+    let input_tokens = add_optional_i64(cycle_input, eval_input);
+    let output_tokens = add_optional_i64(cycle_output, eval_output);
     let recorded =
         cost_usd.is_some() || input_tokens.is_some() || output_tokens.is_some() || unpriced_calls.is_some();
     CycleCost {
@@ -172,10 +175,13 @@ pub async fn list_cycle_runs_filtered(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<CycleRunSummary>> {
-    if cycle_ids.is_empty() {
-        return list_cycle_runs_inner(pool, None, limit, offset).await;
-    }
-    list_cycle_runs_inner(pool, Some(cycle_ids), limit, offset).await
+    let mut summaries = if cycle_ids.is_empty() {
+        list_cycle_runs_inner(pool, None, limit, offset).await?
+    } else {
+        list_cycle_runs_inner(pool, Some(cycle_ids), limit, offset).await?
+    };
+    enrich_cycle_summaries_with_eval_usage(pool, &mut summaries).await;
+    Ok(summaries)
 }
 
 async fn list_cycle_runs_inner(
@@ -306,6 +312,76 @@ async fn load_cycle_cost(
     }
 }
 
+fn add_optional_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match (left, right) {
+        (None, None) => None,
+        (left, right) => Some(left.unwrap_or(0).saturating_add(right.unwrap_or(0))),
+    }
+}
+
+async fn enrich_cycle_summaries_with_eval_usage(pool: &SqlitePool, summaries: &mut [CycleRunSummary]) {
+    for summary in summaries {
+        let (eval_input, eval_output) = load_cycle_eval_usage(pool, &summary.cycle_id).await;
+        summary.input_tokens = add_optional_i64(summary.input_tokens, eval_input);
+        summary.output_tokens = add_optional_i64(summary.output_tokens, eval_output);
+    }
+}
+
+/// `(actual_input_tokens, actual_output_tokens)` summed across distinct eval
+/// runs linked to this cycle by `MutationGated.eval_run_id` events. Missing
+/// tables/JSON support degrade to `None`; callers still show the cycle meter.
+async fn load_cycle_eval_usage(pool: &SqlitePool, cycle_id: &str) -> (Option<i64>, Option<i64>) {
+    let run_ids: Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT DISTINCT json_extract(payload_json, '$.eval_run_id') AS eval_run_id \
+         FROM autooptimizer_events \
+         WHERE cycle_id = ? \
+           AND json_extract(payload_json, '$.eval_run_id') IS NOT NULL",
+    )
+    .bind(cycle_id)
+    .fetch_all(pool)
+    .await;
+    let Ok(run_ids) = run_ids else {
+        return (None, None);
+    };
+
+    let mut input_tokens = None;
+    let mut output_tokens = None;
+    for (run_id,) in run_ids {
+        if eval_run_has_model_calls(pool, &run_id).await {
+            continue;
+        }
+        let (run_input, run_output) = load_eval_run_actual_usage(pool, &run_id).await;
+        input_tokens = add_optional_i64(input_tokens, run_input);
+        output_tokens = add_optional_i64(output_tokens, run_output);
+    }
+    (input_tokens, output_tokens)
+}
+
+async fn eval_run_has_model_calls(pool: &SqlitePool, eval_run_id: &str) -> bool {
+    let count: Result<i64, _> = sqlx::query_scalar(
+        "SELECT COUNT(*) \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_one(pool)
+    .await;
+    count.map(|n| n > 0).unwrap_or(false)
+}
+
+async fn load_eval_run_actual_usage(pool: &SqlitePool, eval_run_id: &str) -> (Option<i64>, Option<i64>) {
+    let row: Result<Option<(Option<i64>, Option<i64>)>, _> = sqlx::query_as(
+        "SELECT actual_input_tokens, actual_output_tokens \
+         FROM eval_runs WHERE id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_optional(pool)
+    .await;
+    row.ok().flatten().unwrap_or((None, None))
+}
+
 /// Fetch one cycle's summary + all of its nodes (ordered oldest-first), or
 /// `None` when no node carries that `cycle_id`.
 pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<CycleRunDetail>> {
@@ -343,7 +419,11 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         .filter(|n| matches!(n.status, super::lineage::LineageStatus::Rejected))
         .count() as i64;
     let node_count = nodes.len() as i64;
-    let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
+    let (cost_usd, cycle_input_tokens, cycle_output_tokens, unpriced_calls) =
+        load_cycle_cost(pool, cycle_id).await;
+    let (eval_input_tokens, eval_output_tokens) = load_cycle_eval_usage(pool, cycle_id).await;
+    let input_tokens = add_optional_i64(cycle_input_tokens, eval_input_tokens);
+    let output_tokens = add_optional_i64(cycle_output_tokens, eval_output_tokens);
     let strategy_id = load_cycle_strategy_id(pool, cycle_id).await;
     let summary = CycleRunSummary {
         cycle_id: cycle_id.to_string(),
@@ -628,5 +708,146 @@ mod tests {
             .find(|n| n.node.bundle_hash.to_hex() == hash_active)
             .expect("active node in detail");
         assert!(active_node.regime_results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cycle_token_totals_include_linked_eval_run_actuals() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
+        sqlx::query(
+            "CREATE TABLE autooptimizer_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                cycle_id TEXT,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                ts TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create events");
+        sqlx::query(
+            "CREATE TABLE eval_runs (
+                id TEXT PRIMARY KEY,
+                actual_input_tokens INTEGER,
+                actual_output_tokens INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create eval_runs");
+        for ddl in [
+            "CREATE TABLE agent_runs (id TEXT PRIMARY KEY, eval_run_id TEXT)",
+            "CREATE TABLE spans (id TEXT PRIMARY KEY, run_id TEXT)",
+            "CREATE TABLE model_calls (span_id TEXT)",
+        ] {
+            sqlx::query(ddl)
+                .execute(&pool)
+                .await
+                .expect("create model-call table");
+        }
+
+        let cycle_id = "cycle-token-test";
+        let ts = "2026-01-01T00:00:00Z";
+        let hash = ContentHash::of_bytes(b"token-test").to_hex();
+        sqlx::query(
+            "INSERT INTO lineage_nodes \
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
+             VALUES (?, NULL, 'pass', 'active', ?, ?)",
+        )
+        .bind(&hash)
+        .bind(cycle_id)
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .expect("insert lineage_node");
+        sqlx::query(
+            "INSERT OR REPLACE INTO cycle_cost \
+             (cycle_id, input_tokens, output_tokens, cost_usd, unpriced_calls, created_at) \
+             VALUES (?, 100, 50, 0.001, 0, ?)",
+        )
+        .bind(cycle_id)
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .expect("insert cycle_cost");
+        sqlx::query(
+            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
+             VALUES ('run-token-1', 400, 60)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert eval run");
+        sqlx::query(
+            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
+             VALUES ('run-token-2', 1000, 1000)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert eval run with model calls");
+        sqlx::query("INSERT INTO agent_runs (id, eval_run_id) VALUES ('agent-run-2', 'run-token-2')")
+            .execute(&pool)
+            .await
+            .expect("insert agent run");
+        sqlx::query("INSERT INTO spans (id, run_id) VALUES ('span-2', 'agent-run-2')")
+            .execute(&pool)
+            .await
+            .expect("insert span");
+        sqlx::query("INSERT INTO model_calls (span_id) VALUES ('span-2')")
+            .execute(&pool)
+            .await
+            .expect("insert model call");
+
+        let payload = serde_json::json!({
+            "type": "mutation_gated",
+            "eval_run_id": "run-token-1"
+        })
+        .to_string();
+        for _ in 0..2 {
+            sqlx::query(
+                "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts) \
+                 VALUES ('sess-token', ?, 'mutation_gated', ?, ?)",
+            )
+            .bind(cycle_id)
+            .bind(&payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .expect("insert event");
+        }
+        let model_call_payload = serde_json::json!({
+            "type": "mutation_gated",
+            "eval_run_id": "run-token-2"
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts) \
+             VALUES ('sess-token', ?, 'mutation_gated', ?, ?)",
+        )
+        .bind(cycle_id)
+        .bind(&model_call_payload)
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .expect("insert model-call-backed event");
+
+        let summaries = list_cycle_runs(&pool, 10, 0).await.expect("list cycles");
+        assert_eq!(summaries[0].input_tokens, Some(500));
+        assert_eq!(summaries[0].output_tokens, Some(110));
+
+        let detail = get_cycle_run(&pool, cycle_id)
+            .await
+            .expect("get cycle")
+            .expect("cycle exists");
+        assert_eq!(detail.summary.input_tokens, Some(500));
+        assert_eq!(detail.summary.output_tokens, Some(110));
+
+        let cost = get_cycle_cost(&pool, cycle_id).await;
+        assert!(cost.recorded);
+        assert_eq!(cost.input_tokens, Some(500));
+        assert_eq!(cost.output_tokens, Some(110));
     }
 }
