@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::autooptimizer::progress::CycleProgressEvent;
+use crate::eval::report::aggregate_run_token_totals;
 
 /// Schema-version tag stamped onto every cycle export.
 ///
@@ -122,6 +123,11 @@ pub struct ExperimentSummary {
     /// WS-11b: the persisted eval `Run.id` for this candidate's primary
     /// day-window evaluation, so an agent can drill into that run's trace.
     pub eval_run_id: Option<String>,
+    /// Token usage recorded on the linked eval run, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     /// Judge findings raised against this candidate (severity, code).
     pub judge_findings: Vec<JudgeFindingSummary>,
 }
@@ -224,7 +230,29 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, sqlx::Erro
 /// Build a [`CycleExport`] for `cycle_id` from the given pool.
 pub async fn build_cycle_export(pool: &SqlitePool, cycle_id: &str) -> Result<CycleExport, sqlx::Error> {
     let events = load_cycle_events(pool, cycle_id).await?;
-    Ok(assemble_cycle_export(cycle_id, events))
+    let mut export = assemble_cycle_export(cycle_id, events);
+    hydrate_experiment_usage(pool, &mut export).await;
+    Ok(export)
+}
+
+async fn hydrate_experiment_usage(pool: &SqlitePool, export: &mut CycleExport) {
+    for exp in &mut export.experiments {
+        let Some(run_id) = exp.eval_run_id.as_deref() else {
+            continue;
+        };
+        let totals = aggregate_run_token_totals(pool, run_id).await;
+        exp.input_tokens = totals.input_tokens;
+        exp.output_tokens = totals.output_tokens;
+    }
+}
+
+fn render_tokens(input_tokens: Option<u64>, output_tokens: Option<u64>) -> Option<String> {
+    match (input_tokens, output_tokens) {
+        (None, None) => None,
+        (Some(input), Some(output)) => Some(format!("{input} in / {output} out ({} total)", input + output)),
+        (Some(input), None) => Some(format!("{input} in / — out")),
+        (None, Some(output)) => Some(format!("— in / {output} out")),
+    }
 }
 
 /// Fold a loaded event sequence into a [`CycleExport`]. Public so callers that
@@ -485,6 +513,9 @@ pub fn render_cycle_export_markdown(export: &CycleExport) -> String {
                     let _ = writeln!(out, "- Eval run: —");
                 }
             }
+            if let Some(tokens) = render_tokens(exp.input_tokens, exp.output_tokens) {
+                let _ = writeln!(out, "- Tokens: {tokens}");
+            }
             if !exp.judge_findings.is_empty() {
                 let _ = writeln!(out, "- Reviewer findings:");
                 for f in &exp.judge_findings {
@@ -524,7 +555,25 @@ pub fn render_cycle_export_markdown(export: &CycleExport) -> String {
     let _ = writeln!(out, "## Event timeline");
     let _ = writeln!(out);
     for le in &export.events {
-        let detail = event_detail(&le.event);
+        let mut detail = event_detail(&le.event);
+        if let CycleProgressEvent::MutationGated {
+            eval_run_id: Some(run_id),
+            ..
+        } = &le.event
+        {
+            if let Some(exp) = export
+                .experiments
+                .iter()
+                .find(|exp| exp.eval_run_id.as_deref() == Some(run_id.as_str()))
+            {
+                if let Some(tokens) = render_tokens(exp.input_tokens, exp.output_tokens) {
+                    if !detail.is_empty() {
+                        detail.push_str(" · ");
+                    }
+                    let _ = write!(detail, "tokens {tokens}");
+                }
+            }
+        }
         if detail.is_empty() {
             let _ = writeln!(out, "- **{}**", le.label);
         } else {
@@ -886,6 +935,58 @@ mod tests {
         assert_eq!(export.events.len(), 8);
         assert_eq!(export.experiments.len(), 1);
         assert_eq!(export.experiments[0].eval_run_id.as_deref(), Some("01EVALRUN"));
+    }
+
+    #[tokio::test]
+    async fn build_cycle_export_hydrates_eval_run_tokens() {
+        let pool = open_test_pool().await;
+        sqlx::query(
+            "CREATE TABLE eval_runs (
+                id TEXT PRIMARY KEY,
+                actual_input_tokens INTEGER,
+                actual_output_tokens INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
+             VALUES ('01EVALRUN', 410969, 34665)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for ev in representative_events() {
+            let kind = serde_json::to_value(&ev).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            append_event(
+                &pool,
+                "sess-1",
+                Some("cyc-1"),
+                &kind,
+                &serde_json::to_string(&ev).unwrap(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let export = build_cycle_export(&pool, "cyc-1").await.unwrap();
+        let exp = &export.experiments[0];
+        assert_eq!(exp.input_tokens, Some(410_969));
+        assert_eq!(exp.output_tokens, Some(34_665));
+
+        let md = render_cycle_export_markdown(&export);
+        assert!(
+            md.contains("410969 in / 34665 out (445634 total)"),
+            "missing per-experiment tokens:\n{md}"
+        );
+        assert!(
+            md.contains("tokens 410969 in / 34665 out (445634 total)"),
+            "missing timeline tokens:\n{md}"
+        );
     }
 
     /// An unknown cycle yields an empty export and a graceful "no events"

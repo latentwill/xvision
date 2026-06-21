@@ -1,11 +1,12 @@
 //! Per-run aggregated report — the canonical payload behind
 //! `xvn eval results` / `xvn eval show`.
 //!
-//! This module sums `model_calls.input_token_count`,
-//! `model_calls.output_token_count`, and `model_calls.cost_usd` across all
-//! model calls associated with an eval run (via the observability span
-//! join), and folds in the run-level wall clock derived from
-//! `eval_runs.started_at` / `completed_at`.
+//! This module prefers the per-call `model_calls.input_token_count`,
+//! `model_calls.output_token_count`, and `model_calls.cost_usd` rows associated
+//! with an eval run (via the observability span join). When those rows are
+//! absent, it falls back to `eval_runs.actual_input_tokens` /
+//! `eval_runs.actual_output_tokens`, which are updated directly by the executor
+//! and cover sidecar-backed optimizer evals that do not have linked model calls.
 //!
 //! All token / cost / wall-clock fields are `Option`: a run that failed
 //! before any `model_call` row was written, or a run produced by a
@@ -27,12 +28,10 @@ use crate::eval::store::{DecisionRow, RunStore};
 
 /// Aggregated token + cost figures for one eval run.
 ///
-/// Sourced from the `model_calls` table joined to the run via the
-/// observability span chain (see [`aggregate_run_token_totals`]). The
-/// `cost_estimate_complete` flag tracks whether every contributing
-/// `model_calls.cost_usd` had a non-null value — when `false`, the
-/// reported `cost_usd` is a strict lower bound and the operator should
-/// know.
+/// Sourced from `model_calls` when available, then from the run-level
+/// `eval_runs.actual_*_tokens` columns as a fallback. The
+/// `cost_estimate_complete` flag only describes per-call cost rows; run-level
+/// token fallbacks carry no cost signal and are therefore incomplete.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -40,11 +39,11 @@ use crate::eval::store::{DecisionRow, RunStore};
 )]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct RunTokenTotals {
-    /// Sum of `model_calls.input_token_count` across the run.
-    /// `None` when no model_calls landed for this run.
+    /// Sum of `model_calls.input_token_count` across the run, or
+    /// `eval_runs.actual_input_tokens` when no model calls landed for this run.
     pub input_tokens: Option<u64>,
-    /// Sum of `model_calls.output_token_count` across the run.
-    /// `None` when no model_calls landed for this run.
+    /// Sum of `model_calls.output_token_count` across the run, or
+    /// `eval_runs.actual_output_tokens` when no model calls landed for this run.
     pub output_tokens: Option<u64>,
     /// Sum of `model_calls.cost_usd`. `None` when every contributing row
     /// had `cost_usd = NULL`, or no model_calls landed at all.
@@ -77,15 +76,15 @@ pub fn wall_clock_ms(started_at: DateTime<Utc>, completed_at: Option<DateTime<Ut
     Some(delta as u64)
 }
 
-/// Sum tokens + cost across every `model_calls` row belonging to the
-/// given eval run.
+/// Sum tokens + cost for the given eval run.
 ///
-/// Join path (mirrors [`crate::eval::cost::aggregate_eval_run_inference_cost`]):
+/// The primary source is the observability join path (mirrors
+/// [`crate::eval::cost::aggregate_eval_run_inference_cost`]):
 /// `eval_runs.id → agent_runs.eval_run_id → spans.run_id → model_calls.span_id`.
 ///
-/// Returns `RunTokenTotals::default()` (all `None`, `model_call_count = 0`)
-/// when the join chain yields zero rows — i.e. the run produced no model
-/// calls, or the observability tables aren't populated for this run.
+/// If that join yields zero rows, fall back to `eval_runs.actual_*_tokens`.
+/// Optimizer-spawned evals routed through the sidecar persist those columns even
+/// when their provider calls are not linked into `model_calls`.
 pub async fn aggregate_run_token_totals(pool: &SqlitePool, eval_run_id: &str) -> RunTokenTotals {
     let row: Result<Option<(Option<i64>, Option<i64>, Option<f64>, i64, i64)>, _> = sqlx::query_as(
         "SELECT \
@@ -104,11 +103,11 @@ pub async fn aggregate_run_token_totals(pool: &SqlitePool, eval_run_id: &str) ->
     .await;
 
     let Ok(Some((sum_in, sum_out, sum_cost, null_cost_rows, rows))) = row else {
-        return RunTokenTotals::default();
+        return aggregate_run_actual_tokens(pool, eval_run_id).await;
     };
 
     if rows <= 0 {
-        return RunTokenTotals::default();
+        return aggregate_run_actual_tokens(pool, eval_run_id).await;
     }
 
     let input_tokens = sum_in.and_then(|n| u64::try_from(n).ok());
@@ -125,6 +124,31 @@ pub async fn aggregate_run_token_totals(pool: &SqlitePool, eval_run_id: &str) ->
         cost_usd_estimate,
         cost_estimate_complete,
         model_call_count: rows as u64,
+    }
+}
+
+async fn aggregate_run_actual_tokens(pool: &SqlitePool, eval_run_id: &str) -> RunTokenTotals {
+    let row: Result<Option<(Option<i64>, Option<i64>)>, _> = sqlx::query_as(
+        "SELECT actual_input_tokens, actual_output_tokens \
+         FROM eval_runs WHERE id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_optional(pool)
+    .await;
+
+    let Ok(Some((actual_input, actual_output))) = row else {
+        return RunTokenTotals::default();
+    };
+    if actual_input.is_none() && actual_output.is_none() {
+        return RunTokenTotals::default();
+    }
+
+    RunTokenTotals {
+        input_tokens: actual_input.and_then(|n| u64::try_from(n).ok()),
+        output_tokens: actual_output.and_then(|n| u64::try_from(n).ok()),
+        cost_usd_estimate: None,
+        cost_estimate_complete: false,
+        model_call_count: 0,
     }
 }
 
@@ -212,5 +236,35 @@ mod tests {
         let started = Utc::now();
         let completed = started - Duration::milliseconds(500);
         assert_eq!(wall_clock_ms(started, Some(completed)), None);
+    }
+
+    #[tokio::test]
+    async fn aggregate_run_token_totals_falls_back_to_eval_run_actuals() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE eval_runs (
+                id TEXT PRIMARY KEY,
+                actual_input_tokens INTEGER,
+                actual_output_tokens INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens)
+             VALUES ('run-1', 410969, 34665)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let totals = aggregate_run_token_totals(&pool, "run-1").await;
+
+        assert_eq!(totals.input_tokens, Some(410_969));
+        assert_eq!(totals.output_tokens, Some(34_665));
+        assert_eq!(totals.cost_usd_estimate, None);
+        assert!(!totals.cost_estimate_complete);
+        assert_eq!(totals.model_call_count, 0);
     }
 }

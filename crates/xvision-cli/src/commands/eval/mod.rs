@@ -1646,19 +1646,15 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
 
 /// Render the live token/cost segment appended to the watch status line.
 ///
-/// `model_call_count == 0` means "no signal" (nothing landed yet, or a
-/// pre-observability run) — rendered as `n/a` for all three fields so an
-/// operator can tell it apart from a genuine zero. Otherwise each numeric
-/// field falls back to `n/a` if its `Option` is `None`, and the cost carries
-/// a trailing `*` when the estimate is incomplete (a lower bound), matching
-/// the asterisk convention in `eval/compare_format.rs`.
-///
-/// Note: per-field `n/a` can also appear with `model_call_count > 0` when
-/// model calls landed but the provider did not report token/cost counts (the
-/// underlying columns are nullable). The `--json` surface disambiguates via
-/// `model_call_count`.
+/// `model_call_count == 0` with no token values means "no signal" (nothing
+/// landed yet, or a pre-observability run) — rendered as `n/a` for all three
+/// fields so an operator can tell it apart from a genuine zero. If run-level
+/// fallback token values exist without model calls, they are still rendered.
+/// Otherwise each numeric field falls back to `n/a` if its `Option` is `None`,
+/// and the cost carries a trailing `*` when the estimate is incomplete (a lower
+/// bound), matching the asterisk convention in `eval/compare_format.rs`.
 fn render_tokens_segment(tokens: &RunTokenTotals) -> String {
-    if tokens.model_call_count == 0 {
+    if tokens.model_call_count == 0 && tokens.input_tokens.is_none() && tokens.output_tokens.is_none() {
         return "\ttokens_in=n/a\ttokens_out=n/a\tcost=n/a".to_string();
     }
     let in_s = tokens
@@ -2997,6 +2993,21 @@ mod tests {
         let line = render_run_status_line(&sample_run(), &tokens);
         assert!(line.contains("tokens_in=n/a"), "line: {line}");
         assert!(line.contains("tokens_out=n/a"), "line: {line}");
+        assert!(line.contains("cost=n/a"), "line: {line}");
+    }
+
+    #[test]
+    fn status_line_fallback_tokens_render_without_model_calls() {
+        let tokens = RunTokenTotals {
+            input_tokens: Some(410_969),
+            output_tokens: Some(34_665),
+            cost_usd_estimate: None,
+            cost_estimate_complete: false,
+            model_call_count: 0,
+        };
+        let line = render_run_status_line(&sample_run(), &tokens);
+        assert!(line.contains("tokens_in=410969"), "line: {line}");
+        assert!(line.contains("tokens_out=34665"), "line: {line}");
         assert!(line.contains("cost=n/a"), "line: {line}");
     }
 
