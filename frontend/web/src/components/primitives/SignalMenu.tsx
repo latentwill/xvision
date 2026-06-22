@@ -15,7 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { Icon, type IconName } from "./Icon";
 
 // ─── Floating position hook ───────────────────────────────────────────────────
@@ -347,6 +347,202 @@ export function SignalSelectMenu({
             </button>
           );
         })}
+      </MenuShell>
+    </>
+  );
+}
+
+// ─── SignalSearchableSelectMenu ───────────────────────────────────────────────
+// Searchable single-select dropdown for entity pickers with larger option sets.
+
+export interface SearchableSelectOption {
+  value: string;
+  label: string;
+  meta?: string;
+  searchText?: string;
+  disabled?: boolean;
+  group?: string;
+}
+
+export interface SignalSearchableSelectMenuProps {
+  label?: string;
+  ariaLabel: string;
+  value: string;
+  options: SearchableSelectOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyHint?: string;
+  loading?: boolean;
+  disabled?: boolean;
+  align?: "left" | "right";
+  className?: string;
+  minWidth?: number;
+}
+
+export function SignalSearchableSelectMenu({
+  label,
+  ariaLabel,
+  value,
+  options,
+  onChange,
+  placeholder = "Select…",
+  searchPlaceholder,
+  emptyHint = "No options match",
+  loading = false,
+  disabled = false,
+  align = "left",
+  className,
+  minWidth = 280,
+}: SignalSearchableSelectMenuProps) {
+  const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const selected = options.find((option) => option.value === value);
+  const normalized = query.trim().toLowerCase();
+  const filtered = normalized
+    ? options.filter((option) =>
+        (option.searchText ?? `${option.label} ${option.meta ?? ""} ${option.value}`)
+          .toLowerCase()
+          .includes(normalized),
+      )
+    : options;
+  const enabled = filtered.filter((option) => !option.disabled);
+  const listboxId = `signal-searchable-${ariaLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-listbox`;
+
+  useEffect(() => {
+    if (open) {
+      window.requestAnimationFrame(() => filterRef.current?.focus());
+    } else {
+      setQuery("");
+      setActiveIndex(-1);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [query]);
+
+  function choose(option: SearchableSelectOption | undefined) {
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    setOpen(false);
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!open) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, Math.max(enabled.length - 1, 0)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      choose(enabled[activeIndex] ?? enabled[0]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled || loading}
+        onClick={toggle}
+        onKeyDown={onKeyDown}
+        className={[
+          "inline-flex h-8 min-w-0 items-center gap-1.5 rounded-sm border border-border bg-surface-elev px-2.5 text-[12.5px] text-text transition-colors",
+          "hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          className ?? "",
+        ].join(" ")}
+      >
+        {label ? (
+          <span className="text-[11.5px] tracking-wide text-text-3">
+            {label}
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate text-left font-mono text-[12px]">
+          {loading ? "Loading…" : selected?.label ?? placeholder}
+        </span>
+        <Icon name="chevR" size={11} className="text-text-3" />
+      </button>
+      <MenuShell
+        open={open}
+        menuRef={menuRef as RefObject<HTMLDivElement>}
+        pos={pos}
+        minWidth={minWidth}
+        role="menu"
+      >
+        <div className="border-b border-border px-2 pb-1 pt-2">
+          <div className="flex h-8 items-center gap-2 rounded-sm border border-border bg-surface-elev px-2 focus-within:border-gold-soft">
+            <Icon name="search" size={13} className="shrink-0 text-text-3" />
+            <input
+              ref={filterRef}
+              type="text"
+              aria-label={`Search ${ariaLabel}`}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={searchPlaceholder ?? `Search ${ariaLabel.toLowerCase()}…`}
+              spellCheck={false}
+              className="min-w-0 flex-1 border-none bg-transparent p-0 font-mono text-[12px] text-text outline-none placeholder:text-text-3"
+            />
+          </div>
+        </div>
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label={`${ariaLabel} options`}
+          className="max-h-[320px] overflow-y-auto py-1"
+        >
+          {filtered.length === 0 ? (
+            <div className="px-3 py-3 font-mono text-[12px] text-text-3">
+              {emptyHint}
+            </div>
+          ) : (
+            filtered.map((option) => {
+              const isSelected = option.value === value;
+              const enabledIndex = enabled.findIndex((item) => item.value === option.value);
+              const isActive = enabledIndex >= 0 && enabledIndex === activeIndex;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={option.disabled}
+                  onMouseEnter={() => setActiveIndex(enabledIndex)}
+                  onClick={() => choose(option)}
+                  className={[
+                    "flex min-h-[34px] w-full items-center gap-2 px-3 text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    isSelected ? "bg-gold/10" : isActive ? "bg-surface-hover" : "hover:bg-surface-hover",
+                  ].join(" ")}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-text">{option.label}</span>
+                    {option.meta ? (
+                      <span className="block truncate font-mono text-[11px] text-text-3">
+                        {option.meta}
+                      </span>
+                    ) : null}
+                  </span>
+                  {isSelected ? (
+                    <Icon name="check" size={12} className="shrink-0 text-gold" />
+                  ) : null}
+                </button>
+              );
+            })
+          )}
+        </div>
       </MenuShell>
     </>
   );
