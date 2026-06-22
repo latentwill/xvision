@@ -54,7 +54,6 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
       start: "2025-01-01T00:00:00Z",
       end: "2025-01-11T00:00:00Z",
     },
-    granularity: "4h",
     timezone: "UTC",
     calendar: "Continuous24x7",
     data_source: { type: "AlpacaHistorical", feed: null, adjustment: "Raw" },
@@ -233,7 +232,6 @@ describe("ScenariosRoute", () => {
         scenario({
           id: "b",
           display_name: "ETH 1h",
-          granularity: "1h",
         }),
       ],
       total: 2,

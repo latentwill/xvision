@@ -14,6 +14,7 @@ use anyhow::{bail, Result};
 use clap::Args;
 
 use xvision_core::Capital;
+use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::eval::{self, EvalRunRequest, RunTrajectoryMode};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
@@ -118,6 +119,7 @@ pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
         bar_limit: args.bar_limit,
         decision_limit: args.decision_limit,
         time_limit_secs: args.time_limit_secs,
+        trade_limit: None,
     };
 
     // Derive a clean AssetRef from the `--asset` value.
@@ -139,6 +141,7 @@ pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
         },
         broker_creds_ref: args.venue.clone(),
         stop_policy,
+        granularity: BarGranularity::Minute1,
         venue_label,
         warmup_bars: Some(args.warmup_bars),
         safety_limits: None,

@@ -1,7 +1,8 @@
-//! Scenario — a frozen evaluation context (asset window, venue settings,
+//! Scenario — a frozen evaluation context (date window, venue settings,
 //! replay mode, lineage). Properties of the world, not the agent — capital
 //! lives on `Scenario` (a per-run envelope; strategy-level risk lives on
-//! `Strategy` via `strategies::risk::RiskConfig`).
+//! `Strategy` via `strategies::risk::RiskConfig`). Scenario cadence/timeframe
+//! is intentionally not stored here; strategies own decision cadence.
 //!
 //! The seeding logic for canonical scenarios will move to a separate
 //! `scenario_seed.rs` in Task 6. Until then, `canonical_scenarios()` here
@@ -40,8 +41,6 @@ pub struct Scenario {
     pub asset_class: AssetClass,
     pub quote_currency: QuoteCurrency,
     pub time_window: TimeWindow,
-    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
-    pub granularity: BarGranularity,
     pub timezone: String,
     pub calendar: CalendarRef,
 
@@ -145,7 +144,6 @@ mod warmup_bars_tests {
                 "start": "2025-01-01T00:00:00Z",
                 "end": "2025-01-02T00:00:00Z"
             },
-            "granularity": "1Hour",
             "timezone": "UTC",
             "calendar": "Continuous24x7",
             "data_source": {"type": "AlpacaHistorical", "feed": null, "adjustment": "Raw"},
@@ -199,7 +197,6 @@ mod warmup_bars_tests {
                 start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
                 end: Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap(),
             },
-            granularity: BarGranularity::Hour1,
             timezone: "UTC".into(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {
@@ -311,7 +308,7 @@ impl Scenario {
         DataManifest {
             feed,
             adjustment,
-            timeframe: format!("{:?}", self.granularity),
+            timeframe: String::new(),
             session_filter: SessionFilter::All,
             calendar: calendar_str,
             timezone: self.timezone.clone(),
@@ -877,7 +874,6 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
             asset_class: AssetClass::Crypto,
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
-            granularity: BarGranularity::Hour1,
             timezone: "UTC".into(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {

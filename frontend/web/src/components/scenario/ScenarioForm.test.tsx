@@ -27,7 +27,7 @@ function withDateRange(
 }
 
 describe("ScenarioForm", () => {
-  it("submits with the hard-coded 1h granularity default when none supplied", () => {
+  it("does not submit scenario granularity", () => {
     const onSubmit = vi.fn();
     const onDraftChange = vi.fn();
 
@@ -47,7 +47,6 @@ describe("ScenarioForm", () => {
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         display_name: "ETH default",
-        granularity: "1h",
       } satisfies Partial<CreateScenarioRequest>),
     );
     expect(onDraftChange).toHaveBeenLastCalledWith(
@@ -55,33 +54,6 @@ describe("ScenarioForm", () => {
     );
   });
 
-  it("passes a supported `initial.granularity` through to submit", () => {
-    const onSubmit = vi.fn();
-    const onDraftChange = vi.fn();
-
-    render(
-      <ScenarioForm
-        onSubmit={onSubmit}
-        onDraftChange={onDraftChange}
-        initial={{ ...withDateRange(), granularity: "15m" } as Partial<CreateScenarioRequest>}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "ETH 15m range" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
-
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        display_name: "ETH 15m range",
-        granularity: "15m",
-      } satisfies Partial<CreateScenarioRequest>),
-    );
-    expect(onDraftChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ granularity: "15m" }),
-    );
-  });
 
   it("submits a typed tag draft without requiring Enter", () => {
     const onSubmit = vi.fn();
@@ -117,28 +89,25 @@ describe("ScenarioForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "Hour4",
-    "2mo",
-    "garbage",
-    "",
-  ])(
-    "coerces unsupported initial granularity %s to the 1h default on submit",
-    (bad) => {
-      const onSubmit = vi.fn();
-      render(
-        <ScenarioForm
-          onSubmit={onSubmit}
-          initial={{ ...withDateRange(), granularity: bad } as Partial<CreateScenarioRequest>}
-        />,
-      );
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "x" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create →" }));
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ granularity: "1h" }),
-      );
-    },
-  );
+  it("keeps draft granularity only for previews", () => {
+    const onSubmit = vi.fn();
+    const onDraftChange = vi.fn();
+    render(
+      <ScenarioForm
+        onSubmit={onSubmit}
+        onDraftChange={onDraftChange}
+        initial={withDateRange()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ granularity: expect.anything() }),
+    );
+    expect(onDraftChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ granularity: "1h" }),
+    );
+  });
 
   it("does not render a user-facing granularity control", () => {
     render(<ScenarioForm onSubmit={vi.fn()} />);

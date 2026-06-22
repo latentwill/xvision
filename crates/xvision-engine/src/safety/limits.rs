@@ -32,6 +32,9 @@ pub struct SafetyLimits {
     /// Breach triggers a circuit-breaker abort. `None` = no cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_loss_pct: Option<f64>,
+    /// Maximum drawdown in USD from peak equity. `None` = no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_drawdown_usd: Option<f64>,
 }
 
 impl SafetyLimits {
@@ -40,6 +43,7 @@ impl SafetyLimits {
             && self.max_order_count.is_none()
             && self.max_leverage.is_none()
             && self.max_loss_pct.is_none()
+            && self.max_drawdown_usd.is_none()
     }
 }
 
@@ -169,5 +173,12 @@ mod tests {
         };
         let breach = limits.check(&high).unwrap();
         assert_eq!(breach.kind, "loss_pct");
+    }
+
+    #[test]
+    fn max_drawdown_usd_defaults_to_none() {
+        let limits = SafetyLimits::default();
+        assert!(limits.max_drawdown_usd.is_none());
+        assert!(limits.is_empty());
     }
 }

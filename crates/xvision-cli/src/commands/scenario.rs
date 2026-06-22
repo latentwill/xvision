@@ -1,12 +1,11 @@
 //! `xvn scenario` — scenario authoring: create / ls / show / clone / archive / rm / tree.
 //!
 //! Also exposes `xvn scenario select` — a **stateless** selector that filters
-//! the scenario library by timeframe and decision-count proximity so
-//! agents can pick a comparable set without hand-picking IDs. Scenarios are
-//! asset-free; asset-universe selection lives at the run layer.
+//! the scenario library by strategy timeframe, decision-count proximity, and
+//! regime. Scenarios are asset-free date ranges; asset-universe and timeframe
+//! selection live at the run/strategy layer.
 
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use chrono::NaiveDate;
 use clap::{Args, Subcommand, ValueEnum};
@@ -16,9 +15,9 @@ use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::regime::derive_regime_labels;
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarGranularity, CalendarRef, Capital, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource,
-    SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel, LimitOrderFill,
+    MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue,
+    VenueSettings,
 };
 use xvision_engine::eval::scenario_store;
 
@@ -104,9 +103,9 @@ pub enum ScenarioOp {
     /// Use --card (required) to request the card layout; other formats will be
     /// added later without breaking this layout commitment.
     Inspect(InspectArgs),
-    /// Select a comparable set of scenarios by timeframe and decision
-    /// count. Purely a read-only query — nothing is created or mutated.
-    /// Scenarios are asset-free; asset-universe selection lives at the run layer.
+    /// Select a comparable set of scenarios by decision count and regime.
+    /// Purely a read-only query — nothing is created or mutated. `--timeframe`
+    /// is the strategy timeframe used for decision-count math.
     ///
     /// Examples:
     ///   xvn scenario select --timeframe 4h --target-decisions 49 --count 4
@@ -150,10 +149,6 @@ pub struct CreateArgs {
     /// Window end date (YYYY-MM-DD, UTC midnight).
     #[arg(long)]
     pub to: NaiveDate,
-    /// Bar granularity. Supports Alpaca bars:
-    /// 1-59m, 1-23h, 1d, 1w, 1/2/3/4/6/12mo.
-    #[arg(long, default_value = "1h")]
-    pub granularity: String,
     /// Venue (only `alpaca` in v1).
     #[arg(long, default_value = "alpaca")]
     pub venue: String,
@@ -286,9 +281,8 @@ pub struct InspectArgs {
 /// (see code comment in `run_select` for deferral rationale).
 #[derive(Args, Debug)]
 pub struct SelectArgs {
-    /// Bar granularity / timeframe filter (e.g. `4h`, `1h`, `1d`).
-    /// Maps to `decision_cadence_minutes`; see `parse_timeframe_minutes`.
-    /// If omitted, all timeframes are considered.
+    /// Strategy timeframe used to compute decision counts (e.g. `4h`, `1h`, `1d`).
+    /// If omitted, decision counts are computed at 1h.
     #[arg(long)]
     pub timeframe: Option<String>,
 
@@ -323,7 +317,7 @@ pub struct SelectArgs {
     #[arg(long, default_value_t = 4)]
     pub count: usize,
 
-    /// Emit output as a JSON array of `{id, name, timeframe, decision_count}`.
+    /// Emit output as a JSON array of `{id, name, decision_count}`.
     /// Alias for `--format json-compact`. Explicit `--format` wins.
     #[arg(long)]
     pub json: bool,
@@ -435,9 +429,6 @@ async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> 
         .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))
 }
 
-fn parse_granularity(s: &str) -> CliResult<BarGranularity> {
-    BarGranularity::from_str(s).map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))
-}
 
 fn parse_slippage(s: &str) -> CliResult<SlippageModel> {
     if let Some(bps_str) = s.strip_prefix("linear:") {
@@ -484,7 +475,6 @@ fn scenario_to_create_request(s: &Scenario) -> api_scenario::CreateScenarioReque
         quote_currency: s.quote_currency,
         time_window: s.time_window.clone(),
         capital: s.capital.clone(),
-        granularity: s.granularity,
         timezone: s.timezone.clone(),
         calendar: s.calendar.clone(),
         venue: s.venue.clone(),
@@ -540,7 +530,6 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    let granularity = parse_granularity(&a.granularity)?;
     let slippage = parse_slippage(&a.slippage)?;
     let venue = parse_venue(&a.venue)?;
 
@@ -562,7 +551,6 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 .and_utc(),
         },
         capital: Capital::default(),
-        granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         venue: VenueSettings {
@@ -719,7 +707,6 @@ async fn run_clone(ctx: &ApiContext, a: CloneArgs) -> CliResult<()> {
         display_name: a.name,
         time_window,
         description: None,
-        granularity: None,
         venue: None,
         tags: None,
         notes: None,
@@ -852,20 +839,12 @@ pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_p
     out.push_str(&format!("id: {}\n", s.id));
     out.push_str(&format!("name: {}\n", s.display_name));
     out.push_str(&format!("quote_currency: {}\n", quote));
-    out.push_str(&format!("timeframe: {}\n", s.granularity));
     out.push_str(&format!(
         "date_window: {}..{}\n",
         s.time_window.start.format("%Y-%m-%d"),
         s.time_window.end.format("%Y-%m-%d"),
     ));
     out.push_str(&format!("warmup_bars: {}\n", s.warmup_bars));
-
-    // decision_bars: derive from the scenario window duration ÷ granularity.
-    // Warmup bars are pre-window context, not decision opportunities.
-    let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
-    let bar_secs = s.granularity.seconds();
-    let decision_bars = if bar_secs > 0 { window_secs / bar_secs } else { 0 };
-    out.push_str(&format!("decision_bars: {}\n", decision_bars));
 
     if let Some(parent_id) = &s.parent_scenario_id {
         out.push_str(&format!("source: cloned_from {}\n", parent_id));
@@ -953,15 +932,13 @@ async fn run_inspect(ctx: &ApiContext, a: InspectArgs) -> CliResult<()> {
 
 // ---- scenario select --------------------------------------------------------
 
-/// Compute the decision bar count for a scenario.
+/// Compute the decision bar count for a scenario at a caller-supplied timeframe.
 ///
-/// Uses the same formula as `format_inspect_card`: total bars in the scenario
-/// window. `warmup_bars` are pre-window context and do not reduce decision
-/// opportunities. Returns 0 when bar granularity has no duration (should never
-/// happen for valid scenarios).
-pub fn scenario_decision_count(s: &Scenario) -> u64 {
+/// `warmup_bars` are pre-window context and do not reduce decision
+/// opportunities.
+pub fn scenario_decision_count(s: &Scenario, timeframe_minutes: u32) -> u64 {
     let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
-    let bar_secs = s.granularity.seconds();
+    let bar_secs = u64::from(timeframe_minutes) * 60;
     if bar_secs == 0 {
         return 0;
     }
@@ -981,100 +958,60 @@ pub fn scenario_regime_labels(s: &Scenario) -> Vec<String> {
 pub struct SelectRow {
     pub id: String,
     pub name: String,
-    pub timeframe: String,
     pub decision_count: u64,
 }
 
 /// Pure selection logic — takes a pre-fetched scenario list and applies
-/// timeframe / regime / decision-count filters plus the cap. Scenarios are
-/// asset-free; asset-universe selection now lives at the run layer, so this
-/// no longer filters by asset.
+/// regime / decision-count filters plus the cap at the caller-supplied
+/// strategy timeframe.
 ///
 /// Exposed as `pub` so unit tests can call it directly without a live DB.
 pub fn select_scenarios(
     scenarios: &[Scenario],
-    timeframe_minutes: Option<u32>,
+    timeframe_minutes: u32,
     regimes: &[String],
     target_decisions: Option<u64>,
     same_decisions: bool,
     max_decisions: Option<u64>,
     count: usize,
 ) -> Result<Vec<SelectRow>, String> {
-    // ── 1. Pre-filter by timeframe / regime ───────────────────────────────
-
     let mut candidates: Vec<&Scenario> = scenarios
         .iter()
         .filter(|s| {
-            // Timeframe filter: granularity.seconds() / 60 == timeframe_minutes.
-            if let Some(tf_min) = timeframe_minutes {
-                let bar_min = (s.granularity.seconds() / 60) as u32;
-                if bar_min != tf_min {
-                    return false;
-                }
-            }
-
-            // Regime filter: match against the first-class `regime_label`
-            // column (migration 021) when the column is populated; fall back
-            // to `regime:<label>` tag prefix match only when the column is
-            // NULL (scenario pre-dates migration 021 or hasn't been classified).
-            // OR semantics within a scenario.
             if !regimes.is_empty() {
                 let matched = if let Some(ref col_label) = s.regime_label {
-                    // Column is set → use ONLY the column (authoritative).
                     regimes
                         .iter()
                         .any(|want| col_label.eq_ignore_ascii_case(want) || col_label.contains(want.as_str()))
                 } else {
-                    // Column is NULL → fall back to tag prefix match so
-                    // wave-B scenarios (and any hand-tagged scenarios) keep
-                    // working without needing to run `xvn scenario classify`.
                     let labels = scenario_regime_labels(s);
                     regimes.iter().any(|want| {
-                        labels.iter().any(|l| {
-                            // Accept "bull" matching "trending_bull" (prefix / substring).
-                            l.eq_ignore_ascii_case(want) || l.contains(want.as_str())
-                        })
+                        labels
+                            .iter()
+                            .any(|l| l.eq_ignore_ascii_case(want) || l.contains(want.as_str()))
                     })
                 };
                 if !matched {
                     return false;
                 }
             }
-
             true
         })
         .collect();
 
-    // ── 2. Decision-count mode ────────────────────────────────────────────
-
     let target_count: u64 = if same_decisions {
-        // Mode B: find the largest common decision count ≤ max_decisions
-        // across the candidate set.
-        //
-        // Auto-clone to normalise decision counts is DEFERRED.  The blast
-        // radius of creating new scenario rows during a read-only `select`
-        // call is too broad for this track (requires user confirmation and
-        // a fresh display_name).  Track #12 (`scenario-regime-labels`) or a
-        // dedicated `scenario normalise` verb should add this.  For now we
-        // return only scenarios that already share the target count, and emit
-        // an informational note when the set has to be further trimmed.
         let max = max_decisions.unwrap_or(u64::MAX);
         let counts: Vec<u64> = candidates
             .iter()
-            .map(|s| scenario_decision_count(s))
+            .map(|s| scenario_decision_count(s, timeframe_minutes))
             .filter(|&c| c <= max)
             .collect();
 
-        // Find the largest count that appears at least `count` times, or the
-        // largest count that appears at least once if no count meets the
-        // threshold.
         let mut count_freq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
         for c in &counts {
             *count_freq.entry(*c).or_insert(0) += 1;
         }
 
-        // Prefer the largest count with freq ≥ requested count; fall back to
-        // the global max.
         let best = count_freq
             .iter()
             .filter(|(_, &freq)| freq >= count)
@@ -1084,39 +1021,27 @@ pub fn select_scenarios(
 
         match best {
             Some(c) => c,
-            None => {
-                // No candidates at all — return empty.
-                return Ok(vec![]);
-            }
+            None => return Ok(vec![]),
         }
     } else if let Some(t) = target_decisions {
         t
     } else {
-        // No decision-count filter: keep all candidates (use 0 as sentinel,
-        // filtered out below).
         0
     };
 
-    // ── 3. Decision-count tolerance filter ───────────────────────────────
-
     if same_decisions {
-        // Mode B: keep only exact matches to the common count.
-        candidates.retain(|s| scenario_decision_count(s) == target_count);
+        candidates.retain(|s| scenario_decision_count(s, timeframe_minutes) == target_count);
     } else if let Some(t) = target_decisions {
-        // Mode A: ±10 % tolerance.
         let lo = (t as f64 * 0.9).floor() as u64;
         let hi = (t as f64 * 1.1).ceil() as u64;
         candidates.retain(|s| {
-            let dc = scenario_decision_count(s);
+            let dc = scenario_decision_count(s, timeframe_minutes);
             dc >= lo && dc <= hi
         });
     }
 
-    // ── 4. Cap at `count`, by closeness to target ─────────────────────────
-
-    // Sort by closeness to target_count (0 when no target → stable order).
     candidates.sort_by_key(|s| {
-        let dc = scenario_decision_count(s);
+        let dc = scenario_decision_count(s, timeframe_minutes);
         if target_decisions.is_some() || same_decisions {
             (dc as i64 - target_count as i64).unsigned_abs()
         } else {
@@ -1124,19 +1049,13 @@ pub fn select_scenarios(
         }
     });
 
-    // Scenarios are asset-free, so there is no longer a one-per-asset
-    // preference — selection is purely by decision-count closeness.
-    let selected: Vec<&Scenario> = candidates.into_iter().take(count).collect();
-
-    // ── 5. Build output rows ──────────────────────────────────────────────
-
-    let rows = selected
+    let rows = candidates
         .into_iter()
+        .take(count)
         .map(|s| SelectRow {
             id: s.id.clone(),
             name: s.display_name.clone(),
-            timeframe: s.granularity.to_string(),
-            decision_count: scenario_decision_count(s),
+            decision_count: scenario_decision_count(s, timeframe_minutes),
         })
         .collect();
 
@@ -1144,7 +1063,6 @@ pub fn select_scenarios(
 }
 
 async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
-    // Parse optional timeframe → minutes.
     let timeframe_minutes = a
         .timeframe
         .as_deref()
@@ -1152,16 +1070,15 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
             crate::commands::strategy::parse_timeframe_minutes(tf)
                 .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))
         })
-        .transpose()?;
+        .transpose()?
+        .unwrap_or(60);
 
-    // Validate that at least one selection mode is active.
     if a.target_decisions.is_none() && !a.same_decisions {
         return Err(CliError::usage(anyhow::anyhow!(
             "specify either --target-decisions <N> (Mode A) or --same-decisions --max-decisions <N> (Mode B)"
         )));
     }
 
-    // Fetch all non-archived scenarios.
     let all = api_scenario::list(
         ctx,
         api_scenario::ListScenariosFilter {
@@ -1186,7 +1103,6 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
     )
     .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
 
-    // Resolve effective format: explicit --format wins; --json is alias for json-compact.
     let effective_format = match a.format {
         Some(fmt) => fmt,
         None if a.json => ListFormat::JsonCompact,
@@ -1199,21 +1115,14 @@ async fn run_select(ctx: &ApiContext, a: SelectArgs) -> CliResult<()> {
         ListFormat::Table => {}
     }
 
-    // Plain-text table.
     if rows.is_empty() {
         println!("(no matching scenarios)");
         return Ok(());
     }
 
-    println!(
-        "{:<30}  {:<40}  {:<8}  {}",
-        "ID", "NAME", "TIMEFRAME", "DECISIONS"
-    );
+    println!("{:<30}  {:<40}  {}", "ID", "NAME", "DECISIONS");
     for r in &rows {
-        println!(
-            "{:<30}  {:<40}  {:<8}  {}",
-            r.id, r.name, r.timeframe, r.decision_count
-        );
+        println!("{:<30}  {:<40}  {}", r.id, r.name, r.decision_count);
     }
 
     Ok(())
@@ -1264,19 +1173,24 @@ async fn classify_one(ctx: &ApiContext, id: &str, force: bool, dry_run: bool) ->
         return Ok(false);
     }
 
-    // Try to load bars from cache; if not cached, skip gracefully. Scenarios
-    // are asset-free and the bar cache is keyed by `cache_key` alone
-    // (asset-independent via `compute_scenario_cache_key`), so `asset_pair`
-    // here is only the symbol used on a live-fetch miss — which classify never
-    // performs (it skips when bars are absent). A placeholder is sufficient.
+    // Scenario-only classification uses the default 60m cadence. Eval paths
+    // derive timeframe from the strategy.
     let asset_pair = "BTC/USD";
+    let granularity = xvision_engine::strategies::bar_granularity_for_cadence(60);
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        asset_pair,
+        granularity,
+        s.time_window.start,
+        s.time_window.end,
+        "alpaca-historical-v1",
+    );
 
     let bars = xvision_engine::eval::bars::load_bars(
         ctx,
         &xvision_engine::eval::bars::BarCacheArgs {
-            cache_key: s.bar_cache_policy.cache_key.clone(),
+            cache_key,
             asset_pair: asset_pair.to_string(),
-            granularity: s.granularity,
+            granularity,
             start: s.time_window.start,
             end: s.time_window.end,
             data_source_tag: "alpaca-historical-v1".to_string(),
@@ -1687,8 +1601,7 @@ pub mod select {
     ) -> Scenario {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
         let end = start + chrono::Duration::seconds(window_secs);
-        let gran = BarGranularity::from_str(granularity).expect("valid gran");
-        Scenario {
+                Scenario {
             id: id.to_string(),
             parent_scenario_id: None,
             source: ScenarioSource::User,
@@ -1699,7 +1612,6 @@ pub mod select {
             asset_class: AssetClass::Crypto,
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
-            granularity: gran,
             timezone: "UTC".to_string(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {
@@ -1757,14 +1669,14 @@ pub mod select {
         // Warmup bars are pre-window context, so they do not reduce the
         // scenario's decision count.
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        assert_eq!(scenario_decision_count(&s), 300);
+        assert_eq!(scenario_decision_count(&s, 60), 300);
     }
 
     #[test]
     fn decision_count_4h_gran_with_0_warmup() {
         // 4h = 14400 s. Window = 48 bars (8 days).
         let s = make_scenario("sc2", "BTC", "4h", 48 * 4 * 3_600, 0, &[]);
-        assert_eq!(scenario_decision_count(&s), 48);
+        assert_eq!(scenario_decision_count(&s, 60), 48);
     }
 
     #[test]
@@ -1772,7 +1684,7 @@ pub mod select {
         // Warmup > total bars is valid because warmup is pre-window context;
         // the scenario still has 5 decision bars in its own window.
         let s = make_scenario("sc3", "SOL", "1h", 5 * 3_600, 200, &[]);
-        assert_eq!(scenario_decision_count(&s), 5);
+        assert_eq!(scenario_decision_count(&s, 60), 5);
     }
 
     // ── scenario_regime_labels ────────────────────────────────────────────
@@ -1798,7 +1710,7 @@ pub mod select {
     fn mode_a_returns_empty_when_no_match() {
         // 50-decision scenario; target = 200 (±10 % → 180..220) → no match.
         let s1 = make_scenario("sc1", "ETH", "1h", 50 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1], None, &[], Some(200), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s1], 60, &[], Some(200), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1806,7 +1718,7 @@ pub mod select {
     fn mode_a_matches_within_ten_percent_tolerance() {
         // 1h window: 100 decision bars. Target = 100 → ±10 % = 90..110 → match.
         let s1 = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1], None, &[], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s1], 60, &[], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].decision_count, 100);
     }
@@ -1816,7 +1728,7 @@ pub mod select {
         // 4h scenario; filter by 1h → excluded.
         let s = make_scenario("sc1", "ETH", "4h", 200 * 4 * 3_600, 0, &[]);
         // 60 min = 1h filter
-        let rows = select_scenarios(&[s], Some(60), &[], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 60, &[], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1825,14 +1737,14 @@ pub mod select {
         // 4h scenario; filter by 4h (240 min) → included.
         // 200 total 4h bars. target=200 → within ±10 %.
         let s = make_scenario("sc1", "ETH", "4h", 200 * 4 * 3_600, 0, &[]);
-        let rows = select_scenarios(&[s], Some(240), &[], Some(200), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 240, &[], Some(200), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
     }
 
     #[test]
     fn mode_a_regime_filter_excludes_non_matching() {
         let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bear"]);
-        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 60, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1840,7 +1752,7 @@ pub mod select {
     fn mode_a_regime_filter_includes_partial_match() {
         // "bull" is a substring of "trending_bull" → should match.
         let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bull"]);
-        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 60, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
     }
 
@@ -1851,7 +1763,7 @@ pub mod select {
         let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 100 * 3_600, 200, &[]);
         let s4 = make_scenario("sc4", "DOGE", "1h", 100 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1, s2, s3, s4], None, &[], Some(100), false, None, 2).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3, s4], 60, &[], Some(100), false, None, 2).unwrap();
         assert_eq!(rows.len(), 2);
     }
 
@@ -1863,7 +1775,7 @@ pub mod select {
         let s1 = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
         let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 50 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1, s2, s3], None, &[], None, true, Some(200), 2).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3], 60, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
             assert_eq!(
@@ -1880,7 +1792,7 @@ pub mod select {
         let s1 = make_scenario("sc1", "ETH", "1h", 200 * 3_600, 200, &[]);
         let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
         let s3 = make_scenario("sc3", "SOL", "1h", 100 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1, s2, s3], None, &[], None, true, Some(150), 4).unwrap();
+        let rows = select_scenarios(&[s1, s2, s3], 60, &[], None, true, Some(150), 4).unwrap();
         assert!(!rows.iter().any(|r| r.id == "sc1"), "sc1 should be excluded");
         for r in &rows {
             assert_eq!(r.decision_count, 100);
@@ -1891,7 +1803,7 @@ pub mod select {
     fn mode_b_returns_empty_when_no_candidates_under_max() {
         let s1 = make_scenario("sc1", "ETH", "1h", 200 * 3_600, 200, &[]);
         // 200 decisions; max_decisions = 50 → excluded → empty.
-        let rows = select_scenarios(&[s1], None, &[], None, true, Some(50), 4).unwrap();
+        let rows = select_scenarios(&[s1], 60, &[], None, true, Some(50), 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1904,7 +1816,7 @@ pub mod select {
         // count (the guard is tested at the clap / run_select level separately).
         let s1 = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
         let s2 = make_scenario("sc2", "BTC", "1h", 400 * 3_600, 200, &[]);
-        let rows = select_scenarios(&[s1, s2], None, &[], None, false, None, 4).unwrap();
+        let rows = select_scenarios(&[s1, s2], 60, &[], None, false, None, 4).unwrap();
         // Both returned; no decision-count filter applied.
         assert_eq!(rows.len(), 2);
     }
@@ -1920,7 +1832,7 @@ pub mod select {
 
         let rows_expansion = select_scenarios(
             &[s.clone()],
-            None,
+            60,
             &["expansion".to_string()],
             Some(100),
             false,
@@ -1932,7 +1844,7 @@ pub mod select {
 
         // Bear tag should NOT match since column overrides.
         let rows_bear =
-            select_scenarios(&[s], None, &["bear".to_string()], Some(100), false, None, 4).unwrap();
+            select_scenarios(&[s], 60, &["bear".to_string()], Some(100), false, None, 4).unwrap();
         assert!(
             rows_bear.is_empty(),
             "tag 'bear' should not match when column says 'expansion'"
@@ -1945,7 +1857,7 @@ pub mod select {
         let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bull"]);
         assert!(s.regime_label.is_none());
 
-        let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 60, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert_eq!(
             rows.len(),
             1,
@@ -1958,7 +1870,7 @@ pub mod select {
         // No regime in column AND no regime tag → excluded when filter is active.
         let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
         let rows =
-            select_scenarios(&[s], None, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
+            select_scenarios(&[s], 60, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -2062,7 +1974,6 @@ pub mod apply_diff {
             asset_class: AssetClass::Crypto,
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
-            granularity: BarGranularity::from_str("1h").unwrap(),
             timezone: "UTC".to_string(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {

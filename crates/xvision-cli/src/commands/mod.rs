@@ -16,6 +16,7 @@ pub mod indicator;
 pub mod init;
 pub mod last;
 pub mod live;
+pub mod live_preflight;
 pub mod live_guard;
 pub mod marketplace;
 pub mod memory;

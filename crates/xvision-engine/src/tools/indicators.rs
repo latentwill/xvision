@@ -59,6 +59,11 @@ impl Tool for IndicatorPanelTool {
 
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let req: PanelRequest = serde_json::from_value(input)?;
+        if req.timeframe.is_some() {
+            anyhow::bail!(
+                "timeframe-specific indicator requests require run-scoped market data; fixture-backed indicator_panel only serves the fixture's native bars"
+            );
+        }
         let panel = xvision_data::compute_panel_from_fixture(&req.fixture, &req.asset, req.lookback_bars)?;
         let mut out = serde_json::to_value(panel)?;
         if let Some(timeframe) = req.timeframe {

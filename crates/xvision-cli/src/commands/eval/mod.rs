@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
+use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride, RunTrajectoryMode,
 };
@@ -771,6 +772,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             time_limit_secs,
             bar_limit: args.live_bar_limit,
             decision_limit: args.live_decision_limit,
+            trade_limit: None,
         };
         if stop_policy.is_empty() {
             return Err(CliError {
@@ -794,6 +796,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             },
             broker_creds_ref: args.live_broker_creds_ref.clone(),
             stop_policy,
+            granularity: BarGranularity::Minute1,
             venue_label: VenueLabel::Paper,
             warmup_bars: Some(args.live_warmup_bars),
             safety_limits: None,
@@ -840,7 +843,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     // the engine's own warmup preflight still guards that path).
     if mode == RunMode::Backtest && !args.skip_bar_coverage_check {
         if let Some(assets) = assets_subset.as_deref() {
-            preflight_bar_coverage(&ctx, &scenario_id, assets).await?;
+            preflight_bar_coverage(&ctx, &args.strategy, &scenario_id, assets).await?;
         }
     }
 
@@ -922,6 +925,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
 /// credentials (the cached case must not touch creds).
 async fn preflight_bar_coverage(
     ctx: &ApiContext,
+    strategy_id: &str,
     scenario_id: &str,
     assets: &[xvision_core::trading::AssetSymbol],
 ) -> CliResult<()> {
@@ -933,10 +937,14 @@ async fn preflight_bar_coverage(
     let scenario = api_scenario::get(ctx, scenario_id)
         .await
         .map_err(|e| api_to_cli("eval run (bar-coverage preflight: load scenario)", e))?;
+    let strategy = api_strategy::get(ctx, strategy_id)
+        .await
+        .map_err(|e| api_to_cli("eval run (bar-coverage preflight: load strategy)", e))?;
 
     let start = scenario.time_window.start;
     let end = scenario.time_window.end;
-    let granularity = scenario.granularity;
+    let granularity =
+        xvision_engine::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
 
     for asset in assets {
         let asset_pair = asset.as_alpaca_pair();

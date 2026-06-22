@@ -7,7 +7,7 @@ import type { VenueSettings } from "./VenueSettings";
  * means "inherit from parent". `notes` is intentionally a bare
  * `Option<String>` so the clone starts with empty notes by default.
  */
-export type ScenarioMutations = { display_name: string | null, description: string | null, time_window: TimeWindow | null, granularity: string | null, venue: VenueSettings | null, tags: Array<string> | null, notes: string | null,
+export type ScenarioMutations = { display_name: string | null, description: string | null, time_window: TimeWindow | null, venue: VenueSettings | null, tags: Array<string> | null, notes: string | null,
 /**
  * Override the parent's warmup window when cloning. `None` inherits
  * the parent's `warmup_bars`.

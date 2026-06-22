@@ -241,7 +241,7 @@ async fn resolve_scenario_summary(ctx: &ApiContext, run_id: &str) -> Option<Revi
         // asset is the source of truth, so a single run-level asset is no longer
         // meaningful.
         asset: None,
-        granularity: Some(scenario.granularity.to_string()),
+        granularity: None,
         start: Some(scenario.time_window.start.to_rfc3339()),
         end: Some(scenario.time_window.end.to_rfc3339()),
     })
@@ -534,7 +534,7 @@ mod tests {
             .expect("canonical scenario should resolve");
         assert_eq!(summary.id, scenario_id);
         assert!(summary.name.is_some());
-        assert!(summary.granularity.is_some());
+        assert!(summary.granularity.is_none());
         assert!(summary.start.is_some());
         assert!(summary.end.is_some());
     }

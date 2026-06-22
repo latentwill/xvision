@@ -112,7 +112,6 @@ const scenario = {
   asset_class: "Crypto",
   quote_currency: "Usd",
   time_window: { start: "2025-04-01T00:00:00Z", end: "2025-06-30T00:00:00Z" },
-  granularity: "Hour4",
   timezone: "UTC",
   calendar: "Continuous24x7",
   data_source: { type: "AlpacaHistorical", feed: null, adjustment: "Raw" },
@@ -220,13 +219,11 @@ describe("ScenariosDetailRoute bars cache actions", () => {
   it("emits null granularity on clone now that the operator-facing control is hidden", async () => {
     vi.mocked(scenarioApi.getScenario).mockResolvedValue({
       ...scenario,
-      granularity: "5m",
     });
     vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
     vi.mocked(scenarioApi.cloneScenario).mockResolvedValue({
       ...scenario,
       id: "sc_clone_granularity",
-      granularity: "5m",
       parent_scenario_id: scenario.id,
       source: "Clone",
     } as Scenario);
@@ -245,9 +242,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     await waitFor(() => {
       expect(scenarioApi.cloneScenario).toHaveBeenCalledWith(
         scenario.id,
-        expect.objectContaining({
-          granularity: null,
-        }),
+        expect.not.objectContaining({ granularity: expect.anything() }),
       );
     });
   });
@@ -276,7 +271,6 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // touching structural fields → those must be null (inherit
     // parent). display_name diverges from parent ("(clone)" suffix
     // pre-filled) so it's a non-null override.
-    expect(mutations.granularity).toBeNull();
     expect(mutations.time_window).toBeNull();
     expect(mutations.venue).toBeNull();
     expect(mutations.warmup_bars).toBeNull();
@@ -373,7 +367,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
           "--asset",
           "BTC/USD",
           "--granularity",
-          "4h",
+          "1h",
           "--from",
           "2025-04-01",
           "--to",

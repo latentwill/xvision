@@ -152,7 +152,7 @@ async fn hold_marker_with_missing_bar_timestamp_is_skipped_not_zero_priced() {
     // so seed bars (and key them) under that asset-specific cache key.
     let cache_key = xvision_engine::eval::bars::compute_cache_key(
         "BTC/USD",
-        scenario.granularity,
+        xvision_data::alpaca::BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",

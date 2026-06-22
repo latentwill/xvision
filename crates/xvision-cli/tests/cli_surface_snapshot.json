@@ -385,6 +385,86 @@
       ],
       "mutates": false,
       "path": [
+        "config"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "config",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "config",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "config",
+        "help",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "config",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "config",
+        "help",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "config",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
         "dashboard"
       ]
     },
@@ -1618,6 +1698,38 @@
       "mutates": false,
       "path": [
         "help",
+        "config"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "config",
+        "get"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "config",
+        "set"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
         "dashboard"
       ]
     },
@@ -2487,6 +2599,17 @@
       "path": [
         "help",
         "optimize",
+        "diff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
         "export"
       ]
     },
@@ -3304,6 +3427,16 @@
         "help",
         "trajectory",
         "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "update"
       ]
     },
     {
@@ -4536,6 +4669,21 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--blob-root",
+        "--db",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "diff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--db",
         "--format",
         "--help",
@@ -4555,6 +4703,17 @@
       "path": [
         "optimize",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "diff"
       ]
     },
     {
@@ -4804,6 +4963,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--blob-root",
         "--db",
         "--help",
         "--json"
@@ -6612,6 +6772,19 @@
       "path": [
         "trajectory",
         "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--check",
+        "--help",
+        "--version"
+      ],
+      "mutates": true,
+      "path": [
+        "update"
       ]
     }
   ]

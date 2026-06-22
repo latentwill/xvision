@@ -59,7 +59,6 @@ fn make_scenario() -> Scenario {
             start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap(),
         },
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

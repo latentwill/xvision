@@ -1,6 +1,4 @@
 use chrono::{TimeZone, Utc};
-use std::str::FromStr;
-use xvision_data::alpaca::BarGranularity;
 use xvision_data::asset_whitelist::ALPACA_CRYPTO_WHITELIST;
 use xvision_engine::api::scenario::{archive, create, validate_request, CreateScenarioRequest};
 use xvision_engine::api::{ApiContext, ApiError};
@@ -42,7 +40,6 @@ fn valid_request() -> CreateScenarioRequest {
             end: Utc.with_ymd_and_hms(2024, 2, 10, 0, 0, 0).unwrap(),
         },
         capital: xvision_core::Capital::default(),
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         venue: VenueSettings {
@@ -165,11 +162,8 @@ async fn create_rejects_active_duplicate_display_name() {
 async fn create_succeeds_with_hour4_granularity() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
-    req.granularity = BarGranularity::Hour4;
-
     let s = create(&ctx, req).await.unwrap();
 
-    assert_eq!(s.granularity, BarGranularity::Hour4);
     assert!(!s.bar_cache_policy.cache_key.is_empty());
 }
 
@@ -177,11 +171,8 @@ async fn create_succeeds_with_hour4_granularity() {
 async fn create_succeeds_with_hour6_granularity() {
     let ctx = test_ctx().await;
     let mut req = valid_request();
-    req.granularity = BarGranularity::Hour6;
-
     let s = create(&ctx, req).await.unwrap();
 
-    assert_eq!(s.granularity, BarGranularity::Hour6);
     assert!(!s.bar_cache_policy.cache_key.is_empty());
 }
 
@@ -190,15 +181,11 @@ async fn create_succeeds_with_minute_and_week_granularities() {
     let ctx = test_ctx().await;
 
     let mut minute_req = valid_request();
-    minute_req.granularity = BarGranularity::Minute5;
     let minute_scenario = create(&ctx, minute_req).await.unwrap();
-    assert_eq!(minute_scenario.granularity, BarGranularity::Minute5);
 
     let mut week_req = valid_request();
     week_req.display_name = "ETH weekly 2024".into();
-    week_req.granularity = BarGranularity::from_str("1w").unwrap();
     let week_scenario = create(&ctx, week_req).await.unwrap();
-    assert_eq!(week_scenario.granularity, BarGranularity::Week1);
 }
 
 #[tokio::test]

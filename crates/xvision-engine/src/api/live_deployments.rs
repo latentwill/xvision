@@ -446,6 +446,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
     use xvision_core::Capital;
+    use xvision_data::alpaca::BarGranularity;
 
     fn live_config(name: &str, creds: &str, venue: VenueLabel) -> LiveConfig {
         LiveConfig {
@@ -464,6 +465,7 @@ mod tests {
                 time_limit_secs: Some(900),
                 ..Default::default()
             },
+            granularity: BarGranularity::Minute1,
             venue_label: venue,
             warmup_bars: None,
             safety_limits: None,

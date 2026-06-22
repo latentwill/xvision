@@ -162,10 +162,8 @@ pub struct PreflightResult {
 /// `validate_strategy` performs, expressed as structured `PreflightResult`
 /// rather than a `Result<(), ValidationError>`).
 ///
-/// With a scenario the check additionally verifies:
-/// - Scenario's primary asset is in the strategy's `asset_universe`.
-/// - Scenario's granularity matches `manifest.decision_cadence_minutes`.
-///
+/// With a scenario, the check keeps the same call shape but does not validate
+/// timeframe: strategy cadence is now the sole timeframe source.
 /// Provider/model liveness (checks 3-4 in the spec) cannot be performed here
 /// without access to the runtime config — that layer lives in `xvision-cli`
 /// and passes any provider-enabled errors in via `PreflightResult::errors`
@@ -181,21 +179,10 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
         result.errors.push(e.to_string());
     }
 
-    if let Some(sc) = scenario {
-        // Scenarios are asset-free — the asset a run trades comes from the
-        // strategy's `asset_universe`, so there is no scenario-asset to
-        // cross-check against the universe. (The former "scenario asset
-        // not in strategy asset_universe" warning is removed.)
-
-        // Check 6: scenario granularity matches decision_cadence_minutes.
-        let scenario_minutes = (sc.granularity.seconds() / 60) as u32;
-        if scenario_minutes != strategy.manifest.decision_cadence_minutes {
-            result.warnings.push(format!(
-                "timeframe mismatch: scenario granularity is {} min but strategy decision_cadence_minutes is {}",
-                scenario_minutes,
-                strategy.manifest.decision_cadence_minutes
-            ));
-        }
+    if scenario.is_some() {
+        // Scenarios are date ranges only. Asset universe and timeframe both
+        // live on the strategy/run layer, so there is no scenario-owned field
+        // to cross-check here.
     }
 
     // Fold no-filter warnings into preflight. `no_filter_warnings` (topology-
@@ -433,6 +420,7 @@ fn validate_common(b: &Strategy) -> Result<(), ValidationError> {
             b.risk.max_leverage
         )));
     }
+    validate_timeframe_requirements(b)?;
     Ok(())
 }
 
@@ -617,7 +605,6 @@ mod preflight_tests {
                 start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
                 end: Utc.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap(),
             },
-            granularity: BarGranularity::Hour4,
             timezone: "UTC".into(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {
@@ -670,6 +657,17 @@ mod preflight_tests {
         let strategy = make_strategy_with_agent("ETH/USD", 240);
         let result = preflight_validate(&strategy, None);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn validate_strategy_rejects_invalid_auxiliary_timeframe() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 60);
+        strategy.manifest.timeframe_requirements.auxiliary =
+            vec![crate::strategies::manifest::TimeframeSpec("7h".into())];
+
+        let err = validate_strategy(&strategy).expect_err("invalid auxiliary timeframe must fail");
+
+        assert!(matches!(err, ValidationError::UnsupportedAuxiliaryTimeframe(tf) if tf == "7h"));
     }
 
     #[test]

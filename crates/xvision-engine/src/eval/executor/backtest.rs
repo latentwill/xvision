@@ -810,7 +810,7 @@ impl Executor {
             .market_data
             .as_ref()
             .map(|ctx| ctx.supported_timeframes(asset_sym))
-            .unwrap_or_else(|| vec![scenario.granularity.canonical()]);
+            .unwrap_or_else(|| vec![strategy.native_timeframe().as_str().to_string()]);
         // F-8 stats: snapshot the global counter so we can log the
         // per-run cache-hint delta at finalize.
         let cache_hint_start =
@@ -869,7 +869,7 @@ impl Executor {
         // observations across bars for within-run recall. Scoped to this run;
         // dropped when the run completes. Not persisted to SQLite (R3).
         let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
-        let bar_secs = scenario.granularity.seconds();
+        let bar_secs = (cadence_min.max(1) as u64) * 60;
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
         // Lifetime equals the run loop; dropped when the run completes.
@@ -4090,7 +4090,8 @@ impl Executor {
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
             // first terminates the loop cleanly (not an error).
-            if let Some(stop) = live_stop_reason(&stop_policy, bar_count, decision_idx, run_started) {
+            if let Some(stop) = live_stop_reason(&stop_policy, bar_count, decision_idx, n_trades, run_started)
+            {
                 tracing::info!(
                     run_id = %run.id,
                     reason = %stop,
@@ -4538,7 +4539,7 @@ impl Executor {
                     bar_low: bar.low,
                     bar_close: bar.close,
                     decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                    bar_duration_ms: u64::from(strategy.manifest.decision_cadence_minutes.max(1)) * 60_000,
                 })
                 .await
         };
@@ -4787,7 +4788,7 @@ impl Executor {
                     bar_low: reference,
                     bar_close: reference,
                     decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                    bar_duration_ms: u64::from(strategy.manifest.decision_cadence_minutes.max(1)) * 60_000,
                 })
                 .await;
 
@@ -5019,12 +5020,14 @@ impl FlattenReason {
 
 /// Reason the live loop terminated on a [`StopPolicy`] limit, or `None`
 /// when no limit has fired. `decision_count` is the number of decisions
-/// recorded so far; `bar_count` the number of bars consumed; `started`
-/// the wall-clock anchor for `time_limit_secs`.
+/// recorded so far; `bar_count` the number of bars consumed; `trade_count`
+/// the number of completed fills; `started` the wall-clock anchor for
+/// `time_limit_secs`.
 fn live_stop_reason(
     policy: &crate::eval::live_config::StopPolicy,
     bar_count: u32,
     decision_count: u32,
+    trade_count: u32,
     started: Instant,
 ) -> Option<String> {
     if let Some(lim) = policy.bar_limit {
@@ -5035,6 +5038,11 @@ fn live_stop_reason(
     if let Some(lim) = policy.decision_limit {
         if decision_count >= lim {
             return Some(format!("decision_limit {lim} reached"));
+        }
+    }
+    if let Some(lim) = policy.trade_limit {
+        if trade_count >= lim {
+            return Some(format!("trade_limit {lim} reached"));
         }
     }
     if let Some(secs) = policy.time_limit_secs {
@@ -6652,6 +6660,39 @@ mod tests {
 
     /// The F-8 truncation math is shared by the backtest and live decision
     /// loops via `bar_history_limit_offset`; pin it so the two can't drift.
+    #[test]
+    fn live_stop_reason_uses_first_configured_limit_order() {
+        let started = Instant::now();
+        let policy = crate::eval::live_config::StopPolicy {
+            bar_limit: Some(2),
+            decision_limit: Some(3),
+            trade_limit: Some(1),
+            time_limit_secs: None,
+        };
+
+        assert_eq!(
+            live_stop_reason(&policy, 2, 3, 1, started).as_deref(),
+            Some("bar_limit 2 reached")
+        );
+    }
+
+    #[test]
+    fn live_stop_reason_counts_trades_separately_from_decisions() {
+        let started = Instant::now();
+        let policy = crate::eval::live_config::StopPolicy {
+            bar_limit: None,
+            decision_limit: None,
+            trade_limit: Some(2),
+            time_limit_secs: None,
+        };
+
+        assert_eq!(live_stop_reason(&policy, 10, 10, 1, started), None);
+        assert_eq!(
+            live_stop_reason(&policy, 10, 10, 2, started).as_deref(),
+            Some("trade_limit 2 reached")
+        );
+    }
+
     #[test]
     fn bar_history_limit_offset_shared_truncation() {
         assert_eq!(bar_history_limit_offset(10, None), 0); // no cap → keep all

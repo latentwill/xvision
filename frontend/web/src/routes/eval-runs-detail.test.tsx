@@ -1389,6 +1389,33 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     expect(screen.getByText(/Realized \+\$250\.00/i)).toBeInTheDocument();
     expect(screen.getByText(/Unrealized \+\$392\.00/i)).toBeInTheDocument();
   });
+  it("counts realized PnL from SLTP exits (stop_loss, take_profit, partial_tp1, max_bars_held)", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T15:00:00Z", equity_usd: 11000 },
+        ],
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", pnl_realized: null }),
+          // SLTP exits — none are "flat", all carry realized P&L
+          decision({ decision_index: 1, action: "stop_loss", pnl_realized: -50 }),
+          decision({ decision_index: 2, action: "take_profit", pnl_realized: 300 }),
+          decision({ decision_index: 3, action: "partial_tp1", pnl_realized: 150 }),
+          decision({ decision_index: 4, action: "max_bars_held", pnl_realized: -25 }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText("TOTAL PNL")).toBeInTheDocument();
+    expect(screen.getByText("+$1,000.00")).toBeInTheDocument();
+    // Sum: -50 + 300 + 150 + (-25) = +375
+    expect(screen.getByText(/Realized \+\$375\.00/i)).toBeInTheDocument();
+    // Unrealized = total - realized = 1000 - 375 = 625
+    expect(screen.getByText(/Unrealized \+\$625\.00/i)).toBeInTheDocument();
+  });
 
   it("surfaces buy/sell decision context with the chart before the full decisions table", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(

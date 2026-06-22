@@ -32,8 +32,6 @@ fn scenario_inspect_card_prints_expected_fields() {
             "2025-01-01",
             "--to",
             "2025-01-09",
-            "--granularity",
-            "4h",
             "--warmup-bars",
             "200",
             "--json",
@@ -73,20 +71,12 @@ fn scenario_inspect_card_prints_expected_fields() {
         "card must not contain an asset field (scenarios are asset-free); got:\n{card}"
     );
     assert!(
-        card.contains("timeframe: 4h"),
-        "card must contain timeframe; got:\n{card}"
-    );
-    assert!(
         card.contains("date_window: 2025-01-01..2025-01-09"),
         "card must contain date_window; got:\n{card}"
     );
     assert!(
         card.contains("warmup_bars: 200"),
         "card must contain warmup_bars; got:\n{card}"
-    );
-    assert!(
-        card.contains("decision_bars: 48"),
-        "card must count only the scenario window bars, not subtract pre-window warmup; got:\n{card}"
     );
     // No parent — source line should be absent.
     assert!(
@@ -115,8 +105,6 @@ fn scenario_inspect_card_clone_shows_source() {
             "2025-01-01",
             "--to",
             "2025-01-09",
-            "--granularity",
-            "4h",
             "--json",
         ],
         dir.path(),

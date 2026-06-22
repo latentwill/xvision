@@ -23,8 +23,6 @@ fn scenario_create_json_is_machine_readable() {
             "2024-02-03",
             "--to",
             "2024-02-10",
-            "--granularity",
-            "15m",
             "--json",
         ],
         dir.path(),
@@ -38,7 +36,6 @@ fn scenario_create_json_is_machine_readable() {
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(body["id"].as_str().unwrap().starts_with("sc_"));
     assert_eq!(body["display_name"], "ETH 15m");
-    assert_eq!(body["granularity"], "15m");
 }
 
 #[test]
@@ -154,8 +151,6 @@ fn scenario_warmup_create_round_trips_through_show() {
             "2024-02-03",
             "--to",
             "2024-02-10",
-            "--granularity",
-            "1h",
             "--warmup-bars",
             "50",
             "--json",
@@ -194,8 +189,6 @@ fn scenario_warmup_create_defaults_to_200_when_flag_omitted() {
             "2024-02-03",
             "--to",
             "2024-02-10",
-            "--granularity",
-            "1h",
             "--json",
         ],
         dir.path(),
@@ -226,8 +219,6 @@ fn scenario_warmup_clone_overrides_parent_value() {
             "2024-02-03",
             "--to",
             "2024-02-10",
-            "--granularity",
-            "1h",
             "--warmup-bars",
             "100",
             "--json",

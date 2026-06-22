@@ -155,6 +155,7 @@ pub fn live_run_with_venue(label: VenueLabel) -> Run {
             bar_limit: Some(10),
             ..Default::default()
         },
+        granularity: BarGranularity::Minute1,
         venue_label: label,
         warmup_bars: None,
         safety_limits: None,
@@ -341,6 +342,7 @@ fn _support_live_config(initial: f64, bars: usize) -> LiveConfig {
             bar_limit: Some(bars as u32),
             ..Default::default()
         },
+        granularity: BarGranularity::Minute1,
         venue_label: VenueLabel::Paper,
         warmup_bars: Some(0),
         safety_limits: None,

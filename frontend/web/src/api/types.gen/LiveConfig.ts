@@ -8,13 +8,26 @@ import type { VenueLabel } from "./VenueLabel";
  * Launch envelope for a Live run. Persisted as
  * `eval_runs.live_config_json` (Phase B migration).
  *
- * `strategy_id` references the strategy artifact that drives the run.
- * `assets` is `Vec` for forward-compat with multi-asset Live launches
- * (see `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`);
- * v1 hard-walls it to `len() == 1`.
+ * **Live scope:** Alpaca = paper (`https://paper-api.alpaca.markets`,
+ * real market data + simulated money), Orderly = testnet, and the
+ * real-money perps venues (Byreal, Hyperliquid, Degen Arena) when
+ * `venue_label = Live`. Every live submit passes the `SafetyGate`
+ * (a non-Live run can never reach a Live broker); `venue_label = Live`
+ * is rejected here for non-real-money creds (Alpaca/Orderly).
  *
- * `broker_creds_ref` resolves to a configured broker-credentials row;
- * the engine never stores the secret material itself in `LiveConfig`.
+ * `strategy_id` references the strategy artifact that drives the run.
+ * `assets` is a non-empty list of whitelisted assets; each is fanned out
+ * into its own `LiveStream` and merged in the executor (§4 L2 multi-asset
+ * live fanout, see
+ * `docs/superpowers/plans/2026-05-25-cline-live-followups.md` and the
+ * invariants in
+ * `docs/superpowers/notes/2026-05-25-live-multi-asset-invariants.md`). The
+ * earlier single-asset wall (`len() == 1`) has been lifted.
+ *
+ * `broker_creds_ref` selects WHICH stored credential set to load
+ * (e.g. `"alpaca"` → the Alpaca credentials row). It is a lookup key,
+ * not a venue/environment selector — venue selection is a separate
+ * future plan. The engine never stores secret material in `LiveConfig`.
  */
 export type LiveConfig = { strategy_id: string, assets: Array<AssetRef>, 
 /**
@@ -22,7 +35,20 @@ export type LiveConfig = { strategy_id: string, assets: Array<AssetRef>,
  * in the ts-rs export because `xvision_core::Capital` is not a ts-rs
  * type (mirrors the existing override on `Scenario`).
  */
-capital: { initial: number, currency: string }, broker_creds_ref: string, stop_policy: StopPolicy, 
+capital: { initial: number, currency: string }, 
+/**
+ * Selects WHICH stored credential set to use (e.g. `"alpaca"` → the
+ * Alpaca credentials row under Settings → Brokers). This is a lookup
+ * key, **not** a venue/environment selector — venue and environment
+ * selection is a separate future plan. Current live scope accepts only
+ * `"alpaca"` (Alpaca paper trading).
+ */
+broker_creds_ref: string, stop_policy: StopPolicy, 
+/**
+ * Live bar timeframe. Historical configs omitted this field and should
+ * continue to run at the original 1-minute cadence.
+ */
+granularity: string, 
 /**
  * Coarse safety label for the venue. v1 rejects [`VenueLabel::Live`]
  * at validation; once the per-strategy verdict + kill-switch hardening

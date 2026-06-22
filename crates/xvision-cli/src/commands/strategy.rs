@@ -1589,7 +1589,10 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let preflight = preflight_validate(&strategy, Some(&scenario));
     warnings.extend(preflight.warnings);
 
-    let timeframe_display = scenario.granularity.canonical();
+    let granularity = xvision_engine::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    );
+    let timeframe_display = granularity.canonical();
     collect_prompt_mismatch_warnings(&ctx, &strategy, &timeframe_display, &mut warnings).await;
 
     if scenario.warmup_bars == 0 {
@@ -1599,7 +1602,7 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let window_secs = (scenario.time_window.end - scenario.time_window.start)
         .num_seconds()
         .max(0) as u64;
-    let granularity_secs = scenario.granularity.seconds();
+    let granularity_secs = granularity.seconds();
     let expected_decisions = if granularity_secs > 0 {
         let total_bars = window_secs / granularity_secs;
         (total_bars as i64) - (scenario.warmup_bars as i64)

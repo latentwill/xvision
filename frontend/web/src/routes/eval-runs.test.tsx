@@ -1097,15 +1097,85 @@ describe("EvalRunsRoute", () => {
     await screen.findByRole("button", { name: "Scenario" });
     expect(screen.queryByLabelText("paper")).not.toBeInTheDocument();
     expect(screen.getByLabelText("backtest")).toBeChecked();
+    expect(screen.getByLabelText("Scenario")).toBeVisible();
     fireEvent.click(screen.getByLabelText("forward test"));
     expect(screen.getByLabelText("forward test")).toBeChecked();
+    expect(screen.queryByLabelText("Scenario")).not.toBeInTheDocument();
+    expect(screen.getByText("Alpaca paper")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Degen Arena" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Orderly testnet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Byreal testnet" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Forward-test asset")).toBeVisible();
     expect(screen.getByLabelText("Forward-test capital")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test timeframe")).toBeVisible();
     expect(screen.getByLabelText("Forward-test bar limit")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test decision limit")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test end date and time")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test trade limit")).toBeVisible();
     expect(screen.getByLabelText("Forward-test warmup bars")).toBeVisible();
   });
 
-  it("offers Degen Arena as a selectable forward-test venue", async () => {
+  it("submits forward-test duration and Alpaca paper payload", async () => {
+    mockReady();
+    vi.mocked(evalApi.startRun).mockResolvedValue({
+      summary: {
+        id: "01LIVE",
+        agent_id: "01TEST",
+        scenario_id: "",
+        mode: "live",
+        status: "queued",
+        started_at: null,
+        completed_at: null,
+        total_return_pct: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_tokens: null,
+        actual_tokens: null,
+        total_input_tokens: null,
+        total_output_tokens: null,
+        model_calls: null,
+      },
+    } as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("button", { name: "Scenario" });
+    fireEvent.click(screen.getByLabelText("forward test"));
+    fireEvent.change(screen.getByLabelText("Forward-test bar limit"), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText("Forward-test decision limit"), {
+      target: { value: "7" },
+    });
+    fireEvent.change(screen.getByLabelText("Forward-test trade limit"), {
+      target: { value: "3" },
+    });
+    fireEvent.change(screen.getByLabelText("Forward-test timeframe"), {
+      target: { value: "5m" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(evalApi.startRun).toHaveBeenCalled());
+    expect(vi.mocked(evalApi.startRun).mock.calls[0]?.[0]).toMatchObject({
+      agent_id: "01TEST",
+      scenario_id: "",
+      mode: "live",
+      live_config: {
+        broker_creds_ref: "alpaca",
+        granularity: "5m",
+        stop_policy: {
+          bar_limit: null,
+          decision_limit: 7,
+          trade_limit: 3,
+        },
+        venue_label: "paper",
+        display_name: "Forward test Alpaca paper BTC/USD",
+      },
+    });
+  });
+
+  it("blocks forward-test launch when all duration limits are empty", async () => {
     mockReady();
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
@@ -1113,12 +1183,9 @@ describe("EvalRunsRoute", () => {
 
     await screen.findByRole("button", { name: "Scenario" });
     fireEvent.click(screen.getByLabelText("forward test"));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
-    // The venue button was entirely absent before this change.
-    const degenBtn = screen.getByRole("button", { name: "Degen Arena" });
-    expect(degenBtn).toBeInTheDocument();
-
-    fireEvent.click(degenBtn);
-    expect(degenBtn).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText(/Set at least one duration limit/)).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 });

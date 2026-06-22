@@ -11,7 +11,7 @@ import type { TimeWindow } from "./TimeWindow";
 import type { VenueLabel } from "./VenueLabel";
 import type { VenueSettings } from "./VenueSettings";
 
-export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode,
+export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, quote_currency: QuoteCurrency, time_window: TimeWindow, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode,
 /**
  * Initial trading capital for this evaluation scenario. Moved back onto
  * Scenario (from Strategy) so backtest results are reproducible

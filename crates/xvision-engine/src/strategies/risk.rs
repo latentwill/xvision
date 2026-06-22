@@ -31,6 +31,13 @@ pub struct RiskConfig {
     /// `0.0` disables. Default 0.0 so existing behavior is unchanged.
     #[serde(default)]
     pub max_total_exposure_pct: f64,
+    /// Maximum drawdown in USD. `0.0` means no limit (acknowledged).
+    /// Required for live launch.
+    #[serde(default)]
+    pub max_drawdown_usd: f64,
+    /// Maximum drawdown as a percentage. `None` means no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_drawdown_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,6 +61,8 @@ impl RiskPreset {
                 max_funding_pay_8h: 0.01,
                 min_liq_distance_pct: 8.0,
                 max_total_exposure_pct: 100.0,
+                max_drawdown_usd: 0.0,
+                max_drawdown_pct: None,
             },
             RiskPreset::Balanced => RiskConfig {
                 risk_pct_per_trade: 0.015,
@@ -65,6 +74,8 @@ impl RiskPreset {
                 max_funding_pay_8h: 0.02,
                 min_liq_distance_pct: 5.0,
                 max_total_exposure_pct: 150.0,
+                max_drawdown_usd: 0.0,
+                max_drawdown_pct: None,
             },
             RiskPreset::Aggressive => RiskConfig {
                 risk_pct_per_trade: 0.025,
@@ -76,7 +87,36 @@ impl RiskPreset {
                 max_funding_pay_8h: 0.05,
                 min_liq_distance_pct: 3.0,
                 max_total_exposure_pct: 250.0,
+                max_drawdown_usd: 0.0,
+                max_drawdown_pct: None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_drawdown_usd_defaults_to_zero() {
+        // Test backward compatibility: deserialize JSON without new fields
+        let json = r#"{
+            "risk_pct_per_trade": 0.015,
+            "max_concurrent_positions": 2,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 2.0,
+            "daily_loss_kill_pct": 0.05,
+            "max_position_pct_nav": 20.0,
+            "max_funding_pay_8h": 0.02,
+            "min_liq_distance_pct": 5.0,
+            "max_total_exposure_pct": 150.0
+        }"#;
+
+        let config: RiskConfig = serde_json::from_str(json)
+            .expect("should deserialize old format without max_drawdown fields");
+
+        assert_eq!(config.max_drawdown_usd, 0.0, "max_drawdown_usd should default to 0.0");
+        assert_eq!(config.max_drawdown_pct, None, "max_drawdown_pct should default to None");
     }
 }

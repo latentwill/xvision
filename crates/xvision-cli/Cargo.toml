@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 clap   = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 xvision-core      = { path = "../xvision-core" }
 xvision-data      = { path = "../xvision-data" }

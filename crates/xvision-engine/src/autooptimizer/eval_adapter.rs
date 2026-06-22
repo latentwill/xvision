@@ -579,9 +579,12 @@ async fn build_market_data_context(
     assets: &[AssetSymbol],
 ) -> Result<MarketDataContext> {
     let mut market_data = MarketDataContext::new();
+    let native_granularity = crate::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    );
     for asset in assets {
-        let bars = load_ohlcv_for_scenario(ctx, scenario, *asset).await?;
-        market_data.insert_series(*asset, scenario.granularity, bars);
+        let bars = load_ohlcv_for_scenario(ctx, scenario, *asset, native_granularity).await?;
+        market_data.insert_series(*asset, native_granularity, bars);
     }
     for (tf, support) in strategy.supported_timeframes() {
         if support == crate::strategies::TimeframeSupport::Native {
@@ -647,15 +650,18 @@ async fn build_cached_backtest_executor(
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
     let market_data = build_market_data_context(ctx, strategy, scenario, &active).await?;
 
+    let native_granularity = crate::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    );
     let mut asset_bars = BTreeMap::new();
     for asset in &active {
         let bars = market_data
-            .series(*asset, scenario.granularity)
+            .series(*asset, native_granularity)
             .with_context(|| format!("missing native bars for {}", asset.as_alpaca_pair()))?;
         asset_bars.insert(*asset, bars.to_vec());
     }
 
-    let warmup = load_warmup_for_scenario(ctx, scenario, first_asset).await?;
+    let warmup = load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?;
     let mut executor = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
         Executor::with_bars(
             asset_bars
@@ -694,11 +700,12 @@ async fn load_ohlcv_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
     asset: AssetSymbol,
+    granularity: xvision_data::alpaca::BarGranularity,
 ) -> Result<Vec<Ohlcv>> {
     let asset_pair = asset.as_alpaca_pair();
     let cache_key = bars::compute_cache_key(
         &asset_pair,
-        scenario.granularity,
+        granularity,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -708,7 +715,7 @@ async fn load_ohlcv_for_scenario(
         &BarCacheArgs {
             cache_key,
             asset_pair: asset_pair.clone(),
-            granularity: scenario.granularity,
+            granularity,
             start: scenario.time_window.start,
             end: scenario.time_window.end,
             data_source_tag: "alpaca-historical-v1".into(),
@@ -724,12 +731,13 @@ async fn load_warmup_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
     asset: AssetSymbol,
+    granularity: xvision_data::alpaca::BarGranularity,
 ) -> Result<Vec<Ohlcv>> {
     let asset_pair = asset.as_alpaca_pair();
     let bars = bars::load_warmup_bars(
         ctx,
         &asset_pair,
-        scenario.granularity,
+        granularity,
         scenario.time_window.start,
         scenario.warmup_bars,
     )

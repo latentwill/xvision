@@ -379,6 +379,16 @@ async fn resolve_strategy_asset_for_chart(ctx: &ApiContext, agent_id: &str) -> A
     })
 }
 
+async fn resolve_strategy_granularity_for_chart(
+    ctx: &ApiContext,
+    agent_id: &str,
+) -> ApiResult<xvision_data::alpaca::BarGranularity> {
+    let strategy = crate::api::strategy::get(ctx, agent_id).await?;
+    Ok(crate::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    ))
+}
+
 fn parse_chart_asset(raw: &str, source: &str) -> Option<AssetSymbol> {
     match raw.parse::<AssetSymbol>() {
         Ok(asset) => Some(asset),
@@ -541,7 +551,7 @@ pub async fn build_run_payload_with(
         });
     }
 
-    // 2. Resolve the scenario so we know asset + window + granularity.
+    // 2. Resolve the scenario window and the strategy-owned timeframe.
     let scenario = crate::api::scenario::get(ctx, &run.scenario_id)
         .await
         .map_err(|e| match e {
@@ -551,6 +561,7 @@ pub async fn build_run_payload_with(
             )),
             other => other,
         })?;
+    let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id).await?;
 
     let decisions = store
         .read_decisions(run_id)
@@ -565,7 +576,7 @@ pub async fn build_run_payload_with(
     let asset_pair = asset_sym.as_alpaca_pair();
     let cache_key = crate::eval::bars::compute_cache_key(
         &asset_pair,
-        scenario.granularity,
+        granularity,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -577,7 +588,7 @@ pub async fn build_run_payload_with(
         &crate::eval::bars::BarCacheArgs {
             cache_key,
             asset_pair: asset_pair.clone(),
-            granularity: scenario.granularity,
+            granularity,
             start: scenario.time_window.start,
             end: scenario.time_window.end,
             data_source_tag: "alpaca-historical-v1".into(),
@@ -626,7 +637,7 @@ pub async fn build_run_payload_with(
     };
 
     // 10. Granularity string (human-readable).
-    let granularity_str = scenario.granularity.as_alpaca_str().to_string();
+    let granularity_str = granularity.as_alpaca_str().to_string();
 
     Ok(RunChartPayload {
         run_id: run_id.into(),
@@ -981,12 +992,12 @@ pub async fn build_scenario_payload_with_granularity(
 ) -> ApiResult<ScenarioChartPayload> {
     use crate::api::scenario as api_scenario;
 
-    let mut scenario = api_scenario::get(ctx, id).await?;
+    let scenario = api_scenario::get(ctx, id).await?;
     let requested_granularity = match granularity {
         Some(raw) if !raw.trim().is_empty() => raw
             .parse::<xvision_data::alpaca::BarGranularity>()
             .map_err(ApiError::Validation)?,
-        _ => scenario.granularity,
+        _ => xvision_data::alpaca::BarGranularity::Hour1,
     };
     // Scenarios are asset-free; a standalone scenario preview has no strategy
     // to source the asset from. The operator picks a preview asset via the
@@ -1017,19 +1028,17 @@ pub async fn build_scenario_payload_with_granularity(
         data_source_tag,
     );
 
-    scenario.granularity = requested_granularity;
-    scenario.bar_cache_policy.cache_key = cache_key.clone();
 
     // Compute expected bar count from the window and granularity.
     let window_secs = (scenario.time_window.end - scenario.time_window.start)
         .num_seconds()
         .max(0) as u64;
-    let bar_secs = scenario.granularity.seconds();
+    let bar_secs = requested_granularity.seconds();
     let expected_count = (window_secs / bar_secs) as u32;
 
     // Query bars_cache for cache status metadata — don't go through
     // load_bars (which would trigger a live Alpaca fetch on miss).
-    let cache_row = query_bars_cache_meta(ctx, &scenario.bar_cache_policy.cache_key).await?;
+    let cache_row = query_bars_cache_meta(ctx, &cache_key).await?;
 
     let cache_status = match cache_row {
         None => CacheStatus::NotCached { expected_count },
@@ -1056,9 +1065,9 @@ pub async fn build_scenario_payload_with_granularity(
         crate::eval::bars::load_bars(
             ctx,
             &crate::eval::bars::BarCacheArgs {
-                cache_key: scenario.bar_cache_policy.cache_key.clone(),
+                cache_key: cache_key.clone(),
                 asset_pair,
-                granularity: scenario.granularity,
+                granularity: requested_granularity,
                 start: scenario.time_window.start,
                 end: scenario.time_window.end,
                 data_source_tag: data_source_tag.into(),
@@ -1497,9 +1506,13 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
             None => AssetSymbol::Btc,
         };
         let asset_pair = asset_sym.as_alpaca_pair();
+        let granularity = match &backdrop_run {
+            Some(run) => resolve_strategy_granularity_for_chart(ctx, &run.agent_id).await?,
+            None => xvision_data::alpaca::BarGranularity::Hour1,
+        };
         let cache_key = crate::eval::bars::compute_cache_key(
             &asset_pair,
-            scenario.granularity,
+            granularity,
             scenario.time_window.start,
             scenario.time_window.end,
             "alpaca-historical-v1",
@@ -1510,7 +1523,7 @@ pub async fn build_compare_payload(ctx: &ApiContext, run_ids: &[String]) -> ApiR
             &crate::eval::bars::BarCacheArgs {
                 cache_key,
                 asset_pair,
-                granularity: scenario.granularity,
+                granularity,
                 start: scenario.time_window.start,
                 end: scenario.time_window.end,
                 data_source_tag: "alpaca-historical-v1".into(),

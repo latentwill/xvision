@@ -58,22 +58,6 @@ const SCENARIO_CAPITAL = {
   initial: 100000,
   currency: 'USD',
 };
-const GRANULARITY_OPTIONS = [
-  '1m',
-  '5m',
-  '15m',
-  '30m',
-  '1h',
-  '4h',
-  '6h',
-  '12h',
-  '1d',
-  '1w',
-  '1mo',
-  '3mo',
-  '6mo',
-  '12mo',
-];
 
 /// Default for the "Context bars" field; mirrors
 /// `xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS` (200). Kept
@@ -101,16 +85,9 @@ export function ScenarioForm({
   const [calendar, setCalendar] = useState<CalendarRef>(
     initial?.calendar ?? DEFAULT_CALENDAR,
   );
-  // Granularity is fixed at 1h — the user-facing selector was removed per QA
-  // feedback. The backend still requires the field, so we persist + send the
-  // default (or whatever `initial` carries for an edit) without exposing a UI
-  // control.
-  const granularity: ScenarioGranularity = (() => {
-    const initialGranularity = initial?.granularity?.trim().toLowerCase();
-    return initialGranularity && GRANULARITY_OPTIONS.includes(initialGranularity)
-      ? initialGranularity
-      : '1h';
-  })();
+  // Scenario timeframe is strategy-owned. Keep a fixed 1h draft value only for
+  // the standalone chart preview/estimated-bars helper; it is not submitted.
+  const granularity: ScenarioGranularity = '1h';
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [tagDraft, setTagDraft] = useState('');
   const [notes, setNotes] = useState(initial?.notes ?? '');
@@ -152,7 +129,6 @@ export function ScenarioForm({
     }
     setNameError(null);
 
-    const granularityValue = granularity.trim().toLowerCase();
 
     if (!isValidWindow(from, to)) {
       setTimeError('End date must be after start date.');
@@ -191,7 +167,6 @@ export function ScenarioForm({
       quote_currency: QUOTE_CURRENCY,
       time_window: { start: `${from}T00:00:00Z`, end: `${to}T00:00:00Z` },
       capital: SCENARIO_CAPITAL,
-      granularity: granularityValue,
       timezone: 'UTC',
       calendar,
       venue: {
