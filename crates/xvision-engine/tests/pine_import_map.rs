@@ -476,6 +476,8 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         max_funding_pay_8h: 0.0,
         min_liq_distance_pct: 0.0,
         max_total_exposure_pct: 0.0,
+        max_drawdown_usd: 0.0,
+        max_drawdown_pct: None,
     };
 
     // Build the base decision seed (no briefing_indicators yet).
