@@ -52,7 +52,7 @@
   "pnpm": {
     "overrides": {
       "vite": "6.4.3",
-      "esbuild": "0.28.1",
+      "esbuild": "0.25.12",
       "undici": "7.28.0",
       "ws": "8.21.0",
       "viem>ws": "8.21.0",
