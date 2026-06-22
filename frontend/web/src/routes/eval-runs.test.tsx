@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { EvalRunsRoute } from "./eval-runs";
@@ -610,6 +611,40 @@ describe("EvalRunsRoute", () => {
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
+
+  it("searches the start-eval strategy picker by strategy id", async () => {
+    mockReady();
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "agent-one",
+        display_name: "First strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openai"],
+        models: ["gpt-4.1-mini"],
+      },
+      {
+        agent_id: "agent-two",
+        display_name: "Second strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openai"],
+        models: ["gpt-4.1-mini"],
+      },
+    ]);
+    const user = userEvent.setup();
+
+    renderRoute("/eval-runs?start=1");
+
+    const picker = await screen.findByRole("button", { name: "Strategy" });
+    await user.click(picker);
+    await user.type(screen.getByRole("textbox", { name: "Search Strategy" }), "agent-two");
+    await user.click(await screen.findByRole("option", { name: /Second strategy/i }));
+
+    expect(screen.getByRole("button", { name: "Strategy" })).toHaveTextContent(
+      "Second strategy",
+    );
+  });
   it("starts a backtest when the attached strategy agent provider is ready", async () => {
     mockReady({
       providers: [

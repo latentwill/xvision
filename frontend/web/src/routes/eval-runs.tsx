@@ -10,6 +10,7 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import { StrategyPicker } from "@/components/primitives/StrategyPicker";
 import {
   ServerPagerStrip,
   useServerPagination,
@@ -911,29 +912,18 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label
-              htmlFor="eval-start-strategy"
-              className="block text-[12px] text-text-2 mb-1"
-            >
-              Strategy
-            </label>
-            <select
-              id="eval-start-strategy"
+            <div className="block text-[12px] text-text-2 mb-1">Strategy</div>
+            <StrategyPicker
+              strategies={strategies.data ?? []}
               value={agentId}
-              onChange={(e) => {
-                setAgentId(e.target.value);
+              onChange={(next) => {
+                setAgentId(next);
                 setPreflightError(null);
               }}
-              disabled={strategies.isPending}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-            >
-              <option value="">— pick a strategy —</option>
-              {(strategies.data ?? []).map((s: StrategyListItem) => (
-                <option key={s.agent_id} value={s.agent_id}>
-                  {s.display_name || "Untitled strategy"}
-                </option>
-              ))}
-            </select>
+              loading={strategies.isPending}
+              placeholder="— pick a strategy —"
+              className="h-9 min-h-9 w-full justify-between"
+            />
             {strategies.isError ? (
               <p className="m-0 mt-1 text-[12px] text-rose-300">
                 couldn't load strategies — try refreshing
