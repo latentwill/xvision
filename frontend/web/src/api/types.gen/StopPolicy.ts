@@ -6,7 +6,8 @@
  *
  * `time_limit_secs` is wall-clock seconds since run start, `bar_limit` is
  * the bar count consumed from the [`crate::eval::executor::BarSource`],
- * and `decision_limit` is the LLM-dispatch count.
+ * `decision_limit` is the LLM-dispatch count, and `trade_limit` is the
+ * completed filled-trade count.
  */
 export type StopPolicy = { 
 /**
@@ -23,4 +24,8 @@ bar_limit: number | null,
  * Number of LLM dispatches before termination. Useful for cost-bounded
  * shake-down runs.
  */
-decision_limit: number | null, };
+decision_limit: number | null, 
+/**
+ * Number of completed filled trades before termination.
+ */
+trade_limit: number | null, };
