@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS autooptimizer_gate_records (
   parent_day_score      REAL, child_day_score      REAL,
   parent_holdout_score  REAL, child_holdout_score  REAL,
   gate_epsilon          REAL,
+  holdout_epsilon       REAL,
   delta_day             REAL, delta_holdout        REAL,
   drawdown_ratio        REAL,
   verdict               TEXT NOT NULL,

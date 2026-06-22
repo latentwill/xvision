@@ -14,7 +14,8 @@ use crate::autooptimizer::config::{
     validate_regime_set, AutoOptimizerConfig, RegimeSide, RegimeWindow, TradeDirection,
 };
 use crate::autooptimizer::content_hash::ContentHash;
-use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
+// [loosening-disabled 2026-06-22] preserved for later opt-in re-enablement
+// use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
@@ -150,6 +151,8 @@ struct GateScores {
     pub child_holdout_score: f64,
     pub gate_epsilon: f64,
     pub delta_day: f64,
+    /// Holdout (untouched) gate threshold, separate from day `gate_epsilon`.
+    pub holdout_epsilon: f64,
     pub delta_holdout: f64,
     pub drawdown_ratio: Option<f64>,
     /// Edge vs a fixed-seed random baseline (informational, never gating).
@@ -279,12 +282,12 @@ pub async fn run_cycle(
     // (resume) or the cancel flag is set. `None` = never paused.
     pause: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<CycleResult> {
+    // [loosening-disabled 2026-06-22] use config value directly;
+    // was: effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
+    //         .await?.effective_min_improvement
     let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
-    let min_improvement =
-        effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
-            .await?
-            .effective_min_improvement;
-
+    let min_improvement = config.min_improvement;
+    let holdout_min_improvement = config.holdout_min_improvement;
     let dsr_prefix: Option<String> = match dspy_ctx {
         Some(ctx) if config.dspy_enabled => query_dsr_prefix(&ctx.store, &ctx.namespace).await?,
         _ => None,
@@ -369,6 +372,7 @@ pub async fn run_cycle(
                 parent_strategy,
                 &cycle_id,
                 min_improvement,
+                holdout_min_improvement,
                 cycle_config,
                 config,
                 mutator,
@@ -413,6 +417,7 @@ pub async fn run_cycle(
             mutator,
             paper_tester,
             min_improvement,
+            holdout_min_improvement,
             &cycle_id,
             &progress,
         )
@@ -481,6 +486,7 @@ async fn run_cycle_canary<F>(
     mutator: &Mutator,
     paper_tester: &dyn PaperTestRunner,
     min_improvement: f64,
+    holdout_min_improvement: f64,
     cycle_id: &str,
     progress: &F,
 ) -> Result<HonestyCheckResult>
@@ -505,6 +511,7 @@ where
     };
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
+    let hmi = holdout_min_improvement;
     let obj = cycle_config.objective;
     // R2: `run_honesty_check` itself degrades a canary eval/trader error to a
     // neutral failed-canary result (it never errors on canary eval), so this
@@ -520,6 +527,7 @@ where
             parent_untouched_metrics: pu.clone(),
             child_untouched_metrics: cu.clone(),
             min_improvement: mi,
+            holdout_min_improvement: hmi,
             objective: obj,
         },
         &cycle_config.day_scenario,
@@ -585,6 +593,7 @@ async fn process_parent_mutations<F>(
     parent_strategy: &Strategy,
     cycle_id: &str,
     min_improvement: f64,
+    holdout_min_improvement: f64,
     cycle_config: &CycleConfig,
     config: &AutoOptimizerConfig,
     mutator: &Mutator,
@@ -1049,6 +1058,7 @@ where
             &gate_parent_day,
             &gate_parent_untouched,
             min_improvement,
+            holdout_min_improvement,
             &parent_regime_metrics,
             sampled_day,
             sampled_baseline,
@@ -1135,6 +1145,7 @@ where
                     parent_holdout_score: Some(gs.parent_holdout_score),
                     child_holdout_score: Some(gs.child_holdout_score),
                     gate_epsilon: Some(gs.gate_epsilon),
+                    holdout_epsilon: Some(gs.holdout_epsilon),
                     delta_day: Some(gs.delta_day),
                     delta_holdout: Some(gs.delta_holdout),
                     drawdown_ratio: gs.drawdown_ratio,
@@ -1343,6 +1354,7 @@ async fn gate_and_classify<F>(
     parent_day: &MetricsSummary,
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
+    holdout_min_improvement: f64,
     // Per-regime parent metrics (label → (day, untouched)), pre-computed by
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
@@ -1434,8 +1446,12 @@ where
             });
         }
 
-        let (regime_status, regime_rows) =
-            classify_from_regime_outcomes(&regime_inputs, min_improvement, cycle_config.objective);
+        let (regime_status, regime_rows) = classify_from_regime_outcomes(
+            &regime_inputs,
+            min_improvement,
+            holdout_min_improvement,
+            cycle_config.objective,
+        );
 
         // For regime path: use the first regime's day metrics as the primary
         // child_day/child_untouched for the node-metrics side table (so the
@@ -1578,13 +1594,13 @@ where
         phase: Phase::EvalUntouchedWindow,
         duration_ms: t0.elapsed().as_millis() as u64,
     });
-
     let raw_verdict = gate_check(
         parent_day,
         &child_day,
         parent_untouched,
         &child_untouched,
         min_improvement,
+        holdout_min_improvement,
         cycle_config.objective,
     );
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
@@ -1677,6 +1693,7 @@ where
         parent_holdout_score,
         child_holdout_score,
         gate_epsilon: min_improvement,
+        holdout_epsilon: holdout_min_improvement,
         delta_day: child_day_score - parent_day_score,
         delta_holdout: child_holdout_score - parent_holdout_score,
         drawdown_ratio,
@@ -1946,13 +1963,13 @@ async fn persist_honesty_check(pool: &SqlitePool, cycle_id: &str, check: &Honest
         tracing::warn!(cycle_id, "failed to persist honesty check: {e}");
     }
 }
-
 fn gate_check(
     parent_day: &MetricsSummary,
     child_day: &MetricsSummary,
     parent_untouched: &MetricsSummary,
     child_untouched: &MetricsSummary,
     min_improvement: f64,
+    holdout_min_improvement: f64,
     objective: Objective,
 ) -> GateVerdict {
     evaluate(&GateInput {
@@ -1961,6 +1978,7 @@ fn gate_check(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement,
+        holdout_min_improvement,
         objective,
     })
 }
@@ -1992,6 +2010,7 @@ pub struct RegimeEvalInput {
 pub fn classify_from_regime_outcomes(
     regimes: &[RegimeEvalInput],
     min_improvement: f64,
+    holdout_min_improvement: f64,
     objective: Objective,
 ) -> (LineageStatus, Vec<RegimeResultRow>) {
     let mut side_verdict_pairs: Vec<(RegimeSide, GateVerdict)> = Vec::with_capacity(regimes.len());
@@ -2004,6 +2023,7 @@ pub fn classify_from_regime_outcomes(
             parent_untouched_metrics: r.parent_untouched.clone(),
             child_untouched_metrics: r.child_untouched.clone(),
             min_improvement,
+            holdout_min_improvement,
             objective,
         });
         let delta_sharpe = r.child_day.sharpe - r.parent_day.sharpe;
@@ -2117,7 +2137,7 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, Objective::Sharpe);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, 0.1, Objective::Sharpe);
 
         assert_eq!(
             status,
@@ -2148,6 +2168,44 @@ mod tests {
             bear_row.verdict
         );
         assert!((bear_row.delta_sharpe - (-0.2)).abs() < 1e-9, "bear Δsharpe");
+    }
+
+    #[test]
+    fn classify_regime_outcomes_uses_independent_holdout_threshold() {
+        let make_metrics = |sharpe: f64| MetricsSummary {
+            sharpe,
+            total_return_pct: 0.0,
+            max_drawdown_pct: 5.0,
+            win_rate: 0.5,
+            n_trades: 10,
+            n_decisions: 20,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
+            baselines: None,
+        };
+        let regimes = vec![
+            RegimeEvalInput {
+                label: "bull_2024".to_string(),
+                side: RegimeSide::Bull,
+                parent_day: make_metrics(1.0),
+                parent_untouched: make_metrics(1.0),
+                child_day: make_metrics(1.12),
+                child_untouched: make_metrics(1.006),
+            },
+            RegimeEvalInput {
+                label: "bear_2022".to_string(),
+                side: RegimeSide::BearOrShock,
+                parent_day: make_metrics(0.5),
+                parent_untouched: make_metrics(0.5),
+                child_day: make_metrics(0.62),
+                child_untouched: make_metrics(0.506),
+            },
+        ];
+
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe);
+
+        assert_eq!(status, LineageStatus::Active);
+        assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);
     }
 
     // ── B19: round-robin scenario_pair selection ──────────────────────────────

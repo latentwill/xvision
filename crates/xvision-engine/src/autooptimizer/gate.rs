@@ -1,7 +1,7 @@
 use crate::autooptimizer::mutator::MutationDiff;
 use crate::eval::MetricsSummary;
 use anyhow::{bail, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Factor by which the child's worst drawdown may exceed the parent's before rejection.
 const DRAWDOWN_DETERIORATION_FACTOR: f64 = 1.5;
@@ -68,18 +68,54 @@ impl Objective {
 
 /// Inputs to the deterministic numeric gate.
 ///
-/// `min_improvement` is the pre-committed ε threshold (operator flag: `--min-improvement`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `min_improvement` applies to the day (in-sample) window;
+/// `holdout_min_improvement` applies to the baseline-untouched (out-of-sample) window.
+#[derive(Debug, Clone, Serialize)]
 pub struct GateInput {
     pub parent_day_metrics: MetricsSummary,
     pub child_day_metrics: MetricsSummary,
     pub parent_untouched_metrics: MetricsSummary,
     pub child_untouched_metrics: MetricsSummary,
     pub min_improvement: f64,
+    /// Minimum improvement threshold for the holdout (baseline-untouched) window.
+    /// Separate from `min_improvement` so the out-of-sample bar can differ from
+    /// the in-sample bar.
+    pub holdout_min_improvement: f64,
     /// F24: which metric to optimize. Defaults to `Sharpe` (serde default) so
     /// existing call sites/fixtures that omit it keep the prior behavior.
     #[serde(default)]
     pub objective: Objective,
+}
+
+impl<'de> Deserialize<'de> for GateInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct GateInputWire {
+            parent_day_metrics: MetricsSummary,
+            child_day_metrics: MetricsSummary,
+            parent_untouched_metrics: MetricsSummary,
+            child_untouched_metrics: MetricsSummary,
+            min_improvement: f64,
+            #[serde(default)]
+            holdout_min_improvement: Option<f64>,
+            #[serde(default)]
+            objective: Objective,
+        }
+
+        let wire = GateInputWire::deserialize(deserializer)?;
+        Ok(Self {
+            parent_day_metrics: wire.parent_day_metrics,
+            child_day_metrics: wire.child_day_metrics,
+            parent_untouched_metrics: wire.parent_untouched_metrics,
+            child_untouched_metrics: wire.child_untouched_metrics,
+            min_improvement: wire.min_improvement,
+            holdout_min_improvement: wire.holdout_min_improvement.unwrap_or(wire.min_improvement),
+            objective: wire.objective,
+        })
+    }
 }
 
 /// Outcome of `evaluate`.
@@ -114,14 +150,11 @@ impl GateVerdict {
     }
 }
 
-/// Deterministic numeric gate for AR-1 mutations.
-///
 /// Passes only when all three hold:
-/// 1. Δ Sharpe (day window)       ≥ `min_improvement`
-/// 2. Δ Sharpe (untouched window) ≥ `min_improvement`  ← the stricter check
-/// 3. Child worst drawdown        ≤ parent worst drawdown × 1.5
+/// 1. Δ score (day window)       ≥ `min_improvement`
+/// 2. Δ score (untouched window) ≥ `holdout_min_improvement`
+/// 3. Child worst drawdown       ≤ parent worst drawdown × 1.5
 ///
-/// Pure function — same inputs always yield the same verdict.
 pub fn evaluate(input: &GateInput) -> GateVerdict {
     debug_assert!(
         input.min_improvement.is_finite(),
@@ -130,8 +163,8 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
 
     // F24: evaluate the operator-selected objective on BOTH windows (the
     // held-out discipline is preserved — a candidate must improve on the day
-    // window AND the untouched window). `oriented_value` makes larger always
-    // better, so the same delta comparison works for every objective.
+    // window AND the untouched window, each against its own threshold).
+    // `oriented_value` makes larger always better.
     let obj = input.objective;
     let delta_day =
         obj.oriented_value(&input.child_day_metrics) - obj.oriented_value(&input.parent_day_metrics);
@@ -155,22 +188,22 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
         ));
     }
 
-    let untouched_failed = delta_untouched < input.min_improvement - CMP_EPS;
+    let untouched_failed = delta_untouched < input.holdout_min_improvement - CMP_EPS;
     if untouched_failed {
         failures.push(format!(
             "baseline-untouched-score ({}) improved by {delta_untouched:.6} \
-             but minimum-improvement threshold is {:.6}",
+             but holdout minimum-improvement threshold is {:.6}",
             obj.label(),
-            input.min_improvement
+            input.holdout_min_improvement
         ));
     } else if day_failed {
         // The day check failed but the holdout passed: surface the holdout delta
         // anyway so a holdout near-miss (or near-pass) is never invisible.
         failures.push(format!(
             "baseline-untouched-score ({}) improved by {delta_untouched:.6} \
-             (cleared the {:.6} minimum)",
+             (cleared the {:.6} holdout minimum)",
             obj.label(),
-            input.min_improvement
+            input.holdout_min_improvement
         ));
     }
 

@@ -65,111 +65,136 @@ Hard deployment rules for agents:
 5. Use GHCR via `.github/workflows/docker.yml` (`workflow_dispatch`) when you
    need a registry-backed, reproducible image shared across servers.
 
-## Quickstart (for first users)
+## Getting started
 
-This walks through a local backtest path with no live orders.
+xvision ships as a single binary (`xvn`) for macOS, Linux, and Windows.
+Pick your path:
+
+### Download a pre-built binary (fastest)
+
+Download `xvn` from the [latest release](https://github.com/latentwill/xvision/releases/latest):
+
+| Platform | Asset |
+|---|---|
+| macOS (Apple Silicon) | `xvn-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `xvn-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64) | `xvn-x86_64-linux-musl.tar.gz` |
+| Windows (x86_64) | `xvn-x86_64-windows-msvc.zip` |
+
+Extract and place the binary on your `PATH`. On macOS/Linux:
 
 ```bash
-# 1. Clone and build
+tar xzf xvn-aarch64-apple-darwin.tar.gz
+sudo mv xvn /usr/local/bin/
+xvn init
+```
+
+On Windows (PowerShell):
+
+```powershell
+Expand-Archive xvn-x86_64-windows-msvc.zip -DestinationPath .
+Move-Item xvn.exe C:\Users\$env:USERNAME\AppData\Local\Microsoft\WindowsApps\
+xvn init
+```
+
+### Run with Docker
+
+```bash
+# Create an env file with your credentials
+cp .env.example .env
+# Edit .env — add at least one LLM provider key
+
+# Pull and run (the image is private — docker login ghcr.io first)
+docker pull ghcr.io/latentwill/xvision:0.37.0
+XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
+docker run --rm \
+  -e XVN_AUTOMIGRATE=1 \
+  -e XVN_DASHBOARD_TOKEN="$XVN_DASHBOARD_TOKEN" \
+  -v xvision-data:/data \
+  --env-file .env \
+  -p 8788:8788 \
+  ghcr.io/latentwill/xvision:0.37.0
+echo "Open http://localhost:8788?token=$XVN_DASHBOARD_TOKEN"
+```
+
+Then open the printed URL — the `?token=` query param bootstraps a session
+cookie so you never need to pass the token again.
+
+> **`XVN_DASHBOARD_TOKEN`** is required whenever the dashboard binds to a
+> non-loopback address (including Docker and Tailscale). Generate it with
+> `openssl rand -hex 32`. More detail in
+> [the runbook](crates/xvision-dashboard/wiki/runbook.md#dashboard-authentication).
+
+### Build from source
+
+```bash
 git clone https://github.com/latentwill/xvision
 cd xvision
 cargo build --release
-
-# 2. Initialize xvision config/state
 ./target/release/xvn init
-
-# 3. Check provider config/readiness
-./target/release/xvn doctor --json
-./target/release/xvn provider list
-./target/release/xvn provider check --name <provider>
-./target/release/xvn provider models --name <provider>
-
-# 4. Configure a strategy from a template
-./target/release/xvn strategy templates
-./target/release/xvn strategy templates --json
-STRATEGY_ID=$(./target/release/xvn strategy create --template mean_reversion --name my-first-agent)
-
-# 5. Diagnose and validate before launching evals
-./target/release/xvn strategy diagnostics "$STRATEGY_ID" --json
-./target/release/xvn eval scenarios
-./target/release/xvn eval validate --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
-./target/release/xvn eval run --strategy "$STRATEGY_ID" --scenario crypto-bull-q1-2025 --mode backtest
-
-# 6. Inspect stored runs
-./target/release/xvn eval list
 ```
 
-Or pull the Docker image. The current release is **`0.36.0`**, published to
-GHCR as `ghcr.io/latentwill/xvision:0.36.0` on each `vX.Y.Z` tag. The image is
-private (inherits repo visibility) — run `docker login ghcr.io` first. See
-`docker/README.md` for the full mount/env-var reference and tag list.
+### First run (all platforms)
+
+1. **Check everything works:**
+   ```bash
+   xvn doctor
+   ```
+
+2. **Add an LLM provider** in Settings → Providers in the dashboard, or via CLI:
+   ```bash
+   xvn provider add \
+     --name anthropic \
+     --kind anthropic \
+     --base-url https://api.anthropic.com \
+     --api-key "$ANTHROPIC_API_KEY"
+   ```
+
+3. **Create an example strategy:**
+   ```bash
+   xvn example seed
+   xvn strategy list
+   ```
+
+4. **Run a backtest:**
+   ```bash
+   xvn strategy diagnostics <strategy_id> --json
+   xvn eval run --strategy <strategy_id> --scenario crypto-bull-q1-2025 --mode backtest
+   xvn eval list
+   ```
+
+5. **Open the dashboard** (if not already running):
+   ```bash
+   xvn dashboard serve --bind 127.0.0.1:8788
+   # → http://localhost:8788
+   ```
+
+   The dashboard is a full SPA baked into the binary — no separate frontend
+   process. V1 routes: `/` Dashboard, `/strategies`, `/eval-runs`, `/settings`.
+   See `frontend/README.md` for the full route table.
+
+> **Building from source?** `frontend/web/` is a pnpm workspace. Build it
+> first (`cd frontend/web && pnpm install && pnpm build`) before `cargo build`
+> to embed the SPA. The Docker image does this automatically.
+
+## Remote access over Tailscale
+
+Bind the dashboard to `0.0.0.0` and connect from your Tailscale node:
 
 ```bash
-docker pull ghcr.io/latentwill/xvision:0.36.0
-docker run --rm \
-  -e XVN_AUTOMIGRATE=1 \
-  -v xvision-data:/data \
-  --env-file .env \
-  ghcr.io/latentwill/xvision:0.36.0 \
-  doctor
+export XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
+xvn dashboard serve --bind 0.0.0.0:8788
+# → https://<tailscale-node>:8788?token=<XVN_DASHBOARD_TOKEN>
 ```
 
-## Web dashboard
-
-`xvn` also ships a single-binary web dashboard. The Vite-built SPA in
-`frontend/web/` is baked into the binary at compile time (via `rust-embed`),
-so `xvn dashboard serve` boots a full UI with no separate frontend process.
+For CLI commands on a remote node without SSH, use the typed remote CLI API:
 
 ```bash
-# locally, after cargo build
-xvn dashboard serve --bind 127.0.0.1:8788
-# open http://localhost:8788
-
-# in the docker image (dashboard serve is the default CMD)
-docker run --rm -p 8788:8788 -e XVN_AUTOMIGRATE=1 \
-  -v xvision-data:/data \
-  ghcr.io/latentwill/xvision:0.36.0
+scripts/xvn-remote.py exec eval list
 ```
 
-V1 routes: `/` Dashboard, `/setup` Wizard, `/strategies`, `/strategies/:id`,
-`/eval-runs`, `/eval-runs/:id`, `/eval-runs/compare`, `/charts/compare`,
-`/settings/*`.
-`/authoring/:id` remains as a compatibility alias for old inspector links.
-See `frontend/README.md` for the full route table and `frontend/DESIGN.md` for
-the design synthesis.
-
-> Building from source? `frontend/web/` is a pnpm workspace and must be built
-> (`cd frontend/web && pnpm install && pnpm build`) before `cargo build` if
-> you want the SPA embedded. The image published from `Dockerfile.deploy`
-> does this automatically.
-
-## Remote CLI over Tailscale
-
-Live-node command execution is exposed through the dashboard's typed remote CLI
-job API, not arbitrary SSH access. The API accepts a typed argv array only —
-no shell, no caller-controlled cwd or env.
-
-See **[`crates/xvision-dashboard/wiki/remote-cli.md`](crates/xvision-dashboard/wiki/remote-cli.md)**
-for the full canonical reference: endpoint table, request/response fields,
-polling vs SSE, allowlist policy, and safe-to-surface command examples.
-
-Quick summary:
-
-- Use `scripts/xvn-remote.py exec ...` for a shell-free helper (create/poll/output in one call).
-- Use `POST /api/cli/jobs` with a typed argv array for direct API access.
-- Long-running jobs can be polled through `GET /api/cli/jobs/:id` and output
-  retrieved via `GET /api/cli/jobs/:id/output`.
-- SSE progress is available at `GET /api/cli/jobs/:id/events`.
-- Cancel a running job with `DELETE /api/cli/jobs/:id` (preferred) or
-  `POST /api/cli/jobs/:id/cancel` (legacy alias). Both send SIGTERM then
-  SIGKILL after a 5-second grace period and are idempotent on terminal jobs.
-- Every job is checked against the allowlist policy before spawning. Read-only
-  heads (`eval list/show/results/watch/compare`, `strategy show/validate`,
-  `scenario show/select`, `doctor`, etc.) are allowed without configuration.
-  Mutating/destructive nested paths and server/live-trading heads (`dashboard`,
-  `mcp`, `fire-trade`, `close-position`, `init`, etc.) are rejected.
-  Bounded eval/experiment/bakeoff jobs require their strict-template flag set
-  (`--max-decisions`, `--max-wall-clock`, etc.).
+See **[remote-cli.md](crates/xvision-dashboard/wiki/remote-cli.md)** for the
+full endpoint reference, allowlist policy, and safe-to-surface commands.
 
 ## Safety
 

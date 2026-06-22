@@ -146,6 +146,7 @@ fn seed_strategy(home: &std::path::Path) -> String {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             hypothesis: None,
             agents: vec![AgentRef {

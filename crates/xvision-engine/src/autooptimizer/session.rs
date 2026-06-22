@@ -144,6 +144,11 @@ pub async fn ensure_session_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_aoe_session ON autooptimizer_events(session_id)")
         .execute(pool)
         .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_aoe_cycle_kind_seq ON autooptimizer_events(cycle_id, kind, seq)",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -342,7 +347,7 @@ pub async fn run_session<F, Fut>(
     mode: &str,
     cycles_planned: Option<i64>,
     budget_cap: Option<f64>,
-    loosening_thresholds: Vec<f64>,
+    _loosening_thresholds: Vec<f64>,
     max_consecutive_errors: u32,
     // After this many consecutive cycles with 0 kept candidates, halt the session
     // with a diagnostic. `None` or `0` disables the guard (never halts). Default: 3.
@@ -479,10 +484,10 @@ where
             _ => false,
         };
 
-        // 8. Check sustained-no-pass floor.
-        let floor_hit = loosening_floor_reached(&loosening_thresholds, sustained_no_pass);
-
-        if mode_done || budget_exceeded || floor_hit {
+        // 8. The historical loosening floor is disabled while threshold
+        // loosening itself is disabled. Preserved schedules are no-ops until an
+        // explicit re-enable path wires both threshold changes and floor exits.
+        if mode_done || budget_exceeded {
             break;
         }
     }
@@ -1292,13 +1297,14 @@ mod tests {
     // -----------------------------------------------------------------------
     // test_no_pass_floor_stops_loop
     // -----------------------------------------------------------------------
-    /// When the loosening schedule is exhausted (sustained_no_pass_cycles
-    /// exceeds the schedule length), the loop stops and finishes normally.
+    /// Preserved loosening schedule thresholds are no-ops until loosening is
+    /// explicitly re-enabled.
     #[tokio::test]
-    async fn test_no_pass_floor_stops_loop() {
+    async fn test_disabled_loosening_schedule_does_not_stop_loop() {
         let pool = test_pool().await;
-        // Use n_experiments=100 so mode alone would never stop it.
-        let sid = create_session(&pool, "strat-floor", "{}", "n_experiments", Some(100))
+        // Use n_experiments=3 so mode stops the loop; the disabled loosening
+        // schedule must not stop it after the first no-pass report.
+        let sid = create_session(&pool, "strat-floor", "{}", "n_experiments", Some(3))
             .await
             .unwrap();
 
@@ -1308,15 +1314,13 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let pause = Arc::new(AtomicBool::new(false));
 
-        // Schedule has 2 steps. Floor is exceeded when sustained_no_pass_cycles > 2.
-        // We return sustained_no_pass_cycles=3 immediately → floor hit on first cycle.
         run_session(
             &pool,
             &sid,
             "n_experiments",
-            Some(100),
+            Some(3),
             None,
-            vec![0.05, 0.02], // 2-step loosening schedule
+            vec![0.05, 0.02], // preserved but disabled loosening schedule
             0,                // max_consecutive_errors: session breaker disabled in this test
             None,             // max_consecutive_no_keep: disabled
             Arc::new(|| 0.0), // cost_so_far: no spend tracked in this test
@@ -1324,7 +1328,6 @@ mod tests {
             Arc::clone(&pause),
             move || {
                 counter.fetch_add(1, Ordering::Relaxed);
-                // Return floor-exceeded immediately (3 > 2 steps).
                 let outcome = CycleRunOutcome {
                     outcome: "dropped".to_string(),
                     cum_cost_usd: 0.0,
@@ -1338,8 +1341,8 @@ mod tests {
 
         assert_eq!(
             call_count.load(Ordering::Relaxed),
-            1,
-            "floor stop must trigger after first cycle reports floor-exceeded"
+            3,
+            "disabled loosening floor must not stop the session before n_experiments"
         );
 
         let row: OptimizerSession =

@@ -53,6 +53,7 @@ fn strategy(required_tools: Vec<&str>) -> Strategy {
             asset_universe: vec!["BTC/USD".to_string()],
             required_tools: required_tools.into_iter().map(str::to_string).collect(),
             decision_cadence_minutes: 15,
+            timeframe_requirements: Default::default(),
             attested_with: Vec::new(),
             risk_preset_or_config: "balanced".to_string(),
             published_at: None,

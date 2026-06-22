@@ -258,6 +258,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {

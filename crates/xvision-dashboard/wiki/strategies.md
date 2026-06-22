@@ -35,20 +35,17 @@ that strategies draw from.
 
 ## Author a strategy from the CLI
 
-### Template mode
+### File mode
 
-Create a strategy draft from a registered template:
+Create editable starter manifests, then import one as a strategy:
 
 ```sh
-xvn strategy create \
-  --template trend-follower \
-  --name "ETH Trend 4h" \
-  --provider openrouter \
-  --model deepseek/deepseek-chat
+xvn strategies init
+xvn strategy create --from-file ~/.xvn/strategies/<strategy-id>.json --json
 ```
 
-`--provider` and `--model` seed the auto-created agent for each template role.
-Run `xvn strategy templates` to list available template names.
+`xvn strategies init` writes starter strategy JSON files under the xvision home
+directory. Edit the manifest first, then import it with `--from-file`.
 
 ### Atomic mode
 

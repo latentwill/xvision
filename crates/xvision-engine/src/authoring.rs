@@ -271,6 +271,7 @@ pub async fn create_blank_strategy(
             regime_fit: Vec::new(),
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
+            timeframe_requirements: Default::default(),
             attested_with: Vec::new(),
             required_tools: Vec::new(),
             risk_preset_or_config: "conservative".into(),

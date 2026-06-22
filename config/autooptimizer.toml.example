@@ -6,6 +6,11 @@
 # 0.05 means the candidate must improve Sharpe ratio by at least 5%.
 # Must be greater than 0.
 min_improvement = 0.05
+# Minimum improvement on the holdout (baseline-untouched) window.
+# Separate from min_improvement so the out-of-sample bar can be lower than
+# the in-sample bar. Defaults to 0.005 (0.5%) when not set.
+holdout_min_improvement = 0.005
+
 
 # Dates held out for final performance checks — never used during evening runs.
 # Must not overlap with day_window. Format: "YYYY-MM-DD" (quoted string).
@@ -21,11 +26,11 @@ end   = "2025-12-01"
 start = "2025-01-01"
 end   = "2025-04-01"
 
-# Optional: lower the minimum-improvement bar if no experiment passes for
-# several consecutive evenings. Remove this section to keep min_improvement fixed.
-# Each threshold applies to the corresponding evening number (evening 1, 2, 3, …).
-[loosening_schedule]
-day_n_thresholds = [0.04, 0.03, 0.02]
+# Loosening schedule is disabled in the runtime as of 2026-06-22.
+# The preserved implementation is intentionally not wired to sessions/cycles
+# until a future opt-in re-enable path lands.
+# [loosening_schedule]
+# day_n_thresholds = [0.04, 0.03, 0.02]
 
 # The model that writes experiment proposals each evening.
 [mutator]

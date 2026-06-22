@@ -26,8 +26,59 @@ fn make_input(
         parent_untouched_metrics: metrics(parent_untouched_sharpe, parent_untouched_dd),
         child_untouched_metrics: metrics(child_untouched_sharpe, child_untouched_dd),
         min_improvement,
+        holdout_min_improvement: min_improvement,
         objective: Objective::default(),
     }
+}
+
+#[test]
+fn holdout_threshold_is_independent_from_day_threshold() {
+    let input = GateInput {
+        parent_day_metrics: metrics(1.0, -10.0),
+        child_day_metrics: metrics(1.12, -10.0),
+        parent_untouched_metrics: metrics(0.8, -8.0),
+        child_untouched_metrics: metrics(0.806, -8.0),
+        min_improvement: 0.10,
+        holdout_min_improvement: 0.005,
+        objective: Objective::default(),
+    };
+
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+#[test]
+fn legacy_gate_input_json_defaults_holdout_threshold_to_day_threshold() {
+    let json = serde_json::json!({
+        "parent_day_metrics": metrics(1.0, -10.0),
+        "child_day_metrics": metrics(1.2, -10.0),
+        "parent_untouched_metrics": metrics(0.8, -8.0),
+        "child_untouched_metrics": metrics(1.0, -8.0),
+        "min_improvement": 0.1,
+        "objective": "sharpe"
+    });
+
+    let input: GateInput = serde_json::from_value(json).expect("legacy gate input should deserialize");
+
+    assert_eq!(input.holdout_min_improvement, input.min_improvement);
+}
+
+#[test]
+fn holdout_failure_message_uses_holdout_threshold() {
+    let input = GateInput {
+        parent_day_metrics: metrics(1.0, -10.0),
+        child_day_metrics: metrics(1.12, -10.0),
+        parent_untouched_metrics: metrics(0.8, -8.0),
+        child_untouched_metrics: metrics(0.803, -8.0),
+        min_improvement: 0.10,
+        holdout_min_improvement: 0.005,
+        objective: Objective::default(),
+    };
+
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected holdout failure");
+    };
+
+    assert!(reason.contains("holdout minimum-improvement threshold is 0.005000"));
 }
 
 // ── F24: configurable objective ──────────────────────────────────────────────
@@ -53,6 +104,7 @@ fn total_return_objective_gates_on_return_not_sharpe() {
         parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
         child_untouched_metrics: m_full(1.0, 7.0, 0.5, -8.0),
         min_improvement: 1.0,
+        holdout_min_improvement: 1.0,
         objective: Objective::TotalReturn,
     };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
@@ -69,6 +121,7 @@ fn max_drawdown_objective_rewards_reducing_drawdown() {
         child_day_metrics: m_full(1.0, 5.0, 0.5, -12.0),
         parent_untouched_metrics: m_full(1.0, 5.0, 0.5, -18.0),
         child_untouched_metrics: m_full(1.0, 5.0, 0.5, -10.0),
+        holdout_min_improvement: 1.0,
         min_improvement: 1.0,
         objective: Objective::MaxDrawdown,
     };
@@ -83,6 +136,7 @@ fn total_return_objective_requires_both_windows() {
         parent_day_metrics: m_full(1.0, 5.0, 0.5, -10.0),
         child_day_metrics: m_full(1.0, 9.0, 0.5, -10.0),
         parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
+        holdout_min_improvement: 1.0,
         child_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0), // no untouched improvement
         min_improvement: 1.0,
         objective: Objective::TotalReturn,

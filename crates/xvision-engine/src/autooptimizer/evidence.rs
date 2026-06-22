@@ -63,6 +63,7 @@ pub struct GateRecord<'a> {
     pub parent_holdout_score: Option<f64>,
     pub child_holdout_score: Option<f64>,
     pub gate_epsilon: Option<f64>,
+    pub holdout_epsilon: Option<f64>,
     pub delta_day: Option<f64>,
     pub delta_holdout: Option<f64>,
     pub drawdown_ratio: Option<f64>,
@@ -89,10 +90,10 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
         "INSERT OR REPLACE INTO autooptimizer_gate_records \
          (bundle_hash, parent_day_score, child_day_score, \
           parent_holdout_score, child_holdout_score, \
-          gate_epsilon, delta_day, delta_holdout, drawdown_ratio, \
+          gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
           verdict, reason, rationale, \
           edge_over_random, parent_edge, edge_delta, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(rec.bundle_hash)
     .bind(rec.parent_day_score)
@@ -100,6 +101,7 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
     .bind(rec.parent_holdout_score)
     .bind(rec.child_holdout_score)
     .bind(rec.gate_epsilon)
+    .bind(rec.holdout_epsilon)
     .bind(rec.delta_day)
     .bind(rec.delta_holdout)
     .bind(rec.drawdown_ratio)
@@ -142,6 +144,7 @@ pub struct GateRecordRow {
     pub parent_holdout_score: Option<f64>,
     pub child_holdout_score: Option<f64>,
     pub gate_epsilon: Option<f64>,
+    pub holdout_epsilon: Option<f64>,
     pub delta_day: Option<f64>,
     pub delta_holdout: Option<f64>,
     pub drawdown_ratio: Option<f64>,
@@ -187,7 +190,7 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
         "SELECT bundle_hash, parent_day_score, child_day_score, \
          edge_over_random, parent_edge, edge_delta, \
                 parent_holdout_score, child_holdout_score, \
-                gate_epsilon, delta_day, delta_holdout, drawdown_ratio, \
+                gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
                 verdict, reason, rationale, created_at \
          FROM autooptimizer_gate_records WHERE bundle_hash = ?",
     )
@@ -206,6 +209,7 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
         parent_holdout_score: row.try_get("parent_holdout_score")?,
         child_holdout_score: row.try_get("child_holdout_score")?,
         gate_epsilon: row.try_get("gate_epsilon")?,
+        holdout_epsilon: row.try_get("holdout_epsilon")?,
         delta_day: row.try_get("delta_day")?,
         delta_holdout: row.try_get("delta_holdout")?,
         drawdown_ratio: row.try_get("drawdown_ratio")?,
@@ -359,6 +363,7 @@ mod tests {
                 parent_holdout_score: Some(0.9),
                 child_holdout_score: Some(1.1),
                 gate_epsilon: Some(0.05),
+                holdout_epsilon: Some(0.005),
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),
@@ -383,6 +388,7 @@ mod tests {
         assert!((rec.child_day_score.unwrap() - 1.8).abs() < 1e-9);
         assert!((rec.delta_day.unwrap() - 0.3).abs() < 1e-9);
         assert!((rec.delta_holdout.unwrap() - 0.2).abs() < 1e-9);
+        assert!((rec.holdout_epsilon.unwrap() - 0.005).abs() < 1e-9);
         assert_eq!(rec.verdict, "passed");
         assert!(rec.reason.is_none());
         assert_eq!(
@@ -412,6 +418,7 @@ mod tests {
                     parent_holdout_score: None,
                     child_holdout_score: None,
                     gate_epsilon: None,
+                    holdout_epsilon: None,
                     delta_day: None,
                     delta_holdout: None,
                     drawdown_ratio: None,

@@ -51,6 +51,7 @@ fn fixture_strategy() -> Strategy {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

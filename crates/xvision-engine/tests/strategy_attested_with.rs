@@ -24,6 +24,7 @@ fn manifest(attested: Vec<String>) -> PublicManifest {
         color: None,
         execution_mode: Default::default(),
         capital_mode: Default::default(),
+        timeframe_requirements: Default::default(),
     }
 }
 

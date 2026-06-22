@@ -559,6 +559,7 @@ fn make_scaffold_manifest(title: Option<&str>) -> PublicManifest {
         regime_fit: vec![],
         asset_universe: vec!["BTC/USD".to_string()],
         decision_cadence_minutes: 60,
+        timeframe_requirements: Default::default(),
         attested_with: vec![],
         required_tools: vec![],
         risk_preset_or_config: "balanced".to_string(),

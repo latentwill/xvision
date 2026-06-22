@@ -54,6 +54,8 @@ fn default_autooptimizer_toml() -> String {
 # (mutator) and judge at a registered, launchable provider. `{provider}` must
 # be present in $XVN_HOME/config/default.toml for this to dispatch.
 min_improvement = 0.05
+holdout_min_improvement = 0.005
+
 
 [baseline_untouched_window]
 start = \"2025-09-01\"
@@ -241,6 +243,7 @@ async fn seed_strategies(
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -483,6 +486,7 @@ mod tests {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),

@@ -498,6 +498,8 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         take_profit_price: 0.0,
         risk_config: &risk,
         perps: PerpsContext::default(),
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     });
 
     // Before injection: no briefing_indicators key.

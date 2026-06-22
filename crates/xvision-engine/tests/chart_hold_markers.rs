@@ -30,6 +30,7 @@ async fn seed_btc_strategy(ctx: &ApiContext, id: &str) {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

@@ -3810,6 +3810,61 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
         .collect()
 }
 
+async fn load_market_data_context_for_scenario(
+    ctx: &ApiContext,
+    scenario: &Scenario,
+    strategy: &crate::strategies::Strategy,
+    assets: &[xvision_core::trading::AssetSymbol],
+) -> ApiResult<crate::eval::market_data::MarketDataContext> {
+    let mut market_data = crate::eval::market_data::MarketDataContext::new();
+    for asset in assets {
+        let bars = market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset).await?);
+        market_data.insert_series(*asset, scenario.granularity, bars);
+    }
+    for (tf, support) in strategy.supported_timeframes() {
+        if support == crate::strategies::TimeframeSupport::Native {
+            continue;
+        }
+        let granularity = match tf.as_str() {
+            "1m" => xvision_data::alpaca::BarGranularity::Minute1,
+            "5m" => xvision_data::alpaca::BarGranularity::Minute5,
+            "15m" => xvision_data::alpaca::BarGranularity::Minute15,
+            "30m" => xvision_data::alpaca::BarGranularity::new(30, xvision_data::alpaca::BarGranularityUnit::Minute)
+                .expect("validated 30m granularity"),
+            "1h" => xvision_data::alpaca::BarGranularity::Hour1,
+            "2h" => xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
+                .expect("validated 2h granularity"),
+            "4h" => xvision_data::alpaca::BarGranularity::Hour4,
+            "1d" => xvision_data::alpaca::BarGranularity::Day1,
+            _ => continue,
+        };
+        for asset in assets {
+            let pair = asset.as_alpaca_pair();
+            let cache_key = crate::eval::bars::compute_cache_key(
+                &pair,
+                granularity,
+                scenario.time_window.start,
+                scenario.time_window.end,
+                "alpaca-historical-v1",
+            );
+            let bars = crate::eval::bars::load_bars(
+                ctx,
+                &crate::eval::bars::BarCacheArgs {
+                    cache_key,
+                    asset_pair: pair,
+                    granularity,
+                    start: scenario.time_window.start,
+                    end: scenario.time_window.end,
+                    data_source_tag: "alpaca-historical-v1".into(),
+                },
+            )
+            .await?;
+            market_data.insert_series(*asset, granularity, market_bars_to_ohlcv(bars));
+        }
+    }
+    Ok(market_data)
+}
+
 // `load_ohlcv_for_scenario`, `build_paper_executor`, and
 // `paper_min_notional_usd` were removed
 // alongside the paper-mode-executor-deleted deletion (executor-collapse-paper-mode,
@@ -3863,21 +3918,23 @@ async fn build_backtest_executor(
         .first()
         .ok_or_else(|| ApiError::Validation("strategy asset_universe resolved empty".into()))?;
     if from_db {
+        let market_data = load_market_data_context_for_scenario(ctx, scenario, strategy, &active).await?;
         let mut asset_bars = std::collections::BTreeMap::new();
         let mut first_err: Option<String> = None;
         for asset in &active {
-            match load_bars_for_scenario(ctx, scenario, *asset).await {
-                Ok(bars) => {
-                    if bars.is_empty() {
-                        first_err.get_or_insert_with(|| {
-                            format!("{}: no bars loaded for scenario window", asset.as_alpaca_pair())
-                        });
-                    } else {
-                        asset_bars.insert(*asset, market_bars_to_ohlcv(bars));
-                    }
+            match market_data.series(*asset, scenario.granularity) {
+                Some(bars) if !bars.is_empty() => {
+                    asset_bars.insert(*asset, bars.to_vec());
                 }
-                Err(e) => {
-                    first_err.get_or_insert_with(|| format!("{}: {e}", asset.as_alpaca_pair()));
+                Some(_) => {
+                    first_err.get_or_insert_with(|| {
+                        format!("{}: no bars loaded for scenario window", asset.as_alpaca_pair())
+                    });
+                }
+                None => {
+                    first_err.get_or_insert_with(|| {
+                        format!("{}: missing native timeframe context", asset.as_alpaca_pair())
+                    });
                 }
             }
         }
@@ -3896,17 +3953,11 @@ async fn build_backtest_executor(
                 Executor::new().with_asset_bars(asset_bars)
             };
             bt = bt
+                .with_market_data(market_data)
                 .with_warmup(warmup)
                 .with_event_bus(ctx.event_bus.clone())
                 .with_provider_catalogs(provider_catalogs)
                 .with_cline_runtime(agent_runtime, cline);
-            // Task C3: thread the asset subset into the executor so its own
-            // `active_assets` call (inside `run`) agrees with the bars we just
-            // loaded. Without this the executor would call
-            // `active_assets(universe, None)` → full universe, then filter to
-            // only assets with bars — functionally equivalent for the DB path,
-            // but the explicit subset makes the two resolutions agree and avoids
-            // any divergence if future executor logic changes.
             if let Some(subset) = assets_subset {
                 bt = bt.with_asset_subset(subset.to_vec());
             }
@@ -5987,6 +6038,7 @@ mod tests {
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
                 decision_cadence_minutes: 60,
+                timeframe_requirements: Default::default(),
                 attested_with: Vec::new(),
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".into(),

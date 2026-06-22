@@ -1373,6 +1373,7 @@ impl XvisionTools {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
