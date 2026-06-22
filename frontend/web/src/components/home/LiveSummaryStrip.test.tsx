@@ -67,14 +67,14 @@ afterEach(() => {
 });
 
 describe("LiveSummaryStrip", () => {
-  it("shows the empty state + 'Deploy a strategy' CTA when there are no live runs", async () => {
+  it("shows the empty state + 'Launch eval' CTA when there are no live runs", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([]);
 
     renderStrip();
 
     await screen.findByText(/no live strategies running/i);
-    const cta = screen.getByRole("link", { name: /deploy a strategy/i });
-    expect(cta).toHaveAttribute("href", "/strategies");
+    const cta = screen.getByRole("link", { name: /launch eval/i });
+    expect(cta).toHaveAttribute("href", "/eval-runs?start=1");
   });
 
   it("counts ACTIVE live-money strategies and links to /live", async () => {
