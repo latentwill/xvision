@@ -452,19 +452,12 @@ fn byreal_entry(stored: Option<&ByrealCredentials>) -> BrokerEntry {
 }
 
 fn byreal_spot_entry(stored: Option<&ByrealSpotCredentials>) -> BrokerEntry {
-    // Surface the BYREAL_SPOT_* vars for debuggability. The signing key
-    // (`BYREAL_SPOT_PRIVATE_KEY`) gates a connection; `BYREAL_SPOT_NETWORK`
-    // defaults to mainnet and is optional. Spot has no account field
-    // (unlike perps) — the CLI resolves the wallet from the keystore.
-    let credentials = vec![
-        cred("BYREAL_SPOT_PRIVATE_KEY"),
-        cred("BYREAL_SPOT_NETWORK"),
-    ];
-    let env_configured = credentials
-        .iter()
-        .find(|c| c.env_var == "BYREAL_SPOT_PRIVATE_KEY")
-        .map(|c| c.is_set)
-        .unwrap_or(false);
+    // Spot execution is owned by byreal-cli's local wallet keystore; the
+    // engine does not consume a stored private key or BYREAL_SPOT_PRIVATE_KEY.
+    // Keep stored=true as a redacted record for the Settings UI, but never
+    // promote it to configured=true.
+    let credentials = vec![cred("BYREAL_SPOT_NETWORK")];
+    let runtime_configured = false;
     let stored_present = stored.is_some();
     let stored_key_id_suffix = stored.map(|c| last4(&c.private_key));
     let base_url = stored
@@ -474,15 +467,14 @@ fn byreal_spot_entry(stored: Option<&ByrealSpotCredentials>) -> BrokerEntry {
         name: "Byreal Spot".into(),
         kind: "byreal_spot".into(),
         credentials,
-        configured: env_configured || stored_present,
+        configured: runtime_configured,
         stored: stored_present,
         stored_key_id_suffix,
         base_url,
         note: Some(
             "Solana spot trading (curated SPL + xStocks) via byreal-cli. \
-             Long/Flat only — no shorting, no leverage. Testnet supported \
-             for live-eval (set network=testnet). Use a trading-only agent \
-             key (cannot withdraw)."
+             Runtime wallet configuration lives in the byreal-cli keystore; \
+             Settings stores a redacted key record only and does not configure execution."
                 .into(),
         ),
     }
@@ -1808,6 +1800,33 @@ mod tests {
         assert!(report.byreal.stored, "stored creds ⇒ stored=true");
         assert!(report.byreal.configured, "stored creds ⇒ configured=true");
         assert_eq!(report.byreal.stored_key_id_suffix.as_deref(), Some("cafe"));
+    }
+
+    fn byreal_spot_req(key: &str, network: Option<&str>) -> SetByrealSpotReq {
+        SetByrealSpotReq {
+            private_key: key.into(),
+            network: network.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_reports_stored_byreal_spot_without_runtime_configured() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_byreal_spot(&ctx, byreal_spot_req("solana-agent-key-9f3c", Some("testnet")))
+            .await
+            .unwrap();
+
+        let report = get(&ctx).await.unwrap();
+
+        assert!(report.byreal_spot.stored, "stored key should still be redacted");
+        assert!(
+            !report.byreal_spot.configured,
+            "byreal-cli spot runtime uses its keystore; storing this key must not imply execution is configured"
+        );
+        assert_eq!(
+            report.byreal_spot.stored_key_id_suffix.as_deref(),
+            Some("9f3c")
+        );
     }
 
     #[tokio::test]
