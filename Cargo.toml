@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "xtask"]
+exclude = ["probes/m0-byreal"]
 
 # `default-members` omits xvision-identity / xvision-marketplace as direct
 # members, but since the marketplace routes landed, xvision-dashboard (a
@@ -73,8 +74,6 @@ uuid   = { version = "1", features = ["v4", "serde"] }
 
 # brokerage
 apca = { version = "0.30", default-features = false, features = ["vendored-openssl"] }
-# orderly-connector-rs pinned at 0.4.15 per M0 probe (probes/m0-orderly/)
-orderly-connector-rs = "0.4.15"
 
 # test / bench
 proptest  = "1"

@@ -57,14 +57,18 @@ export ORDERLY_ACCOUNT_ID=$(op read 'op://Personal/xvision-orderly-testnet/accou
 export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
 ```
 
-4. Smoke the full signed-request path:
+4. Smoke the maintained signed-request path with the CLI executor:
 
 ```bash
-cargo run --release --manifest-path probes/m0-orderly/Cargo.toml
+xvn fire-trade --venue orderly --side buy --size-bps 1 --asset BTC \
+  --summary "orderly testnet signed-request smoke"
+xvn close-position --venue orderly --asset BTC
 ```
 
-The probe places and cancels a tiny `PERP_BTC_USDC` order and verifies the SDK
-error mapping. Success: round-trip submit+cancel completes without errors.
+The smoke submits a tiny testnet Orderly order through the same direct signed
+HTTP executor used by runtime code, then closes the position. The legacy
+`probes/m0-orderly` SDK probe was removed because `orderly-connector-rs` pins
+stale Solana/TLS dependencies that are not used by production execution.
 
 ## On-chain identity (opt-in)
 
