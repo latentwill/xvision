@@ -28,6 +28,8 @@ pub enum XvnExit {
     NotFound = 4,
     Upstream = 5,
     Conflict = 7,
+    /// Operator cancelled the operation (e.g. pre-flight gate query).
+    Cancelled = 8,
     // `xvn optimize` failure classes (Phase 3.6). Distinct codes so an agent
     // can branch on the exact reason an optimization run failed without parsing
     // text. Kept in the 10–16 band, clear of the shared codes above.
