@@ -26,6 +26,7 @@ pub mod early_stop;
 pub mod executor;
 pub mod experiment_store;
 pub mod export;
+pub mod market_data;
 pub mod filter_hook;
 pub mod finalize_writer;
 pub mod findings;

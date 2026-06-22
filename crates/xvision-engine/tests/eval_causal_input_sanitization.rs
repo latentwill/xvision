@@ -227,6 +227,8 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
         take_profit_price: 0.0,
         risk_config: &risk,
         perps: PerpsContext::default(),
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     })
 }
 
@@ -313,6 +315,8 @@ fn live_and_backtest_seeds_diverge_only_on_allowlisted_fields() {
         take_profit_price: 120.0,
         risk_config: &risk,
         perps: PerpsContext::default(),
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     };
     let backtest = build_decision_seed(DecisionSeedInput::from_context(ctx(109.0, "eval_bar.close")));
     let live = build_decision_seed(DecisionSeedInput::from_context(ctx(108.0, "live_bar.close")));
@@ -343,6 +347,8 @@ fn from_context_derives_unrealized_pnl_for_long_and_flat() {
         take_profit_price: 0.0,
         risk_config: &risk,
         perps: PerpsContext::default(),
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     };
     // Long 100 → 110 mark = +10%.
     let long = build_decision_seed(DecisionSeedInput::from_context(base(0.02, 100.0)));
@@ -382,6 +388,8 @@ fn perps_context_emitted_in_market_data_when_present() {
             open_interest: Some(9_000_000.0),
             ..Default::default()
         },
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     });
     let perps = &seed["market_data"]["perps"];
     assert_eq!(perps["funding_rate"].as_f64(), Some(0.0002));

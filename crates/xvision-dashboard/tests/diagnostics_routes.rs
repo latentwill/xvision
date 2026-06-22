@@ -81,6 +81,7 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             hypothesis: None,
             agents: vec![AgentRef {

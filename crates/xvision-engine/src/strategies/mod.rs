@@ -252,6 +252,12 @@ fn is_default_pipeline(p: &PipelineDef) -> bool {
 }
 
 /// Fallback warmup-bar count when `manifest.min_warmup_bars` is unset.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TimeframeSupport {
+    Native,
+    Auxiliary,
+}
 pub const FALLBACK_MIN_WARMUP_BARS: u32 = 0;
 
 impl Strategy {
@@ -261,6 +267,37 @@ impl Strategy {
     /// 1. `manifest.min_warmup_bars`, if set.
     /// 2. [`FALLBACK_MIN_WARMUP_BARS`].
     ///
+
+    pub fn native_timeframe(&self) -> crate::strategies::manifest::TimeframeSpec {
+        crate::strategies::manifest::TimeframeSpec(match self.manifest.decision_cadence_minutes {
+            1 => "1m",
+            5 => "5m",
+            15 => "15m",
+            30 => "30m",
+            60 => "1h",
+            120 => "2h",
+            240 => "4h",
+            1440 => "1d",
+            other => return crate::strategies::manifest::TimeframeSpec(format!("{other}m")),
+        }
+        .to_string())
+    }
+
+    pub fn supported_timeframes(
+        &self,
+    ) -> Vec<(crate::strategies::manifest::TimeframeSpec, TimeframeSupport)> {
+        let mut out = Vec::with_capacity(1 + self.manifest.timeframe_requirements.auxiliary.len());
+        out.push((self.native_timeframe(), TimeframeSupport::Native));
+        out.extend(
+            self.manifest
+                .timeframe_requirements
+                .auxiliary
+                .iter()
+                .cloned()
+                .map(|tf| (tf, TimeframeSupport::Auxiliary)),
+        );
+        out
+    }
     /// Warmup is purely a manifest concern — set `manifest.min_warmup_bars`
     /// explicitly when a strategy's indicators need prior-bar history.
     pub fn min_warmup_bars(&self) -> u32 {
@@ -391,6 +428,7 @@ mod tests {
             regime_fit: vec![],
             asset_universe: vec![],
             decision_cadence_minutes: 60,
+            timeframe_requirements: Default::default(),
             attested_with: vec![],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),

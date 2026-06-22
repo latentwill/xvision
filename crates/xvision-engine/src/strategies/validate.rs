@@ -50,6 +50,14 @@ pub enum ValidationError {
          it before attaching"
     )]
     CheckpointNotLiveApproved { role: String, model_id: String },
+    #[error("auxiliary timeframe '{0}' duplicates the native strategy timeframe")]
+    DuplicateNativeTimeframe(String),
+    #[error("auxiliary timeframe '{0}' is duplicated in timeframe_requirements")]
+    DuplicateAuxiliaryTimeframe(String),
+    #[error("unsupported auxiliary timeframe '{0}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d")]
+    UnsupportedAuxiliaryTimeframe(String),
+    #[error("auxiliary timeframe '{auxiliary}' must be an integer multiple of native timeframe '{native}'")]
+    NonNestedAuxiliaryTimeframe { native: String, auxiliary: String },
 }
 
 pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
@@ -84,6 +92,45 @@ pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
             .any(|slot| slot.allowed_tools.iter().any(|t| t == required));
         if !granted {
             return Err(ValidationError::UndeclaredTool(required.clone()));
+        }
+    }
+    Ok(())
+}
+
+fn parse_supported_timeframe_minutes(tf: &str) -> Option<u32> {
+    match tf {
+        "1m" => Some(1),
+        "5m" => Some(5),
+        "15m" => Some(15),
+        "30m" => Some(30),
+        "1h" => Some(60),
+        "2h" => Some(120),
+        "4h" => Some(240),
+        "1d" => Some(1440),
+        _ => None,
+    }
+}
+
+fn validate_timeframe_requirements(b: &Strategy) -> Result<(), ValidationError> {
+    let native = b.native_timeframe();
+    let native_minutes = b.manifest.decision_cadence_minutes;
+    let mut seen = HashSet::new();
+    for tf in &b.manifest.timeframe_requirements.auxiliary {
+        let name = tf.as_str();
+        if name == native.as_str() {
+            return Err(ValidationError::DuplicateNativeTimeframe(name.to_string()));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(ValidationError::DuplicateAuxiliaryTimeframe(name.to_string()));
+        }
+        let Some(minutes) = parse_supported_timeframe_minutes(name) else {
+            return Err(ValidationError::UnsupportedAuxiliaryTimeframe(name.to_string()));
+        };
+        if minutes <= native_minutes || minutes % native_minutes != 0 {
+            return Err(ValidationError::NonNestedAuxiliaryTimeframe {
+                native: native.as_str().to_string(),
+                auxiliary: name.to_string(),
+            });
         }
     }
     Ok(())
@@ -130,6 +177,9 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
     if let Err(e) = validate_strategy(strategy) {
         result.errors.push(e.to_string());
     }
+    if let Err(e) = validate_timeframe_requirements(strategy) {
+        result.errors.push(e.to_string());
+    }
 
     if let Some(sc) = scenario {
         // Scenarios are asset-free — the asset a run trades comes from the
@@ -163,7 +213,6 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
     if let Some(w) = high_position_size_warning(strategy) {
         result.warnings.push(w);
     }
-
     result.eval_ready = result.errors.is_empty() && result.warnings.is_empty();
     result
 }
@@ -519,6 +568,7 @@ mod preflight_tests {
                 regime_fit: vec![],
                 asset_universe: vec![asset.to_string()],
                 decision_cadence_minutes: cadence_minutes,
+                timeframe_requirements: Default::default(),
                 attested_with: vec![],
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),

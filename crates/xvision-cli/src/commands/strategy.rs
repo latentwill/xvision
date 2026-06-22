@@ -1345,6 +1345,7 @@ async fn new_atomic(
             color: None,
             execution_mode: exec_mode,
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -3775,6 +3776,7 @@ pub mod atomic_create {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
@@ -3851,6 +3853,7 @@ pub mod atomic_create {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),

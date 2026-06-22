@@ -39,6 +39,7 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
