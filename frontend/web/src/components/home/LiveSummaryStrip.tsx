@@ -130,13 +130,12 @@ export function LiveSummaryStrip() {
       )}
 
       {/* CTA — always present. Routes to the live page when there's activity
-          to monitor (live, non-live, or stale rows to clean up), or to the
-          strategies list to deploy one when there's nothing running yet. */}
+          to monitor, or to the eval launcher to deploy one when nothing's running. */}
       <Link
-        to={hasAny ? "/live" : "/strategies"}
+        to={hasAny ? "/live" : "/eval-runs?start=1"}
         className="ml-auto shrink-0 text-[12px] text-text-3 hover:text-text underline-offset-2 hover:underline"
       >
-        {hasLive ? "Go to Live Trading →" : hasAny ? "View runs →" : "Deploy a strategy →"}
+        {hasLive ? "Go to Live Trading →" : hasAny ? "View runs →" : "Launch eval →"}
       </Link>
     </section>
   );

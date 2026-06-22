@@ -104,7 +104,7 @@ describe("LiveConsole", () => {
       expect(screen.getByText("Live Trading")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("strategy-strip")).toBeInTheDocument();
-    expect(screen.getByText("Deploy strategy →")).toBeInTheDocument();
+    expect(screen.getByText("Launch eval →")).toBeInTheDocument();
   });
 
   test("/live auto-selects most recently started live run into viewport", async () => {

@@ -75,6 +75,21 @@ async fn get_password_hash(pool: &SqlitePool) -> Option<String> {
         .flatten()
 }
 
+pub async fn verify_configured_dashboard_password(
+    pool: &SqlitePool,
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> bool {
+    let Some(stored_hash) = get_password_hash(pool).await else {
+        return false;
+    };
+    let candidate = extract_bearer_token(headers)
+        .or_else(|| extract_header_token(headers, AUTH_TOKEN_HEADER))
+        .or_else(|| extract_cookie_token(headers, PASSWORD_COOKIE_NAME))
+        .or_else(|| extract_query_token(query, AUTH_TOKEN_QUERY_PARAM));
+    matches!(candidate, Some(token) if verify_password(&token, &stored_hash))
+}
+
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------

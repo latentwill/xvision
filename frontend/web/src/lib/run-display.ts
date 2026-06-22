@@ -31,7 +31,7 @@ export function evalRunLabels(
     displayStrategyName(summary.agent_id, strategies);
   const scenarioName =
     summary.scenario?.display_name?.trim() ||
-    displayScenarioName(summary.scenario_id, scenarios);
+    displayScenarioName(summary.scenario_id, scenarios, summary.mode);
   return {
     strategyName,
     scenarioName,
@@ -56,7 +56,9 @@ export function displayStrategyName(
 export function displayScenarioName(
   id: string,
   scenarios: NamedScenario[] = [],
+  mode?: string,
 ): string {
+  if (mode === 'live') return 'Forward Test';
   return (
     scenarios.find((s) => s.id === id)?.display_name?.trim() ||
     fallbackName("Scenario", id)

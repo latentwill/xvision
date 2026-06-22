@@ -132,10 +132,10 @@ export function StrategyStrip({
                 <>
                   No live strategies —{" "}
                   <Link
-                    to="/strategies"
+                    to="/eval-runs?start=1"
                     className="text-text-2 underline-offset-2 hover:text-text hover:underline"
                   >
-                    deploy one
+                    launch one
                   </Link>
                 </>
               ) : filter === "ALL" ? (
@@ -179,10 +179,10 @@ export function StrategyStrip({
         */}
         <div className="flex shrink-0 items-center gap-3 border-l border-border pl-3">
           <Link
-            to="/strategies"
+            to="/eval-runs?start=1"
             className="whitespace-nowrap text-[13px] font-medium text-text-2 hover:text-text"
           >
-            Deploy strategy →
+            Launch eval →
           </Link>
         </div>
       </div>

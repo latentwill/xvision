@@ -474,7 +474,7 @@ export function EvalRunsRoute() {
             title={displayStrategyName(row.agent_id, strategies)}
             badge={row.status}
             badgeColor={badgeColorFor(row.status)}
-            subtitle={displayScenarioName(row.scenario_id, scenarios)}
+            subtitle={displayScenarioName(row.scenario_id, scenarios, row.mode)}
             meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
             rightTop={fmtPct(row.total_return_pct)}
             rightSub={fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
@@ -651,7 +651,7 @@ function DesktopRow({
         </Link>
       </td>
       <td className="px-3 py-3 text-text-2">
-        {displayScenarioName(row.scenario_id, scenarios)}
+        {displayScenarioName(row.scenario_id, scenarios, row.mode)}
       </td>
       <td className="px-3 py-3">
         <StatusPill status={row.status} />

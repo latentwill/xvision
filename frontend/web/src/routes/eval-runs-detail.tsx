@@ -344,9 +344,11 @@ export function EvalRunDetailRoute() {
                 label="Scenario"
                 value={labels.scenarioName}
                 tone="neutral"
-                ariaLabel={`Open Scenario ${labels.scenarioName}`}
-                onClick={() =>
-                  navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
+                ariaLabel={detail.summary.mode === 'live' ? 'Forward Test' : `Open Scenario ${labels.scenarioName}`}
+                onClick={
+                  detail.summary.mode === 'live'
+                    ? undefined
+                    : () => navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
                 }
               />
             </div>

@@ -301,6 +301,7 @@ async fn paused_safety_gate_blocks_all_broker_submits() {
         VenueLabel::Paper, // run_venue_label
         VenueLabel::Paper, // broker_venue_label — matches, no VenueLabelMismatch
         AuthContext::system(),
+        None,
     ));
 
     let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
@@ -357,6 +358,7 @@ async fn allow_all_gate_with_matching_labels_delegates_to_inner_broker() {
         VenueLabel::Paper,
         VenueLabel::Paper,
         AuthContext::system(),
+        None,
     ));
 
     let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);

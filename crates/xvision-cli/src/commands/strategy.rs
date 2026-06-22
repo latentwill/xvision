@@ -520,6 +520,21 @@ enum StrategyAction {
     /// Scan the on-disk strategy directory for bundles missing from the search
     /// index and backfill them. One-shot fix for existing index divergence.
     Reindex,
+    /// Set risk parameters on a strategy.
+    #[command(name = "set-risk")]
+    SetRisk {
+        /// Strategy id (ULID).
+        #[arg(long)]
+        id: String,
+
+        /// Maximum drawdown in USD. 0 = no limit.
+        #[arg(long)]
+        max_drawdown_usd: Option<f64>,
+
+        /// Maximum drawdown as percentage of initial capital.
+        #[arg(long)]
+        max_drawdown_pct: Option<f64>,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -664,6 +679,38 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
         StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
+        StrategyAction::SetRisk {
+            id,
+            max_drawdown_usd,
+            max_drawdown_pct,
+        } => {
+            let store = store();
+            let mut strategy = store.load(&id).await.exit_with(XvnExit::NotFound)?;
+
+            if let Some(dd) = max_drawdown_usd {
+                if !dd.is_finite() || dd <= 0.0 {
+                    return Err(CliError {
+                        exit: XvnExit::Usage,
+                        source: anyhow::anyhow!(
+                            "--max-drawdown-usd must be a positive finite USD amount, got {dd}"
+                        ),
+                    });
+                }
+                strategy.risk.max_drawdown_usd = dd;
+            }
+            if let Some(dd_pct) = max_drawdown_pct {
+                strategy.risk.max_drawdown_pct = Some(dd_pct);
+            }
+
+            store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
+
+            println!("Risk updated for strategy {id}");
+            println!("  max_drawdown_usd:  {}", strategy.risk.max_drawdown_usd);
+            if let Some(pct) = strategy.risk.max_drawdown_pct {
+                println!("  max_drawdown_pct:  {pct}%");
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1589,9 +1636,8 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let preflight = preflight_validate(&strategy, Some(&scenario));
     warnings.extend(preflight.warnings);
 
-    let granularity = xvision_engine::strategies::bar_granularity_for_cadence(
-        strategy.manifest.decision_cadence_minutes,
-    );
+    let granularity =
+        xvision_engine::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
     let timeframe_display = granularity.canonical();
     collect_prompt_mismatch_warnings(&ctx, &strategy, &timeframe_display, &mut warnings).await;
 
