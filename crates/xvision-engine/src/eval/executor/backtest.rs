@@ -3594,7 +3594,11 @@ impl Executor {
         // evaluates it before `run_pipeline` so cooldown_bars,
         // max_wakeups_per_day, and wake_when_in_position are honored in
         // live mode.
-        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
+            .map(|hook| hook.with_obs(self.obs_emitter.clone()));
+
+        // In-memory episodic store for per-decision recall.
+        let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
 
         // Drain warmup history from the bar source into per-asset buffers so
         // the first tradable bar has a complete lookback window.  Without
@@ -3868,6 +3872,7 @@ impl Executor {
                         daily_loss_day,
                         daily_realized_at_day_start,
                         filter_hook: filter_hook.as_mut(),
+                        episodic_store: &mut episodic_store,
                     },
                     &mut runtime.fill_sink,
                     &mut book,
@@ -4259,6 +4264,7 @@ impl Executor {
             mut daily_loss_day,
             mut daily_realized_at_day_start,
             mut filter_hook,
+            episodic_store,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -4296,7 +4302,7 @@ impl Executor {
         // Shared seed-context prologue: position/entry/mark are derived inside
         // `build_seed_context` (single source of truth), so this path can't
         // drift from the backtest one.
-        let seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
+        let mut seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
             book,
             asset_sym,
             bar,
@@ -4338,7 +4344,7 @@ impl Executor {
         // filter events (Warming, Inactive, Cooldown, Suppressed, Active)
         // even when the filter suppresses dispatch.
         let mut filter_gated = false;
-        let mut _filter_trigger_context: Option<serde_json::Value> = None;
+        let mut filter_trigger_context: Option<serde_json::Value> = None;
         if let Some(hook) = filter_hook.as_mut() {
             let in_position = book.position(asset_sym).abs() > f64::EPSILON;
             let evaluation = hook.evaluate(bar, in_position);
@@ -4362,7 +4368,49 @@ impl Executor {
                     });
                 }
             } else {
-                _filter_trigger_context = evaluation.trigger_context.clone();
+                filter_trigger_context = evaluation.trigger_context.clone();
+            }
+        }
+
+        // Inject filter context into the seed (parity with backtest L1307-1311).
+        if let Some(ctx) = &filter_trigger_context {
+            if let Some(obj) = seed.as_object_mut() {
+                obj.insert("filter_context".to_string(), ctx.clone());
+            }
+        }
+        // Inject briefing indicators for Pine-imported strategies (parity with backtest).
+        if !strategy.briefing_indicators.is_empty() {
+            inject_briefing_indicators_into_seed(
+                &mut seed,
+                &strategy.briefing_indicators,
+                bar,
+                &history_slice,
+            );
+        }
+
+        // Inject episodic memory recall (parity with backtest L1330-1376).
+        {
+            let get_ind = |ctx: &serde_json::Value, key: &str| -> Option<f64> {
+                ctx.get(key)
+                    .or_else(|| ctx.get("context").and_then(|c| c.get(key)))
+                    .and_then(|v| v.as_f64())
+            };
+            let query_vec = filter_trigger_context
+                .as_ref()
+                .map(|ctx| {
+                    let snap = crate::agent::episodic::IndicatorSnapshot {
+                        rsi: get_ind(ctx, "rsi_14"),
+                        macd_hist: get_ind(ctx, "macd_hist"),
+                        ema_cross: get_ind(ctx, "ema_cross"),
+                        volume_zscore: get_ind(ctx, "volume_zscore"),
+                    };
+                    snap.feature_vector()
+                })
+                .unwrap_or([0.0_f64; 4]);
+            if let Some(episodes_json) = episodic_store.to_seed_json(query_vec, 5) {
+                if let Some(obj) = seed.as_object_mut() {
+                    obj.insert("prior_episodes".to_string(), episodes_json);
+                }
             }
         }
 
@@ -4747,6 +4795,21 @@ impl Executor {
             self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
         }
 
+
+        // Push this decision as an episodic observation (parity with backtest).
+        {
+            let obs = crate::agent::episodic::EpisodicObservation::new(
+                bar.timestamp.to_rfc3339(),
+                decision_idx,
+                parsed.action.clone(),
+                parsed.conviction,
+                Some(pre_fill_entry),
+                Some(applied_action.clone()),
+                parsed.justification.clone(),
+                crate::agent::episodic::IndicatorSnapshot::default(),
+            );
+            episodic_store.push(obs);
+        }
         Ok(LiveDecisionOutcome {
             input_tokens,
             output_tokens,
@@ -5197,6 +5260,8 @@ struct DecideOneLiveCtx<'a> {
     /// strategies (the default); when `Some`, `decide_one_live` evaluates
     /// it before `run_pipeline` and skips when the filter says "not active".
     filter_hook: Option<&'a mut crate::eval::filter_hook::FilterHook>,
+    /// In-memory episodic store shared across all decisions in this live run.
+    episodic_store: &'a mut crate::agent::episodic::EpisodicStore,
 }
 
 /// What `decide_one_live` returns to the loop driver.
