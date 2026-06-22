@@ -158,14 +158,14 @@ fn cache_key_is_stable_for_same_window() {
 
     let first = compute_cache_key(
         "ETH/USD",
-        BarGranularity::Hour1,
+        xvision_data::alpaca::BarGranularity::Hour1,
         start,
         end,
         "alpaca-historical-v1",
     );
     let second = compute_cache_key(
         "ETH/USD",
-        BarGranularity::Hour1,
+        xvision_data::alpaca::BarGranularity::Hour1,
         start,
         end,
         "alpaca-historical-v1",

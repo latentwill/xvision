@@ -160,7 +160,6 @@ fn mtm_scenario(bars: usize) -> Scenario {
             start,
             end: start + Duration::hours(bars as i64),
         },
-        granularity: xvision_engine::eval::BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

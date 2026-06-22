@@ -146,7 +146,6 @@ fn short_scenario() -> Scenario {
             start: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(2025, 1, 1, 4, 0, 0).unwrap(),
         },
-        granularity: xvision_engine::eval::BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

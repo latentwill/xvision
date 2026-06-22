@@ -57,7 +57,7 @@ async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eva
     let asset = "BTC/USD";
     let cache_key = xvision_engine::eval::bars::compute_cache_key(
         asset,
-        BarGranularity::Hour1,
+        xvision_data::alpaca::BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -89,7 +89,7 @@ async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eva
     )
     .bind(&cache_key)
     .bind(asset)
-    .bind(BarGranularity::Hour1.as_alpaca_str())
+    .bind(xvision_data::alpaca::BarGranularity::Hour1.as_alpaca_str())
     .bind(scenario.time_window.start.to_rfc3339())
     .bind(scenario.time_window.end.to_rfc3339())
     .bind("alpaca-historical-v1")
