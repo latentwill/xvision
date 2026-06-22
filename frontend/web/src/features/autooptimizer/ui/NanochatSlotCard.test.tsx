@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { NanochatSlotCard } from "./NanochatSlotCard";
 import type { NanochatCheckpoint } from "@/api/nanochat";
 
@@ -176,6 +177,64 @@ describe("NanochatSlotCard — ?attach_checkpoint deep-link", () => {
     await waitFor(() => {
       expect(onCheckpointChange).toHaveBeenCalledWith("mod-approved");
     });
+  });
+
+  it("allows an explicitly cleared deep-linked checkpoint to remain cleared", async () => {
+    const user = userEvent.setup();
+    const onCheckpointChange = vi.fn();
+
+    function ControlledCard() {
+      const [checkpointModelId, setCheckpointModelId] = useState<string | null>(null);
+      return (
+        <NanochatSlotCard
+          {...DEFAULT_PROPS}
+          checkpointModelId={checkpointModelId}
+          onCheckpointChange={(next) => {
+            onCheckpointChange(next);
+            setCheckpointModelId(next);
+          }}
+        />
+      );
+    }
+
+    render(<ControlledCard />, {
+      wrapper: makeWrapper("/?attach_checkpoint=mod-approved"),
+    });
+
+    await waitFor(() => {
+      expect(onCheckpointChange).toHaveBeenCalledWith("mod-approved");
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Nanochat model" }));
+    await user.click(await screen.findByRole("option", { name: /No checkpoint/i }));
+
+    await waitFor(() => {
+      expect(onCheckpointChange).toHaveBeenLastCalledWith(null);
+    });
+    expect(screen.getByRole("button", { name: "Nanochat model" })).toHaveTextContent(
+      /No checkpoint/i,
+    );
+  });
+});
+
+describe("NanochatSlotCard — checkpoint picker", () => {
+  it("can clear a selected checkpoint back to null", async () => {
+    const user = userEvent.setup();
+    const onCheckpointChange = vi.fn();
+
+    render(
+      <NanochatSlotCard
+        {...DEFAULT_PROPS}
+        checkpointModelId="mod-approved"
+        onCheckpointChange={onCheckpointChange}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Nanochat model" }));
+    await user.click(await screen.findByRole("option", { name: /No checkpoint/i }));
+
+    expect(onCheckpointChange).toHaveBeenCalledWith(null);
   });
 });
 

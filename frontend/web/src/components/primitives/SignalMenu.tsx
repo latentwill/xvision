@@ -99,7 +99,7 @@ export function useSignalMenu(align: "left" | "right" = "left") {
     else openMenu();
   }, [open, openMenu]);
 
-  return { open, setOpen, toggle, triggerRef, menuRef, pos };
+  return { open, setOpen, openMenu, toggle, triggerRef, menuRef, pos };
 }
 
 // ─── Menu shell ───────────────────────────────────────────────────────────────
@@ -112,14 +112,16 @@ interface MenuShellProps {
   minWidth?: number;
   className?: string;
   role?: "menu" | "listbox";
+  id?: string;
 }
 
-function MenuShell({ open, menuRef, pos, children, minWidth = 220, className, role = "menu" }: MenuShellProps) {
+function MenuShell({ open, menuRef, pos, children, minWidth = 220, className, role = "menu", id }: MenuShellProps) {
   if (!open) return null;
   return createPortal(
     <div
       ref={menuRef}
       role={role}
+      id={id}
       style={{ ...pos, minWidth }}
       className={[
         "rounded-[6px] border border-border bg-surface-card",
@@ -297,8 +299,133 @@ export function SignalSelectMenu({
   className,
   ariaLabel,
 }: SignalSelectMenuProps) {
-  const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
-  const selected = options.find((o) => o.value === value) ?? options[0];
+  const { open, setOpen, openMenu, triggerRef, menuRef, pos } = useSignalMenu(align);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  const selected = options[selectedIndex] ?? options[0];
+  const enabledIndexes = options.flatMap((option, index) =>
+    option.disabled ? [] : [index],
+  );
+  const listboxId = `signal-select-${(ariaLabel ?? label ?? "menu")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")}-listbox`;
+
+  function defaultActiveIndex(direction: 1 | -1 = 1) {
+    if (selectedIndex >= 0 && !options[selectedIndex]?.disabled) {
+      return selectedIndex;
+    }
+    return direction === -1
+      ? enabledIndexes[enabledIndexes.length - 1] ?? -1
+      : enabledIndexes[0] ?? -1;
+  }
+
+  function adjacentEnabledIndex(index: number, direction: 1 | -1) {
+    if (enabledIndexes.length === 0) return -1;
+    const enabledPosition = enabledIndexes.indexOf(index);
+    if (enabledPosition === -1) return defaultActiveIndex(direction);
+    const nextPosition =
+      (enabledPosition + direction + enabledIndexes.length) % enabledIndexes.length;
+    return enabledIndexes[nextPosition] ?? -1;
+  }
+
+  function closeAndFocusTrigger() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function choose(index: number) {
+    const option = options[index];
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    closeAndFocusTrigger();
+  }
+
+  function openAt(index: number) {
+    if (index === -1) return;
+    setActiveIndex(index);
+    openMenu();
+  }
+
+  function setActiveAndFocus(index: number) {
+    setActiveIndex(index);
+    if (index !== -1) optionRefs.current[index]?.focus();
+  }
+
+  function moveActive(direction: 1 | -1) {
+    const nextIndex = adjacentEnabledIndex(
+      activeIndex === -1 ? defaultActiveIndex(direction) : activeIndex,
+      direction,
+    );
+    setActiveAndFocus(nextIndex);
+  }
+
+  function onTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (disabled) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (open) moveActive(1);
+      else openAt(defaultActiveIndex(1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (open) moveActive(-1);
+      else openAt(defaultActiveIndex(-1));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      openAt(enabledIndexes[0] ?? -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      openAt(enabledIndexes[enabledIndexes.length - 1] ?? -1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) choose(activeIndex === -1 ? defaultActiveIndex(1) : activeIndex);
+      else openAt(defaultActiveIndex(1));
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    }
+  }
+
+  function onOptionKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveAndFocus(enabledIndexes[0] ?? -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveAndFocus(enabledIndexes[enabledIndexes.length - 1] ?? -1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(index);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    }
+  }
+
+  useEffect(() => {
+    if (!open) {
+      setActiveIndex(-1);
+      return;
+    }
+    setActiveIndex((index) => {
+      if (index >= 0 && !options[index]?.disabled) return index;
+      return defaultActiveIndex(1);
+    });
+  }, [open, options, selectedIndex]);
+
+  useEffect(() => {
+    if (!open || activeIndex === -1) return;
+    window.requestAnimationFrame(() => optionRefs.current[activeIndex]?.focus());
+  }, [open, activeIndex]);
 
   return (
     <>
@@ -307,9 +434,14 @@ export function SignalSelectMenu({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         aria-label={ariaLabel}
         disabled={disabled}
-        onClick={toggle}
+        onClick={() => {
+          if (open) setOpen(false);
+          else openAt(defaultActiveIndex(1));
+        }}
+        onKeyDown={onTriggerKeyDown}
         data-active={active || undefined}
         style={minWidth ? { minWidth } : undefined}
         className={[
@@ -333,34 +465,50 @@ export function SignalSelectMenu({
         </span>
         <Icon name="chevR" size={11} className="text-text-3" />
       </button>
-      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200} role="listbox">
-        {options.map((opt) => {
-          const isSelected = opt.value === value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              role="option"
-              aria-selected={isSelected}
-              disabled={opt.disabled}
-              onClick={() => {
-                if (opt.disabled) return;
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              className="flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-            >
-              <span className="w-[14px] flex-shrink-0">
-                {isSelected && (
-                  <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gold" aria-hidden>
-                    <path d="M4 10l4 4 8-8" />
-                  </svg>
-                )}
-              </span>
-              <span className="flex-1 text-left">{opt.label}</span>
-            </button>
-          );
-        })}
+      <MenuShell
+        open={open}
+        menuRef={menuRef as RefObject<HTMLDivElement>}
+        pos={pos}
+        minWidth={200}
+        role="listbox"
+        id={listboxId}
+      >
+        <div role="presentation">
+          {options.map((opt, index) => {
+            const isSelected = opt.value === value;
+            const isActive = index === activeIndex;
+            return (
+              <button
+                key={opt.value}
+                ref={(node) => {
+                  optionRefs.current[index] = node;
+                }}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                disabled={opt.disabled}
+                onMouseEnter={() => {
+                  if (!opt.disabled) setActiveIndex(index);
+                }}
+                onKeyDown={(event) => onOptionKeyDown(event, index)}
+                onClick={() => choose(index)}
+                className={[
+                  "flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+                  isSelected ? "bg-gold/10" : isActive ? "bg-surface-hover" : "hover:bg-surface-hover",
+                ].join(" ")}
+              >
+                <span className="w-[14px] flex-shrink-0">
+                  {isSelected && (
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gold" aria-hidden>
+                      <path d="M4 10l4 4 8-8" />
+                    </svg>
+                  )}
+                </span>
+                <span className="flex-1 text-left">{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </MenuShell>
     </>
   );
@@ -439,10 +587,15 @@ export function SignalSearchableSelectMenu({
     setActiveIndex(-1);
   }, [query]);
 
+  function closeAndFocusTrigger() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
   function choose(option: SearchableSelectOption | undefined) {
     if (!option || option.disabled) return;
     onChange(option.value);
-    setOpen(false);
+    closeAndFocusTrigger();
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
@@ -457,7 +610,22 @@ export function SignalSearchableSelectMenu({
       event.preventDefault();
       choose(enabled[activeIndex] ?? enabled[0]);
     } else if (event.key === "Escape") {
-      setOpen(false);
+      closeAndFocusTrigger();
+    }
+  }
+
+  function onOptionKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    option: SearchableSelectOption,
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(option);
+    } else {
+      onKeyDown(event);
     }
   }
 
@@ -535,7 +703,9 @@ export function SignalSearchableSelectMenu({
                   role="option"
                   aria-selected={isSelected}
                   disabled={option.disabled}
+                  onFocus={() => setActiveIndex(enabledIndex)}
                   onMouseEnter={() => setActiveIndex(enabledIndex)}
+                  onKeyDown={(event) => onOptionKeyDown(event, option)}
                   onClick={() => choose(option)}
                   className={[
                     "flex min-h-[34px] w-full items-center gap-2 px-3 text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",

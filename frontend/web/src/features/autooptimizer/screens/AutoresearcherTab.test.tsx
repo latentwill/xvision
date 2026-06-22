@@ -81,6 +81,30 @@ describe("AutoresearcherTab sections", () => {
     await user.click(screen.getByRole("button", { name: /label strategy/i }));
     expect(screen.getByRole("option", { name: /price_forward/i })).toBeInTheDocument();
   });
+
+  it("renders the source strategy picker as a searchable Signal listbox", async () => {
+    const strategiesApi = await import("@/api/strategies");
+    vi.mocked(strategiesApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "strat-alpha",
+        display_name: "Alpha Breakout",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        model: "deepseek/deepseek-v4-flash",
+        bundle_hash: "hash-alpha",
+      },
+    ]);
+    const user = userEvent.setup();
+
+    render(<AutoresearcherTab />, { wrapper: makeWrapper() });
+
+    await user.click(await screen.findByRole("button", { name: /Source strategy/i }));
+    await user.type(screen.getByRole("textbox", { name: /Search Source strategy/i }), "hash-alpha");
+
+    expect(
+      await screen.findByRole("option", { name: /Alpha Breakout/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("run_tag client-side validation", () => {

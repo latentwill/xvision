@@ -6,7 +6,7 @@
 //  - NO right-sidebar / col-span-4 / grid-cols-12 layout.
 //  - Dark-mode borders: border-border / border-border-soft, never border-white.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   useNanochatCheckpoints,
@@ -57,6 +57,7 @@ export function NanochatSlotCard({
   onCompatibilityChange,
 }: NanochatSlotCardProps) {
   const [params] = useSearchParams();
+  const appliedAttachIdRef = useRef<string | null>(null);
   const checkpointsQ = useNanochatCheckpoints({ promoted_only: true });
   const checkpoints: NanochatCheckpoint[] = checkpointsQ.data ?? [];
 
@@ -64,7 +65,12 @@ export function NanochatSlotCard({
   // Only fires once when checkpointModelId is null (nothing already selected).
   useEffect(() => {
     const attachId = params.get("attach_checkpoint");
-    if (attachId && checkpointModelId == null) {
+    if (
+      attachId &&
+      checkpointModelId == null &&
+      appliedAttachIdRef.current !== attachId
+    ) {
+      appliedAttachIdRef.current = attachId;
       onCheckpointChange(attachId);
     }
   }, [params, checkpointModelId, onCheckpointChange]);
@@ -100,14 +106,22 @@ export function NanochatSlotCard({
         <SignalSearchableSelectMenu
           ariaLabel="Nanochat model"
           value={checkpointModelId ?? ""}
-          options={checkpoints.map((checkpoint) => ({
-            value: checkpoint.model_id,
-            label: checkpoint.live_approved
-              ? checkpoint.display_name
-              : `${checkpoint.display_name} (candidate)`,
-            meta: checkpoint.model_id,
-            searchText: `${checkpoint.display_name} ${checkpoint.model_id}`,
-          }))}
+          options={[
+            {
+              value: "",
+              label: "No checkpoint",
+              meta: "Clear nanochat model",
+              searchText: "none no checkpoint clear",
+            },
+            ...checkpoints.map((checkpoint) => ({
+              value: checkpoint.model_id,
+              label: checkpoint.live_approved
+                ? checkpoint.display_name
+                : `${checkpoint.display_name} (candidate)`,
+              meta: checkpoint.model_id,
+              searchText: `${checkpoint.display_name} ${checkpoint.model_id}`,
+            })),
+          ]}
           onChange={(next) => onCheckpointChange(next || null)}
           placeholder="— select a checkpoint —"
           searchPlaceholder="Search checkpoints…"

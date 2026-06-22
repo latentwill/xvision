@@ -19,7 +19,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { listStrategies, strategyKeys } from "@/api/strategies";
 import { useAutoresearchStream } from "../hooks/useAutoresearchStream";
-import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
+import { SignalSearchableSelectMenu, SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 // ─── run_tag validation ────────────────────────────────────────────────────────
 
@@ -82,9 +82,6 @@ function RunLauncher({
 }) {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const [sourceStrategyId, setSourceStrategyId] = useState("");
-  const [strategySearch, setStrategySearch] = useState("");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [hoverIndex, setHoverIndex] = useState(-1);
   const [labelStrategy, setLabelStrategy] = useState<
     "price_forward" | "outcome_imitation"
   >("price_forward");
@@ -99,18 +96,6 @@ function RunLauncher({
     staleTime: 120_000,
   });
 
-  const selectedName = strategies?.find(
-    (s) => s.agent_id === sourceStrategyId,
-  )?.display_name ?? "";
-
-  const filtered = (strategies ?? []).filter((s) => {
-    if (!strategySearch) return true;
-    const q = strategySearch.toLowerCase();
-    return (
-      s.display_name.toLowerCase().includes(q) ||
-      s.agent_id.toLowerCase().includes(q)
-    );
-  });
 
   function handleRunTagChange(v: string) {
     setRunTag(v);
@@ -169,90 +154,42 @@ function RunLauncher({
           onSubmit={handleStart}
           className="space-y-3 rounded-md border border-border bg-surface-card p-4"
         >
-          {/* Strategy dropdown with built-in search */}
-          <div className="flex flex-col gap-1 relative">
-            <label
-              htmlFor="ar-source-strategy"
-              className="text-[12px] text-text-3"
-            >
+          <div className="flex flex-col gap-1">
+            <div className="text-[12px] text-text-3">
               Source strategy
-            </label>
-            <div className="relative">
-              <input
-                id="ar-source-strategy"
-                type="text"
-                value={dropdownOpen ? strategySearch : selectedName || strategySearch}
-                placeholder="Search strategies…"
-                autoComplete="off"
-                onFocus={() => { setDropdownOpen(true); setHoverIndex(-1); }}
-                onChange={(e) => {
-                  setStrategySearch(e.target.value);
-                  setDropdownOpen(true);
-                  setHoverIndex(-1);
-                  if (e.target.value === "") setSourceStrategyId("");
-                }}
-                onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
-                onKeyDown={(e) => {
-                  if (!dropdownOpen || filtered.length === 0) return;
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setHoverIndex((i) => Math.min(i + 1, filtered.length - 1));
-                  } else if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setHoverIndex((i) => Math.max(i - 1, -1));
-                  } else if (e.key === "Enter") {
-                    e.preventDefault();
-                    if (hoverIndex >= 0 && hoverIndex < filtered.length) {
-                      const s = filtered[hoverIndex];
-                      setSourceStrategyId(s.agent_id);
-                      setStrategySearch("");
-                      setDropdownOpen(false);
-                    }
-                  } else if (e.key === "Escape") {
-                    setDropdownOpen(false);
-                  }
-                }}
-                className={`${inp} w-full pr-7`}
-              />
-              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-4">
-                {dropdownOpen ? "▲" : "▼"}
-              </span>
-              {dropdownOpen && (
-                <div className="absolute left-0 right-0 top-full z-30 mt-0.5 max-h-56 overflow-y-auto rounded border border-border bg-surface-elev shadow-lg">
-                  {filtered.length === 0 ? (
-                    <div className="px-3 py-2 text-[12px] text-text-4">
-                      No strategies found
-                    </div>
-                  ) : (
-                    filtered.map((s, i) => (
-                      <div
-                        key={s.agent_id}
-                        onMouseDown={() => {
-                          setSourceStrategyId(s.agent_id);
-                          setStrategySearch("");
-                          setDropdownOpen(false);
-                        }}
-                        onMouseEnter={() => setHoverIndex(i)}
-                        className={`flex items-center justify-between px-3 py-1.5 cursor-pointer text-[13px] ${
-                          i === hoverIndex
-                            ? "bg-accent/10 text-text"
-                            : s.agent_id === sourceStrategyId
-                              ? "bg-gold/5 text-text"
-                              : "text-text-2 hover:bg-surface-panel"
-                        }`}
-                      >
-                        <span className="truncate flex-1">{s.display_name}</span>
-                        {s.model && (
-                          <span className="ml-2 shrink-0 text-[11px] text-text-4 font-mono">
-                            {s.model}
-                          </span>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
             </div>
+            <SignalSearchableSelectMenu
+              ariaLabel="Source strategy"
+              value={sourceStrategyId}
+              options={[
+                {
+                  value: "",
+                  label: "— pick a strategy —",
+                  meta: "Clear source strategy",
+                  searchText: "pick strategy clear none",
+                },
+                ...(strategies ?? []).map((strategy) => ({
+                  value: strategy.agent_id,
+                  label: strategy.display_name,
+                  meta: strategy.model ?? strategy.agent_id,
+                  searchText: [
+                    strategy.display_name,
+                    strategy.agent_id,
+                    strategy.bundle_hash,
+                    strategy.model,
+                    ...(strategy.tags ?? []),
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                })),
+              ]}
+              onChange={setSourceStrategyId}
+              placeholder="Search strategies…"
+              searchPlaceholder="Search source strategies…"
+              emptyHint="No strategies found"
+              className={`${inp} w-full justify-between`}
+              minWidth={280}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
