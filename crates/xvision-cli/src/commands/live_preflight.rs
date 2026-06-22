@@ -4,6 +4,9 @@
 //! name and hardness). Hard gates that fail abort the run; info gates print
 //! warnings to stderr but do not block.
 
+use std::path::Path;
+
+use xvision_engine::api::settings::brokers;
 use thiserror::Error;
 
 use xvision_engine::api::ApiContext;
@@ -52,6 +55,103 @@ impl PreFlight {
         f: impl Fn() -> Result<(), PreFlightError> + 'static,
     ) {
         self.gates.push((name, is_hard, Box::new(f)));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 1 — wallet connectivity
+// ---------------------------------------------------------------------------
+
+/// Resolve broker credentials for `broker_creds_ref` and attempt connection.
+/// Returns the account balance in USD on success (0.0 for v1 lightweight check).
+async fn check_wallet(
+    xvn_home: &Path,
+    broker_creds_ref: &str,
+) -> Result<f64, PreFlightError> {
+    match broker_creds_ref {
+        "alpaca" => {
+            match brokers::resolve_alpaca_credentials(xvn_home).await {
+                Ok(creds) => {
+                    eprintln!("  wallet: alpaca connected (source: {})", creds.source);
+                    Ok(0.0)
+                }
+                Err(e) => Err(PreFlightError::Wallet(format!(
+                    "alpaca credentials not configured: {e}\n\
+                     Fix: open Settings → Brokers in the dashboard, or\n\
+                     set APCA_API_KEY_ID and APCA_API_SECRET_KEY env vars."
+                ))),
+            }
+        }
+        "byreal" => {
+            match brokers::resolve_byreal_credentials(xvn_home).await {
+                Ok(Some(_)) => {
+                    eprintln!("  wallet: byreal credentials found");
+                    Ok(0.0)
+                }
+                Ok(None) => Err(PreFlightError::Wallet(
+                    "byreal credentials not configured.\n\
+                     Fix: open Settings → Brokers and add your byreal API/agent wallet key."
+                        .into(),
+                )),
+                Err(e) => Err(PreFlightError::Wallet(format!(
+                    "byreal credentials error: {e}"
+                ))),
+            }
+        }
+        "orderly" | "orderly_testnet" | "orderly_mainnet" => {
+            match brokers::resolve_orderly_credentials(xvn_home).await {
+                Ok(Some(_)) => {
+                    eprintln!("  wallet: orderly credentials found");
+                    Ok(0.0)
+                }
+                Ok(None) => Err(PreFlightError::Wallet(
+                    "orderly credentials not configured.\n\
+                     Fix: open Settings → Brokers and add your Orderly key/secret."
+                        .into(),
+                )),
+                Err(e) => Err(PreFlightError::Wallet(format!(
+                    "orderly credentials error: {e}"
+                ))),
+            }
+        }
+        "hyperliquid" => {
+            match brokers::resolve_hyperliquid_credentials(xvn_home).await {
+                Ok(Some(_)) => {
+                    eprintln!("  wallet: hyperliquid credentials found");
+                    Ok(0.0)
+                }
+                Ok(None) => Err(PreFlightError::Wallet(
+                    "hyperliquid credentials not configured.\n\
+                     Fix: open Settings → Brokers and add your HL agent wallet key."
+                        .into(),
+                )),
+                Err(e) => Err(PreFlightError::Wallet(format!(
+                    "hyperliquid credentials error: {e}"
+                ))),
+            }
+        }
+        "degen_arena" => {
+            match brokers::resolve_degen_arena_credentials(xvn_home).await {
+                Ok(Some(_)) => {
+                    eprintln!("  wallet: degen arena credentials found");
+                    Ok(0.0)
+                }
+                Ok(None) => Err(PreFlightError::Wallet(
+                    "degen arena credentials not configured.\n\
+                     Fix: open Settings → Brokers and add your Degen Arena HL agent wallet key."
+                        .into(),
+                )),
+                Err(e) => Err(PreFlightError::Wallet(format!(
+                    "degen arena credentials error: {e}"
+                ))),
+            }
+        }
+        other => {
+            eprintln!(
+                "  warning: unknown broker_creds_ref '{other}' — connectivity check skipped"
+            );
+            Ok(0.0)
+        }
     }
 }
 
