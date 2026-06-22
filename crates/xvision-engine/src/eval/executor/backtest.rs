@@ -3828,10 +3828,41 @@ impl Executor {
                 )
                 .await?;
 
+            // Always mark-to-market and record an equity sample, even
+            // when the filter gate suppresses dispatch.  Without this,
+            // `eval_equity_samples` stayed at the initial equity for
+            // every filtered bar and the equity chart showed flat $0/nil
+            // until the first filter pass — operators had no signal that
+            // the run was alive and tracking.
+            book.mark(asset_sym, bar.close);
+            let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+            equity = book.equity(&marks);
+            equity_samples_buf.push((decision_ts, equity));
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Equity(ChartEquityPoint {
+                    time: decision_ts.timestamp(),
+                    equity_usd: equity,
+                }),
+            )
+            .await;
+            equity_curve.push(equity);
+            if equity > peak_equity {
+                peak_equity = equity;
+            }
+            session_tracker.observe_equity(equity);
+            // R3 risk-veto: write back the (possibly updated) daily-loss
+            // state from the outcome so the session tracker sees current
+            // values on every bar, gated or not.
+            daily_loss_day = outcome.daily_loss_day;
+            daily_realized_at_day_start = outcome.daily_realized_at_day_start;
+            if let Some(day) = daily_loss_day {
+                session_tracker.roll_day(day, daily_realized_at_day_start);
+            }
+
             // Filter gate: when the DSL filter suppressed this bar,
-            // skip token counting, fill tracking, mark-to-market, and
-            // history push. Continue to the next bar so the loop stays
-            // alive.
+            // skip token counting, fill tracking, and history push.
+            // Continue to the next bar so the loop stays alive.
             if outcome.filter_gated {
                 continue;
             }
@@ -3850,9 +3881,6 @@ impl Executor {
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
             last_open_direction.insert(asset_sym, outcome.last_open_direction);
-            // R3 risk-veto: write back the (possibly updated) daily-loss state.
-            daily_loss_day = outcome.daily_loss_day;
-            daily_realized_at_day_start = outcome.daily_realized_at_day_start;
 
             // Push this bar onto THIS asset's rolling history AFTER the
             // decision (so the seed for bar T sees only bars strictly before
@@ -3881,44 +3909,6 @@ impl Executor {
                 } else {
                     anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
                 }
-            }
-
-            // Mark-to-market on the bar close + record the pooled equity
-            // sample keyed at this bar's timestamp. We mark only the
-            // arriving asset's leg; every other open leg keeps its stored
-            // `last_mark` (PortfolioBook falls back to it for assets absent
-            // from `marks`), so the pooled NAV stays continuous across
-            // assets that haven't produced a bar this tick.
-            book.mark(asset_sym, bar.close);
-            let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
-            equity = book.equity(&marks);
-            // Upsert (not plain INSERT): two assets at the same bar
-            // timestamp would otherwise collide on the `(run_id, timestamp)`
-            // PK. The latest pooled NAV at a timestamp wins; a single-asset
-            // run never repeats a timestamp, so this matches L1's one row
-            // per bar.
-            // B25: buffer instead of per-row upsert; flushed in one tx below.
-            equity_samples_buf.push((decision_ts, equity));
-            self.emit_chart(
-                &run.id,
-                RunChartEvent::Equity(ChartEquityPoint {
-                    time: decision_ts.timestamp(),
-                    equity_usd: equity,
-                }),
-            )
-            .await;
-            equity_curve.push(equity);
-            if equity > peak_equity {
-                peak_equity = equity;
-            }
-            // CT5 (§6): keep the in-memory session tracker in lock-step with the
-            // loop-local peak / day-start so the drawdown + daily-loss-buffer
-            // formulas come from ONE authority (unit-tested in `live_session`).
-            session_tracker.observe_equity(equity);
-            if let Some(day) = daily_loss_day {
-                // The day baseline was already rolled inside `decide_one_live`;
-                // mirror it into the tracker (idempotent within a day).
-                session_tracker.roll_day(day, daily_realized_at_day_start);
             }
             // CT5 honesty (§6.1): source drawdown from the ONE session-tracker
             // authority instead of re-deriving it with a literal-0 fallback. The
@@ -4298,12 +4288,35 @@ impl Executor {
         // Evaluate the DSL filter hook before `run_pipeline` so that
         // cooldown_bars, max_wakeups_per_day, and wake_when_in_position
         // are honored in live mode — not just backtest.
+        // Also record every evaluation via hook.record() so the UI shows
+        // filter events (Warming, Inactive, Cooldown, Suppressed, Active)
+        // even when the filter suppresses dispatch.
         let mut filter_gated = false;
+        let mut _filter_trigger_context: Option<serde_json::Value> = None;
         if let Some(hook) = filter_hook.as_mut() {
             let in_position = book.position(asset_sym).abs() > f64::EPSILON;
             let evaluation = hook.evaluate(bar, in_position);
+            hook.record(
+                store.pool(),
+                self.progress.as_ref(),
+                &run.id,
+                decision_ts,
+                &evaluation,
+            )
+            .await?;
             if !evaluation.outcome.decision.is_active() {
                 filter_gated = true;
+                if matches!(
+                    evaluation.outcome.decision,
+                    xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                ) {
+                    self.emit(ProgressEvent::FilterBlocked {
+                        run_id: run.id.clone(),
+                        reason: "in_position".to_string(),
+                    });
+                }
+            } else {
+                _filter_trigger_context = evaluation.trigger_context.clone();
             }
         }
 
