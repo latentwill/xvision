@@ -1,0 +1,11 @@
+packages:
+  - .
+
+overrides:
+  vite: 6.4.3
+  esbuild: 0.28.1
+  undici: 7.28.0
+  ws: 8.21.0
+  "viem>ws": 8.21.0
+  "isows>ws": 8.21.0
+  "@babel/core": 7.29.7

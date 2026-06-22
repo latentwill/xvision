@@ -16,11 +16,21 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@cline/sdk": "0.0.47"
+    "@cline/sdk": "0.0.51"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "hono": "4.12.26",
+      "ws": "8.21.0",
+      "protobufjs": "7.6.4",
+      "@opentelemetry/core": "2.8.0",
+      "esbuild": "0.28.1",
+      "@ai-sdk/provider-utils": "4.0.30"
+    }
   }
 }

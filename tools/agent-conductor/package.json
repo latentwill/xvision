@@ -24,10 +24,10 @@
     "lint": "node lint/no-host-repo-references.mjs src/"
   },
   "dependencies": {
-    "ajv": "8.17.1",
+    "ajv": "^8.18.0",
     "ajv-formats": "3.0.1",
     "commander": "12.1.0",
-    "tsx": "4.16.2"
+    "tsx": "^4.20.6"
   },
   "devDependencies": {
     "@types/node": "20.14.10",
