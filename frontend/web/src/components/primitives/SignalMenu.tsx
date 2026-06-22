@@ -226,10 +226,11 @@ export function SignalActionMenu({
         aria-expanded={open}
         aria-label={triggerAriaLabel}
         onClick={toggle}
-        className={
+        className={[
           triggerClassName ??
-          "inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
-        }
+            "inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text",
+          "focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
+        ].join(" ")}
       >
         {triggerLabel}
       </button>
@@ -315,7 +316,7 @@ export function SignalSelectMenu({
           "relative inline-flex items-center gap-1.5 h-8 px-2.5",
           "bg-surface-elev border border-border rounded-sm text-text-2",
           "text-[12.5px] cursor-pointer transition-colors whitespace-nowrap",
-          "hover:border-text-3 disabled:hover:border-border",
+          "hover:border-text-3 disabled:hover:border-border focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
           active ? "border-gold/45 bg-gold/10" : "",
           disabled ? "cursor-not-allowed opacity-50" : "",
           className ?? "",
@@ -375,6 +376,7 @@ export interface SearchableSelectOption {
   searchText?: string;
   disabled?: boolean;
   group?: string;
+  badge?: string;
 }
 
 export interface SignalSearchableSelectMenuProps {
@@ -548,6 +550,11 @@ export function SignalSearchableSelectMenu({
                       </span>
                     ) : null}
                   </span>
+                  {option.badge ? (
+                    <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 text-[11px] text-amber-600 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-400">
+                      {option.badge}
+                    </span>
+                  ) : null}
                   {isSelected ? (
                     <Icon name="check" size={12} className="shrink-0 text-gold" />
                   ) : null}
@@ -617,7 +624,7 @@ export function SignalCheckboxMenu({
           "inline-flex items-center gap-1.5 h-8 px-2.5",
           "bg-surface-elev border border-border rounded-sm text-text-2",
           "text-[12.5px] cursor-pointer transition-colors whitespace-nowrap",
-          "hover:border-text-3",
+          "hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
           activeCount > 0 ? "border-gold/45 bg-gold/10" : "",
         ].join(" ")}
       >
@@ -782,7 +789,7 @@ export function SignalModelPickerMenu({
         disabled={loading}
         onClick={toggle}
         className={[
-          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors overflow-hidden min-w-0 whitespace-nowrap hover:border-text-3 disabled:opacity-50",
+          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors overflow-hidden min-w-0 whitespace-nowrap hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45 disabled:opacity-50",
           className ?? "",
         ].join(" ")}
       >

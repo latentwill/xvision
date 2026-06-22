@@ -421,9 +421,9 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       );
     });
 
-    // The asset picker is now a custom AssetPicker combobox (role="combobox").
+    // The asset picker is a Signal-styled listbox trigger.
     // Click it to open, then click the ETH/USD option.
-    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    const assetPicker = await screen.findByRole("button", { name: "Asset picker" });
     fireEvent.click(assetPicker);
     const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
     fireEvent.click(ethOption);
@@ -447,8 +447,8 @@ describe("ScenariosDetailRoute bars cache actions", () => {
 
     renderRoute();
 
-    // The asset picker is a custom AssetPicker combobox (role="combobox").
-    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    // The asset picker is a Signal-styled listbox trigger.
+    const assetPicker = await screen.findByRole("button", { name: "Asset picker" });
     fireEvent.click(assetPicker);
     const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
     fireEvent.click(ethOption);
