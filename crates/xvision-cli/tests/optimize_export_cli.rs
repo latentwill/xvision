@@ -7,7 +7,7 @@
 //!   - Markdown carries the OPERATOR-surface labels, the gate outcome
 //!     (Active/Suspect/Rejected), the day-Sharpe delta, the nested eval-run id,
 //!     and the compiled prompt-pattern summary;
-//!   - JSON carries the `xvn.optimizer_cycle.v1` schema + the per-experiment
+//!   - JSON carries the `xvn.optimizer_cycle.v2` schema + the per-experiment
 //!     summary;
 //!   - an unknown cycle yields a graceful (non-empty, non-panicking) document.
 
@@ -155,7 +155,7 @@ fn export_cycle_markdown_is_full_fidelity_to_file() {
 
     // Header + cycle id + schema.
     assert!(md.contains(CYCLE_ID), "missing cycle id:\n{md}");
-    assert!(md.contains("xvn.optimizer_cycle.v1"), "missing schema:\n{md}");
+    assert!(md.contains("xvn.optimizer_cycle.v2"), "missing schema:\n{md}");
 
     // Operator-surface labels (NOT developer wire names).
     for label in [
@@ -216,7 +216,7 @@ fn export_cycle_json_carries_schema_and_experiments() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).expect("valid JSON on stdout");
 
-    assert_eq!(value["schema_version"], "xvn.optimizer_cycle.v1");
+    assert_eq!(value["schema_version"], "xvn.optimizer_cycle.v2");
     assert_eq!(value["cycle_id"], CYCLE_ID);
     assert_eq!(value["active_count"], 1);
 

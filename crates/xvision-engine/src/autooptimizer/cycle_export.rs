@@ -42,7 +42,7 @@ use crate::eval::report::aggregate_run_token_totals;
 /// Schema-version discipline is load-bearing: a shape change bumps this tag
 /// rather than mutating v1 in place, so a downstream consumer can detect the new
 /// shape instead of silently breaking.
-pub const SCHEMA_VERSION: &str = "xvn.optimizer_cycle.v1";
+pub const SCHEMA_VERSION: &str = "xvn.optimizer_cycle.v2";
 
 /// serde `default` for the skipped-on-deserialize `schema_version` field.
 fn default_schema_version() -> &'static str {
@@ -156,7 +156,7 @@ pub struct FlywheelSummary {
     pub pattern_id: String,
 }
 
-/// The `xvn.optimizer_cycle.v1` payload — a complete record of one optimizer
+/// The `xvn.optimizer_cycle.v2` payload — a complete record of one optimizer
 /// cycle, JSON-serializable for the `--format json` export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleExport {

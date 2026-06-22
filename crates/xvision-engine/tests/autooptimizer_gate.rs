@@ -31,6 +31,56 @@ fn make_input(
     }
 }
 
+#[test]
+fn holdout_threshold_is_independent_from_day_threshold() {
+    let input = GateInput {
+        parent_day_metrics: metrics(1.0, -10.0),
+        child_day_metrics: metrics(1.12, -10.0),
+        parent_untouched_metrics: metrics(0.8, -8.0),
+        child_untouched_metrics: metrics(0.806, -8.0),
+        min_improvement: 0.10,
+        holdout_min_improvement: 0.005,
+        objective: Objective::default(),
+    };
+
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+#[test]
+fn legacy_gate_input_json_defaults_holdout_threshold_to_day_threshold() {
+    let json = serde_json::json!({
+        "parent_day_metrics": metrics(1.0, -10.0),
+        "child_day_metrics": metrics(1.2, -10.0),
+        "parent_untouched_metrics": metrics(0.8, -8.0),
+        "child_untouched_metrics": metrics(1.0, -8.0),
+        "min_improvement": 0.1,
+        "objective": "sharpe"
+    });
+
+    let input: GateInput = serde_json::from_value(json).expect("legacy gate input should deserialize");
+
+    assert_eq!(input.holdout_min_improvement, input.min_improvement);
+}
+
+#[test]
+fn holdout_failure_message_uses_holdout_threshold() {
+    let input = GateInput {
+        parent_day_metrics: metrics(1.0, -10.0),
+        child_day_metrics: metrics(1.12, -10.0),
+        parent_untouched_metrics: metrics(0.8, -8.0),
+        child_untouched_metrics: metrics(0.803, -8.0),
+        min_improvement: 0.10,
+        holdout_min_improvement: 0.005,
+        objective: Objective::default(),
+    };
+
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected holdout failure");
+    };
+
+    assert!(reason.contains("holdout minimum-improvement threshold is 0.005000"));
+}
+
 // ── F24: configurable objective ──────────────────────────────────────────────
 
 fn m_full(sharpe: f64, total_return_pct: f64, win_rate: f64, max_drawdown_pct: f64) -> MetricsSummary {

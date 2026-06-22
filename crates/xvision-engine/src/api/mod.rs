@@ -1962,6 +1962,13 @@ async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
             sqlx::query(&stmt).execute(pool).await?;
         }
     }
+    if table_exists(pool, "autooptimizer_gate_records").await?
+        && !table_has_column(pool, "autooptimizer_gate_records", "holdout_epsilon").await?
+    {
+        sqlx::query("ALTER TABLE autooptimizer_gate_records ADD COLUMN holdout_epsilon REAL")
+            .execute(pool)
+            .await?;
+    }
     // Migration 061: additive edge-metric columns. Guarded so re-opening an
     // already-migrated DB is a no-op (SQLite has no ADD COLUMN IF NOT EXISTS).
     if table_exists(pool, "autooptimizer_gate_records").await?
@@ -2746,6 +2753,7 @@ mod migration_registry_tests {
             "parent_holdout_score",
             "child_holdout_score",
             "gate_epsilon",
+            "holdout_epsilon",
             "delta_day",
             "delta_holdout",
             "drawdown_ratio",

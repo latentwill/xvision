@@ -26,11 +26,11 @@ end   = "2025-12-01"
 start = "2025-01-01"
 end   = "2025-04-01"
 
-# Optional: lower the minimum-improvement bar if no experiment passes for
-# several consecutive evenings. Remove this section to keep min_improvement fixed.
-# Each threshold applies to the corresponding evening number (evening 1, 2, 3, …).
-[loosening_schedule]
-day_n_thresholds = [0.04, 0.03, 0.02]
+# Loosening schedule is disabled in the runtime as of 2026-06-22.
+# The preserved implementation is intentionally not wired to sessions/cycles
+# until a future opt-in re-enable path lands.
+# [loosening_schedule]
+# day_n_thresholds = [0.04, 0.03, 0.02]
 
 # The model that writes experiment proposals each evening.
 [mutator]

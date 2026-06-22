@@ -1,7 +1,7 @@
 use crate::autooptimizer::mutator::MutationDiff;
 use crate::eval::MetricsSummary;
 use anyhow::{bail, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Factor by which the child's worst drawdown may exceed the parent's before rejection.
 const DRAWDOWN_DETERIORATION_FACTOR: f64 = 1.5;
@@ -70,7 +70,7 @@ impl Objective {
 ///
 /// `min_improvement` applies to the day (in-sample) window;
 /// `holdout_min_improvement` applies to the baseline-untouched (out-of-sample) window.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GateInput {
     pub parent_day_metrics: MetricsSummary,
     pub child_day_metrics: MetricsSummary,
@@ -85,6 +85,37 @@ pub struct GateInput {
     /// existing call sites/fixtures that omit it keep the prior behavior.
     #[serde(default)]
     pub objective: Objective,
+}
+
+impl<'de> Deserialize<'de> for GateInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct GateInputWire {
+            parent_day_metrics: MetricsSummary,
+            child_day_metrics: MetricsSummary,
+            parent_untouched_metrics: MetricsSummary,
+            child_untouched_metrics: MetricsSummary,
+            min_improvement: f64,
+            #[serde(default)]
+            holdout_min_improvement: Option<f64>,
+            #[serde(default)]
+            objective: Objective,
+        }
+
+        let wire = GateInputWire::deserialize(deserializer)?;
+        Ok(Self {
+            parent_day_metrics: wire.parent_day_metrics,
+            child_day_metrics: wire.child_day_metrics,
+            parent_untouched_metrics: wire.parent_untouched_metrics,
+            child_untouched_metrics: wire.child_untouched_metrics,
+            min_improvement: wire.min_improvement,
+            holdout_min_improvement: wire.holdout_min_improvement.unwrap_or(wire.min_improvement),
+            objective: wire.objective,
+        })
+    }
 }
 
 /// Outcome of `evaluate`.
