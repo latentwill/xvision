@@ -1122,7 +1122,7 @@ function realizedPnlUsd(decisions: ReadonlyArray<DecisionRowDto>): number | null
   let total = 0;
   let count = 0;
   for (const row of decisions) {
-    if (row.action === "flat" && row.pnl_realized != null) {
+    if (row.pnl_realized != null) {
       total += row.pnl_realized;
       count += 1;
     }
