@@ -6,6 +6,11 @@
 # 0.05 means the candidate must improve Sharpe ratio by at least 5%.
 # Must be greater than 0.
 min_improvement = 0.05
+# Minimum improvement on the holdout (baseline-untouched) window.
+# Separate from min_improvement so the out-of-sample bar can be lower than
+# the in-sample bar. Defaults to 0.005 (0.5%) when not set.
+holdout_min_improvement = 0.005
+
 
 # Dates held out for final performance checks — never used during evening runs.
 # Must not overlap with day_window. Format: "YYYY-MM-DD" (quoted string).

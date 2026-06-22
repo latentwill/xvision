@@ -26,6 +26,7 @@ fn make_input(
         parent_untouched_metrics: metrics(parent_untouched_sharpe, parent_untouched_dd),
         child_untouched_metrics: metrics(child_untouched_sharpe, child_untouched_dd),
         min_improvement,
+        holdout_min_improvement: min_improvement,
         objective: Objective::default(),
     }
 }
@@ -53,6 +54,7 @@ fn total_return_objective_gates_on_return_not_sharpe() {
         parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
         child_untouched_metrics: m_full(1.0, 7.0, 0.5, -8.0),
         min_improvement: 1.0,
+        holdout_min_improvement: 1.0,
         objective: Objective::TotalReturn,
     };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
@@ -69,6 +71,7 @@ fn max_drawdown_objective_rewards_reducing_drawdown() {
         child_day_metrics: m_full(1.0, 5.0, 0.5, -12.0),
         parent_untouched_metrics: m_full(1.0, 5.0, 0.5, -18.0),
         child_untouched_metrics: m_full(1.0, 5.0, 0.5, -10.0),
+        holdout_min_improvement: 1.0,
         min_improvement: 1.0,
         objective: Objective::MaxDrawdown,
     };
@@ -83,6 +86,7 @@ fn total_return_objective_requires_both_windows() {
         parent_day_metrics: m_full(1.0, 5.0, 0.5, -10.0),
         child_day_metrics: m_full(1.0, 9.0, 0.5, -10.0),
         parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
+        holdout_min_improvement: 1.0,
         child_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0), // no untouched improvement
         min_improvement: 1.0,
         objective: Objective::TotalReturn,

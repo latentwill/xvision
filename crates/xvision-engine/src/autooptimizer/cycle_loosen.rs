@@ -18,6 +18,8 @@ pub struct EffectiveGateConfig {
 ///
 /// `_pool` and `_cycle_index` are reserved for a future audit-log path
 /// that will persist each loosening event.
+// [loosening-disabled 2026-06-22] preserved for later opt-in; suppress dead-code warning
+#[allow(dead_code)]
 pub async fn effective_min_improvement_for_cycle(
     _pool: &SqlitePool,
     config: &AutoOptimizerConfig,
