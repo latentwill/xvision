@@ -72,7 +72,8 @@ pub use cycle_export::{
     render_cycle_export_markdown, render_cycle_report_markdown, CycleExport, ExperimentSummary,
     SCHEMA_VERSION as CYCLE_EXPORT_SCHEMA_VERSION,
 };
-pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
+// [loosening-disabled 2026-06-22]
+// pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
     NodeProvenance,

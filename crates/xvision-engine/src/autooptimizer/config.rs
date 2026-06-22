@@ -32,6 +32,13 @@ fn default_gepa_generations() -> usize {
     2
 }
 
+/// Default holdout min-improvement threshold: 0.005 (0.5%).
+/// Small but strictly positive — a candidate must genuinely improve on
+/// out-of-sample data, but the bar is lower than the in-sample `min_improvement`.
+fn default_holdout_min_improvement() -> f64 {
+    0.005
+}
+
 /// Default candidate experiments per parent per cycle. Was a hard-coded `1`
 /// (one experiment/cycle, nothing to compare); 5 gives the optimizer a real
 /// candidate pool by default.
@@ -71,6 +78,12 @@ impl TradeDirection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoOptimizerConfig {
     pub min_improvement: f64,
+    /// Minimum improvement a candidate must beat the parent by on the holdout
+    /// (baseline-untouched) window. Defaults to 0.005 (0.5%). Must be > 0.
+    /// Separate from `min_improvement` so operators can require a smaller bar
+    /// for out-of-sample generalization than for in-sample training improvement.
+    #[serde(default = "default_holdout_min_improvement")]
+    pub holdout_min_improvement: f64,
     pub baseline_untouched_window: BaselineUntouchedWindow,
     pub day_window: DayWindow,
     #[serde(default)]
@@ -232,6 +245,7 @@ impl Default for AutoOptimizerConfig {
     fn default() -> Self {
         Self {
             min_improvement: 0.05,
+            holdout_min_improvement: default_holdout_min_improvement(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
             // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,
             // so a no-config `run-cycle` silently fetched ~16k bars per
@@ -481,6 +495,12 @@ impl AutoOptimizerConfig {
             bail!(
                 "min_improvement must be greater than 0 (got {})",
                 self.min_improvement
+            );
+        }
+        if self.holdout_min_improvement <= 0.0 {
+            bail!(
+                "holdout_min_improvement must be greater than 0 (got {})",
+                self.holdout_min_improvement
             );
         }
         if let Some(cap) = self.max_window_days {
@@ -1079,6 +1099,19 @@ max_retries = 2
         assert!(
             msg.contains("min_improvement"),
             "message must embed the offending field name from the toml error; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_holdout_min_improvement() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.holdout_min_improvement = 0.0;
+        let err = cfg
+            .validate()
+            .expect_err("validate should reject holdout_min_improvement = 0");
+        assert!(
+            err.to_string().contains("holdout_min_improvement"),
+            "error should mention holdout_min_improvement, got: {err}",
         );
     }
 

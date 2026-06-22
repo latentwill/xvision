@@ -158,6 +158,7 @@ fn gate_builder(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement: 0.1,
+        holdout_min_improvement: 0.1,
         objective: Default::default(),
     }
 }
@@ -237,6 +238,7 @@ fn gate_builder_total_return(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement: 0.1,
+        holdout_min_improvement: 0.1,
         objective: Objective::TotalReturn,
     }
 }
