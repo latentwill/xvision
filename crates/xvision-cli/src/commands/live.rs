@@ -86,6 +86,15 @@ pub struct LiveArgs {
     /// Emit the launched Run as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Skip the live confirmation prompt (Gate 7). Use with caution.
+    #[arg(long)]
+    pub yes: bool,
+
+    /// One-time max drawdown override for this run. Tightens the strategy's
+    /// risk.max_drawdown_usd; cannot loosen.
+    #[arg(long)]
+    pub max_drawdown: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
