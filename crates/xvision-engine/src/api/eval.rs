@@ -1493,7 +1493,7 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start: now, end: now },
-        granularity: xvision_data::alpaca::BarGranularity::Minute1,
+        granularity: cfg.granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -2791,7 +2791,8 @@ async fn spawn_cline_ctx(
     // Bug 2: the sidecar can intermittently fail to start (timing race or
     // cold Node start). Retry up to 3 times with a short delay — the gist
     // repro says retry "usually succeeds on second attempt".
-    let mut client_result: Result<AgentClient, xvision_agent_client::AgentClientError> = Err(xvision_agent_client::AgentClientError::TransportClosed);
+    let mut client_result: Result<AgentClient, xvision_agent_client::AgentClientError> =
+        Err(xvision_agent_client::AgentClientError::TransportClosed);
     for attempt in 1..=3u32 {
         match AgentClient::spawn_with_event_sink(
             std::path::Path::new(&bin),
@@ -3393,6 +3394,8 @@ async fn run_inner(
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await
         }
@@ -4278,6 +4281,8 @@ async fn build_live_executor(
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
+    agent_runtime: AgentRuntime,
+    cline_ctx: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
@@ -4505,7 +4510,7 @@ async fn build_live_executor(
         broker_lbl,
         AuthContext::system(),
     ));
-    let granularity = xvision_data::alpaca::BarGranularity::Minute1;
+    let granularity = cfg.granularity;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
         key_id: key_id.clone(),
         secret_key: secret.clone(),
@@ -4606,7 +4611,8 @@ async fn build_live_executor(
     let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
         .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
         .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs);
+        .with_provider_catalogs(provider_catalogs)
+        .with_cline_runtime(agent_runtime, cline_ctx);
     if let Some(recorder) = ctx.memory_recorder.clone() {
         live = live.with_memory_recorder(recorder);
     }
@@ -4820,6 +4826,8 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await?
         }

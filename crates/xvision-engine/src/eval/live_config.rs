@@ -44,6 +44,7 @@
 use serde::{Deserialize, Serialize};
 
 use xvision_core::Capital;
+use xvision_data::alpaca::BarGranularity;
 use xvision_data::asset_whitelist::alpaca_crypto_asset;
 
 use crate::eval::scenario::AssetRef;
@@ -58,7 +59,8 @@ pub const LIVE_RUN_MAX_TIME_LIMIT_SECS: u64 = 30 * 24 * 60 * 60;
 ///
 /// `time_limit_secs` is wall-clock seconds since run start, `bar_limit` is
 /// the bar count consumed from the [`crate::eval::executor::BarSource`],
-/// and `decision_limit` is the LLM-dispatch count.
+/// `decision_limit` is the LLM-dispatch count, and `trade_limit` is the
+/// completed filled-trade count.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -80,12 +82,19 @@ pub struct StopPolicy {
     /// shake-down runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_limit: Option<u32>,
+
+    /// Number of completed filled trades before termination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade_limit: Option<u32>,
 }
 
 impl StopPolicy {
     /// True iff the policy has any limit set. Used by [`LiveConfig::validate`].
     pub fn is_empty(&self) -> bool {
-        self.time_limit_secs.is_none() && self.bar_limit.is_none() && self.decision_limit.is_none()
+        self.time_limit_secs.is_none()
+            && self.bar_limit.is_none()
+            && self.decision_limit.is_none()
+            && self.trade_limit.is_none()
     }
 }
 
@@ -133,6 +142,12 @@ pub struct LiveConfig {
     /// `"alpaca"` (Alpaca paper trading).
     pub broker_creds_ref: String,
     pub stop_policy: StopPolicy,
+
+    /// Live bar timeframe. Historical configs omitted this field and should
+    /// continue to run at the original 1-minute cadence.
+    #[serde(default = "default_live_granularity")]
+    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
+    pub granularity: BarGranularity,
 
     /// Coarse safety label for the venue. v1 rejects [`VenueLabel::Live`]
     /// at validation; once the per-strategy verdict + kill-switch hardening
@@ -228,6 +243,11 @@ impl LiveConfig {
                 });
             }
         }
+        if let Some(trades) = self.stop_policy.trade_limit {
+            if trades == 0 {
+                return Err(E::StopPolicyLimitNotPositive { field: "trade_limit" });
+            }
+        }
 
         // Real-money `Live` is allowed only for venues that settle real funds
         // (Byreal perps / Hyperliquid). Alpaca live scope is paper only.
@@ -245,6 +265,10 @@ impl LiveConfig {
 
         Ok(())
     }
+}
+
+fn default_live_granularity() -> BarGranularity {
+    BarGranularity::Minute1
 }
 
 /// Stable validation errors for a `LiveConfig`. Each variant carries
@@ -408,6 +432,7 @@ mod tests {
                 time_limit_secs: Some(900),
                 ..Default::default()
             },
+            granularity: BarGranularity::Minute1,
             venue_label: VenueLabel::Paper,
             warmup_bars: None,
             safety_limits: None,
@@ -544,6 +569,13 @@ mod tests {
                 },
                 "decision_limit",
             ),
+            (
+                StopPolicy {
+                    trade_limit: Some(0),
+                    ..Default::default()
+                },
+                "trade_limit",
+            ),
         ] {
             let mut cfg = valid_config();
             cfg.stop_policy = set_zero;
@@ -554,6 +586,34 @@ mod tests {
             );
             assert_eq!(err.field_path(), format!("/stop_policy/{field}"));
         }
+    }
+
+    #[test]
+    fn trade_limit_alone_is_a_valid_stop_policy() {
+        let mut cfg = valid_config();
+        cfg.stop_policy = StopPolicy {
+            trade_limit: Some(3),
+            ..Default::default()
+        };
+
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn missing_granularity_defaults_to_minute_one() {
+        let json = serde_json::json!({
+            "strategy_id": "s_01JX_TEST",
+            "assets": [whitelisted_btc_asset()],
+            "capital": { "initial": 10_000.0, "currency": "USD" },
+            "broker_creds_ref": "alpaca",
+            "stop_policy": { "trade_limit": 3 },
+            "venue_label": "paper",
+            "display_name": "Smoke run"
+        });
+
+        let cfg: LiveConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.granularity, BarGranularity::Minute1);
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

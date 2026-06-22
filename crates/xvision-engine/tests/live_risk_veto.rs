@@ -222,6 +222,7 @@ fn two_asset_live_config() -> LiveConfig {
             bar_limit: Some(1_000),
             ..Default::default()
         },
+        granularity: BarGranularity::Minute1,
         venue_label: VenueLabel::Paper,
         warmup_bars: Some(0),
         safety_limits: None,
