@@ -243,6 +243,7 @@ async fn seed_strategies(
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -485,6 +486,7 @@ mod tests {
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             hypothesis: None,
             agents: Vec::new(),

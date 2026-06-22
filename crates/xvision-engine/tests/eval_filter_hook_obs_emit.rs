@@ -59,6 +59,7 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

@@ -87,6 +87,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents,

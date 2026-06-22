@@ -214,6 +214,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         agents: Vec::new(),
         pipeline: Default::default(),

@@ -130,6 +130,7 @@ fn build_strategy(agent_id: &str, execution_mode: ExecutionMode) -> Strategy {
             color: None,
             execution_mode,
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

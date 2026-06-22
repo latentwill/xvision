@@ -376,6 +376,7 @@ mod tests {
                 regime_fit: vec![],
                 asset_universe: vec![],
                 decision_cadence_minutes: 60,
+                timeframe_requirements: Default::default(),
                 attested_with: vec![],
                 required_tools: vec![],
                 risk_preset_or_config: "balanced".into(),

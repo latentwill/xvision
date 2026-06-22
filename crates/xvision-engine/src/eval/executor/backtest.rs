@@ -163,6 +163,8 @@ pub struct Executor {
     /// builds an aligned multi-asset timeline from this map instead of
     /// mapping `injected_bars` to the first active asset.
     injected_asset_bars: Option<BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>>,
+    /// Optional run-level market-data context keyed by asset + timeframe.
+    market_data: Option<crate::eval::market_data::MarketDataContext>,
     /// Stage 1 (Cline runtime unification) — which runtime drives the
     /// LLM-backed slots for this run. Defaults to `LlmDispatch`; the eval
     /// entry point sets it from `RuntimeConfig.agent_runtime` and pairs it
@@ -251,6 +253,7 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            market_data: None,
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
@@ -285,6 +288,7 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            market_data: None,
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
@@ -315,6 +319,7 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            market_data: None,
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
@@ -339,6 +344,7 @@ impl Executor {
             fill_sink_override: None,
             asset_subset: None,
             injected_asset_bars: None,
+            market_data: None,
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
@@ -429,6 +435,12 @@ impl Executor {
     /// Inject per-asset bar series for multi-asset backtests.
     pub fn with_asset_bars(mut self, bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>) -> Self {
         self.injected_asset_bars = Some(bars);
+        self
+    }
+
+    /// Inject run-level asset/timeframe market-data context.
+    pub fn with_market_data(mut self, market_data: crate::eval::market_data::MarketDataContext) -> Self {
+        self.market_data = Some(market_data);
         self
     }
 
@@ -793,6 +805,12 @@ impl Executor {
         // `None` keeps today's behavior; `Some(n)` trims the slice to
         // the most-recent `n` entries.
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
+
+        let supported_timeframes = self
+            .market_data
+            .as_ref()
+            .map(|ctx| ctx.supported_timeframes(asset_sym))
+            .unwrap_or_else(|| vec![scenario.granularity.canonical()]);
         // F-8 stats: snapshot the global counter so we can log the
         // per-run cache-hint delta at finalize.
         let cache_hint_start =
@@ -1212,6 +1230,39 @@ impl Executor {
                     .map(|b| b.timestamp)
                     .unwrap_or(bar.timestamp);
                 let source_window_end = bar.timestamp;
+
+                let last_closed_times = self
+                    .market_data
+                    .as_ref()
+                    .map(|ctx| {
+                        supported_timeframes
+                            .iter()
+                            .filter_map(|tf| {
+                                let granularity = match tf.as_str() {
+                                    "1m" => Some(xvision_data::alpaca::BarGranularity::Minute1),
+                                    "5m" => Some(xvision_data::alpaca::BarGranularity::Minute5),
+                                    "15m" => Some(xvision_data::alpaca::BarGranularity::Minute15),
+                                    "30m" => xvision_data::alpaca::BarGranularity::new(
+                                        30,
+                                        xvision_data::alpaca::BarGranularityUnit::Minute,
+                                    )
+                                    .ok(),
+                                    "1h" => Some(xvision_data::alpaca::BarGranularity::Hour1),
+                                    "2h" => xvision_data::alpaca::BarGranularity::new(
+                                        2,
+                                        xvision_data::alpaca::BarGranularityUnit::Hour,
+                                    )
+                                    .ok(),
+                                    "4h" => Some(xvision_data::alpaca::BarGranularity::Hour4),
+                                    "1d" => Some(xvision_data::alpaca::BarGranularity::Day1),
+                                    _ => None,
+                                }?;
+                                ctx.last_closed_at(asset_sym, granularity, bar.timestamp)
+                                    .map(|ts| (tf.clone(), ts))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let (seed_sl_price, seed_tp_price, seed_bars_held) =
                     if let Some(sltp) = sltp_state.get(&asset_sym) {
                         (
@@ -1235,6 +1286,8 @@ impl Executor {
                         active_assets: &active_venue_symbols,
                         history_slice,
                         inputs_policy,
+                        supported_timeframes: &supported_timeframes,
+                        last_closed_times,
                         equity,
                         next_bar_open,
                         reference_price_source: "eval_bar.close",
@@ -3443,6 +3496,12 @@ impl Executor {
         }
 
         let inputs_policy = resolve_inputs_policy(agent_slots);
+
+        let supported_timeframes = self
+            .market_data
+            .as_ref()
+            .map(|ctx| ctx.supported_timeframes(*active.first().expect("active asset")))
+            .unwrap_or_else(|| vec![strategy.native_timeframe().as_str().to_string()]);
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
         let history_window = scenario.warmup_bars as usize;
 
@@ -3747,6 +3806,7 @@ impl Executor {
                         inputs_policy,
                         bar_history_limit,
                         history_window,
+                        supported_timeframes: &supported_timeframes,
                         history: asset_history,
                         last_open_direction: asset_last_open,
                         bar_period_minutes,
@@ -4138,6 +4198,7 @@ impl Executor {
             bar_history_limit,
             history_window,
             history,
+            supported_timeframes,
             mut last_open_direction,
             bar_period_minutes,
             signal_cache,
@@ -4173,6 +4234,11 @@ impl Executor {
         // Until that poller exists all fields are None → the funding-carry veto
         // no-ops regardless of `is_perp_venue`.
         let perps_ctx = PerpsContext::default();
+
+        let last_closed_times = supported_timeframes
+            .iter()
+            .map(|tf| (tf.clone(), bar.timestamp))
+            .collect();
         // Shared seed-context prologue: position/entry/mark are derived inside
         // `build_seed_context` (single source of truth), so this path can't
         // drift from the backtest one.
@@ -4186,6 +4252,8 @@ impl Executor {
                 active_assets: active_venue_symbols,
                 history_slice: &history_slice,
                 inputs_policy,
+                supported_timeframes,
+                last_closed_times,
                 equity,
                 next_bar_open: next_open,
                 reference_price_source: "live_bar.close",
@@ -4999,6 +5067,7 @@ struct DecideOneLiveCtx<'a> {
     bar_history_limit: Option<u32>,
     history_window: usize,
     history: &'a [Ohlcv],
+    supported_timeframes: &'a [String],
     last_open_direction: Option<GuardAction>,
     bar_period_minutes: u32,
     signal_cache: &'a mut crate::agent::signal_cache::SignalCache,
@@ -5949,6 +6018,8 @@ pub struct DecisionSeedInput<'a> {
     pub mark_price: f64,
     pub history_slice: &'a [&'a Ohlcv],
     pub inputs_policy: InputsPolicy,
+    pub supported_timeframes: &'a [String],
+    pub last_closed_times: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
     /// Entry price of the current open position; `0.0` when flat.
     pub entry_price: f64,
     /// Unrealised PnL as a percentage of entry; `0.0` when flat.
@@ -5986,6 +6057,8 @@ pub struct SeedContext<'a> {
     pub bar: &'a Ohlcv,
     pub history_slice: &'a [&'a Ohlcv],
     pub inputs_policy: InputsPolicy,
+    pub supported_timeframes: &'a [String],
+    pub last_closed_times: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
     pub equity: f64,
     /// Signed position size from the book (`>0` long, `<0` short, `~0` flat).
     pub position_size: f64,
@@ -6036,6 +6109,8 @@ impl<'a> DecisionSeedInput<'a> {
             mark_price: ctx.mark_price,
             history_slice: ctx.history_slice,
             inputs_policy: ctx.inputs_policy,
+            supported_timeframes: ctx.supported_timeframes,
+            last_closed_times: ctx.last_closed_times,
             entry_price,
             unrealized_pnl_pct,
             bars_held: ctx.bars_held,
@@ -6059,6 +6134,8 @@ struct SeedContextParams<'a> {
     active_assets: &'a [String],
     history_slice: &'a [&'a Ohlcv],
     inputs_policy: InputsPolicy,
+    supported_timeframes: &'a [String],
+    last_closed_times: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
     equity: f64,
     next_bar_open: f64,
     reference_price_source: &'a str,
@@ -6090,6 +6167,8 @@ fn build_seed_context<'a>(
         bar,
         history_slice: params.history_slice,
         inputs_policy: params.inputs_policy,
+        supported_timeframes: params.supported_timeframes,
+        last_closed_times: params.last_closed_times,
         equity: params.equity,
         position_size: book.position(asset_sym),
         entry_price: book.entry_price(asset_sym),
@@ -6136,6 +6215,8 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "available_timeframes": input.supported_timeframes,
+                "last_closed_times": input.last_closed_times,
                 "perps": input.perps.to_json(),
             },
             "portfolio_state": {
@@ -6160,6 +6241,8 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "available_timeframes": input.supported_timeframes,
+                "last_closed_times": input.last_closed_times,
                 "perps": input.perps.to_json(),
             },
             "portfolio_state": {
@@ -6693,6 +6776,7 @@ mod tests {
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
                 decision_cadence_minutes: 15,
+                timeframe_requirements: Default::default(),
                 attested_with: vec!["m".into()],
                 required_tools: vec!["ohlcv".into()],
                 risk_preset_or_config: "balanced".into(),

@@ -99,6 +99,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             hypothesis: None,
             agents: vec![AgentRef {

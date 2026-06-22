@@ -14,6 +14,7 @@ use crate::agent::dispatch_capability::ClineDispatchCtx;
 use crate::agent::llm::LlmDispatch;
 use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
+use crate::eval::market_data::MarketDataContext;
 use crate::eval::executor::asset_set::active_assets;
 use crate::eval::executor::{Executor, RunExecutor};
 use crate::eval::run::{DeploymentSource, MetricsSummary, Run, RunMode};
@@ -570,6 +571,69 @@ impl PaperTestRunner for BudgetCappedPaperTester {
     }
 }
 
+
+async fn build_market_data_context(
+    ctx: &ApiContext,
+    strategy: &Strategy,
+    scenario: &Scenario,
+    assets: &[AssetSymbol],
+) -> Result<MarketDataContext> {
+    let mut market_data = MarketDataContext::new();
+    for asset in assets {
+        let bars = load_ohlcv_for_scenario(ctx, scenario, *asset).await?;
+        market_data.insert_series(*asset, scenario.granularity, bars);
+    }
+    for (tf, support) in strategy.supported_timeframes() {
+        if support == crate::strategies::TimeframeSupport::Native {
+            continue;
+        }
+        let granularity = match tf.as_str() {
+            "1m" => xvision_data::alpaca::BarGranularity::Minute1,
+            "5m" => xvision_data::alpaca::BarGranularity::Minute5,
+            "15m" => xvision_data::alpaca::BarGranularity::Minute15,
+            "30m" => xvision_data::alpaca::BarGranularity::new(
+                30,
+                xvision_data::alpaca::BarGranularityUnit::Minute,
+            )
+            .expect("validated 30m granularity"),
+            "1h" => xvision_data::alpaca::BarGranularity::Hour1,
+            "2h" => xvision_data::alpaca::BarGranularity::new(
+                2,
+                xvision_data::alpaca::BarGranularityUnit::Hour,
+            )
+            .expect("validated 2h granularity"),
+            "4h" => xvision_data::alpaca::BarGranularity::Hour4,
+            "1d" => xvision_data::alpaca::BarGranularity::Day1,
+            _ => continue,
+        };
+        for asset in assets {
+            let asset_pair = asset.as_alpaca_pair();
+            let cache_key = bars::compute_cache_key(
+                &asset_pair,
+                granularity,
+                scenario.time_window.start,
+                scenario.time_window.end,
+                "alpaca-historical-v1",
+            );
+            let bars = bars::load_bars(
+                ctx,
+                &BarCacheArgs {
+                    cache_key,
+                    asset_pair: asset_pair.clone(),
+                    granularity,
+                    start: scenario.time_window.start,
+                    end: scenario.time_window.end,
+                    data_source_tag: "alpaca-historical-v1".into(),
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("load {} bars for {asset_pair} in scenario {}", tf.as_str(), scenario.id))?;
+            market_data.insert_series(*asset, granularity, market_bars_to_ohlcv(bars));
+        }
+    }
+    Ok(market_data)
+}
 async fn build_cached_backtest_executor(
     ctx: &ApiContext,
     strategy: &Strategy,
@@ -581,11 +645,14 @@ async fn build_cached_backtest_executor(
 ) -> Result<Executor> {
     let active = active_assets(&strategy.manifest.asset_universe, None)?;
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
+    let market_data = build_market_data_context(ctx, strategy, scenario, &active).await?;
 
     let mut asset_bars = BTreeMap::new();
     for asset in &active {
-        let bars = load_ohlcv_for_scenario(ctx, scenario, *asset).await?;
-        asset_bars.insert(*asset, bars);
+        let bars = market_data
+            .series(*asset, scenario.granularity)
+            .with_context(|| format!("missing native bars for {}", asset.as_alpaca_pair()))?;
+        asset_bars.insert(*asset, bars.to_vec());
     }
 
     let warmup = load_warmup_for_scenario(ctx, scenario, first_asset).await?;
@@ -598,9 +665,9 @@ async fn build_cached_backtest_executor(
     } else {
         Executor::new().with_asset_bars(asset_bars)
     }
+    .with_market_data(market_data)
     .with_warmup(warmup)
     .with_event_bus(ctx.event_bus.clone());
-
     // Parity (2026-06-13): trader runs on Cline, which does NOT do execute_slot-layer per-decision
     // memory recall/write (matching live). No with_memory_recorder here — adding it back would
     // re-invert the optimizer vs production.
@@ -629,10 +696,17 @@ async fn load_ohlcv_for_scenario(
     asset: AssetSymbol,
 ) -> Result<Vec<Ohlcv>> {
     let asset_pair = asset.as_alpaca_pair();
+    let cache_key = bars::compute_cache_key(
+        &asset_pair,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
     let bars = bars::load_bars(
         ctx,
         &BarCacheArgs {
-            cache_key: scenario.bar_cache_policy.cache_key.clone(),
+            cache_key,
             asset_pair: asset_pair.clone(),
             granularity: scenario.granularity,
             start: scenario.time_window.start,
@@ -642,12 +716,7 @@ async fn load_ohlcv_for_scenario(
     )
     .await
     .map_err(|e| anyhow::anyhow!("{e}"))
-    .with_context(|| {
-        format!(
-            "load bars for {asset_pair} in scenario {} ({})",
-            scenario.id, scenario.bar_cache_policy.cache_key
-        )
-    })?;
+    .with_context(|| format!("load bars for {asset_pair} in scenario {}", scenario.id))?;
     Ok(market_bars_to_ohlcv(bars))
 }
 

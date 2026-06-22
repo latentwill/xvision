@@ -113,6 +113,7 @@ fn seed_strategy_with_trader(
                 color: None,
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
+                timeframe_requirements: Default::default(),
             },
             agents: vec![AgentRef {
                 agent_id: agent_id.clone(),
@@ -167,6 +168,7 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         agents: vec![AgentRef {
             agent_id: "01MISSINGAGENTREF0000000000".into(),

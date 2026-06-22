@@ -16,6 +16,7 @@ fn sample_strategy() -> Strategy {
             regime_fit: vec![RegimeFit::RangeBound],
             asset_universe: vec!["BTC/USD".to_string()],
             decision_cadence_minutes: 15,
+            timeframe_requirements: Default::default(),
             attested_with: vec!["anthropic.claude-sonnet-4.6".to_string()],
             required_tools: vec!["ohlcv".to_string()],
             risk_preset_or_config: "balanced".to_string(),
@@ -100,6 +101,7 @@ fn manifest_roundtrip_with_required_fields() {
         regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
         asset_universe: vec!["ETH/USD".to_string()],
         decision_cadence_minutes: 15,
+        timeframe_requirements: Default::default(),
         attested_with: vec!["anthropic.claude-sonnet-4.6+".to_string()],
         required_tools: vec!["ohlcv".to_string(), "indicator_panel".to_string()],
         risk_preset_or_config: "balanced".to_string(),
@@ -112,6 +114,21 @@ fn manifest_roundtrip_with_required_fields() {
     let json = serde_json::to_string(&m).unwrap();
     let parsed: PublicManifest = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.template, "mean_reversion");
+}
+
+#[test]
+fn strategy_manifest_with_auxiliary_timeframes_roundtrips() {
+    let mut strategy = sample_strategy();
+    strategy.manifest.timeframe_requirements.auxiliary = vec![
+        xvision_engine::strategies::manifest::TimeframeSpec("4h".into()),
+        xvision_engine::strategies::manifest::TimeframeSpec("1d".into()),
+    ];
+    let json = serde_json::to_string(&strategy).unwrap();
+    let parsed: Strategy = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        parsed.manifest.timeframe_requirements.auxiliary,
+        strategy.manifest.timeframe_requirements.auxiliary
+    );
 }
 
 #[test]

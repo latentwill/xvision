@@ -85,6 +85,8 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
         // Spot/backtest path: empty perps context (all `None`). Identical for
         // both policies, so the Raw-vs-Oracle byte-identity invariant holds.
         perps: PerpsContext::default(),
+        supported_timeframes: &[],
+        last_closed_times: Default::default(),
     })
 }
 

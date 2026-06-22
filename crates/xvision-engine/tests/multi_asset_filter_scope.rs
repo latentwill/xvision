@@ -287,6 +287,7 @@ fn two_filter_multi_asset_strategy() -> Strategy {
             color: None,
             execution_mode: ExecutionMode::PerAsset,
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![

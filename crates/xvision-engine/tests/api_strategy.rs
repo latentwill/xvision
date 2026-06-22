@@ -275,6 +275,7 @@ async fn list_returns_summaries_for_existing_strategys() {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: Vec::new(),

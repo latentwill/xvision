@@ -80,6 +80,7 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {

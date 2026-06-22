@@ -168,6 +168,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -276,6 +277,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -416,6 +418,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {
@@ -531,6 +534,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         hypothesis: None,
         agents: vec![AgentRef {

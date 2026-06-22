@@ -97,6 +97,7 @@ fn strategy_with_manifest(
             color: None,
             execution_mode: Default::default(),
             capital_mode: Default::default(),
+            timeframe_requirements: Default::default(),
         },
         agents: Vec::new(),
         pipeline: Default::default(),
