@@ -2515,7 +2515,6 @@ impl WizardLoop {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     time_window: None,
-                    granularity: None,
                     venue: None,
                     tags: input
                         .get("tags")
@@ -2569,7 +2568,8 @@ impl WizardLoop {
                 let timeframe_minutes = input
                     .get("timeframe_minutes")
                     .and_then(|v| v.as_u64())
-                    .map(|n| n as u32);
+                    .map(|n| n as u32)
+                    .unwrap_or(60);
                 let regimes: Vec<String> = input
                     .get("regimes")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -3085,7 +3085,7 @@ fn fetch_bars_ui_action(scenario: &Scenario) -> serde_json::Value {
             "--to",
             scenario.time_window.end.date_naive().to_string(),
             "--granularity",
-            scenario.granularity.to_string()
+            "1h"
         ]
     })
 }

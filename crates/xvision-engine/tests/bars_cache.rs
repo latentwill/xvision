@@ -181,7 +181,6 @@ async fn cache_miss_then_hit_returns_same_bars() {
     let args = BarCacheArgs {
         cache_key: "test_key_eth_2024_1h".into(),
         asset_pair: "ETH/USD".into(),
-        granularity: BarGranularity::Hour1,
         start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
         end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
         data_source_tag: "alpaca-historical-v1".into(),
@@ -209,7 +208,6 @@ async fn corrupted_cache_blob_treated_as_miss_and_self_heals() {
     let args = BarCacheArgs {
         cache_key: "corrupt_key".into(),
         asset_pair: "ETH/USD".into(),
-        granularity: BarGranularity::Hour1,
         start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
         end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
         data_source_tag: "alpaca-historical-v1".into(),
@@ -254,7 +252,6 @@ async fn concurrent_misses_serialize_through_singleflight() {
     let args = std::sync::Arc::new(BarCacheArgs {
         cache_key: "singleflight_key".into(),
         asset_pair: "ETH/USD".into(),
-        granularity: BarGranularity::Hour1,
         start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
         end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
         data_source_tag: "alpaca-historical-v1".into(),

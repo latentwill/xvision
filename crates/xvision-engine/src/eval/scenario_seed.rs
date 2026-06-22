@@ -11,10 +11,8 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use xvision_core::Capital;
-use xvision_data::alpaca::BarGranularity;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::eval::bars::compute_scenario_cache_key;
 use crate::eval::scenario::{
     AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
     LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
@@ -79,7 +77,6 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -123,11 +120,10 @@ fn seed_btc(id: &str, name: &str, regime_tag: &str, start: DateTime<Utc>, end: D
         venue_label: VenueLabel::Paper,
         safety_limits: None,
     };
-    s.bar_cache_policy.cache_key = compute_scenario_cache_key(
-        s.granularity,
-        s.time_window.start,
-        s.time_window.end,
-        "alpaca-historical-v1",
+    s.bar_cache_policy.cache_key = format!(
+        "canonical-window:{}:{}:alpaca-historical-v1",
+        s.time_window.start.to_rfc3339(),
+        s.time_window.end.to_rfc3339()
     );
     s
 }

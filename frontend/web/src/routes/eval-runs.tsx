@@ -1317,10 +1317,10 @@ function scenarioWindowLabel(s: Scenario): string {
   const start = Date.parse(s.time_window.start);
   const end = Date.parse(s.time_window.end);
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-    return s.granularity;
+    return "date range unavailable";
   }
   const days = Math.max(1, Math.round((end - start) / 86_400_000));
-  return `${s.granularity} · ${days}d`;
+  return `${days}d`;
 }
 
 function errorDetail(err: unknown): string {

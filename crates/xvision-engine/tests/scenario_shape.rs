@@ -22,7 +22,6 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
             end: Utc.with_ymd_and_hms(2024, 2, 10, 0, 0, 0).unwrap(),
         },
         capital: Capital::default(),
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -85,7 +84,6 @@ fn scenario_serde_roundtrip() {
             end: Utc.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap(),
         },
         capital: Capital::default(),
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

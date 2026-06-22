@@ -143,7 +143,6 @@ fn crypto_scenario(asset_class: AssetClass, symbol: &str, _venue_symbol: &str) -
         asset_class,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
-        granularity: BarGranularity::Day1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

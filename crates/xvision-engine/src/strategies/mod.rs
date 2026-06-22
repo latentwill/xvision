@@ -260,6 +260,28 @@ pub enum TimeframeSupport {
 }
 pub const FALLBACK_MIN_WARMUP_BARS: u32 = 0;
 
+/// Convert a strategy decision cadence into the native bar granularity used
+/// for loading market data. Scenarios deliberately do not carry timeframe.
+pub fn bar_granularity_for_cadence(cadence_minutes: u32) -> xvision_data::alpaca::BarGranularity {
+    use xvision_data::alpaca::{BarGranularity, BarGranularityUnit};
+
+    match cadence_minutes {
+        1 => BarGranularity::Minute1,
+        5 => BarGranularity::Minute5,
+        15 => BarGranularity::Minute15,
+        30 => BarGranularity::new(30, BarGranularityUnit::Minute).expect("validated 30m granularity"),
+        60 => BarGranularity::Hour1,
+        120 => BarGranularity::new(2, BarGranularityUnit::Hour).expect("validated 2h granularity"),
+        240 => BarGranularity::Hour4,
+        1440 => BarGranularity::Day1,
+        m if m < 60 => BarGranularity::new(m as u8, BarGranularityUnit::Minute).unwrap_or(BarGranularity::Hour1),
+        m if m % 60 == 0 && m / 60 < 24 => {
+            BarGranularity::new((m / 60) as u8, BarGranularityUnit::Hour).unwrap_or(BarGranularity::Hour1)
+        }
+        _ => BarGranularity::Hour1,
+    }
+}
+
 impl Strategy {
     /// Minimum prior-bar context this strategy needs at decision t=0.
     ///

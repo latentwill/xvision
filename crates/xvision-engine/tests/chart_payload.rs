@@ -153,7 +153,7 @@ async fn build_run_payload_uses_persisted_decision_asset_before_strategy_file() 
 
     let cache_key = xvision_engine::eval::bars::compute_cache_key(
         "ETH/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -233,7 +233,7 @@ async fn build_scenario_payload_loads_cached_bars_and_indicators() {
     // canonical BTC/USD backdrop, so seed bars under that asset-specific key.
     let preview_key = xvision_engine::eval::bars::compute_cache_key(
         "BTC/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -281,7 +281,7 @@ async fn build_scenario_payload_uses_requested_granularity_cache_key() {
         .await
         .unwrap();
 
-    assert_eq!(payload.scenario.granularity, BarGranularity::Hour4);
+    assert_eq!(payload.BarGranularity::Hour1, BarGranularity::Hour4);
     assert_eq!(payload.scenario.bar_cache_policy.cache_key, override_key);
     assert!(
         matches!(payload.cache_status, CacheStatus::NotCached { .. }),
@@ -315,14 +315,14 @@ async fn build_scenario_payload_uses_requested_asset_cache_key() {
 
     let btc_key = xvision_engine::eval::bars::compute_cache_key(
         "BTC/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
     );
     let eth_key = xvision_engine::eval::bars::compute_cache_key(
         "ETH/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -528,7 +528,7 @@ async fn seed_backtest_run_with_equity(ctx: &ApiContext, bar_count: usize) -> St
         .unwrap();
     let cache_key = xvision_engine::eval::bars::compute_cache_key(
         "ETH/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -630,7 +630,7 @@ async fn baseline_degrades_to_none_when_equity_empty() {
         .unwrap();
     let cache_key = xvision_engine::eval::bars::compute_cache_key(
         "ETH/USD",
-        scenario.granularity,
+        BarGranularity::Hour1,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
