@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CreateScenarioRequest } from "@/api/types.gen";
@@ -248,6 +249,26 @@ describe("ScenarioForm", () => {
     );
   });
 
+  it("selects calendar kind through the styled menu", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
+
+    await user.click(screen.getByRole("button", { name: "Calendar" }));
+    await user.click(await screen.findByRole("option", { name: /US equities/i }));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "US equity calendar" },
+    });
+    await user.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar: "UsEquities",
+      } satisfies Partial<CreateScenarioRequest>),
+    );
+  });
+
   it("preserves initial venue overrides when submitting a cloned scenario", () => {
     const onSubmit = vi.fn();
     const overrides = [
@@ -352,30 +373,30 @@ describe("ScenarioForm", () => {
     );
   });
 
-  it("submits UsEquities when the calendar select switches", () => {
+  it("submits UsEquities when the calendar select switches", async () => {
+    const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH usequities" },
     });
-    fireEvent.change(screen.getByLabelText("Calendar"), {
-      target: { value: "UsEquities" },
-    });
+    await user.click(screen.getByRole("button", { name: "Calendar" }));
+    await user.click(await screen.findByRole("option", { name: /US equities/i }));
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ calendar: "UsEquities" }),
     );
   });
 
-  it("reveals the custom-id input when Custom is picked and submits the typed shape", () => {
+  it("reveals the custom-id input when Custom is picked and submits the typed shape", async () => {
+    const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "ETH custom calendar" },
     });
-    fireEvent.change(screen.getByLabelText("Calendar"), {
-      target: { value: "Custom" },
-    });
+    await user.click(screen.getByRole("button", { name: "Calendar" }));
+    await user.click(await screen.findByRole("option", { name: /Custom/i }));
     const customInput = screen.getByLabelText("Custom calendar id");
     fireEvent.change(customInput, { target: { value: "nyse-extended-hours" } });
     fireEvent.click(screen.getByRole("button", { name: "Create →" }));

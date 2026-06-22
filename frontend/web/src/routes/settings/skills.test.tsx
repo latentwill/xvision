@@ -10,16 +10,18 @@
 //  - kind filter chip narrows to one kind
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 import { ThemeProvider } from "@/theme/ThemeProvider";
 import { SettingsSkillsRoute } from "./skills";
 import type { Skill } from "@/api/skills";
+import type * as SkillsApiModule from "@/api/skills";
 
 vi.mock("@/api/skills", async () => {
-  const actual = await vi.importActual<typeof import("@/api/skills")>(
+  const actual = await vi.importActual<typeof SkillsApiModule>(
     "@/api/skills",
   );
   return {
@@ -94,6 +96,19 @@ describe("SettingsSkillsRoute", () => {
     expect(
       await screen.findByText(/No skills yet/i),
     ).toBeInTheDocument();
+  });
+
+  it("selects the create form skill kind through the styled menu", async () => {
+    const user = userEvent.setup();
+    vi.mocked(skillsApi.listSkills).mockResolvedValue([]);
+
+    renderRoute();
+    await user.click(await screen.findByRole("button", { name: "+ Add skill" }));
+    const form = screen.getByText("Create skill").closest("div")!.parentElement!;
+    await user.click(within(form).getByRole("button", { name: /kind/i }));
+    await user.click(await screen.findByRole("option", { name: /Evaluator/i }));
+
+    expect(within(form).getByText("Evaluator")).toBeInTheDocument();
   });
 
   it("lists every returned skill by name", async () => {

@@ -14,6 +14,7 @@ import {
   type NanochatCheckpoint,
 } from "@/api/nanochat";
 import { NanochatBacktestFlow } from "./NanochatBacktestFlow";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 
 export type NanochatSlotCardProps = {
   strategyId: string;
@@ -93,26 +94,27 @@ export function NanochatSlotCard({
 
       {/* Checkpoint picker — promoted models only */}
       <div className="flex flex-col gap-1">
-        <label
-          htmlFor="nc-checkpoint-picker"
-          className="text-[12px] text-text-3"
-        >
+        <div className="text-[12px] text-text-3">
           Nanochat model
-        </label>
-        <select
-          id="nc-checkpoint-picker"
+        </div>
+        <SignalSearchableSelectMenu
+          ariaLabel="Nanochat model"
           value={checkpointModelId ?? ""}
-          onChange={(e) => onCheckpointChange(e.target.value || null)}
-          className="rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text"
-        >
-          <option value="">— select a checkpoint —</option>
-          {checkpoints.map((c) => (
-            <option key={c.model_id} value={c.model_id}>
-              {c.display_name}
-              {c.live_approved ? "" : " (candidate)"}
-            </option>
-          ))}
-        </select>
+          options={checkpoints.map((checkpoint) => ({
+            value: checkpoint.model_id,
+            label: checkpoint.live_approved
+              ? checkpoint.display_name
+              : `${checkpoint.display_name} (candidate)`,
+            meta: checkpoint.model_id,
+            searchText: `${checkpoint.display_name} ${checkpoint.model_id}`,
+          }))}
+          onChange={(next) => onCheckpointChange(next || null)}
+          placeholder="— select a checkpoint —"
+          searchPlaceholder="Search checkpoints…"
+          emptyHint="No checkpoints found"
+          loading={checkpointsQ.isLoading}
+          className="w-full justify-between"
+        />
         {checkpointsQ.isLoading && (
           <span className="text-[11px] text-text-3">Loading checkpoints…</span>
         )}

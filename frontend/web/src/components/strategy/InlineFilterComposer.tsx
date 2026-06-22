@@ -25,7 +25,7 @@ import {
   type PipelineDef,
 } from "@/api/strategies";
 import { ModelPicker } from "@/components/ModelPicker";
-import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
+import { SignalSearchableSelectMenu, SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 import {
   buildPredicate,
@@ -322,18 +322,17 @@ export function InlineFilterComposer({
             placeholder="regime"
             aria-label="signal field"
           />
-          <select
-            className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+          <SignalSelectMenu
+            ariaLabel="operator"
             value={op}
-            onChange={(e) => setOp(e.target.value as ScalarOp)}
-            aria-label="operator"
-          >
-            {SCALAR_OPS.map((entry) => (
-              <option key={entry.op} value={entry.op}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
+            options={SCALAR_OPS.map((entry) => ({
+              value: entry.op,
+              label: entry.label,
+            }))}
+            onChange={(next) => setOp(next as ScalarOp)}
+            className="justify-between bg-surface-elev font-mono"
+            minWidth={120}
+          />
           <input
             className="bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
             value={rawValue}

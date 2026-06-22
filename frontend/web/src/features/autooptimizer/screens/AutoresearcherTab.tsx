@@ -19,6 +19,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { listStrategies, strategyKeys } from "@/api/strategies";
 import { useAutoresearchStream } from "../hooks/useAutoresearchStream";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 // ─── run_tag validation ────────────────────────────────────────────────────────
 
@@ -255,30 +256,28 @@ function RunLauncher({
           </div>
 
           <div className="flex flex-col gap-1">
-            <label
-              htmlFor="ar-label-strategy"
-              className="text-[12px] text-text-3"
-            >
+            <div className="text-[12px] text-text-3">
               Label strategy
-            </label>
-            <select
-              id="ar-label-strategy"
-              aria-label="Label strategy"
+            </div>
+            <SignalSelectMenu
+              ariaLabel="Label strategy"
               value={labelStrategy}
-              onChange={(e) =>
-                setLabelStrategy(
-                  e.target.value as "price_forward" | "outcome_imitation",
-                )
+              options={[
+                {
+                  value: "price_forward",
+                  label: "price_forward — price movement baseline",
+                },
+                {
+                  value: "outcome_imitation",
+                  label: "outcome_imitation — imitate profitable cycles",
+                },
+              ]}
+              onChange={(next) =>
+                setLabelStrategy(next as "price_forward" | "outcome_imitation")
               }
-              className={`${inp} w-full`}
-            >
-              <option value="price_forward">
-                price_forward — price movement baseline
-              </option>
-              <option value="outcome_imitation">
-                outcome_imitation — imitate profitable cycles
-              </option>
-            </select>
+              className={`${inp} w-full justify-between`}
+              minWidth={240}
+            />
           </div>
 
           {labelStrategy === "price_forward" && (

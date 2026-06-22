@@ -32,6 +32,7 @@ import {
   type FilterDef,
   type SortOption,
 } from "@/components/lists";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { MListRow, type MListRowBadgeColor } from "@/components/lists/MListRow";
 import { Pill } from "@/components/primitives/Pill";
 
@@ -375,22 +376,22 @@ function SkillForm({
           />
         </Field>
 
-        <Field label="Kind">
-          <select
+        <div>
+          <div className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+            Kind
+          </div>
+          <SignalSelectMenu
+            ariaLabel="Kind"
             value={kind}
-            onChange={(e) => setKind(e.target.value as SkillKind)}
-            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
-          >
-            {KIND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            options={KIND_OPTIONS}
+            onChange={(next) => setKind(next as SkillKind)}
+            className="w-full justify-between bg-surface-card"
+            minWidth={180}
+          />
           <p className="m-0 mt-1 text-text-3 text-[11px] leading-snug">
             {KIND_OPTIONS.find((o) => o.value === kind)?.blurb}
           </p>
-        </Field>
+        </div>
       </div>
 
       <Field label="Description">

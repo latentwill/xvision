@@ -264,18 +264,22 @@ export function SignalActionMenu({
 export interface SelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 export interface SignalSelectMenuProps {
   label?: string;
   icon?: IconName;
   value: string;
-  options: SelectOption[];
+  options: readonly SelectOption[];
   onChange: (v: string) => void;
   align?: "left" | "right";
   active?: boolean;
   compact?: boolean;
   minWidth?: number;
+  disabled?: boolean;
+  className?: string;
+  ariaLabel?: string;
 }
 
 export function SignalSelectMenu({
@@ -288,6 +292,9 @@ export function SignalSelectMenu({
   active = false,
   compact = false,
   minWidth,
+  disabled = false,
+  className,
+  ariaLabel,
 }: SignalSelectMenuProps) {
   const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
   const selected = options.find((o) => o.value === value) ?? options[0];
@@ -299,6 +306,8 @@ export function SignalSelectMenu({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={ariaLabel}
+        disabled={disabled}
         onClick={toggle}
         data-active={active || undefined}
         style={minWidth ? { minWidth } : undefined}
@@ -306,8 +315,10 @@ export function SignalSelectMenu({
           "relative inline-flex items-center gap-1.5 h-8 px-2.5",
           "bg-surface-elev border border-border rounded-sm text-text-2",
           "text-[12.5px] cursor-pointer transition-colors whitespace-nowrap",
-          "hover:border-text-3",
+          "hover:border-text-3 disabled:hover:border-border",
           active ? "border-gold/45 bg-gold/10" : "",
+          disabled ? "cursor-not-allowed opacity-50" : "",
+          className ?? "",
         ].join(" ")}
       >
         {icon && (
@@ -330,11 +341,13 @@ export function SignalSelectMenu({
               type="button"
               role="option"
               aria-selected={isSelected}
+              disabled={opt.disabled}
               onClick={() => {
+                if (opt.disabled) return;
                 onChange(opt.value);
                 setOpen(false);
               }}
-              className="flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text hover:bg-surface-hover transition-colors"
+              className="flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
             >
               <span className="w-[14px] flex-shrink-0">
                 {isSelected && (

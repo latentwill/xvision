@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Icon } from "@/components/primitives/Icon";
-import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
+import { SignalSearchableSelectMenu, SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import { toVenuePair } from "@/lib/assets";
 import { useAlpacaAssets } from "@/api/assets";
@@ -669,22 +669,23 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                 : "Filter-gated agent uses one trader AgentRef. Sequential runs refs in the order below."
             }
           >
-            <select
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+            <SignalSelectMenu
+              ariaLabel="Pipeline kind"
               value={pipeline.kind}
-              onChange={(e) =>
-                onPipelineChange(e.target.value as PipelineKind)
-              }
+              options={[
+                {
+                  value: "single",
+                  label: "filter-gated agent",
+                  disabled: attached.length > 1,
+                },
+                { value: "sequential", label: "sequential" },
+                { value: "graph", label: "graph", disabled: true },
+              ]}
+              onChange={(next) => onPipelineChange(next as PipelineKind)}
               disabled={pipeline.kind === "graph" || pipelineMut.isPending}
-            >
-              <option value="single" disabled={attached.length > 1}>
-                filter-gated agent
-              </option>
-              <option value="sequential">sequential</option>
-              <option value="graph" disabled>
-                graph
-              </option>
-            </select>
+              className="w-full justify-between bg-surface-elev font-mono"
+              minWidth={200}
+            />
           </Field>
           <div className="text-[12px] text-text-2 leading-snug">
             <div>
@@ -1231,17 +1232,17 @@ function EntryRulesEditor({
             placeholder="signal_name"
             aria-label={`Entry rule ${i + 1} signal name`}
           />
-          <select
-            className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+          <SignalSelectMenu
+            ariaLabel={`Entry rule ${i + 1} direction`}
             value={rule.direction}
-            onChange={(e) =>
-              updateRule(i, { direction: e.target.value as EntryDirection })
-            }
-            aria-label={`Entry rule ${i + 1} direction`}
-          >
-            <option value="long">Long</option>
-            <option value="short">Short</option>
-          </select>
+            options={[
+              { value: "long", label: "Long" },
+              { value: "short", label: "Short" },
+            ]}
+            onChange={(next) => updateRule(i, { direction: next as EntryDirection })}
+            className="bg-surface-elev font-mono"
+            minWidth={96}
+          />
           <button
             type="button"
             onClick={() => removeRule(i)}
@@ -1319,18 +1320,20 @@ function ClosePoliciesEditor({
           key={i}
           className="flex items-center gap-2 border border-border-soft rounded px-3 py-2"
         >
-          <select
-            className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"
+          <SignalSelectMenu
+            ariaLabel={`Close policy ${i + 1} kind`}
             value={p.kind}
-            onChange={(e) => updateKind(i, e.target.value as ClosePolicy["kind"])}
-            aria-label={`Close policy ${i + 1} kind`}
-          >
-            <option value="stop_loss">Stop Loss (%)</option>
-            <option value="take_profit">Take Profit (%)</option>
-            <option value="trailing_stop">Trailing Stop (%)</option>
-            <option value="time_exit">Time Exit (bars)</option>
-            <option value="target_pnl">Target PnL ($)</option>
-          </select>
+            options={[
+              { value: "stop_loss", label: "Stop Loss (%)" },
+              { value: "take_profit", label: "Take Profit (%)" },
+              { value: "trailing_stop", label: "Trailing Stop (%)" },
+              { value: "time_exit", label: "Time Exit (bars)" },
+              { value: "target_pnl", label: "Target PnL ($)" },
+            ]}
+            onChange={(next) => updateKind(i, next as ClosePolicy["kind"])}
+            className="bg-surface-elev font-mono"
+            minWidth={170}
+          />
           <input
             type="number"
             className="w-24 bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text font-mono"

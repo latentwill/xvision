@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { createElement, type ReactNode } from "react";
@@ -74,9 +75,11 @@ describe("AutoresearcherTab sections", () => {
     expect(screen.getByLabelText(/run tag/i)).toBeInTheDocument();
   });
 
-  it("renders label strategy dropdown with price_forward option", () => {
+  it("renders label strategy dropdown with price_forward option", async () => {
+    const user = userEvent.setup();
     render(<AutoresearcherTab />, { wrapper: makeWrapper() });
-    expect(screen.getByRole("combobox", { name: /label strategy/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /label strategy/i }));
+    expect(screen.getByRole("option", { name: /price_forward/i })).toBeInTheDocument();
   });
 });
 
