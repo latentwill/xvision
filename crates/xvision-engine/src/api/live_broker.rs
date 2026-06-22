@@ -6,14 +6,19 @@
 //! [`venue_account`]; all venue logic lives here so the dashboard never
 //! depends on `xvision-execution` directly.
 //!
-//! Missing `ORDERLY_*` env is NOT an error: the endpoint reports
+//! Missing credentials (stored or env) is NOT an error: the endpoint reports
 //! `{ connected: false, reason: "…" }` so the live page can render a
 //! "not configured" state instead of a 500. Venue fetch failures are
 //! reported the same way — this is a status surface, not a trade path.
 
+use std::path::Path;
+
 use serde::Serialize;
 
+use xvision_execution::orderly::Credentials;
 use xvision_execution::OrderlyExecutor;
+
+use crate::api::settings::brokers::resolve_orderly_credentials;
 
 use super::ApiResult;
 
@@ -84,10 +89,11 @@ fn network_from_base_url(base_url: Option<&str>) -> &'static str {
 /// not yet wired — credentials may be stored but live ledger snapshots for
 /// non-Orderly venues are not implemented at this revision.
 ///
-/// Never errors on a missing/unreachable venue — returns `connected: false`
-/// with a reason so the live page can render a "not configured" state instead
-/// of an HTTP error.
-pub async fn venue_account(venue: Option<&str>) -> ApiResult<VenueAccountDto> {
+/// Credentials are resolved from Settings → Brokers stored credentials first,
+/// then from `ORDERLY_*` env vars. Never errors on a missing/unreachable
+/// venue — returns `connected: false` with a reason so the live page can
+/// render a "not configured" state instead of an HTTP error.
+pub async fn venue_account(venue: Option<&str>, xvn_home: &Path) -> ApiResult<VenueAccountDto> {
     // Route non-Orderly venue requests to a stub response.
     match venue {
         Some(v) if v != "orderly" => {
@@ -109,23 +115,30 @@ pub async fn venue_account(venue: Option<&str>) -> ApiResult<VenueAccountDto> {
         _ => {}
     }
 
-    // Orderly path (venue == None or "orderly").
-    let missing: Vec<&str> = ["ORDERLY_KEY", "ORDERLY_SECRET", "ORDERLY_ACCOUNT_ID"]
-        .into_iter()
-        .filter(|v| std::env::var(v).map(|s| s.trim().is_empty()).unwrap_or(true))
-        .collect();
-    if !missing.is_empty() {
-        return Ok(VenueAccountDto::disconnected(format!(
-            "Orderly credentials not configured: {} unset",
-            missing.join(", ")
-        )));
-    }
+    // Resolve credentials: stored (Settings → Brokers) wins over env.
+    let resolved = resolve_orderly_credentials(xvn_home).await?;
+    let (creds, network) = match resolved {
+        Some(c) => {
+            let network = network_from_base_url(c.base_url.as_deref()).to_string();
+            (c, network)
+        }
+        None => {
+            return Ok(VenueAccountDto::disconnected(
+                "Orderly credentials not configured: store them in Settings → Brokers \
+                 or set ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID env vars"
+                    .into(),
+            ));
+        }
+    };
 
-    let base_url = std::env::var("ORDERLY_BASE_URL").ok();
-    let network = network_from_base_url(base_url.as_deref()).to_string();
-    let account_id = std::env::var("ORDERLY_ACCOUNT_ID").unwrap_or_default();
-
-    let executor = match OrderlyExecutor::from_env() {
+    let executor = match OrderlyExecutor::connect(
+        Credentials {
+            orderly_key: creds.api_key,
+            orderly_secret: creds.api_secret,
+            orderly_account_id: creds.account_id.clone(),
+        },
+        creds.base_url.as_deref(),
+    ) {
         Ok(e) => e,
         Err(e) => {
             return Ok(VenueAccountDto::disconnected(format!(
@@ -139,7 +152,7 @@ pub async fn venue_account(venue: Option<&str>) -> ApiResult<VenueAccountDto> {
             connected: true,
             venue: "orderly".into(),
             network: Some(network),
-            account_id: Some(account_id),
+            account_id: Some(creds.account_id),
             equity_usd: Some(snap.equity_usd),
             usdc_holding: Some(snap.usdc_holding),
             unrealized_pnl: Some(snap.unrealized_pnl),
