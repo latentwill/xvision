@@ -204,6 +204,15 @@ function mockReady({
       base_url: null,
       note: null,
     }),
+    byreal_spot: broker({
+      name: "Byreal Spot",
+      kind: "byreal_spot",
+      configured: false,
+      stored: false,
+      stored_key_id_suffix: null,
+      base_url: null,
+      note: null,
+    }),
     degen_arena: broker({
       name: "Degen Arena",
       kind: "degen_arena",

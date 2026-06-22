@@ -40,7 +40,9 @@ vi.mock("@/api/settings", async () => {
     ...actual,
     getBrokers: vi.fn(),
     setDegenArenaCredentials: vi.fn(),
+    setByrealSpotCredentials: vi.fn(),
     clearDegenArenaCredentials: vi.fn(),
+    clearByrealSpotCredentials: vi.fn(),
   };
 });
 
@@ -58,7 +60,10 @@ function broker(overrides: Partial<BrokerEntry> = {}): BrokerEntry {
   };
 }
 
-function mockBrokers(degenOverrides: Partial<BrokerEntry> = {}) {
+function mockBrokers(
+  degenOverrides: Partial<BrokerEntry> = {},
+  byrealSpotOverrides: Partial<BrokerEntry> = {},
+) {
   const report: BrokersReport = {
     alpaca: broker({ name: "Alpaca", kind: "alpaca" }),
     orderly: broker({ name: "Orderly Network", kind: "orderly" }),
@@ -67,6 +72,7 @@ function mockBrokers(degenOverrides: Partial<BrokerEntry> = {}) {
       name: "Byreal Spot",
       kind: "byreal_spot",
       note: "Solana spot trading (curated SPL + xStocks).",
+      ...byrealSpotOverrides,
     }),
     degen_arena: broker({
       name: "Degen Arena",
@@ -192,8 +198,9 @@ describe("ByrealSpotBrokerCard", () => {
     renderRoute();
 
     expect(await screen.findByText("Byreal Spot")).toBeInTheDocument();
-    expect(screen.getByLabelText("Trading-only agent key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Network")).toBeInTheDocument();
+    const keyInput = screen.getByLabelText("Trading-only agent key");
+    const form = keyInput.closest("form") as HTMLFormElement;
+    expect(within(form).getByText("Network")).toBeInTheDocument();
   });
 
   it("saves valid credentials to the byreal-spot route", async () => {
@@ -219,12 +226,15 @@ describe("ByrealSpotBrokerCard", () => {
   });
 
   it("shows the stored suffix and clears when configured", async () => {
-    mockBrokers({
-      configured: true,
-      stored: true,
-      stored_key_id_suffix: "9f3c",
-      base_url: "testnet",
-    });
+    mockBrokers(
+      {},
+      {
+        configured: true,
+        stored: true,
+        stored_key_id_suffix: "9f3c",
+        base_url: "testnet",
+      },
+    );
     vi.mocked(settingsApi.clearByrealSpotCredentials).mockResolvedValue();
     renderRoute();
     await screen.findByText("Byreal Spot");

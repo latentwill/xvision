@@ -42,6 +42,7 @@ function mkReport(configured: string[]): BrokersReport {
     alpaca: cfg("alpaca", "Alpaca"),
     orderly: cfg("orderly", "Orderly Network"),
     byreal: cfg("byreal", "Byreal"),
+    byreal_spot: cfg("byreal_spot", "Byreal Spot"),
     degen_arena: cfg("degen_arena", "Degen Arena"),
     hyperliquid: cfg("hyperliquid", "Hyperliquid"),
   };

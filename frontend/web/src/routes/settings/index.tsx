@@ -7,6 +7,7 @@ import { Pill } from "@/components/primitives/Pill";
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import {
+  clearAlpacaCredentials,
   clearByrealCredentials,
   clearByrealSpotCredentials,
   clearDegenArenaCredentials,
@@ -19,6 +20,7 @@ import {
   setDegenArenaCredentials,
   setHyperliquidCredentials,
   setOrderlyCredentials,
+  settingsKeys,
   testAlpacaConnection,
 } from "@/api/settings";
 import type { AlpacaTestReport, BrokerEntry } from "@/api/types.gen";
@@ -100,6 +102,7 @@ export function SettingsBrokersRoute() {
           <ByrealBrokerCard entry={data.byreal} />
           <ByrealSpotBrokerCard entry={data.byreal_spot} />
           <DegenArenaBrokerCard entry={data.degen_arena} />
+          <HyperliquidBrokerCard entry={data.hyperliquid} />
           <MarketsRefreshCard />
         </div>
       )}
@@ -840,10 +843,14 @@ function ByrealSpotBrokerCard({ entry }: { entry: BrokerEntry }) {
             (cannot withdraw) — never your master account key.
           </p>
           <div>
-            <label className="block text-[12px] text-text-2 mb-1">
+            <label
+              htmlFor="byreal-spot-private-key"
+              className="block text-[12px] text-text-2 mb-1"
+            >
               Trading-only agent key
             </label>
             <input
+              id="byreal-spot-private-key"
               type="password"
               autoComplete="off"
               spellCheck={false}

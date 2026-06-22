@@ -57,6 +57,7 @@ function brokers(over: Partial<BrokersReport> = {}): BrokersReport {
     alpaca: broker(),
     orderly: broker({ name: "Orderly Network", kind: "orderly", configured: false }),
     byreal: broker({ name: "Byreal", kind: "byreal", configured: false }),
+    byreal_spot: broker({ name: "Byreal Spot", kind: "byreal_spot", configured: false }),
     degen_arena: broker({ name: "Degen Arena", kind: "degen_arena", configured: false }),
     hyperliquid: broker({ name: "Hyperliquid", kind: "hyperliquid", configured: false }),
     ...over,
