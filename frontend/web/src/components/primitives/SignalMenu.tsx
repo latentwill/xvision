@@ -15,7 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { Icon, type IconName } from "./Icon";
 
 // ─── Floating position hook ───────────────────────────────────────────────────
@@ -99,7 +99,7 @@ export function useSignalMenu(align: "left" | "right" = "left") {
     else openMenu();
   }, [open, openMenu]);
 
-  return { open, setOpen, toggle, triggerRef, menuRef, pos };
+  return { open, setOpen, openMenu, toggle, triggerRef, menuRef, pos };
 }
 
 // ─── Menu shell ───────────────────────────────────────────────────────────────
@@ -112,14 +112,16 @@ interface MenuShellProps {
   minWidth?: number;
   className?: string;
   role?: "menu" | "listbox";
+  id?: string;
 }
 
-function MenuShell({ open, menuRef, pos, children, minWidth = 220, className, role = "menu" }: MenuShellProps) {
+function MenuShell({ open, menuRef, pos, children, minWidth = 220, className, role = "menu", id }: MenuShellProps) {
   if (!open) return null;
   return createPortal(
     <div
       ref={menuRef}
       role={role}
+      id={id}
       style={{ ...pos, minWidth }}
       className={[
         "rounded-[6px] border border-border bg-surface-card",
@@ -226,10 +228,11 @@ export function SignalActionMenu({
         aria-expanded={open}
         aria-label={triggerAriaLabel}
         onClick={toggle}
-        className={
+        className={[
           triggerClassName ??
-          "inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
-        }
+            "inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text",
+          "focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
+        ].join(" ")}
       >
         {triggerLabel}
       </button>
@@ -264,18 +267,22 @@ export function SignalActionMenu({
 export interface SelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 export interface SignalSelectMenuProps {
   label?: string;
   icon?: IconName;
   value: string;
-  options: SelectOption[];
+  options: readonly SelectOption[];
   onChange: (v: string) => void;
   align?: "left" | "right";
   active?: boolean;
   compact?: boolean;
   minWidth?: number;
+  disabled?: boolean;
+  className?: string;
+  ariaLabel?: string;
 }
 
 export function SignalSelectMenu({
@@ -288,9 +295,137 @@ export function SignalSelectMenu({
   active = false,
   compact = false,
   minWidth,
+  disabled = false,
+  className,
+  ariaLabel,
 }: SignalSelectMenuProps) {
-  const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
-  const selected = options.find((o) => o.value === value) ?? options[0];
+  const { open, setOpen, openMenu, triggerRef, menuRef, pos } = useSignalMenu(align);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  const selected = options[selectedIndex] ?? options[0];
+  const enabledIndexes = options.flatMap((option, index) =>
+    option.disabled ? [] : [index],
+  );
+  const listboxId = `signal-select-${(ariaLabel ?? label ?? "menu")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")}-listbox`;
+
+  function defaultActiveIndex(direction: 1 | -1 = 1) {
+    if (selectedIndex >= 0 && !options[selectedIndex]?.disabled) {
+      return selectedIndex;
+    }
+    return direction === -1
+      ? enabledIndexes[enabledIndexes.length - 1] ?? -1
+      : enabledIndexes[0] ?? -1;
+  }
+
+  function adjacentEnabledIndex(index: number, direction: 1 | -1) {
+    if (enabledIndexes.length === 0) return -1;
+    const enabledPosition = enabledIndexes.indexOf(index);
+    if (enabledPosition === -1) return defaultActiveIndex(direction);
+    const nextPosition =
+      (enabledPosition + direction + enabledIndexes.length) % enabledIndexes.length;
+    return enabledIndexes[nextPosition] ?? -1;
+  }
+
+  function closeAndFocusTrigger() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function choose(index: number) {
+    const option = options[index];
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    closeAndFocusTrigger();
+  }
+
+  function openAt(index: number) {
+    if (index === -1) return;
+    setActiveIndex(index);
+    openMenu();
+  }
+
+  function setActiveAndFocus(index: number) {
+    setActiveIndex(index);
+    if (index !== -1) optionRefs.current[index]?.focus();
+  }
+
+  function moveActive(direction: 1 | -1) {
+    const nextIndex = adjacentEnabledIndex(
+      activeIndex === -1 ? defaultActiveIndex(direction) : activeIndex,
+      direction,
+    );
+    setActiveAndFocus(nextIndex);
+  }
+
+  function onTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (disabled) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (open) moveActive(1);
+      else openAt(defaultActiveIndex(1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (open) moveActive(-1);
+      else openAt(defaultActiveIndex(-1));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      openAt(enabledIndexes[0] ?? -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      openAt(enabledIndexes[enabledIndexes.length - 1] ?? -1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) choose(activeIndex === -1 ? defaultActiveIndex(1) : activeIndex);
+      else openAt(defaultActiveIndex(1));
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    }
+  }
+
+  function onOptionKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveAndFocus(enabledIndexes[0] ?? -1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveAndFocus(enabledIndexes[enabledIndexes.length - 1] ?? -1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(index);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    }
+  }
+
+  useEffect(() => {
+    if (!open) {
+      setActiveIndex(-1);
+      return;
+    }
+    setActiveIndex((index) => {
+      if (index >= 0 && !options[index]?.disabled) return index;
+      return defaultActiveIndex(1);
+    });
+  }, [open, options, selectedIndex]);
+
+  useEffect(() => {
+    if (!open || activeIndex === -1) return;
+    window.requestAnimationFrame(() => optionRefs.current[activeIndex]?.focus());
+  }, [open, activeIndex]);
 
   return (
     <>
@@ -299,15 +434,24 @@ export function SignalSelectMenu({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={toggle}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => {
+          if (open) setOpen(false);
+          else openAt(defaultActiveIndex(1));
+        }}
+        onKeyDown={onTriggerKeyDown}
         data-active={active || undefined}
         style={minWidth ? { minWidth } : undefined}
         className={[
           "relative inline-flex items-center gap-1.5 h-8 px-2.5",
           "bg-surface-elev border border-border rounded-sm text-text-2",
           "text-[12.5px] cursor-pointer transition-colors whitespace-nowrap",
-          "hover:border-text-3",
+          "hover:border-text-3 disabled:hover:border-border focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
           active ? "border-gold/45 bg-gold/10" : "",
+          disabled ? "cursor-not-allowed opacity-50" : "",
+          className ?? "",
         ].join(" ")}
       >
         {icon && (
@@ -321,32 +465,274 @@ export function SignalSelectMenu({
         </span>
         <Icon name="chevR" size={11} className="text-text-3" />
       </button>
-      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200} role="listbox">
-        {options.map((opt) => {
-          const isSelected = opt.value === value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              role="option"
-              aria-selected={isSelected}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              className="flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text hover:bg-surface-hover transition-colors"
-            >
-              <span className="w-[14px] flex-shrink-0">
-                {isSelected && (
-                  <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gold" aria-hidden>
-                    <path d="M4 10l4 4 8-8" />
-                  </svg>
-                )}
-              </span>
-              <span className="flex-1 text-left">{opt.label}</span>
-            </button>
-          );
-        })}
+      <MenuShell
+        open={open}
+        menuRef={menuRef as RefObject<HTMLDivElement>}
+        pos={pos}
+        minWidth={200}
+        role="listbox"
+        id={listboxId}
+      >
+        <div role="presentation">
+          {options.map((opt, index) => {
+            const isSelected = opt.value === value;
+            const isActive = index === activeIndex;
+            return (
+              <button
+                key={opt.value}
+                ref={(node) => {
+                  optionRefs.current[index] = node;
+                }}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                disabled={opt.disabled}
+                onMouseEnter={() => {
+                  if (!opt.disabled) setActiveIndex(index);
+                }}
+                onKeyDown={(event) => onOptionKeyDown(event, index)}
+                onClick={() => choose(index)}
+                className={[
+                  "flex w-full items-center gap-2 px-3 h-[34px] text-[13px] text-text transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+                  isSelected ? "bg-gold/10" : isActive ? "bg-surface-hover" : "hover:bg-surface-hover",
+                ].join(" ")}
+              >
+                <span className="w-[14px] flex-shrink-0">
+                  {isSelected && (
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gold" aria-hidden>
+                      <path d="M4 10l4 4 8-8" />
+                    </svg>
+                  )}
+                </span>
+                <span className="flex-1 text-left">{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </MenuShell>
+    </>
+  );
+}
+
+// ─── SignalSearchableSelectMenu ───────────────────────────────────────────────
+// Searchable single-select dropdown for entity pickers with larger option sets.
+
+export interface SearchableSelectOption {
+  value: string;
+  label: string;
+  meta?: string;
+  searchText?: string;
+  disabled?: boolean;
+  group?: string;
+  badge?: string;
+}
+
+export interface SignalSearchableSelectMenuProps {
+  label?: string;
+  ariaLabel: string;
+  value: string;
+  options: SearchableSelectOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyHint?: string;
+  loading?: boolean;
+  disabled?: boolean;
+  align?: "left" | "right";
+  className?: string;
+  minWidth?: number;
+}
+
+export function SignalSearchableSelectMenu({
+  label,
+  ariaLabel,
+  value,
+  options,
+  onChange,
+  placeholder = "Select…",
+  searchPlaceholder,
+  emptyHint = "No options match",
+  loading = false,
+  disabled = false,
+  align = "left",
+  className,
+  minWidth = 280,
+}: SignalSearchableSelectMenuProps) {
+  const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const selected = options.find((option) => option.value === value);
+  const normalized = query.trim().toLowerCase();
+  const filtered = normalized
+    ? options.filter((option) =>
+        (option.searchText ?? `${option.label} ${option.meta ?? ""} ${option.value}`)
+          .toLowerCase()
+          .includes(normalized),
+      )
+    : options;
+  const enabled = filtered.filter((option) => !option.disabled);
+  const listboxId = `signal-searchable-${ariaLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-listbox`;
+
+  useEffect(() => {
+    if (open) {
+      window.requestAnimationFrame(() => filterRef.current?.focus());
+    } else {
+      setQuery("");
+      setActiveIndex(-1);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [query]);
+
+  function closeAndFocusTrigger() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function choose(option: SearchableSelectOption | undefined) {
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    closeAndFocusTrigger();
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!open) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, Math.max(enabled.length - 1, 0)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      choose(enabled[activeIndex] ?? enabled[0]);
+    } else if (event.key === "Escape") {
+      closeAndFocusTrigger();
+    }
+  }
+
+  function onOptionKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    option: SearchableSelectOption,
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndFocusTrigger();
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(option);
+    } else {
+      onKeyDown(event);
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled || loading}
+        onClick={toggle}
+        onKeyDown={onKeyDown}
+        className={[
+          "inline-flex h-8 min-w-0 items-center gap-1.5 rounded-sm border border-border bg-surface-elev px-2.5 text-[12.5px] text-text transition-colors",
+          "hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          className ?? "",
+        ].join(" ")}
+      >
+        {label ? (
+          <span className="text-[11.5px] tracking-wide text-text-3">
+            {label}
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate text-left font-mono text-[12px]">
+          {loading ? "Loading…" : selected?.label ?? placeholder}
+        </span>
+        <Icon name="chevR" size={11} className="text-text-3" />
+      </button>
+      <MenuShell
+        open={open}
+        menuRef={menuRef as RefObject<HTMLDivElement>}
+        pos={pos}
+        minWidth={minWidth}
+        role="menu"
+      >
+        <div className="border-b border-border px-2 pb-1 pt-2">
+          <div className="flex h-8 items-center gap-2 rounded-sm border border-border bg-surface-elev px-2 focus-within:border-gold-soft">
+            <Icon name="search" size={13} className="shrink-0 text-text-3" />
+            <input
+              ref={filterRef}
+              type="text"
+              aria-label={`Search ${ariaLabel}`}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={searchPlaceholder ?? `Search ${ariaLabel.toLowerCase()}…`}
+              spellCheck={false}
+              className="min-w-0 flex-1 border-none bg-transparent p-0 font-mono text-[12px] text-text outline-none placeholder:text-text-3"
+            />
+          </div>
+        </div>
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label={`${ariaLabel} options`}
+          className="max-h-[320px] overflow-y-auto py-1"
+        >
+          {filtered.length === 0 ? (
+            <div className="px-3 py-3 font-mono text-[12px] text-text-3">
+              {emptyHint}
+            </div>
+          ) : (
+            filtered.map((option) => {
+              const isSelected = option.value === value;
+              const enabledIndex = enabled.findIndex((item) => item.value === option.value);
+              const isActive = enabledIndex >= 0 && enabledIndex === activeIndex;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={option.disabled}
+                  onFocus={() => setActiveIndex(enabledIndex)}
+                  onMouseEnter={() => setActiveIndex(enabledIndex)}
+                  onKeyDown={(event) => onOptionKeyDown(event, option)}
+                  onClick={() => choose(option)}
+                  className={[
+                    "flex min-h-[34px] w-full items-center gap-2 px-3 text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    isSelected ? "bg-gold/10" : isActive ? "bg-surface-hover" : "hover:bg-surface-hover",
+                  ].join(" ")}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-text">{option.label}</span>
+                    {option.meta ? (
+                      <span className="block truncate font-mono text-[11px] text-text-3">
+                        {option.meta}
+                      </span>
+                    ) : null}
+                  </span>
+                  {option.badge ? (
+                    <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 text-[11px] text-amber-600 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-400">
+                      {option.badge}
+                    </span>
+                  ) : null}
+                  {isSelected ? (
+                    <Icon name="check" size={12} className="shrink-0 text-gold" />
+                  ) : null}
+                </button>
+              );
+            })
+          )}
+        </div>
       </MenuShell>
     </>
   );
@@ -408,7 +794,7 @@ export function SignalCheckboxMenu({
           "inline-flex items-center gap-1.5 h-8 px-2.5",
           "bg-surface-elev border border-border rounded-sm text-text-2",
           "text-[12.5px] cursor-pointer transition-colors whitespace-nowrap",
-          "hover:border-text-3",
+          "hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45",
           activeCount > 0 ? "border-gold/45 bg-gold/10" : "",
         ].join(" ")}
       >
@@ -573,7 +959,7 @@ export function SignalModelPickerMenu({
         disabled={loading}
         onClick={toggle}
         className={[
-          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors overflow-hidden min-w-0 whitespace-nowrap hover:border-text-3 disabled:opacity-50",
+          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors overflow-hidden min-w-0 whitespace-nowrap hover:border-text-3 focus:outline-none focus:border-gold/45 focus-visible:ring-1 focus-visible:ring-gold/45 disabled:opacity-50",
           className ?? "",
         ].join(" ")}
       >

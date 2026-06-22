@@ -9,14 +9,17 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
 
 import { AuthoringRoute } from "./authoring";
 import * as strategyApi from "@/api/strategies";
 import * as agentApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
+import type * as AgentsApiModule from "@/api/agents";
+import type * as StrategiesApiModule from "@/api/strategies";
 
 vi.mock("@/api/strategies", async () => {
-  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+  const actual = await vi.importActual<typeof StrategiesApiModule>(
     "@/api/strategies",
   );
   return {
@@ -35,7 +38,7 @@ vi.mock("@/api/strategies", async () => {
 });
 
 vi.mock("@/api/agents", async () => {
-  const actual = await vi.importActual<typeof import("@/api/agents")>(
+  const actual = await vi.importActual<typeof AgentsApiModule>(
     "@/api/agents",
   );
   return {
@@ -203,7 +206,7 @@ describe("AuthoringRoute risk editor", () => {
     expect(await screen.findByLabelText("Display name")).toHaveValue("Trend 4H");
     // Assets field is a chip editor (not an <input>); verify the chip is rendered
     expect(screen.getByText("BTC/USD")).toBeInTheDocument();
-    expect(screen.getByLabelText("Time frame")).toHaveValue("240");
+    expect(screen.getByRole("button", { name: "Time frame" })).toHaveTextContent("4h");
     expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
     expect(screen.getByText("No saved filter")).toBeInTheDocument();
     expect(screen.queryByText("Mechanical params")).not.toBeInTheDocument();
@@ -484,6 +487,7 @@ describe("AuthoringRoute agent composition", () => {
   });
 
   it("attaches an existing agent with a role derived from the agent name", async () => {
+    const user = userEvent.setup();
     vi.mocked(agentApi.listAgents).mockResolvedValue([
       {
         agent_id: "01DEEPSEEK",
@@ -541,14 +545,16 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
-    // Role field removed — just select the agent and click Add
-    await screen.findByText("DeepSeek trader · 01DEEPSEEK");
-    fireEvent.change(await screen.findByLabelText("Existing agent"), {
-      target: { value: "01DEEPSEEK" },
-    });
+    const picker = await screen.findByRole("button", { name: /existing agent/i });
+    await user.click(picker);
+    await user.type(
+      screen.getByRole("textbox", { name: /search existing agent/i }),
+      "01DEEPSEEK",
+    );
+    await user.click(await screen.findByRole("option", { name: /DeepSeek trader/i }));
     const addButton = screen.getByRole("button", { name: "Add Agent" });
     await waitFor(() => expect(addButton).not.toBeDisabled());
-    fireEvent.click(addButton);
+    await user.click(addButton);
 
     await waitFor(() => {
       expect(strategyApi.addStrategyAgent).toHaveBeenCalledWith("01TEST", {
@@ -718,25 +724,21 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
-    const pipelineSelect = await screen.findByRole("combobox", {
+    const user = userEvent.setup();
+    const pipelineSelect = await screen.findByRole("button", {
       name: /pipeline kind/i,
     });
-    expect(
-      within(pipelineSelect).getByRole("option", {
-        name: /filter-gated agent/i,
-      }),
-    ).toHaveValue("single");
-    expect(
-      within(pipelineSelect).queryByRole("option", { name: /^single$/i }),
-    ).toBeNull();
+    await user.click(pipelineSelect);
+    const disabledSingle = await screen.findByRole("option", {
+      name: /filter-gated agent/i,
+    });
+    expect(disabledSingle).toBeDisabled();
+    expect(screen.queryByRole("option", { name: /^single$/i })).toBeNull();
     expect(
       screen.getByText(/first AgentRef is the gated trader/i),
     ).toBeInTheDocument();
 
-    fireEvent.change(
-      pipelineSelect,
-      { target: { value: "sequential" } },
-    );
+    await user.click(screen.getByRole("option", { name: /sequential/i }));
 
     await waitFor(() => {
       expect(strategyApi.setStrategyPipeline).toHaveBeenCalledWith("01TEST", {

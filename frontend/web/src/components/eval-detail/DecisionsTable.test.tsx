@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 
 import type { FilterSummary } from "@/api/types.gen/FilterSummary";
@@ -81,13 +82,13 @@ describe("DecisionsTable step + asset columns", () => {
     expect(stepColumn(container)).toEqual(["1", "", "2", ""]);
   });
 
-  test("non-chronological sort numbers every row (no blanking)", () => {
+  test("non-chronological sort numbers every row (no blanking)", async () => {
+    const user = userEvent.setup();
     const { container } = render(
       <DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />,
     );
-    fireEvent.change(screen.getByLabelText("Sort decisions"), {
-      target: { value: "pnl-desc" },
-    });
+    await user.click(screen.getByRole("button", { name: /sort/i }));
+    await user.click(await screen.findByRole("option", { name: /PnL high/i }));
     // Every row carries its own step number when the rows may be scattered.
     expect(stepColumn(container).every((s) => s === "1" || s === "2")).toBe(true);
     expect(stepColumn(container)).not.toContain("");
@@ -103,13 +104,13 @@ describe("DecisionsTable step + asset columns", () => {
     expect(screen.getAllByText("ENGAGED")).toHaveLength(2);
   });
 
-  test("PHASE chip renders on every row in non-chronological sort", () => {
+  test("PHASE chip renders on every row in non-chronological sort", async () => {
     // When same-step rows can be scattered by sort key, every row needs its
     // own chip — mirrors the STEP-number behaviour.
+    const user = userEvent.setup();
     render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Sort decisions"), {
-      target: { value: "pnl-desc" },
-    });
+    await user.click(screen.getByRole("button", { name: /sort/i }));
+    await user.click(await screen.findByRole("option", { name: /PnL high/i }));
     expect(screen.getAllByText("ENGAGED")).toHaveLength(4);
   });
 

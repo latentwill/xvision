@@ -9,6 +9,7 @@
 
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/primitives/Icon";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import type { FilterSummary } from "@/api/types.gen/FilterSummary";
 import { ActionPill } from "./ActionPill";
 import { PhaseChip } from "./PhaseChip";
@@ -282,23 +283,19 @@ export function DecisionsTable({
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[10px] font-mono tracking-[0.16em] text-text-3 uppercase">Sort</span>
-          <select
+          <SignalSelectMenu
+            ariaLabel="Sort decisions"
+            label="Sort"
             value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
-            aria-label="Sort decisions"
-            className="h-8 px-2 text-[12px] font-mono text-text"
-            style={{
-              background: "var(--surface-elev)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              outline: "none",
-            }}
-          >
-            <option value="time-asc">Time ↑ (oldest first)</option>
-            <option value="time-desc">Time ↓ (newest first)</option>
-            <option value="conv-desc">Conviction high → low</option>
-            <option value="pnl-desc">PnL high → low</option>
-          </select>
+            options={[
+              { value: "time-asc", label: "Time ↑ (oldest first)" },
+              { value: "time-desc", label: "Time ↓ (newest first)" },
+              { value: "conv-desc", label: "Conviction high → low" },
+              { value: "pnl-desc", label: "PnL high → low" },
+            ]}
+            onChange={(next) => setSortKey(next as SortKey)}
+            compact
+          />
         </div>
       </div>
 

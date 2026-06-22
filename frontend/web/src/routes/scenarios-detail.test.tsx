@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +18,11 @@ import * as strategiesApi from "@/api/strategies";
 import type { Scenario } from "@/api/types.gen";
 import type { ScenarioChartPayload } from "@/api/types.gen/ScenarioChartPayload";
 import { ScenariosDetailRoute } from "./scenarios-detail";
+import type * as ChartApiModule from "@/api/chart";
+import type * as CliApiModule from "@/api/cli";
+import type * as EvalApiModule from "@/api/eval";
+import type * as ScenariosApiModule from "@/api/scenarios";
+import type * as StrategiesApiModule from "@/api/strategies";
 
 // The chart region now renders ScenarioChartV2, whose candle pane drives
 // klinecharts and whose equity/volume panes drive uPlot — neither plays
@@ -36,7 +42,7 @@ vi.mock("@/components/chart/v2/primitives/UplotHistogramPane", () => ({
 }));
 
 vi.mock("@/api/scenarios", async () => {
-  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+  const actual = await vi.importActual<typeof ScenariosApiModule>(
     "@/api/scenarios",
   );
   return {
@@ -49,26 +55,26 @@ vi.mock("@/api/scenarios", async () => {
 });
 
 vi.mock("@/api/chart", async () => {
-  const actual = await vi.importActual<typeof import("@/api/chart")>(
+  const actual = await vi.importActual<typeof ChartApiModule>(
     "@/api/chart",
   );
   return { ...actual, getScenarioChart: vi.fn() };
 });
 
 vi.mock("@/api/eval", async () => {
-  const actual = await vi.importActual<typeof import("@/api/eval")>("@/api/eval");
+  const actual = await vi.importActual<typeof EvalApiModule>("@/api/eval");
   return { ...actual, listRuns: vi.fn().mockResolvedValue([]) };
 });
 
 vi.mock("@/api/strategies", async () => {
-  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+  const actual = await vi.importActual<typeof StrategiesApiModule>(
     "@/api/strategies",
   );
   return { ...actual, listStrategies: vi.fn().mockResolvedValue([]) };
 });
 
 vi.mock("@/api/cli", async () => {
-  const actual = await vi.importActual<typeof import("@/api/cli")>("@/api/cli");
+  const actual = await vi.importActual<typeof CliApiModule>("@/api/cli");
   return {
     ...actual,
     createCliJob: vi.fn(),
@@ -376,13 +382,14 @@ describe("ScenariosDetailRoute bars cache actions", () => {
   });
 
   it("refetches the scenario chart when the indicator timeframe changes", async () => {
+    const user = userEvent.setup();
     vi.mocked(scenarioApi.getScenario).mockResolvedValue(scenario);
     vi.mocked(chartApi.getScenarioChart).mockResolvedValue(chartPayload);
 
     renderRoute();
 
-    const selector = await screen.findByLabelText("Indicator timeframe");
-    fireEvent.change(selector, { target: { value: "1h" } });
+    await user.click(await screen.findByRole("button", { name: /indicator timeframe/i }));
+    await user.click(await screen.findByRole("option", { name: "1 hour" }));
 
     await waitFor(() => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
@@ -408,9 +415,9 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       );
     });
 
-    // The asset picker is now a custom AssetPicker combobox (role="combobox").
+    // The asset picker is a Signal-styled listbox trigger.
     // Click it to open, then click the ETH/USD option.
-    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    const assetPicker = await screen.findByRole("button", { name: "Asset picker" });
     fireEvent.click(assetPicker);
     const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
     fireEvent.click(ethOption);
@@ -434,8 +441,8 @@ describe("ScenariosDetailRoute bars cache actions", () => {
 
     renderRoute();
 
-    // The asset picker is a custom AssetPicker combobox (role="combobox").
-    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    // The asset picker is a Signal-styled listbox trigger.
+    const assetPicker = await screen.findByRole("button", { name: "Asset picker" });
     fireEvent.click(assetPicker);
     const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
     fireEvent.click(ethOption);

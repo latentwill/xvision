@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import { compareRuns, evalKeys, listRunsPaged } from "@/api/eval";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
@@ -238,21 +239,17 @@ function MetricsTable({
         <div className="text-text-3 text-[12px]">
           {runs.length} {runs.length === 1 ? "run" : "runs"}
         </div>
-        <label className="flex items-center gap-2 text-[12px] text-text-3">
-          Sort by
-          <select
+        <div className="flex items-center gap-2 text-[12px] text-text-3">
+          <span>Sort by</span>
+          <SignalSelectMenu
+            ariaLabel="Sort by"
             value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as CompareSortKey)}
-            className="bg-surface-elev border border-border-soft rounded-sm px-2 py-1 text-[12px] text-text focus:outline-none focus:border-gold/40"
-            data-testid="compare-sort"
-          >
-            {COMPARE_SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={COMPARE_SORT_OPTIONS}
+            onChange={(next) => setSortKey(next as CompareSortKey)}
+            compact
+            minWidth={220}
+          />
+        </div>
       </div>
       <table className="w-full min-w-[960px]">
         <thead>

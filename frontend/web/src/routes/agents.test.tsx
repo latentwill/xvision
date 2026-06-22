@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -323,6 +324,7 @@ describe("AgentsRoute", () => {
   });
 
   it("lets operators change an agent's tools from the list row", async () => {
+    const user = userEvent.setup();
     vi.mocked(agentsApi.listAgentsPaged).mockResolvedValue({
       items: [
         agent({
@@ -345,10 +347,11 @@ describe("AgentsRoute", () => {
     });
     renderRoute();
 
-    const select = (await screen.findByRole("combobox", {
+    const toolsButton = await screen.findByRole("button", {
       name: "Tools for Trend Trader",
-    })) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "indicator_panel" } });
+    });
+    await user.click(toolsButton);
+    await user.click(await screen.findByRole("option", { name: /indicator_panel/ }));
 
     await waitFor(() =>
       expect(agentsApi.updateAgent).toHaveBeenCalledWith("ag-1", {

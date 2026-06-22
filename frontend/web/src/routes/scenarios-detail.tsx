@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError, apiFetch } from "@/api/client";
 import {
   archiveScenario,
@@ -478,21 +479,17 @@ function DefinitionTab({ s }: { s: Scenario }) {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-text-3 text-[12px]" htmlFor="scenario-chart-granularity">
+                <span className="text-text-3 text-[12px]">
                   Indicator timeframe
-                </label>
-                <select
-                  id="scenario-chart-granularity"
+                </span>
+                <SignalSelectMenu
+                  ariaLabel="Indicator timeframe"
                   value={chartGranularity}
-                  onChange={(event) => setChartGranularity(event.target.value)}
-                  className="bg-surface-elev border border-border rounded px-2 py-1 text-[12px] text-text focus:outline-none focus:border-gold/40"
-                >
-                  {CHART_GRANULARITY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  options={CHART_GRANULARITY_OPTIONS}
+                  onChange={setChartGranularity}
+                  compact
+                  minWidth={120}
+                />
               </div>
             </div>
             <div className="flex items-center justify-between mb-2">

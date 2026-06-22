@@ -7,9 +7,10 @@ import { apiFetch } from "@/api/client";
 import { listProviders } from "@/api/settings";
 import { listStrategies } from "@/api/strategies";
 import { LaunchPanel } from "./LaunchPanel";
+import type * as ClientApiModule from "@/api/client";
 
 vi.mock("@/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
+  const actual = await vi.importActual<typeof ClientApiModule>("@/api/client");
   return {
     ...actual,
     apiFetch: vi.fn(),
@@ -132,6 +133,12 @@ function renderLaunchPanel() {
   );
 }
 
+async function chooseStrategy(user: ReturnType<typeof userEvent.setup>, name: RegExp | string) {
+  const optionName = typeof name === "string" ? new RegExp(name) : name;
+  await user.click(screen.getByRole("button", { name: "Strategy" }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
+
 describe("LaunchPanel", () => {
   it("renders the launch form with strategy picker and run button", async () => {
     renderLaunchPanel();
@@ -141,12 +148,40 @@ describe("LaunchPanel", () => {
     expect(screen.getByRole("button", { name: "Run optimizer" })).toBeInTheDocument();
   });
 
+  it("searches parent strategies by id before launching", async () => {
+    vi.mocked(listStrategies).mockResolvedValue([
+      {
+        agent_id: "strategy-1",
+        display_name: "Trend follower",
+        template: "trend_follower",
+        decision_cadence_minutes: 60,
+      },
+      {
+        agent_id: "strategy-2",
+        display_name: "Mean reversion",
+        template: "mean_reversion",
+        decision_cadence_minutes: 60,
+      },
+    ]);
+    const user = userEvent.setup();
+
+    renderLaunchPanel();
+
+    const picker = await screen.findByRole("button", { name: /strategy/i });
+    await user.click(picker);
+    await user.type(screen.getByRole("textbox", { name: /search strategy/i }), "strategy-2");
+    await user.click(screen.getByRole("option", { name: /Mean reversion/i }));
+
+    expect(screen.getByRole("button", { name: /strategy/i })).toHaveTextContent(
+      "Mean reversion",
+    );
+  });
+
   it("launches an optimizer run through the dashboard API", async () => {
     const user = userEvent.setup();
     renderLaunchPanel();
 
-    await screen.findByRole("option", { name: "Trend follower" });
-    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
+    await chooseStrategy(user, "Trend follower");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
     // Assert the POST happened against the right path with the selected
@@ -223,7 +258,7 @@ describe("LaunchPanel", () => {
     });
     renderLaunchPanel();
 
-    await screen.findByRole("option", { name: "Trend follower" });
+    await chooseStrategy(user, "Trend follower");
     // The model overrides are Signal dropdowns: open, then click the option.
     const writer = screen.getByLabelText("Experiment writer model override");
     await user.click(writer);
@@ -231,7 +266,6 @@ describe("LaunchPanel", () => {
     const reviewer = screen.getByLabelText("Reviewer model override");
     await user.click(reviewer);
     await user.click(await screen.findByRole("option", { name: /qwen2\.5-coder:7b/ }));
-    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
     await waitFor(() => {
@@ -272,14 +306,13 @@ describe("LaunchPanel", () => {
     });
     renderLaunchPanel();
 
-    await screen.findByRole("option", { name: "Trend follower" });
+    await chooseStrategy(user, "Trend follower");
     await waitFor(() => {
       expect(localStorage.getItem("autooptimizer_mutator_provider")).toBeNull();
       expect(localStorage.getItem("autooptimizer_mutator_model")).toBeNull();
       expect(localStorage.getItem("autooptimizer_judge_provider")).toBeNull();
       expect(localStorage.getItem("autooptimizer_judge_model")).toBeNull();
     });
-    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
     await waitFor(() => {

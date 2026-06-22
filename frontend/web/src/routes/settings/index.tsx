@@ -907,21 +907,20 @@ function DegenArenaBrokerCard({ entry }: { entry: BrokerEntry }) {
             />
           </div>
           <div>
-            <label
-              htmlFor="degen-network"
-              className="block text-[12px] text-text-2 mb-1"
-            >
+            <div className="block text-[12px] text-text-2 mb-1">
               Network
-            </label>
-            <select
-              id="degen-network"
+            </div>
+            <SignalSelectMenu
+              ariaLabel="Network"
               value={network}
-              onChange={(e) => setNetwork(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
-            >
-              <option value="testnet">testnet</option>
-              <option value="mainnet">mainnet</option>
-            </select>
+              options={[
+                { value: "testnet", label: "testnet" },
+                { value: "mainnet", label: "mainnet" },
+              ]}
+              onChange={setNetwork}
+              className="w-full justify-between"
+              minWidth={160}
+            />
           </div>
           {errorMsg ? (
             <p className="m-0 text-[12px] text-danger font-mono">{errorMsg}</p>

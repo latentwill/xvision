@@ -13,6 +13,7 @@ import type { SlippageModel } from '../../api/types.gen/SlippageModel';
 import type { Venue } from '../../api/types.gen/Venue';
 import { InlineRangeBar, MobileInlineCard } from '../calendar-picker';
 import { RegimeRangePresets } from './RegimeRangePresets';
+import { SignalSelectMenu } from '../primitives/SignalMenu';
 
 type CalendarKind = 'Continuous24x7' | 'UsEquities' | 'Custom';
 
@@ -254,24 +255,27 @@ export function ScenarioForm({
         ) : null}
         <RegimeRangePresets onPick={(start, end) => { setFrom(start); setTo(end); }} />
         <Row>
-          <Field label="Calendar">
-            <select
-              className="input"
+          <div className="block text-[12px] text-text-3 flex-1">
+            <div className="mb-1">Calendar</div>
+            <SignalSelectMenu
+              ariaLabel="Calendar"
               value={calendarKind(calendar)}
-              onChange={(e) => {
-                const kind = e.target.value as CalendarKind;
+              options={[
+                { value: 'Continuous24x7', label: 'Continuous (24/7)' },
+                { value: 'UsEquities', label: 'US equities' },
+                { value: 'Custom', label: 'Custom…' },
+              ]}
+              onChange={(next) => {
+                const kind = next as CalendarKind;
                 if (kind === 'Custom') {
                   setCalendar({ Custom: customLabel(calendar) });
                 } else {
                   setCalendar(kind);
                 }
               }}
-            >
-              <option value="Continuous24x7">Continuous (24/7)</option>
-              <option value="UsEquities">US equities</option>
-              <option value="Custom">Custom…</option>
-            </select>
-          </Field>
+              className="w-full justify-between"
+            />
+          </div>
           {calendarKind(calendar) === 'Custom' ? (
             <Field label="Custom calendar id">
               <input

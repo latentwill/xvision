@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { scenarioGranularityToCli } from "./useBarsFetchJob";
 
 // CHART_GRANULARITY_OPTIONS from scenarios-detail.tsx — the set of values the
-// <select> can actually display. Any value NOT in this set leaves the select
-// with no matching <option> and renders as a blank white rectangle (bead
-// xvision-o24j).
+// menu can display. Any value NOT in this set leaves the picker with no matching
+// option and no selected label (bead xvision-o24j).
 const CHART_GRANULARITY_OPTION_VALUES = new Set([
   "1m",
   "5m",
@@ -41,8 +40,8 @@ describe("scenarioGranularityToCli — blank-select guard (bead xvision-o24j)", 
   );
 
   // Legacy backend enum strings that the switch did NOT cover before the fix.
-  // These are the root cause of the blank-select bug: without mapping them,
-  // they pass through as e.g. "Minute1" which has no matching <option>.
+  // These are the root cause of the blank-picker bug: without mapping them,
+  // they pass through as e.g. "Minute1" which has no matching option.
   it.each([
     ["Minute1", "1m"],
     ["Minute5", "5m"],
@@ -56,7 +55,7 @@ describe("scenarioGranularityToCli — blank-select guard (bead xvision-o24j)", 
   );
 
   // Any value returned by scenarioGranularityToCli must be in the option set
-  // so the <select> always has a matching <option> and never renders blank.
+  // so the menu always has a matching option and never renders blank.
   it.each(["Hour1", "Hour4", "Hour6", "Day1", "Minute1", "Minute5", "Minute15", "Week1", "1m", "5m", "15m", "1h", "4h", "6h", "1d", "1w"])(
     "output for %s is always in CHART_GRANULARITY_OPTIONS",
     (input) => {

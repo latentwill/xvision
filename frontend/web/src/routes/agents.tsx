@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/shell/Topbar";
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 import {
   agentKeys,
   listAgentsPaged,
@@ -399,29 +400,34 @@ function AgentToolsSelect({
         : "__custom__";
 
   return (
-    <select
-      aria-label={`Tools for ${row.name}`}
-      value={value}
-      disabled={loading || disabled}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        e.stopPropagation();
-        const next = e.target.value;
-        if (next === "__custom__") return;
-        onChange(next === "__none__" ? [] : [next]);
-      }}
-      className="h-7 w-[150px] max-w-[150px] rounded-sm border border-border bg-surface-elev px-2 font-mono text-[11px] text-text-2 outline-none transition-colors hover:border-text-3 focus:border-gold/50 disabled:cursor-not-allowed disabled:opacity-60 overflow-hidden text-ellipsis"
-    >
-      <option value="__none__">No tools</option>
-      {selectedTools.length > 1 ? (
-        <option value="__custom__">{selectedTools.length} tools</option>
-      ) : null}
-      {tools.map((tool) => (
-        <option key={tool.name} value={tool.name} title={tool.description}>
-          {tool.name}
-        </option>
-      ))}
-    </select>
+    <div onClick={(e) => e.stopPropagation()}>
+      <SignalSearchableSelectMenu
+        ariaLabel={`Tools for ${row.name}`}
+        value={value}
+        options={[
+          { value: "__none__", label: "No tools" },
+          ...(selectedTools.length > 1
+            ? [{ value: "__custom__", label: `${selectedTools.length} tools`, disabled: true }]
+            : []),
+          ...tools.map((tool) => ({
+            value: tool.name,
+            label: tool.name,
+            meta: tool.description,
+            searchText: `${tool.name} ${tool.description}`,
+          })),
+        ]}
+        onChange={(next) => {
+          if (next === "__custom__") return;
+          onChange(next === "__none__" ? [] : [next]);
+        }}
+        placeholder="No tools"
+        searchPlaceholder="Search tools…"
+        emptyHint="No tools found"
+        disabled={loading || disabled}
+        className="h-7 w-[150px] max-w-[150px] justify-between overflow-hidden text-ellipsis font-mono"
+        minWidth={240}
+      />
+    </div>
   );
 }
 

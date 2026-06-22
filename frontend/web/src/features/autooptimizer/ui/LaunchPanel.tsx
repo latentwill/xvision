@@ -10,6 +10,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
 import { ModelPicker } from "@/components/ModelPicker";
+import { StrategyPicker } from "@/components/primitives/StrategyPicker";
 import {
   type StartRunCycleRequest,
   getCycleCost,
@@ -130,30 +131,16 @@ function LaunchStrip({
   const disabled = isRunning || !strategyId.trim() || noStrategies;
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor="optimizer-strategy" className="text-[12px] text-text-3">
-        Parent strategy
-      </label>
-      <select
-        id="optimizer-strategy"
+      <div className="text-[12px] text-text-3">Parent strategy</div>
+      <StrategyPicker
+        strategies={strategies ?? []}
         value={strategyId}
-        onChange={(e) => setStrategyId(e.target.value)}
-        disabled={isRunning || strategiesLoading || noStrategies}
-        aria-label="Strategy"
-        className={`${inp} w-full`}
-      >
-        {strategiesLoading ? (
-          <option value="">Loading…</option>
-        ) : noStrategies ? (
-          <option value="">No strategies</option>
-        ) : (
-          <>
-            <option value="">— pick a strategy —</option>
-            {strategies!.map((s) => (
-              <option key={s.agent_id} value={s.agent_id}>{s.display_name}</option>
-            ))}
-          </>
-        )}
-      </select>
+        onChange={setStrategyId}
+        loading={strategiesLoading}
+        disabled={isRunning || noStrategies}
+        placeholder={noStrategies ? "No strategies" : "— pick a strategy —"}
+        className="h-9 min-h-9 w-full justify-between"
+      />
       <label htmlFor="optimizer-budget" className="text-[12px] text-text-3 mt-1">
         Per-cycle budget cap (USD, optional)
       </label>
