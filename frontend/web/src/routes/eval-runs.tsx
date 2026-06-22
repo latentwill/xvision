@@ -10,6 +10,8 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import { StrategyPicker } from "@/components/primitives/StrategyPicker";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 import {
   ServerPagerStrip,
   useServerPagination,
@@ -105,6 +107,41 @@ const STATUS_FILTER: FilterDef = {
     { value: "cancelled", label: "Cancelled" },
   ],
 };
+
+const FORWARD_TEST_BROKER = "alpaca" as const;
+const FORWARD_TEST_TIMEFRAMES = [
+  { value: "1m", label: "1 minute" },
+  { value: "5m", label: "5 minutes" },
+  { value: "15m", label: "15 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "4h", label: "4 hours" },
+  { value: "1d", label: "1 day" },
+] as const;
+
+function parseOptionalPositiveInt(value: string, label: string): number | null | string {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return `Enter a positive whole-number ${label}.`;
+  }
+  return parsed;
+}
+
+function secondsUntilDeadline(value: string): number | null | string {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const at = new Date(trimmed);
+  const ms = at.getTime();
+  if (!Number.isFinite(ms)) {
+    return "Enter a valid forward-test end date and time.";
+  }
+  const secs = Math.ceil((ms - Date.now()) / 1000);
+  if (secs <= 0) {
+    return "Choose a forward-test end time in the future.";
+  }
+  return secs;
+}
 
 export function EvalRunsRoute() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -713,15 +750,13 @@ function StartEvalPanel({
   const [mode, setMode] = useState<RunMode>("backtest");
   const [liveAsset, setLiveAsset] = useState("BTC/USD");
   const [liveCapital, setLiveCapital] = useState("10000");
-  const [liveBarLimit, setLiveBarLimit] = useState("5");
+  const [liveBarLimit, setLiveBarLimit] = useState("");
+  const [liveDecisionLimit, setLiveDecisionLimit] = useState("");
+  const [liveDeadline, setLiveDeadline] = useState("");
+  const [liveTradeLimit, setLiveTradeLimit] = useState("");
+  const [liveGranularity, setLiveGranularity] = useState("1m");
   const [liveWarmupBars, setLiveWarmupBars] = useState("200");
-  // Forward-test execution venue. Values are the backend `broker_creds_ref`
-  // contract (resolve_live_venue): "alpaca" (paper), "orderly_testnet",
-  // "byreal", "degen_arena". All are paper/testnet — real money lives on the
-  // /live surface (Degen Arena mainnet additionally gates on DEGEN_ALLOW_MAINNET).
-  const [brokerCredsRef, setBrokerCredsRef] = useState<
-    "alpaca" | "orderly_testnet" | "byreal" | "degen_arena"
-  >("alpaca");
+  const brokerCredsRef = FORWARD_TEST_BROKER;
   const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
   const [reviewProvider, setReviewProvider] = useState<string>("");
   const [reviewModel, setReviewModel] = useState<string>("");
@@ -781,8 +816,21 @@ function StartEvalPanel({
     }
     if (mode === "live") {
       const capital = Number(liveCapital);
-      const barLimit = Number(liveBarLimit);
+      const barLimit = parseOptionalPositiveInt(liveBarLimit, "bar limit");
+      const decisionLimit = parseOptionalPositiveInt(liveDecisionLimit, "decision limit");
+      const timeLimitSecs = secondsUntilDeadline(liveDeadline);
+      const tradeLimit = parseOptionalPositiveInt(liveTradeLimit, "trade limit");
       const warmupBars = Number(liveWarmupBars);
+      for (const parsed of [barLimit, decisionLimit, timeLimitSecs, tradeLimit]) {
+        if (typeof parsed === "string") {
+          setPreflightError(parsed);
+          return;
+        }
+      }
+      if (barLimit === null && decisionLimit === null && timeLimitSecs === null && tradeLimit === null) {
+        setPreflightError("Set at least one duration limit: Bars, Decisions, Date & Time, or Number of trades.");
+        return;
+      }
       if (!effectiveLiveAsset.trim()) {
         setPreflightError("Select a strategy with an asset before starting a Forward test.");
         return;
@@ -791,40 +839,13 @@ function StartEvalPanel({
         setPreflightError("Enter a positive live capital amount.");
         return;
       }
-      if (!Number.isFinite(barLimit) || barLimit <= 0) {
-        setPreflightError("Enter a positive live bar limit.");
-        return;
-      }
       if (!Number.isFinite(warmupBars) || warmupBars < 0) {
         setPreflightError("Enter a non-negative live warmup bar count.");
         return;
       }
-      // Alpaca supplies the live market-data bar stream for most venues, so it
-      // is required — EXCEPT Degen Arena, which sources its own Hyperliquid
-      // candles (mirrors the engine's `uses_alpaca_data = venue != DegenArena`).
-      const usesAlpacaData = brokerCredsRef !== "degen_arena";
-      if (usesAlpacaData && brokers.data?.alpaca.configured !== true) {
+      if (brokers.data?.alpaca.configured !== true) {
         setPreflightError(
           "Configure Alpaca paper credentials in Settings -> Brokers before starting a Forward test.",
-        );
-        return;
-      }
-      // The execution venue's own credentials must also be configured.
-      if (brokerCredsRef === "orderly_testnet" && brokers.data?.orderly.configured !== true) {
-        setPreflightError(
-          "Configure Orderly testnet credentials (ORDERLY_*) before starting a Forward test on Orderly.",
-        );
-        return;
-      }
-      if (brokerCredsRef === "byreal" && brokers.data?.byreal.configured !== true) {
-        setPreflightError(
-          "Configure Byreal credentials (BYREAL_PRIVATE_KEY) with BYREAL_NETWORK=testnet before starting a Forward test on Byreal.",
-        );
-        return;
-      }
-      if (brokerCredsRef === "degen_arena" && brokers.data?.degen_arena.configured !== true) {
-        setPreflightError(
-          "Configure Degen Arena credentials in Settings -> Brokers before starting a Forward test on Degen Arena.",
         );
         return;
       }
@@ -840,7 +861,10 @@ function StartEvalPanel({
     }
     setPreflightError(null);
     const capitalNum = Number(liveCapital);
-    const barLimitNum = Number(liveBarLimit);
+    const barLimit = parseOptionalPositiveInt(liveBarLimit, "bar limit");
+    const decisionLimit = parseOptionalPositiveInt(liveDecisionLimit, "decision limit");
+    const timeLimitSecs = secondsUntilDeadline(liveDeadline);
+    const tradeLimit = parseOptionalPositiveInt(liveTradeLimit, "trade limit");
     const warmupBarsNum = Number(liveWarmupBars);
     const liveConfig: LiveConfig | null =
       mode === "live"
@@ -856,24 +880,18 @@ function StartEvalPanel({
             capital: { initial: capitalNum, currency: "USD" },
             broker_creds_ref: brokerCredsRef,
             stop_policy: {
-              time_limit_secs: null,
-              bar_limit: barLimitNum,
-              decision_limit: null,
+              time_limit_secs: timeLimitSecs as unknown as bigint | null,
+              bar_limit: barLimit as number | null,
+              decision_limit: decisionLimit as number | null,
+              trade_limit: tradeLimit as number | null,
             },
+            granularity: liveGranularity,
             // Coarse safety label; v1 only accepts "paper". The actual venue is
             // carried by broker_creds_ref / display_name / tags.
             venue_label: "paper",
             warmup_bars: warmupBarsNum,
             safety_limits: null,
-            display_name: `Forward test ${
-              brokerCredsRef === "alpaca"
-                ? "Alpaca paper"
-                : brokerCredsRef === "orderly_testnet"
-                  ? "Orderly testnet"
-                  : brokerCredsRef === "degen_arena"
-                    ? "Degen Arena"
-                    : "Byreal testnet"
-            } ${effectiveLiveAsset}`,
+            display_name: `Forward test Alpaca paper ${effectiveLiveAsset}`,
             description: null,
             tags: ["live", brokerCredsRef],
             notes: null,
@@ -911,29 +929,18 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label
-              htmlFor="eval-start-strategy"
-              className="block text-[12px] text-text-2 mb-1"
-            >
-              Strategy
-            </label>
-            <select
-              id="eval-start-strategy"
+            <div className="block text-[12px] text-text-2 mb-1">Strategy</div>
+            <StrategyPicker
+              strategies={strategies.data ?? []}
               value={agentId}
-              onChange={(e) => {
-                setAgentId(e.target.value);
+              onChange={(next) => {
+                setAgentId(next);
                 setPreflightError(null);
               }}
-              disabled={strategies.isPending}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-            >
-              <option value="">— pick a strategy —</option>
-              {(strategies.data ?? []).map((s: StrategyListItem) => (
-                <option key={s.agent_id} value={s.agent_id}>
-                  {s.display_name || "Untitled strategy"}
-                </option>
-              ))}
-            </select>
+              loading={strategies.isPending}
+              placeholder="— pick a strategy —"
+              className="h-9 min-h-9 w-full justify-between"
+            />
             {strategies.isError ? (
               <p className="m-0 mt-1 text-[12px] text-rose-300">
                 couldn't load strategies — try refreshing
@@ -941,36 +948,37 @@ function StartEvalPanel({
             ) : null}
           </div>
 
-          <div>
-            <label
-              htmlFor="eval-start-scenario"
-              className="block text-[12px] text-text-2 mb-1"
-            >
-              Scenario
-            </label>
-            <select
-              id="eval-start-scenario"
-              value={scenarioId}
-              onChange={(e) => {
-                setScenarioId(e.target.value);
-                setPreflightError(null);
-              }}
-              disabled={scenarios.isPending}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
-            >
-              <option value="">— pick a scenario —</option>
-              {(scenarios.data ?? []).map((s: Scenario) => (
-                <option key={s.id} value={s.id}>
-                  {s.display_name} · {scenarioWindowLabel(s)}
-                </option>
-              ))}
-            </select>
-            {scenarios.isError ? (
-              <p className="m-0 mt-1 text-[12px] text-rose-300">
-                couldn't load scenarios — try refreshing
-              </p>
-            ) : null}
-          </div>
+          {mode === "backtest" ? (
+            <div>
+              <div className="block text-[12px] text-text-2 mb-1">
+                Scenario
+              </div>
+              <SignalSearchableSelectMenu
+                ariaLabel="Scenario"
+                value={scenarioId}
+                options={(scenarios.data ?? []).map((scenario: Scenario) => ({
+                  value: scenario.id,
+                  label: `${scenario.display_name} · ${scenarioWindowLabel(scenario)}`,
+                  meta: scenario.id,
+                  searchText: `${scenario.display_name} ${scenario.id} ${scenarioWindowLabel(scenario)}`,
+                }))}
+                onChange={(next) => {
+                  setScenarioId(next);
+                  setPreflightError(null);
+                }}
+                placeholder="— pick a scenario —"
+                searchPlaceholder="Search scenarios…"
+                emptyHint="No scenarios found"
+                loading={scenarios.isPending}
+                className="h-9 min-h-9 w-full justify-between"
+              />
+              {scenarios.isError ? (
+                <p className="m-0 mt-1 text-[12px] text-rose-300">
+                  couldn't load scenarios — try refreshing
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <fieldset>
             <legend className="block text-[12px] text-text-2 mb-1.5 px-0">
@@ -1016,35 +1024,13 @@ function StartEvalPanel({
           {mode === "live" ? (
             <fieldset className="grid grid-cols-2 gap-3">
               <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
-                Forward-test venue
+                Forward test
               </legend>
-              <div
-                role="group"
-                aria-label="Forward-test venue"
-                className="col-span-2 flex gap-1 rounded-md border border-border bg-surface-elev p-1"
-              >
-                {(
-                  [
-                    ["alpaca", "Alpaca paper"],
-                    ["orderly_testnet", "Orderly testnet"],
-                    ["byreal", "Byreal testnet"],
-                    ["degen_arena", "Degen Arena"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setBrokerCredsRef(value)}
-                    aria-pressed={brokerCredsRef === value}
-                    className={`flex-1 rounded px-2 py-1 text-[12px] transition-colors ${
-                      brokerCredsRef === value
-                        ? "bg-gold/10 text-text-1"
-                        : "text-text-2 hover:bg-surface-hover"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="col-span-2 rounded-md border border-border bg-surface-elev px-3 py-2">
+                <p className="m-0 text-[12px] font-medium text-text-1">Alpaca paper</p>
+                <p className="m-0 mt-1 text-[11px] leading-snug text-text-3">
+                  Paper trading only for this launcher.
+                </p>
               </div>
               <LabeledInput
                 label="Asset"
@@ -1061,15 +1047,21 @@ function StartEvalPanel({
                 value={liveCapital}
                 onChange={setLiveCapital}
               />
-              <LabeledInput
-                label="Bars to run"
-                help="Stop after this many live bars"
-                ariaLabel="Forward-test bar limit"
-                type="number"
-                min="1"
-                value={liveBarLimit}
-                onChange={setLiveBarLimit}
-              />
+              <label className="min-w-0">
+                <span className="mb-1 block text-[11px] text-text-3">Timeframe</span>
+                <select
+                  aria-label="Forward-test timeframe"
+                  value={liveGranularity}
+                  onChange={(e) => setLiveGranularity(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
+                >
+                  {FORWARD_TEST_TIMEFRAMES.map((tf) => (
+                    <option key={tf.value} value={tf.value}>
+                      {tf.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <LabeledInput
                 label="Warmup bars"
                 help="Historical context loaded before the first live bar"
@@ -1079,10 +1071,50 @@ function StartEvalPanel({
                 value={liveWarmupBars}
                 onChange={setLiveWarmupBars}
               />
-              <p className="col-span-2 m-0 text-[11px] leading-snug text-text-3">
-                Timeframe comes from the live Alpaca bar stream; this launch is
-                bounded by the bar count above, not an open-ended daemon.
-              </p>
+              <div className="col-span-2 grid grid-cols-2 gap-3 rounded-md border border-border bg-surface-elev p-3">
+                <div className="col-span-2">
+                  <p className="m-0 text-[12px] font-medium text-text-1">Duration</p>
+                  <p className="m-0 mt-1 text-[11px] leading-snug text-text-3">
+                    Set any combination. The forward test stops when the first
+                    limit is hit.
+                  </p>
+                </div>
+                <LabeledInput
+                  label="Bars"
+                  help="Optional"
+                  ariaLabel="Forward-test bar limit"
+                  type="number"
+                  min="1"
+                  value={liveBarLimit}
+                  onChange={setLiveBarLimit}
+                />
+                <LabeledInput
+                  label="Decisions"
+                  help="Optional LLM decision cap"
+                  ariaLabel="Forward-test decision limit"
+                  type="number"
+                  min="1"
+                  value={liveDecisionLimit}
+                  onChange={setLiveDecisionLimit}
+                />
+                <LabeledInput
+                  label="Date & Time"
+                  help="Optional local end time"
+                  ariaLabel="Forward-test end date and time"
+                  type="datetime-local"
+                  value={liveDeadline}
+                  onChange={setLiveDeadline}
+                />
+                <LabeledInput
+                  label="Number of trades"
+                  help="Optional completed-trade cap"
+                  ariaLabel="Forward-test trade limit"
+                  type="number"
+                  min="1"
+                  value={liveTradeLimit}
+                  onChange={setLiveTradeLimit}
+                />
+              </div>
             </fieldset>
           ) : null}
 
@@ -1104,38 +1136,42 @@ function StartEvalPanel({
             </label>
             {autoFireReview ? (
               <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <select
-                  aria-label="Review provider"
+                <SignalSearchableSelectMenu
+                  ariaLabel="Review provider"
                   value={activeReviewProvider?.name ?? ""}
-                  onChange={(e) => {
-                    setReviewProvider(e.target.value);
+                  options={reviewProviderRows.map((row) => ({
+                    value: row.name,
+                    label: row.name,
+                    meta: row.enabled_models.join(", "),
+                    searchText: `${row.name} ${row.enabled_models.join(" ")}`,
+                  }))}
+                  onChange={(next) => {
+                    setReviewProvider(next);
                     const row = reviewProviderRows.find(
-                      (candidate) => candidate.name === e.target.value,
+                      (candidate) => candidate.name === next,
                     );
                     setReviewModel(row?.enabled_models[0] ?? "");
                   }}
+                  placeholder="— pick provider —"
+                  searchPlaceholder="Search providers…"
+                  emptyHint="No configured providers"
                   disabled={reviewProviderRows.length === 0}
-                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-                >
-                  {reviewProviderRows.map((row) => (
-                    <option key={row.name} value={row.name}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Review model"
+                  className="w-full justify-between font-mono"
+                />
+                <SignalSearchableSelectMenu
+                  ariaLabel="Review model"
                   value={activeReviewModel}
-                  onChange={(e) => setReviewModel(e.target.value)}
+                  options={(activeReviewProvider?.enabled_models ?? []).map((model) => ({
+                    value: model,
+                    label: model,
+                  }))}
+                  onChange={setReviewModel}
+                  placeholder="— pick model —"
+                  searchPlaceholder="Search models…"
+                  emptyHint="No enabled models"
                   disabled={!activeReviewProvider}
-                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-                >
-                  {(activeReviewProvider?.enabled_models ?? []).map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full justify-between font-mono"
+                />
               </div>
             ) : null}
           </fieldset>

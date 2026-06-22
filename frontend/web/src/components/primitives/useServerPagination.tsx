@@ -15,6 +15,7 @@
 // file.
 
 import { useEffect, useState, type ReactNode } from "react";
+import { SignalSelectMenu } from "./SignalMenu";
 
 export const DEFAULT_PAGE_SIZE = 50;
 export const PAGE_SIZE_OPTIONS: ReadonlyArray<number> = [25, 50, 100];
@@ -112,28 +113,25 @@ export function ServerPagerStrip({
       data-testid="list-pagination"
     >
       <div className="flex items-center gap-2">
-        <label htmlFor="list-pagination-size" className="text-text-3">
-          Per page
-        </label>
-        <select
-          id="list-pagination-size"
-          value={pageSize}
-          onChange={(e) => {
-            const next = Number(e.target.value);
+        <span className="text-text-3">Per page</span>
+        <SignalSelectMenu
+          ariaLabel="Per page"
+          value={String(pageSize)}
+          options={PAGE_SIZE_OPTIONS.map((opt) => ({
+            value: String(opt),
+            label: String(opt),
+          }))}
+          onChange={(value) => {
+            const next = Number(value);
             if (!Number.isFinite(next)) return;
             onPageSizeChange(next);
             // Reset to first page when page size changes so the user
             // doesn't end up on a page that no longer exists.
             onPageChange(1);
           }}
-          className="rounded border border-border bg-surface-card px-2 py-1 text-[12px] text-text outline-none focus:border-text-3"
-        >
-          {PAGE_SIZE_OPTIONS.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
+          compact
+          minWidth={74}
+        />
         <span className="text-text-3" aria-live="polite">
           {total === 0
             ? `0 ${itemLabel}`

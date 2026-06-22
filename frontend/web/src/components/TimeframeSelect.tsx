@@ -1,3 +1,4 @@
+import { SignalSelectMenu, type SelectOption } from "@/components/primitives/SignalMenu";
 import { formatCadence } from "@/lib/format";
 
 export const STANDARD_TIMEFRAMES = [
@@ -26,24 +27,30 @@ export function TimeframeSelect({
   const hasStandard = STANDARD_TIMEFRAMES.some(
     (tf) => tf.minutes === valueMinutes,
   );
+  const options: SelectOption[] = [
+    ...(!hasStandard && Number.isFinite(valueMinutes) && valueMinutes > 0
+      ? [
+          {
+            value: String(valueMinutes),
+            label: `Custom · ${formatCadence(valueMinutes)}`,
+          },
+        ]
+      : []),
+    ...STANDARD_TIMEFRAMES.map((tf) => ({
+      value: String(tf.minutes),
+      label: tf.label,
+    })),
+  ];
+
   return (
-    <select
-      aria-label={ariaLabel}
+    <SignalSelectMenu
+      ariaLabel={ariaLabel}
       value={Number.isFinite(valueMinutes) ? String(valueMinutes) : ""}
-      onChange={(e) => onChange(Number(e.target.value))}
+      options={options}
+      onChange={(next) => onChange(Number(next))}
       disabled={disabled}
       className={className}
-    >
-      {!hasStandard && Number.isFinite(valueMinutes) && valueMinutes > 0 ? (
-        <option value={String(valueMinutes)}>
-          Custom · {formatCadence(valueMinutes)}
-        </option>
-      ) : null}
-      {STANDARD_TIMEFRAMES.map((tf) => (
-        <option key={tf.label} value={String(tf.minutes)}>
-          {tf.label}
-        </option>
-      ))}
-    </select>
+      minWidth={120}
+    />
   );
 }

@@ -12,13 +12,14 @@ use anyhow::{bail, Result};
 use clap::Args;
 
 use xvision_core::Capital;
+use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::eval::{self, EvalRunRequest, RunTrajectoryMode};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::scenario::{AssetClass, AssetRef};
-use xvision_engine::safety::VenueLabel;
 use xvision_engine::safety::SafetyLimits;
+use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -83,6 +84,11 @@ pub struct LiveArgs {
     #[arg(long)]
     pub yes: bool,
 
+    /// Acknowledge that a mainnet launch can settle real funds. Required with
+    /// `--network mainnet --yes` for non-interactive launches.
+    #[arg(long)]
+    pub i_understand_real_money: bool,
+
     /// One-time max drawdown override for this run. Tightens the strategy's
     /// risk.max_drawdown_usd; cannot loosen.
     #[arg(long)]
@@ -109,6 +115,7 @@ pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
         bar_limit: args.bar_limit,
         decision_limit: args.decision_limit,
         time_limit_secs: args.time_limit_secs,
+        trade_limit: None,
     };
 
     // Derive a clean AssetRef from the `--asset` value.
@@ -130,6 +137,7 @@ pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
         },
         broker_creds_ref: args.venue.clone(),
         stop_policy,
+        granularity: BarGranularity::Minute1,
         venue_label,
         warmup_bars: Some(args.warmup_bars),
         safety_limits: None,
@@ -169,9 +177,7 @@ pub async fn run(args: LiveArgs) -> CliResult<()> {
         .exit_with(XvnExit::Upstream)?;
 
     // Pre-flight pipeline
-    let effective_max_dd = crate::commands::live_preflight::run_preflight(
-        &ctx, &args, &live_config,
-    ).await?;
+    let effective_max_dd = crate::commands::live_preflight::run_preflight(&ctx, &args, &live_config).await?;
 
     // Thread max drawdown into SafetyLimits
     if (effective_max_dd - 0.0).abs() > 1e-9 {
@@ -256,9 +262,9 @@ mod tests {
             json: false,
             yes: false,
             max_drawdown: None,
+            i_understand_real_money: false,
         }
     }
-
 
     // (a) mainnet ⇒ Ok with venue_label==Live and broker_creds_ref=="byreal"
     #[test]
@@ -274,7 +280,6 @@ mod tests {
     // (b) testnet ⇒ Ok with venue_label==Testnet
     #[test]
     fn testnet_builds_config() {
-
         let mut args = base_args();
         args.network = "testnet".into();
         let cfg = build_live_launch(&args).expect("testnet must build a config");

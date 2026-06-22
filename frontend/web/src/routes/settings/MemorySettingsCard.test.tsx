@@ -3,9 +3,11 @@ import {
   cleanup,
   fireEvent,
   render,
+  screen,
   waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 
 import { MemorySettingsCard } from "./MemorySettingsCard";
 import * as settingsApi from "@/api/settings";
@@ -102,43 +104,37 @@ afterEach(() => {
 });
 
 describe("MemorySettingsCard", () => {
-  it("renders the embedder select with Off/Auto + mocked OpenAI provider option", async () => {
-    const { findByLabelText } = renderCard();
-    const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
-    // The provider option is appended once listProviders resolves.
-    await waitFor(() => {
-      const values = Array.from(select.options).map((o) => o.value);
-      expect(values).toContain("openai");
-    });
-    const optionValues = Array.from(select.options).map((o) => o.value);
-    expect(optionValues).toContain("off");
-    expect(optionValues).toContain("auto");
-    // Pre-selected from the mocked report.
-    expect(select.value).toBe("auto");
+  it("renders the embedder menu with Off/Auto + mocked OpenAI provider option", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    const trigger = await screen.findByRole("button", { name: "Embedder source" });
+    await waitFor(() => expect(trigger).toHaveTextContent("Auto (OpenAI embeddings)"));
+    await user.click(trigger);
+    expect(await screen.findByRole("option", { name: "openai (OpenAI)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Off" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Auto (OpenAI embeddings)" })).toBeInTheDocument();
   });
 
   it("limits memory embedding controls to OpenAI-backed choices", async () => {
-    const { findByLabelText, findByText, queryByText } = renderCard();
-    const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
-    await findByText(/Memory currently uses OpenAI embedding providers only/i);
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText(/Memory currently uses OpenAI embedding providers only/i);
 
-    const labels = Array.from(select.options).map((o) => o.textContent ?? "");
-    expect(labels).toContain("Off");
-    expect(labels).toContain("Auto (OpenAI embeddings)");
-    expect(labels).toContain("openai (OpenAI)");
-    expect(labels).not.toContain("Local (offline, lexical)");
-    expect(labels).not.toContain("Custom endpoint (OpenAI-compatible)");
-    expect(queryByText(/Ollama/i)).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Embedder source" }));
+    expect(screen.getByRole("option", { name: "Off" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Auto (OpenAI embeddings)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "openai (OpenAI)" })).toBeInTheDocument();
+    expect(screen.queryByText("Local (offline, lexical)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Custom endpoint (OpenAI-compatible)")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ollama/i)).not.toBeInTheDocument();
   });
 
   it("calls updateMemorySettings with the chosen embedder on change", async () => {
-    const { findByLabelText } = renderCard();
-    const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
-    await waitFor(() => {
-      const values = Array.from(select.options).map((o) => o.value);
-      expect(values).toContain("openai");
-    });
-    fireEvent.change(select, { target: { value: "openai" } });
+    const user = userEvent.setup();
+    renderCard();
+    const trigger = await screen.findByRole("button", { name: "Embedder source" });
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "openai (OpenAI)" }));
     await waitFor(() => {
       expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
         embedder: "openai",
@@ -192,16 +188,14 @@ describe("MemorySettingsCard", () => {
   });
 
   it("renders the embedding-model picker with curated options when source is not off", async () => {
-    const { findByLabelText } = renderCard();
-    const modelSelect = (await findByLabelText(
-      "Embedding model",
-    )) as HTMLSelectElement;
-    const values = Array.from(modelSelect.options).map((o) => o.value);
-    expect(values).toContain("text-embedding-3-small");
-    expect(values).toContain("text-embedding-3-large");
-    // "Provider default" (empty) is offered.
-    expect(values).toContain("");
-    expect(values).not.toContain("__custom__");
+    const user = userEvent.setup();
+    renderCard();
+    const modelTrigger = await screen.findByRole("button", { name: "Embedding model" });
+    await user.click(modelTrigger);
+    expect(screen.getByRole("option", { name: "text-embedding-3-small" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "text-embedding-3-large" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Provider default (OpenAI)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "__custom__" })).not.toBeInTheDocument();
   });
 
   it("does not render the model picker when embedder source is off", async () => {
@@ -215,9 +209,10 @@ describe("MemorySettingsCard", () => {
   });
 
   it("calls updateMemorySettings with the chosen model on change", async () => {
-    const { findByLabelText } = renderCard();
-    const modelSelect = await findByLabelText("Embedding model");
-    fireEvent.change(modelSelect, { target: { value: "text-embedding-3-large" } });
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(await screen.findByRole("button", { name: "Embedding model" }));
+    await user.click(await screen.findByRole("option", { name: "text-embedding-3-large" }));
     await waitFor(() => {
       expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
         embedder: null,
@@ -230,14 +225,12 @@ describe("MemorySettingsCard", () => {
   });
 
   it("does not offer custom endpoints or non-OpenAI model controls", async () => {
-    const { findByLabelText, queryByLabelText } = renderCard();
-    const select = (await findByLabelText(
-      "Embedder source",
-    )) as HTMLSelectElement;
-    const values = Array.from(select.options).map((o) => o.value);
-    expect(values).not.toContain("custom");
-    expect(values).not.toContain("local");
-    expect(queryByLabelText("Custom endpoint base URL")).toBeNull();
-    expect(queryByLabelText("Custom embedding model")).toBeNull();
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(await screen.findByRole("button", { name: "Embedder source" }));
+    expect(screen.queryByRole("option", { name: /custom/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /local/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Custom endpoint base URL")).toBeNull();
+    expect(screen.queryByLabelText("Custom embedding model")).toBeNull();
   });
 });

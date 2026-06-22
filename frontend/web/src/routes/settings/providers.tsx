@@ -9,6 +9,7 @@ import {
   type SortOption,
 } from "@/components/lists";
 import { MListRow } from "@/components/lists/MListRow";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import {
   addProvider,
@@ -625,21 +626,22 @@ function EditProviderForm({
       className="px-4 space-y-3"
     >
       <div className="grid grid-cols-1 md:grid-cols-[150px_1fr] gap-3">
-        <Field label="Kind">
-          <select
+        <div>
+          <div className="text-[12px] text-text-2 mb-1 block">Kind</div>
+          <SignalSelectMenu
+            ariaLabel="Kind"
             value={kind}
-            onChange={(e) => setKind(e.target.value)}
-            className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-          >
-            <option value="anthropic">anthropic</option>
-            <option value="openai-compat">openai-compat</option>
-            <option value="local-candle">local-candle</option>
-            <option value="ollama">ollama</option>
-            <option value="vllm">vllm</option>
-            {/* llama-cpp disabled (see KIND_OPTIONS note); backend still supports it. */}
-            {/* <option value="llama-cpp">llama-cpp</option> */}
-          </select>
-        </Field>
+            options={[
+              { value: "anthropic", label: "anthropic" },
+              { value: "openai-compat", label: "openai-compat" },
+              { value: "local-candle", label: "local-candle" },
+              { value: "ollama", label: "ollama" },
+              { value: "vllm", label: "vllm" },
+            ]}
+            onChange={setKind}
+            className="w-full justify-between"
+          />
+        </div>
         <Field label="Base URL">
           <input
             value={baseUrl}
@@ -1031,25 +1033,23 @@ function AddProviderForm({
         ) : null}
       </div>
 
-      <Field label="Provider">
-        <select
+      <div>
+        <div className="text-[12px] text-text-2 mb-1 block">Provider</div>
+        <SignalSelectMenu
+          ariaLabel="Provider"
           value={kindOption}
-          onChange={(e) => {
-            const next = KIND_OPTIONS.find((k) => k.value === e.target.value);
+          options={KIND_OPTIONS}
+          onChange={(value) => {
+            const next = KIND_OPTIONS.find((k) => k.value === value);
             if (!next) return;
             setKindOption(next.value);
             setName(next.defaultName);
             setBaseUrl(next.defaultBaseUrl);
           }}
-          className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-        >
-          {KIND_OPTIONS.map((k) => (
-            <option key={k.value} value={k.value}>
-              {k.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+          className="w-full justify-between"
+          minWidth={240}
+        />
+      </div>
 
       <Field
         label={needsKey ? "API key (required)" : "API key"}

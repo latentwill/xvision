@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
+use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::eval::{
     self, CompareRunsRequest, EvalRunRequest, ListRunsRequest, ProviderOverride, RunTrajectoryMode,
 };
@@ -771,6 +772,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             time_limit_secs,
             bar_limit: args.live_bar_limit,
             decision_limit: args.live_decision_limit,
+            trade_limit: None,
         };
         if stop_policy.is_empty() {
             return Err(CliError {
@@ -794,6 +796,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             },
             broker_creds_ref: args.live_broker_creds_ref.clone(),
             stop_policy,
+            granularity: BarGranularity::Minute1,
             venue_label: VenueLabel::Paper,
             warmup_bars: Some(args.live_warmup_bars),
             safety_limits: None,

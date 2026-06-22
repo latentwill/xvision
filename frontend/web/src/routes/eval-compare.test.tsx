@@ -5,8 +5,9 @@
 // search (typically 2-10 rows, all visible).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { EvalCompareRoute } from "./eval-compare";
@@ -14,19 +15,22 @@ import type {
   ComparisonReport,
   ComparisonRunSummary,
 } from "@/api/types.gen";
+import type * as EvalApiModule from "@/api/eval";
+import type * as ScenariosApiModule from "@/api/scenarios";
+import type * as StrategiesApiModule from "@/api/strategies";
 
 vi.mock("@/api/eval", async () => {
-  const actual = await vi.importActual<typeof import("@/api/eval")>("@/api/eval");
+  const actual = await vi.importActual<typeof EvalApiModule>("@/api/eval");
   return { ...actual, compareRuns: vi.fn() };
 });
 vi.mock("@/api/scenarios", async () => {
-  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+  const actual = await vi.importActual<typeof ScenariosApiModule>(
     "@/api/scenarios",
   );
   return { ...actual, listScenarios: vi.fn().mockResolvedValue([]) };
 });
 vi.mock("@/api/strategies", async () => {
-  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+  const actual = await vi.importActual<typeof StrategiesApiModule>(
     "@/api/strategies",
   );
   return { ...actual, listStrategies: vi.fn().mockResolvedValue([]) };
@@ -137,6 +141,7 @@ describe("EvalCompareRoute sort", () => {
   });
 
   it("re-orders rows by Sharpe (high → low) when the sort is changed", async () => {
+    const user = userEvent.setup();
     vi.mocked(evalApi.compareRuns).mockResolvedValue(
       report([
         mkRun({
@@ -167,9 +172,8 @@ describe("EvalCompareRoute sort", () => {
     renderRoute(["run-A", "run-B"]);
     await screen.findByText("run-A");
 
-    const sort = screen.getByTestId("compare-sort");
-    fireEvent.change(sort, { target: { value: "sharpe" } });
-
+    await user.click(screen.getByRole("button", { name: /sort/i }));
+    await user.click(await screen.findByRole("option", { name: /Sharpe/i }));
     const ids = screen
       .getAllByText(/^run-[A-Z]$/)
       .map((el) => el.textContent);

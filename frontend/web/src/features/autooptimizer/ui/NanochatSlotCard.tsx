@@ -6,7 +6,7 @@
 //  - NO right-sidebar / col-span-4 / grid-cols-12 layout.
 //  - Dark-mode borders: border-border / border-border-soft, never border-white.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   useNanochatCheckpoints,
@@ -14,6 +14,7 @@ import {
   type NanochatCheckpoint,
 } from "@/api/nanochat";
 import { NanochatBacktestFlow } from "./NanochatBacktestFlow";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 
 export type NanochatSlotCardProps = {
   strategyId: string;
@@ -56,6 +57,7 @@ export function NanochatSlotCard({
   onCompatibilityChange,
 }: NanochatSlotCardProps) {
   const [params] = useSearchParams();
+  const appliedAttachIdRef = useRef<string | null>(null);
   const checkpointsQ = useNanochatCheckpoints({ promoted_only: true });
   const checkpoints: NanochatCheckpoint[] = checkpointsQ.data ?? [];
 
@@ -63,7 +65,12 @@ export function NanochatSlotCard({
   // Only fires once when checkpointModelId is null (nothing already selected).
   useEffect(() => {
     const attachId = params.get("attach_checkpoint");
-    if (attachId && checkpointModelId == null) {
+    if (
+      attachId &&
+      checkpointModelId == null &&
+      appliedAttachIdRef.current !== attachId
+    ) {
+      appliedAttachIdRef.current = attachId;
       onCheckpointChange(attachId);
     }
   }, [params, checkpointModelId, onCheckpointChange]);
@@ -93,26 +100,35 @@ export function NanochatSlotCard({
 
       {/* Checkpoint picker — promoted models only */}
       <div className="flex flex-col gap-1">
-        <label
-          htmlFor="nc-checkpoint-picker"
-          className="text-[12px] text-text-3"
-        >
+        <div className="text-[12px] text-text-3">
           Nanochat model
-        </label>
-        <select
-          id="nc-checkpoint-picker"
+        </div>
+        <SignalSearchableSelectMenu
+          ariaLabel="Nanochat model"
           value={checkpointModelId ?? ""}
-          onChange={(e) => onCheckpointChange(e.target.value || null)}
-          className="rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text"
-        >
-          <option value="">— select a checkpoint —</option>
-          {checkpoints.map((c) => (
-            <option key={c.model_id} value={c.model_id}>
-              {c.display_name}
-              {c.live_approved ? "" : " (candidate)"}
-            </option>
-          ))}
-        </select>
+          options={[
+            {
+              value: "",
+              label: "No checkpoint",
+              meta: "Clear nanochat model",
+              searchText: "none no checkpoint clear",
+            },
+            ...checkpoints.map((checkpoint) => ({
+              value: checkpoint.model_id,
+              label: checkpoint.live_approved
+                ? checkpoint.display_name
+                : `${checkpoint.display_name} (candidate)`,
+              meta: checkpoint.model_id,
+              searchText: `${checkpoint.display_name} ${checkpoint.model_id}`,
+            })),
+          ]}
+          onChange={(next) => onCheckpointChange(next || null)}
+          placeholder="— select a checkpoint —"
+          searchPlaceholder="Search checkpoints…"
+          emptyHint="No checkpoints found"
+          loading={checkpointsQ.isLoading}
+          className="w-full justify-between"
+        />
         {checkpointsQ.isLoading && (
           <span className="text-[11px] text-text-3">Loading checkpoints…</span>
         )}

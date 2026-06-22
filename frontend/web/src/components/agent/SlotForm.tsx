@@ -18,6 +18,7 @@ import { listProviders, settingsKeys } from "@/api/settings";
 import { listTools, toolKeys } from "@/api/tools";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 export function SlotForm({
   slot,
@@ -169,20 +170,25 @@ export function SlotForm({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <Field label="Provider">
+        <div>
+          <div className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+            Provider
+          </div>
           {providerNames.length > 0 ? (
-            <select
+            <SignalSelectMenu
+              ariaLabel="Provider"
               value={slot.provider}
-              onChange={(e) => changeProvider(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
-            >
-              <option value="">— select provider —</option>
-              {providerNames.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "— select provider —" },
+                ...providerNames.map((provider) => ({
+                  value: provider,
+                  label: provider,
+                })),
+              ]}
+              onChange={changeProvider}
+              className="w-full justify-between bg-surface-card font-mono"
+              minWidth={240}
+            />
           ) : (
             <input
               type="text"
@@ -192,7 +198,7 @@ export function SlotForm({
               className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
             />
           )}
-        </Field>
+        </div>
 
         <Field label="Model">
           {providerRows.length > 0 ? (
@@ -339,25 +345,27 @@ export function SlotForm({
           agent's history. See:
           docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md */}
       <div className="mt-4">
-        <Field label="Memory">
-          <select
+        <div>
+          <div className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+            Memory
+          </div>
+          <SignalSelectMenu
+            ariaLabel="Memory"
             value={slot.memory_mode ?? "off"}
-            onChange={(e) =>
-              patch("memory_mode", e.target.value as AgentSlot["memory_mode"])
+            options={[
+              { value: "off", label: "Off" },
+              { value: "global", label: "Global (shared across agents)" },
+              { value: "agent_scoped", label: "Agent-scoped (this agent only)" },
+            ]}
+            onChange={(next) =>
+              patch("memory_mode", next as AgentSlot["memory_mode"])
             }
-            aria-describedby={`slot-${index}-memory-help`}
-            className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
-          >
-            <option value="off">Off</option>
-            <option value="global">Global (shared across agents)</option>
-            <option value="agent_scoped">Agent-scoped (this agent only)</option>
-          </select>
-        </Field>
-        {/* Help text lives OUTSIDE <Field> so it does not pollute the
-            select's accessible name (Field wraps its children in a
-            <label>; nesting copy here would break label-text queries
-            like findByLabelText("Memory")). The aria-describedby link
-            from the select still associates this description. */}
+            className="w-full justify-between bg-surface-card"
+            minWidth={240}
+          />
+        </div>
+        {/* Help text stays outside the button-based menu so it does not pollute
+            the control's accessible name. */}
         <small
           id={`slot-${index}-memory-help`}
           className="block mt-1.5 text-[11.5px] text-text-3 leading-snug"

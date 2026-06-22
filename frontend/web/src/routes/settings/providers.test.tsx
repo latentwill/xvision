@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 import { SettingsProvidersRoute } from "./providers";
 import * as settingsApi from "@/api/settings";
 import type { ProviderRow } from "@/api/types.gen";
+import type * as SettingsApiModule from "@/api/settings";
 
 // `<ResponsiveListCard>` reads `useViewportMode()` which calls
 // `window.matchMedia`. jsdom doesn't provide it; install a desktop
@@ -28,7 +30,7 @@ function stubMatchMediaDesktop() {
 }
 
 vi.mock("@/api/settings", async () => {
-  const actual = await vi.importActual<typeof import("@/api/settings")>(
+  const actual = await vi.importActual<typeof SettingsApiModule>(
     "@/api/settings",
   );
   return {
@@ -217,27 +219,22 @@ describe("SettingsProvidersRoute", () => {
   });
 
   it("offers Gemini, Nous Research, and vLLM presets and validates custom names inline", async () => {
+    const user = userEvent.setup();
     renderRoute();
     await screen.findByText("openai");
 
     // Open the add form.
     fireEvent.click(screen.getByRole("button", { name: /Add provider/i }));
 
-    // The two new presets appear in the provider dropdown.
+    const form = screen.getByText("New provider").closest("form") as HTMLElement;
+    await user.click(within(form).getByRole("button", { name: "Provider" }));
     expect(
-      screen.getByRole("option", { name: "Google Gemini" }),
+      await screen.findByRole("option", { name: "Google Gemini" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: "Nous Research" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "vLLM (local)" }),
-    ).toBeInTheDocument();
-
-    const form = screen.getByText("New provider").closest("form") as HTMLElement;
-    fireEvent.change(within(form).getByRole("combobox"), {
-      target: { value: "vllm" },
-    });
+    await user.click(screen.getByRole("option", { name: "vLLM (local)" }));
     expect(screen.queryByPlaceholderText("e.g. ollama")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("https://api.example.com/v1")).toHaveValue(
       "http://localhost:8000/v1",
@@ -246,11 +243,9 @@ describe("SettingsProvidersRoute", () => {
     expect(screen.getByRole("button", { name: "Save provider" })).toBeEnabled();
 
     // Switch to Custom (the only path where the user types a name) and supply a
-    // valid base URL + key so the ONLY blocker is the name itself. Scope to the
-    // form's Provider select (the list toolbar also renders comboboxes).
-    fireEvent.change(within(form).getByRole("combobox"), {
-      target: { value: "custom" },
-    });
+    // valid base URL + key so the ONLY blocker is the name itself.
+    await user.click(within(form).getByRole("button", { name: "Provider" }));
+    await user.click(await screen.findByRole("option", { name: /Custom/i }));
     fireEvent.change(
       screen.getByPlaceholderText("https://api.example.com/v1"),
       { target: { value: "https://api.example.com/v1" } },

@@ -65,6 +65,11 @@ impl Tool for OhlcvTool {
 
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let req: OhlcvRequest = serde_json::from_value(input)?;
+        if req.timeframe.is_some() {
+            anyhow::bail!(
+                "timeframe-specific OHLCV requests require run-scoped market data; fixture-backed ohlcv only serves the fixture's native bars"
+            );
+        }
         let fixture = req.fixture.ok_or_else(|| {
             anyhow::anyhow!("MVP requires a fixture name; live Alpaca fetch lands in Plan #2")
         })?;

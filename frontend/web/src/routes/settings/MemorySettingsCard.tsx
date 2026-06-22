@@ -9,6 +9,7 @@ import {
   updateMemorySettings,
 } from "@/api/settings";
 import type { UpdateMemoryRequest } from "@/api/types.gen";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 // Built-in embedder sources. Provider rows are appended after these.
 const BUILTIN_EMBEDDER_OPTIONS: { value: string; label: string }[] = [
@@ -95,7 +96,7 @@ export function MemorySettingsCard() {
   // The model picker is hidden for the "off" source (no embeddings at all).
   const showModelPicker = (settings?.embedder ?? "off") !== "off";
 
-  // The <select> value: the curated value or provider default.
+  // The menu value: the curated value or provider default.
   const modelSelectValue = isCuratedModel ? persistedModel : "";
 
   function onEmbedderChange(value: string) {
@@ -172,26 +173,18 @@ export function MemorySettingsCard() {
 
       {/* Embedder source */}
       <div className="space-y-1.5">
-        <label
-          htmlFor="memory-embedder"
-          className="block text-[13px] font-medium text-text-2"
-        >
+        <div className="block text-[13px] font-medium text-text-2">
           Embedder source
-        </label>
-        <select
-          id="memory-embedder"
-          aria-label="Embedder source"
-          className="w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
+        </div>
+        <SignalSelectMenu
+          ariaLabel="Embedder source"
           value={settings?.embedder ?? "off"}
+          options={embedderOptions}
           disabled={busy}
-          onChange={(e) => onEmbedderChange(e.target.value)}
-        >
-          {embedderOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          onChange={onEmbedderChange}
+          className="w-full max-w-sm justify-between"
+          minWidth={240}
+        />
         <small className="block max-w-2xl text-[11px] leading-snug text-text-3">
           Add or edit the OpenAI provider in Settings {">"} Providers.
           Non-OpenAI providers are not shown here because memory embeddings are
@@ -202,26 +195,18 @@ export function MemorySettingsCard() {
       {/* Embedding model — only relevant when a real embedder is in use. */}
       {showModelPicker ? (
         <div className="mt-4 space-y-1.5">
-          <label
-            htmlFor="memory-embedder-model"
-            className="block text-[13px] font-medium text-text-2"
-          >
+          <div className="block text-[13px] font-medium text-text-2">
             Embedding model
-          </label>
-          <select
-            id="memory-embedder-model"
-            aria-label="Embedding model"
-            className="w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
+          </div>
+          <SignalSelectMenu
+            ariaLabel="Embedding model"
             value={modelSelectValue}
+            options={CURATED_EMBEDDING_MODELS}
             disabled={busy}
-            onChange={(e) => onModelSelectChange(e.target.value)}
-          >
-            {CURATED_EMBEDDING_MODELS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            onChange={onModelSelectChange}
+            className="w-full max-w-sm justify-between"
+            minWidth={240}
+          />
           <small className="block text-[11px] leading-snug text-text-3">
             Use the OpenAI embedding model configured for your provider. Off
             ignores this. Don&apos;t switch models mid-corpus — the embeddings

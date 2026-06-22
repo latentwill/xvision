@@ -108,9 +108,9 @@ export function scenarioGranularityToCli(granularity: string) {
     // Legacy backend enum strings (PascalCase). The backend's BarGranularity
     // Serialize impl now emits canonical CLI form ("1h", "4h", …) but older
     // rows in the DB were stored/serialised in PascalCase and must still be
-    // handled so the "Indicator timeframe" <select> always has a matching
-    // <option>. Without this guard the select renders as a blank white
-    // rectangle (bead xvision-o24j).
+    // handled so the "Indicator timeframe" menu always has a matching
+    // option. Without this guard the picker renders with no selected label
+    // (bead xvision-o24j).
     case "Minute1":
       return "1m";
     case "Minute5":

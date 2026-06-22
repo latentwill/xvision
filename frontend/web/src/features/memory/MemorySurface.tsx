@@ -33,6 +33,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 import { ApiError } from "@/api/client";
 import {
@@ -685,19 +686,22 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
                 className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
               />
             </label>
-            <label className="block">
-              <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
+            <div className="block">
+              <div className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
                 Demo Source
-              </span>
-              <select
+              </div>
+              <SignalSelectMenu
+                ariaLabel="Demo Source"
                 value={demoSource}
-                onChange={(e) => setDemoSource(e.target.value)}
-                className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text focus:outline-none focus:border-gold/40"
-              >
-                <option value="frozen-snapshot">Use saved examples</option>
-                <option value="fresh-recorder">Capture new examples</option>
-              </select>
-            </label>
+                options={[
+                  { value: "frozen-snapshot", label: "Use saved examples" },
+                  { value: "fresh-recorder", label: "Capture new examples" },
+                ]}
+                onChange={setDemoSource}
+                className="w-full justify-between bg-surface-panel"
+                minWidth={150}
+              />
+            </div>
             <label className="block">
               <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1">
                 Split
@@ -1087,41 +1091,43 @@ function PatternsPanel(props: PatternsPanelProps) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           {props.mode === "agent" ? (
-            <label className="text-[12px] text-text-3">
-              <span className="mr-2">Namespace</span>
-              <select
+            <div className="flex items-center gap-2 text-[12px] text-text-3">
+              <span>Namespace</span>
+              <SignalSelectMenu
+                ariaLabel="Namespace"
                 value={scope}
-                onChange={(e) =>
-                  setScope(e.target.value as "agent" | "global")
-                }
-                className="bg-surface-panel border border-border rounded-sm text-[12.5px] text-text px-2 py-1 focus:outline-none focus:border-gold/40"
-              >
-                <option value="agent">agent:{props.agentId}</option>
-                <option value="global">global</option>
-              </select>
-            </label>
+                options={[
+                  { value: "agent", label: `agent:${props.agentId}` },
+                  { value: "global", label: "global" },
+                ]}
+                onChange={(next) => setScope(next as "agent" | "global")}
+                compact
+                minWidth={130}
+              />
+            </div>
           ) : (
             <span className="text-[12px] text-text-3">
               Namespace <code className="font-mono text-text-2">global</code>
             </span>
           )}
-          <label className="text-[12px] text-text-3">
-            <span className="mr-2">Lifecycle</span>
-            <select
+          <div className="flex items-center gap-2 text-[12px] text-text-3">
+            <span>Lifecycle</span>
+            <SignalSelectMenu
+              ariaLabel="Lifecycle"
               value={lifecycle}
-              onChange={(e) =>
-                setLifecycle(
-                  e.target.value as "all" | "active" | "staged" | "forgotten",
-                )
+              options={[
+                { value: "all", label: "all live" },
+                { value: "active", label: "active" },
+                { value: "staged", label: "staged" },
+                { value: "forgotten", label: "forgotten" },
+              ]}
+              onChange={(next) =>
+                setLifecycle(next as "all" | "active" | "staged" | "forgotten")
               }
-              className="bg-surface-panel border border-border rounded-sm text-[12.5px] text-text px-2 py-1 focus:outline-none focus:border-gold/40"
-            >
-              <option value="all">all live</option>
-              <option value="active">active</option>
-              <option value="staged">staged</option>
-              <option value="forgotten">forgotten</option>
-            </select>
-          </label>
+              compact
+              minWidth={110}
+            />
+          </div>
         </div>
         <button
           type="button"
@@ -1443,27 +1449,26 @@ function AddPatternPanel(props: AddPatternPanelProps) {
             </div>
           ) : null}
 
-          <label className="block">
-            <span className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
+          <div className="block">
+            <div className="block text-[11px] uppercase tracking-wide text-text-3 mb-1.5">
               Namespace
-            </span>
-            <select
+            </div>
+            <SignalSelectMenu
+              ariaLabel="Namespace"
               value={namespace}
-              onChange={(e) => setNamespace(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
-            >
-              {props.mode === "agent" ? (
-                <>
-                  <option value={agentNamespace(props.agentId)}>
-                    agent:{props.agentId}
-                  </option>
-                  <option value="global">global</option>
-                </>
-              ) : (
-                <option value="global">global</option>
-              )}
-            </select>
-          </label>
+              options={
+                props.mode === "agent"
+                  ? [
+                      { value: agentNamespace(props.agentId), label: `agent:${props.agentId}` },
+                      { value: "global", label: "global" },
+                    ]
+                  : [{ value: "global", label: "global" }]
+              }
+              onChange={setNamespace}
+              className="w-full justify-between bg-surface-panel font-mono"
+              minWidth={180}
+            />
+          </div>
 
           {submitError ? (
             <div className="text-danger text-[12.5px]">{submitError}</div>

@@ -90,21 +90,18 @@ impl AuthState {
     }
 
     /// Decide the auth posture for a given bind address by consulting
-    /// the `XVN_DASHBOARD_TOKEN` env var. If the env var is set and
-    /// non-empty, the outer gate is active. Otherwise, no gate applies
-    /// (the dashboard is open — the inner `require_auth_middleware`
-    /// still checks the DB-stored password for mutating routes).
-    ///
-    /// The server no longer refuses to start without the env var;
-    /// the operator can set a dashboard password later via Settings UI.
+    /// the `XVN_DASHBOARD_TOKEN` env var. Loopback binds may run open for local
+    /// development. Non-loopback binds must configure a non-empty token because
+    /// they are reachable from Docker/Tailscale/LAN interfaces.
     pub fn from_env(addr: &SocketAddr) -> anyhow::Result<Self> {
         if is_loopback(addr) {
             return Ok(Self::loopback_only());
         }
-        match std::env::var(AUTH_TOKEN_ENV) {
-            Ok(token) if !token.is_empty() => Ok(Self::with_required_token(token)),
-            _ => Ok(Self::loopback_only()),
+        let token = std::env::var(AUTH_TOKEN_ENV).unwrap_or_default();
+        if token.is_empty() {
+            anyhow::bail!("{AUTH_TOKEN_ENV} must be set for non-loopback dashboard bind {addr}");
         }
+        Ok(Self::with_required_token(token))
     }
 
     /// True when the auth state will gate every request (non-loopback

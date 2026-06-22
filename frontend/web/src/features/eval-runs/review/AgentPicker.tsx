@@ -11,6 +11,7 @@ import { listProviders, settingsKeys } from "@/api/settings";
 import { ApiError } from "@/api/client";
 import { ModelPicker } from "@/components/ModelPicker";
 import type { ProviderRow } from "@/api/types.gen/ProviderRow";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 export function AgentPicker({
   selected,
@@ -133,19 +134,18 @@ export function AgentPicker({
       <div className="flex flex-col gap-1 text-[12px] text-text-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span>Review prompt</span>
-          <select
-            aria-label="Review prompt preset"
+          <SignalSelectMenu
+            ariaLabel="Review prompt preset"
             value={profileId}
-            onChange={(e) => setProfileId(e.target.value)}
+            options={CANONICAL_AGENT_PROFILES.map((profile) => ({
+              value: profile.id,
+              label: profile.label,
+            }))}
+            onChange={setProfileId}
             disabled={busy || isSaving}
-            className="bg-bg border border-border rounded-sm px-2 py-1.5 text-text text-[12px]"
-          >
-            {CANONICAL_AGENT_PROFILES.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+            className="bg-bg"
+            minWidth={220}
+          />
         </div>
         <textarea
           aria-label="Review prompt"

@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SlotForm } from "./SlotForm";
@@ -85,6 +86,7 @@ describe("SlotForm.changeProvider", () => {
   afterEach(() => cleanup());
 
   it("clears slot.model when the new provider does NOT include the current model", async () => {
+    const user = userEvent.setup();
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
@@ -100,12 +102,9 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Wait for the providers query to resolve so the Provider <select>
-    // renders (rather than the always-present Memory <select>). The
-    // Provider field's <label> wraps the <select>, giving it the
-    // accessible name "Provider".
-    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
-    fireEvent.change(providerSelect, { target: { value: "openai" } });
+    const providerButton = await screen.findByRole("button", { name: "Provider" });
+    await user.click(providerButton);
+    await user.click(await screen.findByRole("option", { name: "openai" }));
 
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls[0]![0] as AgentSlot;
@@ -115,6 +114,7 @@ describe("SlotForm.changeProvider", () => {
   });
 
   it("preserves slot.model when the new provider DOES include the current model", async () => {
+    const user = userEvent.setup();
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [
         row("openai-prod", "openai-compat", ["gpt-4.1-mini"]),
@@ -130,12 +130,9 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Wait for the providers query to resolve so the Provider <select>
-    // renders (rather than the always-present Memory <select>). The
-    // Provider field's <label> wraps the <select>, giving it the
-    // accessible name "Provider".
-    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
-    fireEvent.change(providerSelect, { target: { value: "openai-staging" } });
+    const providerButton = await screen.findByRole("button", { name: "Provider" });
+    await user.click(providerButton);
+    await user.click(await screen.findByRole("option", { name: "openai-staging" }));
 
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls[0]![0] as AgentSlot;
@@ -283,6 +280,7 @@ describe("SlotForm.changeProvider", () => {
   });
 
   it("renders the Memory control defaulting to Off and persists a change through onChange", async () => {
+    const user = userEvent.setup();
     // P1 (cortex-memory deployment): the per-slot Memory control must be
     // present (default Off) and thread `memory_mode` through onChange so an
     // operator can enable recall/record on a strategy agent.
@@ -298,16 +296,17 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    const memory = (await screen.findByLabelText("Memory")) as HTMLSelectElement;
-    expect(memory.value).toBe("off");
-
-    fireEvent.change(memory, { target: { value: "agent_scoped" } });
+    const memory = await screen.findByRole("button", { name: "Memory" });
+    expect(memory).toHaveTextContent("Off");
+    await user.click(memory);
+    await user.click(await screen.findByRole("option", { name: "Agent-scoped (this agent only)" }));
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls.at(-1)![0] as AgentSlot;
     expect(next.memory_mode).toBe("agent_scoped");
   });
 
   it("preserves an empty model when changing providers (no spurious change)", async () => {
+    const user = userEvent.setup();
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
@@ -323,12 +322,9 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Wait for the providers query to resolve so the Provider <select>
-    // renders (rather than the always-present Memory <select>). The
-    // Provider field's <label> wraps the <select>, giving it the
-    // accessible name "Provider".
-    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
-    fireEvent.change(providerSelect, { target: { value: "openai" } });
+    const providerButton = await screen.findByRole("button", { name: "Provider" });
+    await user.click(providerButton);
+    await user.click(await screen.findByRole("option", { name: "openai" }));
 
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls[0]![0] as AgentSlot;

@@ -126,6 +126,7 @@ async fn paused_gate_blocks_spot_swaps() {
         VenueLabel::Paper,
         VenueLabel::Paper,
         AuthContext::system(),
+        None,
     );
     assert!(gated.submit_order(buy()).await.is_err());
     assert_eq!(*swaps.lock().unwrap(), 0, "paused gate must block all swaps");
@@ -144,6 +145,7 @@ async fn venue_label_mismatch_blocks_spot_swaps() {
         VenueLabel::Paper,
         VenueLabel::Live,
         AuthContext::system(),
+        None,
     );
     assert!(gated.submit_order(buy()).await.is_err());
     assert_eq!(
@@ -165,6 +167,7 @@ async fn allow_all_gate_lets_spot_swap_through() {
         VenueLabel::Paper,
         VenueLabel::Paper,
         AuthContext::system(),
+        None,
     );
     gated.submit_order(buy()).await.unwrap();
     assert_eq!(
