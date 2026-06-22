@@ -166,6 +166,7 @@ export function DecisionsTable({
   const [actionFilter, setActionFilter] = useState<ActionFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("time-asc");
   const [focused, setFocused] = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   const counts = useMemo(() => actionCounts(decisions), [decisions]);
 
@@ -240,7 +241,7 @@ export function DecisionsTable({
             </span>
           )}
         </div>
-        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus</span>
+        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus / expand</span>
       </div>
 
       {/* Toolbar — search + sort */}
@@ -394,13 +395,21 @@ export function DecisionsTable({
                 return (
                   <tr
                     key={d.i}
-                    onClick={() => onJump(d.i)}
+                    onClick={() => {
+                      onJump(d.i);
+                      const expanded = expandedIdx === d.i;
+                      setExpandedIdx(expanded ? null : d.i);
+                    }}
                     className={`cursor-pointer transition-colors ${
                       !focus && !isFiltered ? "hover:bg-surface-hover" : ""
                     }`}
                     style={{
                       borderTop: "1px solid var(--border-soft)",
-                      background: focus ? "var(--gold-bg)" : "transparent",
+                      background: expandedIdx === d.i
+                        ? "var(--gold-bg)"
+                        : focus
+                          ? "var(--gold-bg)"
+                          : "transparent",
                       opacity: isFiltered ? 0.78 : 1,
                     }}
                   >
@@ -450,7 +459,7 @@ export function DecisionsTable({
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-text-2 truncate max-w-[1px]">
+                    <td className={`px-4 py-2 text-text-2 ${expandedIdx === d.i ? "whitespace-normal break-words" : "truncate max-w-[1px]"}`}>
                       {isFiltered ? (
                         <span className="text-text-4">—</span>
                       ) : d.exit_reason ? (
