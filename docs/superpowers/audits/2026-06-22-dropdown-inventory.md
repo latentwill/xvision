@@ -4,8 +4,8 @@
 
 | Category | Count | Decision |
 |---|---:|---|
-| Signal primitives already compliant | 18 | Keep / improve primitive |
-| Searchable strategy/entity pickers | 8 | Migrate first |
+| Signal primitives already compliant | 17 | Keep / improve primitive |
+| Searchable strategy/entity pickers | 9 | Migrate first |
 | Native enum selects | 24 | Migrate to SignalSelectMenu |
 | Bespoke comboboxes | 4 | Align or migrate |
 | Retained native controls | 2 | Must include justification |
@@ -59,7 +59,7 @@
 | `frontend/web/src/routes/authoring.tsx` | entry rule direction | native `<select>` | static `long/short` | yes | `SignalSelectMenu` | Strategy rule enum. |
 | `frontend/web/src/routes/authoring.tsx` | close policy kind | native `<select>` | static close policy kinds | yes | `SignalSelectMenu` | Strategy risk/exit enum. |
 | `frontend/web/src/routes/eval-compare.tsx` | compare sort | native `<select data-testid="compare-sort">` | `COMPARE_SORT_OPTIONS` | yes | `SignalSelectMenu` | Eval comparison sort enum. |
-| `frontend/web/src/routes/eval-runs.tsx` | runs list toolbar | `ListToolbar` Signal filters/sort/columns | strategy filter from `listStrategies()` + observed runs, `MODE_FILTER`, `STATUS_FILTER`, `SORT_OPTIONS` | yes | Keep list primitives; align columns | Strategy filter already uses SignalSelectMenu but is not searchable inside the menu. |
+| `frontend/web/src/routes/eval-runs.tsx` | runs list toolbar | `ListToolbar` Signal filters/sort/columns | strategy filter from `listStrategies()` + observed runs, `MODE_FILTER`, `STATUS_FILTER`, `SORT_OPTIONS` | yes | Searchable strategy filter | Strategy filter already uses SignalSelectMenu, but the current menu is not sufficient because strategy options need text search by display name/id. |
 | `frontend/web/src/routes/eval-runs.tsx` | start eval strategy | native `<select id="eval-start-strategy">` | `listStrategies()` | yes | `StrategyPicker` | Strategy must search by name/id. |
 | `frontend/web/src/routes/eval-runs.tsx` | start eval scenario | native `<select id="eval-start-scenario">` | `listScenarios()` | yes | `ScenarioPicker` | Dynamic scenario picker should search by name/id/window. |
 | `frontend/web/src/routes/eval-runs.tsx` | auto-review provider/model | native `<select>` pair | `reviewProviderRows` and selected provider `enabled_models` | no | `ModelPicker` | Replace split provider/model selects with shared model picker. |
