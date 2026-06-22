@@ -180,7 +180,7 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
             No active live deployments
           </p>
           <p className="text-[13px] text-text-3">
-            Configure a broker in Settings and deploy a strategy to start live
+            Configure a broker in Settings and launch an eval to start live
             trading.
           </p>
         </div>
