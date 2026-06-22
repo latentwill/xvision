@@ -858,6 +858,10 @@ fn mutating_router(state: AppState) -> Router {
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
         )
         .route(
+            "/api/settings/brokers/byreal-spot",
+            post(settings::brokers::set_byreal_spot).delete(settings::brokers::delete_byreal_spot),
+        )
+        .route(
             "/api/settings/brokers/hyperliquid",
             post(settings::brokers::set_hyperliquid).delete(settings::brokers::delete_hyperliquid),
         )

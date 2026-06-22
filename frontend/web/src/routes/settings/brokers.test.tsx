@@ -40,7 +40,9 @@ vi.mock("@/api/settings", async () => {
     ...actual,
     getBrokers: vi.fn(),
     setDegenArenaCredentials: vi.fn(),
+    setByrealSpotCredentials: vi.fn(),
     clearDegenArenaCredentials: vi.fn(),
+    clearByrealSpotCredentials: vi.fn(),
   };
 });
 
@@ -58,11 +60,20 @@ function broker(overrides: Partial<BrokerEntry> = {}): BrokerEntry {
   };
 }
 
-function mockBrokers(degenOverrides: Partial<BrokerEntry> = {}) {
+function mockBrokers(
+  degenOverrides: Partial<BrokerEntry> = {},
+  byrealSpotOverrides: Partial<BrokerEntry> = {},
+) {
   const report: BrokersReport = {
     alpaca: broker({ name: "Alpaca", kind: "alpaca" }),
     orderly: broker({ name: "Orderly Network", kind: "orderly" }),
     byreal: broker({ name: "Byreal", kind: "byreal" }),
+    byreal_spot: broker({
+      name: "Byreal Spot",
+      kind: "byreal_spot",
+      note: "Solana spot trading (curated SPL + xStocks).",
+      ...byrealSpotOverrides,
+    }),
     degen_arena: broker({
       name: "Degen Arena",
       kind: "degen_arena",
@@ -170,6 +181,70 @@ describe("DegenArenaBrokerCard", () => {
     await waitFor(() =>
       expect(
         vi.mocked(settingsApi.clearDegenArenaCredentials),
+      ).toHaveBeenCalled(),
+    );
+  });
+});
+
+describe("ByrealSpotBrokerCard", () => {
+  beforeEach(() => {
+    stubMatchMediaDesktop();
+    vi.clearAllMocks();
+  });
+  afterEach(() => cleanup());
+
+  it("renders a Byreal Spot card with the key entry form when not configured", async () => {
+    mockBrokers();
+    renderRoute();
+
+    expect(await screen.findByText("Byreal Spot")).toBeInTheDocument();
+    const keyInput = screen.getByLabelText("Trading-only agent key");
+    const form = keyInput.closest("form") as HTMLFormElement;
+    expect(within(form).getByText("Network")).toBeInTheDocument();
+  });
+
+  it("saves valid credentials to the byreal-spot route", async () => {
+    mockBrokers();
+    vi.mocked(settingsApi.setByrealSpotCredentials).mockResolvedValue({
+      stored: true,
+      stored_key_id_suffix: "cafe",
+      network: "testnet",
+    });
+    renderRoute();
+    await screen.findByText("Byreal Spot");
+
+    const keyInput = screen.getByLabelText("Trading-only agent key");
+    fireEvent.change(keyInput, { target: { value: "spot-key-abc123" } });
+    const form = keyInput.closest("form") as HTMLFormElement;
+    fireEvent.click(within(form).getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() =>
+      expect(vi.mocked(settingsApi.setByrealSpotCredentials)).toHaveBeenCalledWith(
+        { private_key: "spot-key-abc123", network: "testnet" },
+      ),
+    );
+  });
+
+  it("shows the stored suffix and clears when configured", async () => {
+    mockBrokers(
+      {},
+      {
+        configured: true,
+        stored: true,
+        stored_key_id_suffix: "9f3c",
+        base_url: "testnet",
+      },
+    );
+    vi.mocked(settingsApi.clearByrealSpotCredentials).mockResolvedValue();
+    renderRoute();
+    await screen.findByText("Byreal Spot");
+
+    expect(screen.getByText(/9f3c/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(settingsApi.clearByrealSpotCredentials),
       ).toHaveBeenCalled(),
     );
   });
