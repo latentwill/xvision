@@ -178,7 +178,7 @@ pub struct ExportArgs {
     #[arg(long)]
     pub db: Option<PathBuf>,
     /// Output format: `md` (Markdown document, default) or `json` (the
-    /// machine-readable `xvn.optimizer_cycle.v1` payload).
+    /// machine-readable `xvn.optimizer_cycle.v2` payload).
     #[arg(long, default_value = "md", value_parser = ["md", "json"])]
     pub format: String,
     /// Write the document to this file. When omitted, the document is printed to

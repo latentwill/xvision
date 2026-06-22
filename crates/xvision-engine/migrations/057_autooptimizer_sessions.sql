@@ -26,3 +26,4 @@ CREATE TABLE IF NOT EXISTS autooptimizer_events (
   ts          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_aoe_session ON autooptimizer_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_aoe_cycle_kind_seq ON autooptimizer_events(cycle_id, kind, seq);

@@ -152,7 +152,6 @@ struct GateScores {
     pub gate_epsilon: f64,
     pub delta_day: f64,
     /// Holdout (untouched) gate threshold, separate from day `gate_epsilon`.
-    #[allow(dead_code)] // persisted to DB in follow-up migration
     pub holdout_epsilon: f64,
     pub delta_holdout: f64,
     pub drawdown_ratio: Option<f64>,
@@ -1146,6 +1145,7 @@ where
                     parent_holdout_score: Some(gs.parent_holdout_score),
                     child_holdout_score: Some(gs.child_holdout_score),
                     gate_epsilon: Some(gs.gate_epsilon),
+                    holdout_epsilon: Some(gs.holdout_epsilon),
                     delta_day: Some(gs.delta_day),
                     delta_holdout: Some(gs.delta_holdout),
                     drawdown_ratio: gs.drawdown_ratio,
@@ -1446,8 +1446,12 @@ where
             });
         }
 
-        let (regime_status, regime_rows) =
-            classify_from_regime_outcomes(&regime_inputs, min_improvement, holdout_min_improvement, cycle_config.objective);
+        let (regime_status, regime_rows) = classify_from_regime_outcomes(
+            &regime_inputs,
+            min_improvement,
+            holdout_min_improvement,
+            cycle_config.objective,
+        );
 
         // For regime path: use the first regime's day metrics as the primary
         // child_day/child_untouched for the node-metrics side table (so the
@@ -2164,6 +2168,44 @@ mod tests {
             bear_row.verdict
         );
         assert!((bear_row.delta_sharpe - (-0.2)).abs() < 1e-9, "bear Δsharpe");
+    }
+
+    #[test]
+    fn classify_regime_outcomes_uses_independent_holdout_threshold() {
+        let make_metrics = |sharpe: f64| MetricsSummary {
+            sharpe,
+            total_return_pct: 0.0,
+            max_drawdown_pct: 5.0,
+            win_rate: 0.5,
+            n_trades: 10,
+            n_decisions: 20,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
+            baselines: None,
+        };
+        let regimes = vec![
+            RegimeEvalInput {
+                label: "bull_2024".to_string(),
+                side: RegimeSide::Bull,
+                parent_day: make_metrics(1.0),
+                parent_untouched: make_metrics(1.0),
+                child_day: make_metrics(1.12),
+                child_untouched: make_metrics(1.006),
+            },
+            RegimeEvalInput {
+                label: "bear_2022".to_string(),
+                side: RegimeSide::BearOrShock,
+                parent_day: make_metrics(0.5),
+                parent_untouched: make_metrics(0.5),
+                child_day: make_metrics(0.62),
+                child_untouched: make_metrics(0.506),
+            },
+        ];
+
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe);
+
+        assert_eq!(status, LineageStatus::Active);
+        assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);
     }
 
     // ── B19: round-robin scenario_pair selection ──────────────────────────────
