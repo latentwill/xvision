@@ -206,7 +206,7 @@ describe("AuthoringRoute risk editor", () => {
     expect(await screen.findByLabelText("Display name")).toHaveValue("Trend 4H");
     // Assets field is a chip editor (not an <input>); verify the chip is rendered
     expect(screen.getByText("BTC/USD")).toBeInTheDocument();
-    expect(screen.getByLabelText("Time frame")).toHaveValue("240");
+    expect(screen.getByRole("button", { name: "Time frame" })).toHaveTextContent("4h");
     expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
     expect(screen.getByText("No saved filter")).toBeInTheDocument();
     expect(screen.queryByText("Mechanical params")).not.toBeInTheDocument();
@@ -724,25 +724,21 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
-    const pipelineSelect = await screen.findByRole("combobox", {
+    const user = userEvent.setup();
+    const pipelineSelect = await screen.findByRole("button", {
       name: /pipeline kind/i,
     });
-    expect(
-      within(pipelineSelect).getByRole("option", {
-        name: /filter-gated agent/i,
-      }),
-    ).toHaveValue("single");
-    expect(
-      within(pipelineSelect).queryByRole("option", { name: /^single$/i }),
-    ).toBeNull();
+    await user.click(pipelineSelect);
+    const disabledSingle = await screen.findByRole("option", {
+      name: /filter-gated agent/i,
+    });
+    expect(disabledSingle).toBeDisabled();
+    expect(screen.queryByRole("option", { name: /^single$/i })).toBeNull();
     expect(
       screen.getByText(/first AgentRef is the gated trader/i),
     ).toBeInTheDocument();
 
-    fireEvent.change(
-      pipelineSelect,
-      { target: { value: "sequential" } },
-    );
+    await user.click(screen.getByRole("option", { name: /sequential/i }));
 
     await waitFor(() => {
       expect(strategyApi.setStrategyPipeline).toHaveBeenCalledWith("01TEST", {

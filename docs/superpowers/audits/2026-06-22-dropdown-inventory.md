@@ -79,3 +79,12 @@
 | `frontend/web/src/routes/settings/providers.tsx` | add-provider provider | native `<select>` | `KIND_OPTIONS` presets | no | `SignalSelectMenu` | Provider preset enum. |
 | `frontend/web/src/routes/settings/skills.tsx` | skills list toolbar | `ListToolbar` Signal filters/sort/columns | `KIND_FILTER`, `SORT_OPTIONS`, columns | no | Keep list primitives; align columns | Skill kind filter/sort already Signal; column picker remains bespoke. |
 | `frontend/web/src/routes/settings/skills.tsx` | skill kind | native `<select>` | `KIND_OPTIONS` | no | `SignalSelectMenu` | Skill create/edit enum. |
+
+
+## Final Verification
+
+- Typecheck: `pnpm typecheck` — PASS.
+- Targeted tests: `pnpm vitest run src/components/primitives/SignalMenu.test.tsx src/components/primitives/StrategyPicker.test.tsx src/features/autooptimizer/ui/LaunchPanel.test.tsx src/routes/eval-runs.test.tsx src/routes/authoring-risk.test.tsx src/routes/scenarios-detail.test.tsx src/routes/settings/providers.test.tsx src/routes/settings/skills.test.tsx` — PASS (75 tests).
+- Visual screenshots: `/tmp/visual-review/xvision-dropdowns/` — PASS.
+- Screenshot coverage: `/strategies`, `/eval-runs?strategy=01TEST&start=1`, `/authoring/01TEST`, `/scenarios/crypto-rangebound-q2-2025`, `/settings/providers`, `/agents/skills`.
+- Retained native controls: none for production dropdown/menu/select surfaces; remaining `<select>` occurrences are test fixtures or comments.
