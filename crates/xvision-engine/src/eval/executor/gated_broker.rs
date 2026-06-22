@@ -10,9 +10,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest};
 
-use crate::safety::{AuthContext, SafetyGate, VenueLabel};
+use crate::safety::{AuthContext, SafetyGate, SafetyLimitCheck, SafetyLimits, VenueLabel};
 
 /// Wraps any `Arc<dyn BrokerSurface>` and runs the engine `SafetyGate` before
 /// delegating `submit_order`. All read paths and metadata methods pass through
@@ -23,12 +24,21 @@ use crate::safety::{AuthContext, SafetyGate, VenueLabel};
 /// When `SafetyGate::check_broker_submit` returns `Err`, `submit_order`
 /// returns `Err(anyhow!("safety_gate_denied: {e}"))` **without** calling
 /// the inner surface. The error is never panicked.
+#[derive(Default)]
+struct LimitRuntime {
+    cumulative_notional_usd: f64,
+    order_count: u32,
+    peak_balance_usd: Option<f64>,
+}
+
 pub struct GatedBrokerSurface {
     inner: Arc<dyn BrokerSurface>,
     gate: SafetyGate,
     run_venue_label: VenueLabel,
     broker_venue_label: VenueLabel,
     auth: AuthContext,
+    limits: Option<SafetyLimits>,
+    runtime: Mutex<LimitRuntime>,
 }
 
 impl GatedBrokerSurface {
@@ -38,6 +48,7 @@ impl GatedBrokerSurface {
         run_venue_label: VenueLabel,
         broker_venue_label: VenueLabel,
         auth: AuthContext,
+        limits: Option<SafetyLimits>,
     ) -> Self {
         Self {
             inner,
@@ -45,6 +56,8 @@ impl GatedBrokerSurface {
             run_venue_label,
             broker_venue_label,
             auth,
+            limits,
+            runtime: Mutex::new(LimitRuntime::default()),
         }
     }
 }
@@ -53,6 +66,39 @@ impl GatedBrokerSurface {
 impl BrokerSurface for GatedBrokerSurface {
     async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
         let notional = (req.size * req.reference_price_usd).abs();
+        let balance = if self
+            .limits
+            .as_ref()
+            .and_then(|limits| limits.max_drawdown_usd)
+            .is_some()
+        {
+            Some(
+                self.inner
+                    .balance()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("safety_gate_denied: drawdown balance unavailable: {e}"))?,
+            )
+        } else {
+            None
+        };
+
+        let mut runtime = self.runtime.lock().await;
+        let current_drawdown_usd = if let Some(balance) = balance {
+            let peak = runtime
+                .peak_balance_usd
+                .map(|peak| peak.max(balance))
+                .unwrap_or(balance);
+            runtime.peak_balance_usd = Some(peak);
+            (peak - balance).max(0.0)
+        } else {
+            0.0
+        };
+        let limit_check = SafetyLimitCheck {
+            cumulative_notional_usd: runtime.cumulative_notional_usd + notional,
+            order_count: runtime.order_count.saturating_add(1),
+            current_drawdown_usd,
+            ..Default::default()
+        };
 
         self.gate
             .check_broker_submit(
@@ -62,13 +108,16 @@ impl BrokerSurface for GatedBrokerSurface {
                 Some(notional),
                 self.run_venue_label,
                 self.broker_venue_label,
-                None,
-                None,
+                self.limits.as_ref(),
+                Some(&limit_check),
             )
             .await
             .map_err(|e| anyhow::anyhow!("safety_gate_denied: {e}"))?;
 
-        self.inner.submit_order(req).await
+        let confirmation = self.inner.submit_order(req).await?;
+        runtime.cumulative_notional_usd = limit_check.cumulative_notional_usd;
+        runtime.order_count = limit_check.order_count;
+        Ok(confirmation)
     }
 
     async fn position(&self, asset: &str) -> anyhow::Result<f64> {
@@ -195,6 +244,7 @@ mod tests {
             VenueLabel::Paper, // run label: Paper
             VenueLabel::Live,  // broker label: Live — mismatch → deny
             AuthContext::system(),
+            None,
         );
 
         let result = surface.submit_order(test_req()).await;
@@ -224,6 +274,7 @@ mod tests {
             VenueLabel::Paper,
             VenueLabel::Paper,
             AuthContext::system(),
+            None,
         );
 
         let result = surface.submit_order(test_req()).await;
@@ -232,6 +283,50 @@ mod tests {
             *call_count.lock().unwrap(),
             1,
             "inner broker must receive exactly 1 call when gate allows"
+        );
+    }
+
+    #[tokio::test]
+    async fn safety_limits_denial_returns_err_and_inner_not_called() {
+        use crate::safety::{SafetyLimits, SafetyManager};
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/030_safety_state_and_audit.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mgr = SafetyManager::new(pool);
+        mgr.bootstrap(false).await.unwrap();
+
+        let (broker, call_count) = RecordingBroker::new();
+        let surface = GatedBrokerSurface::new(
+            Arc::new(broker),
+            SafetyGate::new(mgr),
+            VenueLabel::Paper,
+            VenueLabel::Paper,
+            AuthContext::system(),
+            Some(SafetyLimits {
+                notional_cap_usd: Some(100.0),
+                ..Default::default()
+            }),
+        );
+
+        let result = surface.submit_order(test_req()).await;
+        assert!(result.is_err(), "limit denial must return Err, got: {result:?}");
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("safety_gate_denied") && err_msg.contains("notional"),
+            "error must mention safety gate notional denial, got: {err_msg}"
+        );
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            0,
+            "inner broker must receive ZERO calls when limits deny"
         );
     }
 
@@ -246,6 +341,7 @@ mod tests {
             VenueLabel::Paper,
             VenueLabel::Paper,
             AuthContext::system(),
+            None,
         );
 
         // These must reflect the inner RecordingBroker's values, not trait defaults.

@@ -679,11 +679,23 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
         StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
-        StrategyAction::SetRisk { id, max_drawdown_usd, max_drawdown_pct } => {
+        StrategyAction::SetRisk {
+            id,
+            max_drawdown_usd,
+            max_drawdown_pct,
+        } => {
             let store = store();
             let mut strategy = store.load(&id).await.exit_with(XvnExit::NotFound)?;
 
             if let Some(dd) = max_drawdown_usd {
+                if !dd.is_finite() || dd <= 0.0 {
+                    return Err(CliError {
+                        exit: XvnExit::Usage,
+                        source: anyhow::anyhow!(
+                            "--max-drawdown-usd must be a positive finite USD amount, got {dd}"
+                        ),
+                    });
+                }
                 strategy.risk.max_drawdown_usd = dd;
             }
             if let Some(dd_pct) = max_drawdown_pct {
@@ -1624,9 +1636,8 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     let preflight = preflight_validate(&strategy, Some(&scenario));
     warnings.extend(preflight.warnings);
 
-    let granularity = xvision_engine::strategies::bar_granularity_for_cadence(
-        strategy.manifest.decision_cadence_minutes,
-    );
+    let granularity =
+        xvision_engine::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
     let timeframe_display = granularity.canonical();
     collect_prompt_mismatch_warnings(&ctx, &strategy, &timeframe_display, &mut warnings).await;
 

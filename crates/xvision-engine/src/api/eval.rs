@@ -3817,11 +3817,11 @@ async fn load_market_data_context_for_scenario(
     assets: &[xvision_core::trading::AssetSymbol],
 ) -> ApiResult<crate::eval::market_data::MarketDataContext> {
     let mut market_data = crate::eval::market_data::MarketDataContext::new();
-    let native_granularity = crate::strategies::bar_granularity_for_cadence(
-        strategy.manifest.decision_cadence_minutes,
-    );
+    let native_granularity =
+        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
     for asset in assets {
-        let bars = market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
+        let bars =
+            market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
         market_data.insert_series(*asset, native_granularity, bars);
     }
     for (tf, support) in strategy.supported_timeframes() {
@@ -3832,11 +3832,16 @@ async fn load_market_data_context_for_scenario(
             "1m" => xvision_data::alpaca::BarGranularity::Minute1,
             "5m" => xvision_data::alpaca::BarGranularity::Minute5,
             "15m" => xvision_data::alpaca::BarGranularity::Minute15,
-            "30m" => xvision_data::alpaca::BarGranularity::new(30, xvision_data::alpaca::BarGranularityUnit::Minute)
-                .expect("validated 30m granularity"),
+            "30m" => xvision_data::alpaca::BarGranularity::new(
+                30,
+                xvision_data::alpaca::BarGranularityUnit::Minute,
+            )
+            .expect("validated 30m granularity"),
             "1h" => xvision_data::alpaca::BarGranularity::Hour1,
-            "2h" => xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
-                .expect("validated 2h granularity"),
+            "2h" => {
+                xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
+                    .expect("validated 2h granularity")
+            }
             "4h" => xvision_data::alpaca::BarGranularity::Hour4,
             "1d" => xvision_data::alpaca::BarGranularity::Day1,
             _ => continue,
@@ -3924,9 +3929,8 @@ async fn build_backtest_executor(
         let market_data = load_market_data_context_for_scenario(ctx, scenario, strategy, &active).await?;
         let mut asset_bars = std::collections::BTreeMap::new();
         let mut first_err: Option<String> = None;
-        let native_granularity = crate::strategies::bar_granularity_for_cadence(
-            strategy.manifest.decision_cadence_minutes,
-        );
+        let native_granularity =
+            crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
         for asset in &active {
             match market_data.series(*asset, native_granularity) {
                 Some(bars) if !bars.is_empty() => {
@@ -3951,7 +3955,9 @@ async fn build_backtest_executor(
             // Warmup is a hard preflight error when DB-resolved: an
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
-            let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?);
+            let warmup = market_bars_to_ohlcv(
+                load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?,
+            );
             let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
@@ -4289,7 +4295,11 @@ async fn build_live_executor(
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
-    let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
+    let orderly_creds = broker_settings::resolve_orderly_credentials(&ctx.xvn_home).await?;
+    let orderly_base_url = orderly_creds
+        .as_ref()
+        .and_then(|c| c.base_url.clone())
+        .or_else(|| std::env::var("ORDERLY_BASE_URL").ok());
     let byreal_network = std::env::var("BYREAL_NETWORK").ok();
     let byreal_spot_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
     // Resolve Degen Arena creds (stored via Settings → Brokers / deploy ingest
@@ -4421,14 +4431,27 @@ async fn build_live_executor(
                 AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
                     .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
             ),
-            LiveVenue::OrderlyTestnet => Arc::new(
-                OrderlyLiveSurface::from_env()
-                    .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
-            ),
-            LiveVenue::OrderlyMainnet => Arc::new(
-                OrderlyLiveSurface::from_env()
-                    .map_err(|e| ApiError::Validation(format!("build Orderly mainnet broker: {e}")))?,
-            ),
+            LiveVenue::OrderlyTestnet | LiveVenue::OrderlyMainnet => {
+                let c = orderly_creds.ok_or_else(|| {
+                    ApiError::Validation(
+                        "Orderly venue selected but no credentials configured — \
+                         store credentials in Settings -> Brokers or set \
+                         ORDERLY_KEY / ORDERLY_SECRET / ORDERLY_ACCOUNT_ID."
+                            .into(),
+                    )
+                })?;
+                Arc::new(
+                    OrderlyLiveSurface::connect(
+                        xvision_execution::orderly::Credentials {
+                            orderly_key: c.api_key,
+                            orderly_secret: c.api_secret,
+                            orderly_account_id: c.account_id,
+                        },
+                        c.base_url.as_deref(),
+                    )
+                    .map_err(|e| ApiError::Validation(format!("build Orderly broker: {e}")))?,
+                )
+            }
             LiveVenue::ByrealLive => Arc::new(
                 ByrealLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
@@ -4512,6 +4535,7 @@ async fn build_live_executor(
         cfg.venue_label,
         broker_lbl,
         AuthContext::system(),
+        cfg.safety_limits.clone(),
     ));
     let granularity = cfg.granularity;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
