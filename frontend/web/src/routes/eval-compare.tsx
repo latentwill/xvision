@@ -307,7 +307,7 @@ function MetricsTable({
                   </Pill>
                 </td>
                 <td className="py-2.5 px-3 text-text-2 text-[12px]">
-                  {displayScenarioName(r.scenario_id, scenarios)}
+                  {displayScenarioName(r.scenario_id, scenarios, r.mode)}
                 </td>
                 <MetricCell
                   value={fmtPct(r.metrics?.total_return_pct)}
@@ -410,7 +410,7 @@ function FindingsTable({
                 </Link>
                 {run ? (
                   <div className="mt-0.5 text-[11px] text-text-3">
-                    {displayScenarioName(run.scenario_id, scenarios)}
+                    {displayScenarioName(run.scenario_id, scenarios, run.mode)}
                   </div>
                 ) : null}
               </td>
@@ -578,7 +578,7 @@ function NeedTwoOrMore({
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-[12px] text-text-2">
-                      {displayScenarioName(run.scenario_id, scenarios)}
+                      {displayScenarioName(run.scenario_id, scenarios, run.mode)}
                     </td>
                     <td className="py-2.5 px-3">
                       <Pill
