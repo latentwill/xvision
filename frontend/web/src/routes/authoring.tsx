@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Icon } from "@/components/primitives/Icon";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 import { ApiError } from "@/api/client";
 import { toVenuePair } from "@/lib/assets";
 import { useAlpacaAssets } from "@/api/assets";
@@ -950,20 +951,24 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
         <div id="add-agent-accordion-panel" className="border-t border-border-soft px-3 py-3 space-y-3">
           {mode === "existing" ? (
             <div className="space-y-2">
-              <Field label="Existing agent">
-                <select
-                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+              <div>
+                <div className="text-[12px] text-text-2 mb-1 block">Existing agent</div>
+                <SignalSearchableSelectMenu
+                  ariaLabel="Existing agent"
                   value={props.newAgentId}
-                  onChange={(e) => props.setNewAgentId(e.target.value)}
-                >
-                  <option value="">Select agent…</option>
-                  {props.available.map((a) => (
-                    <option key={a.agent_id} value={a.agent_id}>
-                      {a.name} · {a.agent_id}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+                  onChange={props.setNewAgentId}
+                  placeholder="Select agent…"
+                  searchPlaceholder="Search existing agents…"
+                  emptyHint="No agents match"
+                  className="w-full justify-between"
+                  options={props.available.map((agent) => ({
+                    value: agent.agent_id,
+                    label: agent.name,
+                    meta: agent.agent_id,
+                    searchText: `${agent.name} ${agent.agent_id}`,
+                  }))}
+                />
+              </div>
               <button
                 type="button"
                 onClick={props.onAttachExisting}

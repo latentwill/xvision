@@ -22,11 +22,13 @@ import type {
   ProviderRow,
   Scenario,
 } from "@/api/types.gen";
+import type * as EvalApiModule from "@/api/eval";
+import type * as ScenariosApiModule from "@/api/scenarios";
+import type * as SettingsApiModule from "@/api/settings";
+import type * as StrategiesApiModule from "@/api/strategies";
 
 vi.mock("@/api/eval", async () => {
-  const actual = await vi.importActual<typeof import("@/api/eval")>(
-    "@/api/eval",
-  );
+  const actual = await vi.importActual<typeof EvalApiModule>("@/api/eval");
   return {
     ...actual,
     listRuns: vi.fn(),
@@ -44,7 +46,7 @@ vi.mock("@/api/chart", () => ({
 }));
 
 vi.mock("@/api/scenarios", async () => {
-  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+  const actual = await vi.importActual<typeof ScenariosApiModule>(
     "@/api/scenarios",
   );
   return {
@@ -54,7 +56,7 @@ vi.mock("@/api/scenarios", async () => {
 });
 
 vi.mock("@/api/settings", async () => {
-  const actual = await vi.importActual<typeof import("@/api/settings")>(
+  const actual = await vi.importActual<typeof SettingsApiModule>(
     "@/api/settings",
   );
   return {
@@ -65,7 +67,7 @@ vi.mock("@/api/settings", async () => {
 });
 
 vi.mock("@/api/strategies", async () => {
-  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+  const actual = await vi.importActual<typeof StrategiesApiModule>(
     "@/api/strategies",
   );
   return {

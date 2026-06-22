@@ -7,9 +7,10 @@ import { apiFetch } from "@/api/client";
 import { listProviders } from "@/api/settings";
 import { listStrategies } from "@/api/strategies";
 import { LaunchPanel } from "./LaunchPanel";
+import type * as ClientApiModule from "@/api/client";
 
 vi.mock("@/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
+  const actual = await vi.importActual<typeof ClientApiModule>("@/api/client");
   return {
     ...actual,
     apiFetch: vi.fn(),

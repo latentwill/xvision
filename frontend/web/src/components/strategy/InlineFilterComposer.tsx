@@ -25,6 +25,7 @@ import {
   type PipelineDef,
 } from "@/api/strategies";
 import { ModelPicker } from "@/components/ModelPicker";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 
 import {
   buildPredicate,
@@ -231,19 +232,22 @@ export function InlineFilterComposer({
               "Author new agent" to create one inline.
             </div>
           ) : (
-            <select
-              className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+            <SignalSearchableSelectMenu
+              ariaLabel="Filter agent"
               value={pickedAgentId}
-              onChange={(e) => setPickedAgentId(e.target.value)}
+              onChange={setPickedAgentId}
+              placeholder="Select filter agent…"
+              searchPlaceholder="Search filter agents…"
+              emptyHint="No filter agents match"
               disabled={editing}
-            >
-              {filterCandidates.map((a) => (
-                <option key={a.agent_id} value={a.agent_id}>
-                  {a.name}
-                  {a.scope_strategy_id ? " · scoped" : ""}
-                </option>
-              ))}
-            </select>
+              className="w-full justify-between"
+              options={filterCandidates.map((agent) => ({
+                value: agent.agent_id,
+                label: agent.name,
+                meta: `${agent.agent_id}${agent.scope_strategy_id ? " · scoped" : ""}`,
+                searchText: `${agent.name} ${agent.agent_id} ${agent.description ?? ""} ${agent.scope_strategy_id ?? ""}`,
+              }))}
+            />
           )}
           {pickedAgentId && candidateById.get(pickedAgentId)?.description ? (
             <div className="text-[12px] text-text-3">
