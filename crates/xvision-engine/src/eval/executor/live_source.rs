@@ -187,6 +187,10 @@ impl BarSource for LiveStream {
                 LiveStreamState::Warmup => {
                     self.warmup.clear();
                     self.state = LiveStreamState::WebsocketLive;
+                    tracing::info!(
+                        target: "xvision_engine::live_source",
+                        "LiveStream: warmup drained, entering websocket live"
+                    );
                 }
                 LiveStreamState::WebsocketLive => {
                     let ws = match self.ws.as_mut() {
@@ -234,6 +238,10 @@ impl BarSource for LiveStream {
                         None => {
                             // Stream cleanly closed without budget
                             // exhaustion (test path or apca close).
+                            tracing::info!(
+                                target: "xvision_engine::live_source",
+                                "LiveStream: websocket closed cleanly, falling back to polling"
+                            );
                             self.ws = None;
                             self.state = LiveStreamState::PollFallback;
                         }

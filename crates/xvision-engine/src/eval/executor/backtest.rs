@@ -3596,6 +3596,40 @@ impl Executor {
         // live mode.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
 
+        // Drain warmup history from the bar source into per-asset buffers so
+        // the first tradable bar has a complete lookback window.  Without
+        // this, `MultiLiveStream::new()` collects warmup via `take_warmup()`
+        // but `run_inner_live` never consumes it — indicators see zero
+        // history and the first several bars are wasted.
+        let warmup = runtime.bar_source.take_warmup_history();
+        if !warmup.is_empty() {
+            let counts: Vec<String> = warmup
+                .iter()
+                .map(|(a, bars)| format!("{}:{} bars", a, bars.len()))
+                .collect();
+            tracing::info!(
+                target: "xvision_engine::live_executor",
+                "live loop: seeding per-asset history from warmup ({} assets: {})",
+                warmup.len(),
+                counts.join(", "),
+            );
+            for (asset, bars) in warmup {
+                if let Some(hist) = history.get_mut(&asset) {
+                    hist.extend(bars);
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "xvision_engine::live_executor",
+            run_id = %run.id,
+            strategy = %strategy.manifest.id,
+            active_assets = ?active.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            filter = %filter_hook.as_ref().map_or("none", |_| "active"),
+            bar_limit = ?stop_policy.bar_limit,
+            "live loop: entering bar stream",
+        );
+
         let mut bar_count: u32 = 0;
         // F36: capture-on-interrupt for the live loop too — a cancelled or
         // crashed live/real-money run must record the metrics+tokens it
@@ -3746,6 +3780,18 @@ impl Executor {
                 .cloned()
                 .unwrap_or_else(|| asset_sym.as_alpaca_pair());
             bar_count += 1;
+            // Per-bar operational log at info level so operators can confirm
+            // the live stream is yielding bars without bumping to debug.
+            // Throttled to every 50th bar (roughly every 50 min at 1m
+            // granularity) to avoid spamming container logs.
+            if bar_count % 50 == 1 {
+                tracing::info!(
+                    target: "xvision_engine::live_executor",
+                    bar_count,
+                    asset = %asset_sym,
+                    "live bar received"
+                );
+            }
 
             // (b) bar-count stop limit. Checked AFTER the decision is
             // recorded (at the loop bottom via `live_stop_reason`) so
