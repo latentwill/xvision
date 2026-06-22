@@ -106,17 +106,19 @@ cp .env.example .env
 
 # Pull and run (the image is private — docker login ghcr.io first)
 docker pull ghcr.io/latentwill/xvision:0.37.0
+XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
 docker run --rm \
   -e XVN_AUTOMIGRATE=1 \
-  -e XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)" \
+  -e XVN_DASHBOARD_TOKEN="$XVN_DASHBOARD_TOKEN" \
   -v xvision-data:/data \
   --env-file .env \
   -p 8788:8788 \
   ghcr.io/latentwill/xvision:0.37.0
+echo "Open http://localhost:8788?token=$XVN_DASHBOARD_TOKEN"
 ```
 
-Then open **http://localhost:8788?token=YOUR_TOKEN** — the `?token=` query param
-bootstraps a session cookie so you never need to pass the token again.
+Then open the printed URL — the `?token=` query param bootstraps a session
+cookie so you never need to pass the token again.
 
 > **`XVN_DASHBOARD_TOKEN`** is required whenever the dashboard binds to a
 > non-loopback address (including Docker and Tailscale). Generate it with
@@ -141,19 +143,23 @@ cargo build --release
 
 2. **Add an LLM provider** in Settings → Providers in the dashboard, or via CLI:
    ```bash
-   xvn provider add --name anthropic --kind anthropic --api-key "$ANTHROPIC_API_KEY"
+   xvn provider add \
+     --name anthropic \
+     --kind anthropic \
+     --base-url https://api.anthropic.com \
+     --api-key "$ANTHROPIC_API_KEY"
    ```
 
-3. **Create a strategy from a template:**
+3. **Create an example strategy:**
    ```bash
-   xvn strategy templates              # list available templates
-   xvn strategy create --template mean_reversion --name my-first
+   xvn example seed
+   xvn strategy list
    ```
 
 4. **Run a backtest:**
    ```bash
-   xvn strategy diagnostics my-first --json
-   xvn eval run --strategy my-first --scenario crypto-bull-q1-2025 --mode backtest
+   xvn strategy diagnostics <strategy_id> --json
+   xvn eval run --strategy <strategy_id> --scenario crypto-bull-q1-2025 --mode backtest
    xvn eval list
    ```
 
@@ -184,7 +190,7 @@ xvn dashboard serve --bind 0.0.0.0:8788
 For CLI commands on a remote node without SSH, use the typed remote CLI API:
 
 ```bash
-scripts/xvn-remote.py exec -- xvn eval list
+scripts/xvn-remote.py exec eval list
 ```
 
 See **[remote-cli.md](crates/xvision-dashboard/wiki/remote-cli.md)** for the

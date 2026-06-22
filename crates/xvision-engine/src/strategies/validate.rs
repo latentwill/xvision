@@ -177,9 +177,6 @@ pub fn preflight_validate(strategy: &Strategy, scenario: Option<&Scenario>) -> P
     if let Err(e) = validate_strategy(strategy) {
         result.errors.push(e.to_string());
     }
-    if let Err(e) = validate_timeframe_requirements(strategy) {
-        result.errors.push(e.to_string());
-    }
 
     if let Some(sc) = scenario {
         // Scenarios are asset-free — the asset a run trades comes from the
@@ -433,6 +430,7 @@ fn validate_common(b: &Strategy) -> Result<(), ValidationError> {
             b.risk.max_leverage
         )));
     }
+    validate_timeframe_requirements(b)?;
     Ok(())
 }
 
@@ -670,6 +668,17 @@ mod preflight_tests {
         let strategy = make_strategy_with_agent("ETH/USD", 240);
         let result = preflight_validate(&strategy, None);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn validate_strategy_rejects_invalid_auxiliary_timeframe() {
+        let mut strategy = make_strategy_with_agent("ETH/USD", 60);
+        strategy.manifest.timeframe_requirements.auxiliary =
+            vec![crate::strategies::manifest::TimeframeSpec("7h".into())];
+
+        let err = validate_strategy(&strategy).expect_err("invalid auxiliary timeframe must fail");
+
+        assert!(matches!(err, ValidationError::UnsupportedAuxiliaryTimeframe(tf) if tf == "7h"));
     }
 
     #[test]
