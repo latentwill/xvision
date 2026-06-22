@@ -520,6 +520,21 @@ enum StrategyAction {
     /// Scan the on-disk strategy directory for bundles missing from the search
     /// index and backfill them. One-shot fix for existing index divergence.
     Reindex,
+    /// Set risk parameters on a strategy.
+    #[command(name = "set-risk")]
+    SetRisk {
+        /// Strategy id (ULID).
+        #[arg(long)]
+        id: String,
+
+        /// Maximum drawdown in USD. 0 = no limit.
+        #[arg(long)]
+        max_drawdown_usd: Option<f64>,
+
+        /// Maximum drawdown as percentage of initial capital.
+        #[arg(long)]
+        max_drawdown_pct: Option<f64>,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -664,6 +679,26 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
         StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
+        StrategyAction::SetRisk { id, max_drawdown_usd, max_drawdown_pct } => {
+            let store = store();
+            let mut strategy = store.load(&id).await.exit_with(XvnExit::NotFound)?;
+
+            if let Some(dd) = max_drawdown_usd {
+                strategy.risk.max_drawdown_usd = dd;
+            }
+            if let Some(dd_pct) = max_drawdown_pct {
+                strategy.risk.max_drawdown_pct = Some(dd_pct);
+            }
+
+            store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
+
+            println!("Risk updated for strategy {id}");
+            println!("  max_drawdown_usd:  {}", strategy.risk.max_drawdown_usd);
+            if let Some(pct) = strategy.risk.max_drawdown_pct {
+                println!("  max_drawdown_pct:  {pct}%");
+            }
+            Ok(())
+        }
     }
 }
 
