@@ -3589,6 +3589,13 @@ impl Executor {
             .await;
         let stop_policy = runtime.stop_policy.clone();
 
+        // Per-bar filter hook for strategy-level gating. `None` for
+        // `EveryBar` strategies (the default); when `Some`, `decide_one_live`
+        // evaluates it before `run_pipeline` so cooldown_bars,
+        // max_wakeups_per_day, and wake_when_in_position are honored in
+        // live mode.
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+
         let mut bar_count: u32 = 0;
         // F36: capture-on-interrupt for the live loop too — a cancelled or
         // crashed live/real-money run must record the metrics+tokens it
@@ -3814,11 +3821,20 @@ impl Executor {
                         multi_filter_config,
                         daily_loss_day,
                         daily_realized_at_day_start,
+                        filter_hook: filter_hook.as_mut(),
                     },
                     &mut runtime.fill_sink,
                     &mut book,
                 )
                 .await?;
+
+            // Filter gate: when the DSL filter suppressed this bar,
+            // skip token counting, fill tracking, mark-to-market, and
+            // history push. Continue to the next bar so the loop stays
+            // alive.
+            if outcome.filter_gated {
+                continue;
+            }
 
             total_input_tokens += outcome.input_tokens;
             total_output_tokens += outcome.output_tokens;
@@ -4206,6 +4222,7 @@ impl Executor {
             multi_filter_config,
             mut daily_loss_day,
             mut daily_realized_at_day_start,
+            mut filter_hook,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -4275,6 +4292,36 @@ impl Executor {
         if let Some(cline) = self.cline.as_ref() {
             publish_decision_context(&cline.tool_asset_guard, &cline.as_of_guard, &asset, bar.timestamp)
                 .await;
+        }
+
+        // Filter gate: match the backtest path at lines ~1146-1175.
+        // Evaluate the DSL filter hook before `run_pipeline` so that
+        // cooldown_bars, max_wakeups_per_day, and wake_when_in_position
+        // are honored in live mode — not just backtest.
+        let mut filter_gated = false;
+        if let Some(hook) = filter_hook.as_mut() {
+            let in_position = book.position(asset_sym).abs() > f64::EPSILON;
+            let evaluation = hook.evaluate(bar, in_position);
+            if !evaluation.outcome.decision.is_active() {
+                filter_gated = true;
+            }
+        }
+
+        // When the filter gate is closed, skip the LLM pipeline entirely.
+        // Return a zero-token outcome with filter_gated=true; the loop
+        // driver treats this identically to a skipped bar.
+        if filter_gated {
+            return Ok(LiveDecisionOutcome {
+                input_tokens: 0,
+                output_tokens: 0,
+                fill_happened: false,
+                last_open_direction,
+                broker_error: None,
+                daily_loss_day,
+                daily_realized_at_day_start,
+                risk_vetoed: false,
+                filter_gated: true,
+            });
         }
 
         let outs = run_pipeline(PipelineInputs {
@@ -4650,9 +4697,9 @@ impl Executor {
             daily_loss_day,
             daily_realized_at_day_start,
             risk_vetoed, // CT5: propagate to loop driver for live_run_state counter
+            filter_gated: false,
         })
     }
-
     /// LIVE-only thin wrapper: flatten every open broker position before a
     /// cancelled run finishes. Delegates to [`flatten_open_positions`] with the
     /// `Cancel` reason and returns the [`FlattenOutcome`] (legs fully closed +
@@ -5087,6 +5134,10 @@ struct DecideOneLiveCtx<'a> {
     /// R3 risk-veto: the book's realized-PnL snapshot taken at the start of
     /// the current UTC day.  `realized_today = book.realized() - this`.
     daily_realized_at_day_start: f64,
+    /// Per-bar filter hook for strategy-level gating. `None` for `EveryBar`
+    /// strategies (the default); when `Some`, `decide_one_live` evaluates
+    /// it before `run_pipeline` and skips when the filter says "not active".
+    filter_hook: Option<&'a mut crate::eval::filter_hook::FilterHook>,
 }
 
 /// What `decide_one_live` returns to the loop driver.
@@ -5105,6 +5156,10 @@ struct LiveDecisionOutcome {
     /// The loop driver increments `risk_veto_count` and persists it to
     /// `live_run_state` each bar.
     pub(crate) risk_vetoed: bool,
+    /// True when the DSL filter gate suppressed this bar (cooldown,
+    /// daily cap, or position suppression). The loop driver skips
+    /// token counting, fill tracking, and mark-to-market for gated bars.
+    pub(crate) filter_gated: bool,
 }
 
 // executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
