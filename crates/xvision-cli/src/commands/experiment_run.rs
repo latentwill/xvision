@@ -3,9 +3,9 @@
 //! This module is **intake #9** in the CLI-agent-research-workbench wave.
 //! It sits on top of all wave A / B / C primitives:
 //!
-//! - Wave A: `eval::batch::run_batch` — execute one run per scenario.
-//! - Wave B: `scenario::select_scenarios` — filter library by timeframe /
-//!           decision-count / regime (scenarios are asset-free).
+//! - Wave B: `scenario::select_scenarios` — filter library by strategy
+//!           timeframe / decision-count / regime (scenarios are asset-free
+//!           date ranges).
 //! - Wave C: `api::experiment::{create_experiment, update_experiment}` +
 //!           `ExperimentStore::set_result` — experiment ledger CRUD.
 //!
@@ -14,7 +14,7 @@
 //! Two modes:
 //! 1. `--scenarios <id1,id2,...>` — caller provides explicit scenario ids.
 //! 2. `--timeframe / --target-decisions / ...` — delegates to
-//!    `select_scenarios` (wave B). Equivalent to calling `xvn scenario select`
+//!    `select_scenarios` using the strategy timeframe.
 //!    and feeding the result here.
 //!
 //! `--assets` is a RUN-LAYER subset of the strategy universe (which assets to
@@ -348,7 +348,8 @@ pub struct RunArgs {
     #[arg(long, value_delimiter = ',')]
     pub assets: Vec<String>,
 
-    /// Timeframe in minutes for scenario selection (e.g. `60` for 1h bars).
+    /// Timeframe in minutes for scenario selection. If omitted, the selected
+    /// strategy's `decision_cadence_minutes` is used.
     #[arg(long)]
     pub timeframe: Option<u32>,
 
@@ -482,12 +483,25 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
         Some(parsed)
     };
 
-    // Scenario selection is driven by the remaining (asset-free) selector
-    // flags: --timeframe / --target-decisions / --same-decisions / --regimes.
+    // Scenario selection is driven by selector flags. If --timeframe is omitted,
+    // decision-count math uses the selected strategy's cadence.
     let selector_requested = args.timeframe.is_some()
         || args.target_decisions.is_some()
         || args.same_decisions
         || !args.regimes.is_empty();
+
+    let selector_timeframe = if selector_requested {
+        match args.timeframe {
+            Some(tf) => tf,
+            None => xvision_engine::api::strategy::get(&ctx, &args.strategy)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("load strategy cadence: {e}")))?
+                .manifest
+                .decision_cadence_minutes,
+        }
+    } else {
+        0
+    };
 
     // Resolve scenario ids: explicit list OR selector.
     let mut scenario_ids: Vec<String> = if !args.scenarios.is_empty() {
@@ -495,7 +509,7 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     } else if selector_requested {
         resolve_scenarios_via_selector(
             &ctx,
-            args.timeframe,
+            selector_timeframe,
             &args.regimes,
             args.target_decisions,
             args.same_decisions,
@@ -692,7 +706,7 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
 /// selection lives at the run layer (`--assets`, threaded in Task C3).
 async fn resolve_scenarios_via_selector(
     ctx: &ApiContext,
-    timeframe_minutes: Option<u32>,
+    timeframe_minutes: u32,
     regimes: &[String],
     target_decisions: Option<u64>,
     same_decisions: bool,

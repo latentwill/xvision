@@ -4,7 +4,6 @@
 //! and archive flow.
 
 use chrono::{TimeZone, Utc};
-use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario::{
     AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
@@ -42,7 +41,6 @@ fn make_test_scenario(id: &str) -> Scenario {
             start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(2024, 2, 10, 0, 0, 0).unwrap(),
         },
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

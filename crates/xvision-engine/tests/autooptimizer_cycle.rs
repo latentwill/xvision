@@ -160,7 +160,6 @@ fn make_scenario(id: &str, year_start: i32, year_end: i32) -> Scenario {
             start: Utc.with_ymd_and_hms(year_start, 1, 1, 0, 0, 0).unwrap(),
             end: Utc.with_ymd_and_hms(year_end, 1, 1, 0, 0, 0).unwrap(),
         },
-        granularity: xvision_data::alpaca::BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

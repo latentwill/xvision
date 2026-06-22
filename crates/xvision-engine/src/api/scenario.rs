@@ -2,16 +2,13 @@
 //! validation. The store helpers (Task 3) handle persistence; this module
 //! enforces business rules:
 //! - asset_class == Crypto, quote_currency == Usd
-//! - granularity is one of the Alpaca-supported bar timeframes
 //! - replay_mode == Continuous
 //! - time_window: start < end, end ≤ now, start ≥ Alpaca crypto history floor
 //! - parent_scenario_id (when set) must reference a non-archived scenario
 //!
 //! Scenarios are asset-free — any asset can run against any scenario; the
-//! asset a run trades comes from the strategy's `asset_universe`. Each
-//! scenario gets a deterministic `bar_cache_policy.cache_key` computed via
-//! `eval::bars::compute_scenario_cache_key` (asset-independent); per-asset
-//! bar loads derive their own key via `compute_cache_key`.
+//! scenario is keyed by date range; bar loads combine the scenario window with
+//! the strategy's decision cadence/timeframe at run time.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -21,7 +18,7 @@ use xvision_core::Capital;
 
 use crate::api::{ApiContext, ApiError, ApiResult};
 use crate::eval::scenario::*;
-use crate::eval::{bars as engine_bars, scenario_store};
+use crate::eval::scenario_store;
 use crate::safety::VenueLabel;
 use xvision_data::asset_whitelist::alpaca_crypto_history_start;
 
@@ -43,8 +40,6 @@ pub struct CreateScenarioRequest {
     pub time_window: TimeWindow,
     #[cfg_attr(feature = "ts-export", ts(type = "{ initial: number, currency: string }"))]
     pub capital: Capital,
-    #[cfg_attr(feature = "ts-export", ts(type = "string"))]
-    pub granularity: BarGranularity,
     pub timezone: String,
     pub calendar: CalendarRef,
     /// QA31: chat-agent callers (Gemini Flash etc.) repeatedly omit
@@ -117,8 +112,6 @@ pub struct ScenarioMutations {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub time_window: Option<TimeWindow>,
-    #[cfg_attr(feature = "ts-export", ts(type = "string | null"))]
-    pub granularity: Option<BarGranularity>,
     pub venue: Option<VenueSettings>,
     pub tags: Option<Vec<String>>,
     pub notes: Option<String>,
@@ -135,11 +128,10 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
     validate_request(&req, ctx).await?;
     let display_name = req.display_name.trim().to_string();
     let id = format!("sc_{}", Ulid::new());
-    let cache_key = engine_bars::compute_scenario_cache_key(
-        req.granularity,
-        req.time_window.start,
-        req.time_window.end,
-        "alpaca-historical-v1",
+    let cache_key = format!(
+        "scenario-window:{}:{}:alpaca-historical-v1",
+        req.time_window.start.to_rfc3339(),
+        req.time_window.end.to_rfc3339()
     );
     let scenario = Scenario {
         id,
@@ -152,7 +144,6 @@ pub async fn create(ctx: &ApiContext, req: CreateScenarioRequest) -> ApiResult<S
         asset_class: req.asset_class,
         quote_currency: req.quote_currency,
         time_window: req.time_window,
-        granularity: req.granularity,
         timezone: req.timezone,
         calendar: req.calendar,
         data_source: req.data_source,
@@ -245,7 +236,6 @@ pub async fn clone(ctx: &ApiContext, parent: &str, mutations: ScenarioMutations)
         asset_class: parent_s.asset_class,
         quote_currency: parent_s.quote_currency,
         time_window: mutations.time_window.unwrap_or(parent_s.time_window),
-        granularity: mutations.granularity.unwrap_or(parent_s.granularity),
         timezone: parent_s.timezone,
         calendar: parent_s.calendar,
         venue: mutations.venue.unwrap_or(parent_s.venue),
@@ -415,16 +405,22 @@ pub async fn classify(ctx: &ApiContext, id: &str, force: bool) -> ApiResult<Clas
         });
     }
 
-    // Load bars from cache. Use BTC/USD as the asset_pair placeholder
-    // (scenario bar cache is asset-independent via compute_scenario_cache_key;
-    // this symbol is only used if a live-fetch miss were triggered, which
-    // classify never does — it bails out on missing cache).
+    // Classification is scenario-only, so it uses the default 60m cadence.
+    // Strategy-specific eval paths derive granularity from the strategy.
+    let granularity = crate::strategies::bar_granularity_for_cadence(60);
+    let cache_key = crate::eval::bars::compute_cache_key(
+        "BTC/USD",
+        granularity,
+        s.time_window.start,
+        s.time_window.end,
+        "alpaca-historical-v1",
+    );
     let bars_result = crate::eval::bars::load_bars(
         ctx,
         &crate::eval::bars::BarCacheArgs {
-            cache_key: s.bar_cache_policy.cache_key.clone(),
+            cache_key,
             asset_pair: "BTC/USD".to_string(),
-            granularity: s.granularity,
+            granularity,
             start: s.time_window.start,
             end: s.time_window.end,
             data_source_tag: "alpaca-historical-v1".to_string(),
@@ -472,22 +468,22 @@ pub async fn classify(ctx: &ApiContext, id: &str, force: bool) -> ApiResult<Clas
 pub struct SelectRow {
     pub id: String,
     pub name: String,
-    pub timeframe: String,
     pub decision_count: u64,
 }
 
-/// Compute the decision bar count for a scenario: total bars in the window.
-fn scenario_decision_count(s: &Scenario) -> u64 {
+/// Compute the decision bar count for a scenario at a caller-supplied cadence.
+fn scenario_decision_count(s: &Scenario, timeframe_minutes: u32) -> u64 {
     let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
-    let bar_secs = s.granularity.seconds();
+    let bar_secs = u64::from(timeframe_minutes) * 60;
     if bar_secs == 0 {
         return 0;
     }
     window_secs / bar_secs
 }
 
-/// Stateless scenario selector — filters the scenario library by timeframe,
-/// regime, and decision-count proximity. No mutation; always read-only.
+/// Stateless scenario selector — filters the scenario library by regime and
+/// decision-count proximity using a caller-supplied strategy timeframe. No
+/// mutation; always read-only.
 ///
 /// Two selection modes (at least one required):
 /// - **Mode A** (`target_decisions = Some(N)`): select scenarios within ±10% of N.
@@ -498,7 +494,7 @@ fn scenario_decision_count(s: &Scenario) -> u64 {
 /// all candidates (up to `count`) are returned in stable order.
 pub async fn select(
     ctx: &ApiContext,
-    timeframe_minutes: Option<u32>,
+    timeframe_minutes: u32,
     regimes: &[String],
     target_decisions: Option<u64>,
     same_decisions: bool,
@@ -517,14 +513,6 @@ pub async fn select(
     let candidates: Vec<&Scenario> = all
         .iter()
         .filter(|s| {
-            // Timeframe filter.
-            if let Some(tf_min) = timeframe_minutes {
-                let bar_min = (s.granularity.seconds() / 60) as u32;
-                if bar_min != tf_min {
-                    return false;
-                }
-            }
-            // Regime filter.
             if !regimes.is_empty() {
                 let matched = if let Some(ref col_label) = s.regime_label {
                     regimes
@@ -555,7 +543,7 @@ pub async fn select(
         let max = max_decisions.unwrap_or(u64::MAX);
         let counts: Vec<u64> = candidates
             .iter()
-            .map(|s| scenario_decision_count(s))
+            .map(|s| scenario_decision_count(s, timeframe_minutes))
             .filter(|&c| c <= max)
             .collect();
         let mut freq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
@@ -583,11 +571,11 @@ pub async fn select(
         .into_iter()
         .filter(|s| {
             if same_decisions {
-                scenario_decision_count(s) == target_count
+                scenario_decision_count(s, timeframe_minutes) == target_count
             } else if let Some(t) = target_decisions {
                 let lo = (t as f64 * 0.9).floor() as u64;
                 let hi = (t as f64 * 1.1).ceil() as u64;
-                let dc = scenario_decision_count(s);
+                let dc = scenario_decision_count(s, timeframe_minutes);
                 dc >= lo && dc <= hi
             } else {
                 true
@@ -597,7 +585,7 @@ pub async fn select(
 
     // Sort by closeness to target count.
     filtered.sort_by_key(|s| {
-        let dc = scenario_decision_count(s);
+        let dc = scenario_decision_count(s, timeframe_minutes);
         if target_decisions.is_some() || same_decisions {
             (dc as i64 - target_count as i64).unsigned_abs()
         } else {
@@ -611,8 +599,7 @@ pub async fn select(
         .map(|s| SelectRow {
             id: s.id.clone(),
             name: s.display_name.clone(),
-            timeframe: s.granularity.to_string(),
-            decision_count: scenario_decision_count(s),
+            decision_count: scenario_decision_count(s, timeframe_minutes),
         })
         .collect();
 

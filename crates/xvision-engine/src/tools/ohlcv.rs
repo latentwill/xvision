@@ -42,6 +42,7 @@ impl Tool for OhlcvTool {
                 "properties": {
                     "asset": {"type": "string"},
                     "fixture": {"type": "string"},
+                    "timeframe": {"type": "string"},
                     "lookback_bars": {"type": "integer", "minimum": 1, "default": 200}
                 },
                 "required": ["asset"],
@@ -73,6 +74,10 @@ impl Tool for OhlcvTool {
             anyhow::anyhow!("MVP requires a fixture name; live Alpaca fetch lands in Plan #2")
         })?;
         let bars = xvision_data::fixtures::load_ohlcv_fixture(&fixture, &req.asset, req.lookback_bars)?;
-        Ok(serde_json::json!({"asset": req.asset, "bars": bars}))
+        let mut out = serde_json::json!({"asset": req.asset, "bars": bars});
+        if let Some(timeframe) = req.timeframe {
+            out["timeframe"] = serde_json::Value::String(timeframe);
+        }
+        Ok(out)
     }
 }

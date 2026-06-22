@@ -2226,9 +2226,10 @@ async fn preflight_bar_coverage(
     let assets = active_assets(&strategy.manifest.asset_universe, None)
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
     let cadence = strategy.manifest.decision_cadence_minutes;
+    let granularity = xvision_engine::strategies::bar_granularity_for_cadence(cadence);
 
-    // Synthesize the SAME scenarios the cycle will evaluate so the granularity
-    // and windows match exactly what the backtest loads.
+    // Synthesize the SAME scenarios the cycle will evaluate so the windows
+    // match exactly what the backtest loads.
     let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, cadence, "xvn-cli-preflight");
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
@@ -2250,7 +2251,7 @@ async fn preflight_bar_coverage(
             let report = xvision_engine::eval::bars::check_bar_coverage(
                 &ctx,
                 &asset_pair,
-                scenario.granularity,
+                granularity,
                 scenario.time_window.start,
                 scenario.time_window.end,
                 DATA_SOURCE_TAG,
@@ -2277,7 +2278,7 @@ async fn preflight_bar_coverage(
                     .join("\n");
                 let start_d = scenario.time_window.start.date_naive();
                 let end_d = scenario.time_window.end.date_naive();
-                let gran = scenario.granularity.canonical();
+                let gran = granularity.canonical();
                 return Err(CliError::usage(anyhow::anyhow!(
                     "bars for {asset_pair} {gran} {start_d}..{end_d} ({label} window) are not \
                      fully cached locally.\nCovered:\n{covered}\nGap(s):\n{gaps}\nFix: \

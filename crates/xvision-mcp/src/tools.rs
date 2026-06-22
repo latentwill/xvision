@@ -1506,12 +1506,14 @@ impl XvisionTools {
         let pf = preflight_validate(&strategy, Some(&scenario));
         warnings.extend(pf.warnings);
 
-        let timeframe_display = scenario.granularity.canonical();
+        let granularity =
+            xvision_engine::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
+        let timeframe_display = granularity.canonical();
 
         let window_secs = (scenario.time_window.end - scenario.time_window.start)
             .num_seconds()
             .max(0) as u64;
-        let granularity_secs = scenario.granularity.seconds();
+        let granularity_secs = granularity.seconds();
         let expected_decisions = if granularity_secs > 0 {
             let total_bars = window_secs / granularity_secs;
             (total_bars as i64) - (scenario.warmup_bars as i64)
@@ -1740,22 +1742,20 @@ impl XvisionTools {
             ));
         }
 
-        let timeframe_minutes = req.timeframe.as_deref().map(parse_timeframe_mcp).transpose()?;
+        let timeframe_minutes = req
+            .timeframe
+            .as_deref()
+            .map(parse_timeframe_mcp)
+            .transpose()?
+            .unwrap_or(60);
 
         let ctx = self.api_context().await?;
         let all = api_scenario::list(
             &ctx,
-            api_scenario::ListScenariosFilter {
-                source: None,
-                tags: vec![],
-                include_archived: false,
-                parent_scenario_id: None,
-                ..Default::default()
-            },
+            api_scenario::ListScenariosFilter::default(),
         )
         .await
         .map_err(api_err_to_mcp)?;
-
         let count = req.count.unwrap_or(4);
         let rows = select_scenarios_mcp(
             &all,
@@ -1902,8 +1902,9 @@ impl XvisionTools {
 
         // Build the card string (mirrors CLI's format_inspect_card).
         let quote = format!("{:?}", scenario.quote_currency).to_uppercase();
+        let granularity = xvision_engine::strategies::bar_granularity_for_cadence(60);
         let window_secs = (scenario.time_window.end - scenario.time_window.start).num_seconds() as u64;
-        let bar_secs = scenario.granularity.seconds();
+        let bar_secs = granularity.seconds();
         let decision_bars = if bar_secs > 0 {
             let total_bars = window_secs / bar_secs;
             total_bars.saturating_sub(scenario.warmup_bars as u64)
@@ -1915,7 +1916,6 @@ impl XvisionTools {
         card.push_str(&format!("id: {}\n", scenario.id));
         card.push_str(&format!("name: {}\n", scenario.display_name));
         card.push_str(&format!("quote_currency: {}\n", quote));
-        card.push_str(&format!("timeframe: {}\n", scenario.granularity));
         card.push_str(&format!(
             "date_window: {}..{}\n",
             scenario.time_window.start.format("%Y-%m-%d"),
@@ -2151,14 +2151,13 @@ async fn action_distribution_mcp(ctx: &ApiContext, run_id: &str) -> anyhow::Resu
 struct SelectRow {
     id: String,
     name: String,
-    timeframe: String,
     decision_count: u64,
 }
 
-/// Compute the decision bar count for a scenario (window bars minus warmup).
-fn scenario_decision_count_mcp(s: &Scenario) -> u64 {
+/// Compute the decision bar count for a scenario at a caller-supplied timeframe.
+fn scenario_decision_count_mcp(s: &Scenario, timeframe_minutes: u32) -> u64 {
     let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
-    let bar_secs = s.granularity.seconds();
+    let bar_secs = u64::from(timeframe_minutes) * 60;
     if bar_secs == 0 {
         return 0;
     }
@@ -2175,29 +2174,20 @@ fn scenario_regime_labels_mcp(s: &Scenario) -> Vec<String> {
 }
 
 /// Pure selection logic — ported from `xvision-cli::commands::scenario::select_scenarios`.
-/// Takes a pre-fetched scenario list and applies timeframe / regime /
-/// decision-count filters plus the cap. No DB access. Scenarios are asset-free;
-/// asset-universe selection now lives at the run layer, so this no longer
-/// filters by asset.
+/// Takes a pre-fetched scenario list and applies regime / decision-count filters
+/// plus the cap at the caller-supplied strategy timeframe. No DB access.
 fn select_scenarios_mcp(
     scenarios: &[Scenario],
-    timeframe_minutes: Option<u32>,
+    timeframe_minutes: u32,
     regimes: &[String],
     target_decisions: Option<u64>,
     same_decisions: bool,
     max_decisions: Option<u64>,
     count: usize,
 ) -> Result<Vec<SelectRow>, String> {
-    // 1. Pre-filter by timeframe / regime.
     let mut candidates: Vec<&Scenario> = scenarios
         .iter()
         .filter(|s| {
-            if let Some(tf_min) = timeframe_minutes {
-                let bar_min = (s.granularity.seconds() / 60) as u32;
-                if bar_min != tf_min {
-                    return false;
-                }
-            }
             if !regimes.is_empty() {
                 let labels = scenario_regime_labels_mcp(s);
                 let matched = regimes.iter().any(|want| {
@@ -2218,7 +2208,7 @@ fn select_scenarios_mcp(
         let max = max_decisions.unwrap_or(u64::MAX);
         let counts: Vec<u64> = candidates
             .iter()
-            .map(|s| scenario_decision_count_mcp(s))
+            .map(|s| scenario_decision_count_mcp(s, timeframe_minutes))
             .filter(|&c| c <= max)
             .collect();
         let mut count_freq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
@@ -2243,19 +2233,19 @@ fn select_scenarios_mcp(
 
     // 3. Decision-count tolerance filter.
     if same_decisions {
-        candidates.retain(|s| scenario_decision_count_mcp(s) == target_count);
+        candidates.retain(|s| scenario_decision_count_mcp(s, timeframe_minutes) == target_count);
     } else if let Some(t) = target_decisions {
         let lo = (t as f64 * 0.9).floor() as u64;
         let hi = (t as f64 * 1.1).ceil() as u64;
         candidates.retain(|s| {
-            let dc = scenario_decision_count_mcp(s);
+            let dc = scenario_decision_count_mcp(s, timeframe_minutes);
             dc >= lo && dc <= hi
         });
     }
 
     // 4. Sort by closeness to target.
     candidates.sort_by_key(|s| {
-        let dc = scenario_decision_count_mcp(s);
+        let dc = scenario_decision_count_mcp(s, timeframe_minutes);
         if target_decisions.is_some() || same_decisions {
             (dc as i64 - target_count as i64).unsigned_abs()
         } else {
@@ -2274,8 +2264,7 @@ fn select_scenarios_mcp(
         .map(|s| SelectRow {
             id: s.id.clone(),
             name: s.display_name.clone(),
-            timeframe: s.granularity.to_string(),
-            decision_count: scenario_decision_count_mcp(s),
+            decision_count: scenario_decision_count_mcp(s, timeframe_minutes),
         })
         .collect();
 
@@ -3709,7 +3698,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_returns_matching() {
         // 300 1h bars − 200 warmup = 100 decisions. target=100 → ±10% → matches.
         let s = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200);
-        let rows = select_scenarios_mcp(&[s], None, &[], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios_mcp(&[s], 60, &[], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].decision_count, 100);
     }
@@ -3718,7 +3707,7 @@ mod tests {
     fn select_scenarios_mcp_mode_a_empty_when_no_match() {
         // 50 decisions; target=200 (±10%→180..220) → no match.
         let s = make_test_scenario("sc1", "ETH", "1h", 250 * 3_600, 200);
-        let rows = select_scenarios_mcp(&[s], None, &[], Some(200), false, None, 4).unwrap();
+        let rows = select_scenarios_mcp(&[s], 60, &[], Some(200), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -3727,7 +3716,7 @@ mod tests {
         let s1 = make_test_scenario("sc1", "ETH", "1h", 300 * 3_600, 200); // 100 decisions
         let s2 = make_test_scenario("sc2", "BTC", "1h", 300 * 3_600, 200); // 100 decisions
         let s3 = make_test_scenario("sc3", "SOL", "1h", 250 * 3_600, 200); // 50 decisions
-        let rows = select_scenarios_mcp(&[s1, s2, s3], None, &[], None, true, Some(200), 2).unwrap();
+        let rows = select_scenarios_mcp(&[s1, s2, s3], 60, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
             assert_eq!(r.decision_count, 100);

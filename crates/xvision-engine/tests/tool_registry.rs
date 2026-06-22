@@ -27,6 +27,10 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
         .invoke(serde_json::json!({
             "asset": "BTC/USD",
             "fixture": "test-fixture-btc-2024-01",
+<<<<<<< HEAD
+=======
+            "timeframe": "4h"
+>>>>>>> feat/multi-timeframe-strategies
         }))
         .await
         .expect("invoke must succeed");
@@ -37,6 +41,7 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
         !bars.as_array().unwrap().is_empty(),
         "bars array must not be empty"
     );
+    assert_eq!(out.get("timeframe").and_then(|v| v.as_str()), Some("4h"));
 }
 
 #[tokio::test]
@@ -72,6 +77,10 @@ async fn indicator_panel_tool_returns_panel_for_known_fixture() {
         .invoke(serde_json::json!({
             "asset": "BTC/USD",
             "fixture": "test-fixture-btc-2024-01",
+<<<<<<< HEAD
+=======
+            "timeframe": "1d"
+>>>>>>> feat/multi-timeframe-strategies
         }))
         .await
         .expect("invoke must succeed");
@@ -82,6 +91,7 @@ async fn indicator_panel_tool_returns_panel_for_known_fixture() {
             "{field} must be a numeric indicator value"
         );
     }
+    assert_eq!(out.get("timeframe").and_then(|v| v.as_str()), Some("1d"));
 }
 
 #[tokio::test]

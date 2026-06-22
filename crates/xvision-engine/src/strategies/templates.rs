@@ -110,7 +110,6 @@ fn build_example_scenario(
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
-        granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {

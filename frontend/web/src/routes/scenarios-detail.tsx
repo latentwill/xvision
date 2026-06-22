@@ -31,10 +31,7 @@ import { MListRow } from "@/components/lists/MListRow";
 import { ScenarioChartV2 } from "@/components/chart/v2/surfaces/ScenarioChartV2";
 import { scenarioChartPayloadToV2 } from "@/components/chart/v2/adapters/scenario-chart-payload";
 import { CacheStatusBadge } from "@/components/scenario/CacheStatusBadge";
-import {
-  scenarioGranularityToCli,
-  useBarsFetchJob,
-} from "@/components/scenario/useBarsFetchJob";
+import { useBarsFetchJob } from "@/components/scenario/useBarsFetchJob";
 import type {
   CreateScenarioRequest,
   Scenario,
@@ -225,7 +222,6 @@ function DetailView({
     quote_currency: s.quote_currency,
     time_window: s.time_window,
     capital: s.capital,
-    granularity: scenarioGranularityToCli(s.granularity),
     timezone: s.timezone,
     calendar: s.calendar,
     venue: s.venue,
@@ -253,13 +249,6 @@ function DetailView({
       time_window: timeWindowEquals(req.time_window, s.time_window)
         ? null
         : req.time_window,
-      // Compare the current UI granularity strings case-insensitively.
-      // ScenarioForm intentionally owns the fixed operator-facing palette.
-      granularity:
-        req.granularity.trim().toLowerCase() ===
-        scenarioGranularityToCli(s.granularity).toLowerCase()
-          ? null
-          : req.granularity,
       venue: venueEquals(req.venue, s.venue) ? null : req.venue,
       warmup_bars: req.warmup_bars !== s.warmup_bars ? req.warmup_bars : null,
     } satisfies ScenarioMutations);
@@ -434,11 +423,10 @@ function TabBar({
 // ── definition tab ─────────────────────────────────────────────────────────
 
 function DefinitionTab({ s }: { s: Scenario }) {
-  const scenarioGranularity = scenarioGranularityToCli(s.granularity);
-  const [chartGranularity, setChartGranularity] = useState(scenarioGranularity);
+  const [chartGranularity, setChartGranularity] = useState("1h");
   useEffect(() => {
-    setChartGranularity(scenarioGranularity);
-  }, [s.id, scenarioGranularity]);
+    setChartGranularity("1h");
+  }, [s.id]);
 
   // Scenarios are asset-free; the operator chooses which market backs the
   // standalone preview. `chartAsset` is a bare symbol (e.g. "BTC"); it is
@@ -928,14 +916,11 @@ function buildBarsFetchSpec(s: Scenario, granularity?: string, asset?: string) {
   // Scenarios are asset-free; the operator picks which market backs the
   // standalone preview. Default to BTC/USD when none is selected.
   const selectedAsset = asset ?? "BTC/USD";
-  const selectedGranularity = granularity ?? scenarioGranularityToCli(s.granularity);
-  const scenarioGranularity = scenarioGranularityToCli(s.granularity);
+  const selectedGranularity = granularity ?? "1h";
   const invalidateQueryKeys: Array<readonly unknown[]> = [
     scenarioChartKeys.scenario(s.id, selectedGranularity, selectedAsset),
+    ["bars-cache", s.bar_cache_policy.cache_key] as const,
   ];
-  if (selectedGranularity === scenarioGranularity) {
-    invalidateQueryKeys.push(["bars-cache", s.bar_cache_policy.cache_key] as const);
-  }
   return {
     asset: selectedAsset,
     granularity: selectedGranularity,

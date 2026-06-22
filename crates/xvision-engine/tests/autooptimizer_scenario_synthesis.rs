@@ -1,9 +1,9 @@
 use chrono::{TimeZone, Utc};
 use xvision_engine::autooptimizer::{synthesize_baseline_untouched_scenario, BaselineUntouchedWindow};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::safety::VenueLabel;
 
@@ -32,7 +32,6 @@ fn make_day_scenario() -> Scenario {
             start: dt(2025, 1, 1),
             end: dt(2025, 4, 1),
         },
-        granularity: BarGranularity::Hour1,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -112,7 +111,6 @@ fn preserves_data_source_venue_and_feed() {
     assert_eq!(result.data_source, day.data_source);
     assert_eq!(result.venue, day.venue);
     assert_eq!(result.asset_class, day.asset_class);
-    assert_eq!(result.granularity, day.granularity);
     assert!(result.tags.iter().any(|t| t == "regime:trending_bull"));
     assert!(result.tags.iter().any(|t| t == OPTIMIZER_SCENARIO_TAG));
     assert_eq!(result.regime_label, None);

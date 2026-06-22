@@ -810,7 +810,11 @@ impl Executor {
             .market_data
             .as_ref()
             .map(|ctx| ctx.supported_timeframes(asset_sym))
+<<<<<<< HEAD
             .unwrap_or_else(|| vec![scenario.granularity.canonical()]);
+=======
+            .unwrap_or_else(|| vec![strategy.native_timeframe().as_str().to_string()]);
+>>>>>>> feat/multi-timeframe-strategies
         // F-8 stats: snapshot the global counter so we can log the
         // per-run cache-hint delta at finalize.
         let cache_hint_start =
@@ -869,7 +873,7 @@ impl Executor {
         // observations across bars for within-run recall. Scoped to this run;
         // dropped when the run completes. Not persisted to SQLite (R3).
         let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
-        let bar_secs = scenario.granularity.seconds();
+        let bar_secs = (cadence_min.max(1) as u64) * 60;
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
         // Lifetime equals the run loop; dropped when the run completes.
@@ -4539,7 +4543,7 @@ impl Executor {
                     bar_low: bar.low,
                     bar_close: bar.close,
                     decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                    bar_duration_ms: u64::from(strategy.manifest.decision_cadence_minutes.max(1)) * 60_000,
                 })
                 .await
         };
@@ -4788,7 +4792,7 @@ impl Executor {
                     bar_low: reference,
                     bar_close: reference,
                     decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                    bar_duration_ms: u64::from(strategy.manifest.decision_cadence_minutes.max(1)) * 60_000,
                 })
                 .await;
 
