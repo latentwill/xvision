@@ -1,15 +1,13 @@
-//! `xvn live` — guarded CLI verb for launching a real-money (mainnet) or testnet live run.
+//! `xvn live` — CLI verb for launching a live run against mainnet or testnet.
 //!
-//! Real-money (`--network mainnet`) requires the explicit
-//! `--i-understand-real-money` flag. The verb builds a `LiveConfig` with
-//! `venue_label = VenueLabel::Live` (mainnet) or `VenueLabel::Testnet` and
-//! submits it through the engine's `eval::run` entry point — the same path
-//! the dashboard and `xvn eval run --mode live` use.
+//! The verb builds a `LiveConfig` with `venue_label = VenueLabel::Live`
+//! (mainnet) or `VenueLabel::Testnet` and submits it through the engine's
+//! `eval::run` entry point — the same path the dashboard and
+//! `xvn eval run --mode live` use.
 //!
 //! Safety: `live` is in the remote-CLI denylist in
 //! `crates/xvision-dashboard/src/cli_jobs/allowlist.rs` — it must NEVER be
 //! executed over the remote job API because it can settle real funds.
-
 use anyhow::{bail, Result};
 use clap::Args;
 
@@ -20,6 +18,7 @@ use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::RunMode;
 use xvision_engine::eval::scenario::{AssetClass, AssetRef};
 use xvision_engine::safety::VenueLabel;
+use xvision_engine::safety::SafetyLimits;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
@@ -35,16 +34,10 @@ pub struct LiveArgs {
     #[arg(long, default_value = "byreal")]
     pub venue: String,
 
-    /// Network environment: `mainnet` (real money, requires
-    /// `--i-understand-real-money`) or `testnet` (on-chain but no real funds).
+    /// Network environment: `mainnet` (real money) or `testnet` (on-chain
+    /// but no real funds).
     #[arg(long, default_value = "mainnet")]
     pub network: String,
-
-    /// Explicit acknowledgement that this run will settle REAL funds.
-    /// Required when `--network mainnet`. Omitting this flag for a mainnet
-    /// run is a usage error; testnet ignores it.
-    #[arg(long)]
-    pub i_understand_real_money: bool,
 
     /// Strategy id (ULID/string) as returned by `xvn strategy ls`.
     #[arg(long)]
@@ -100,12 +93,10 @@ pub struct LiveArgs {
 // Pure builder — unit-testable, no I/O
 // ---------------------------------------------------------------------------
 
-/// Build a `LiveConfig` from `LiveArgs` applying the real-money guard.
+/// Build a `LiveConfig` from `LiveArgs`.
 ///
 /// Logic:
 ///  - `network = mainnet` ⇒ `venue_label = VenueLabel::Live`; testnet ⇒ `VenueLabel::Testnet`.
-///  - If the resolved label is `Live` and `!confirm_real_money` ⇒ `Err` whose
-///    message contains `--i-understand-real-money`.
 ///  - `broker_creds_ref = venue`.
 pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
     let venue_label = match args.network.to_ascii_lowercase().as_str() {
@@ -113,15 +104,6 @@ pub fn build_live_launch(args: &LiveArgs) -> Result<LiveConfig> {
         "testnet" => VenueLabel::Testnet,
         other => bail!("unknown --network {other:?}; expected one of: mainnet | testnet"),
     };
-
-    // Real-money guard: mainnet without the explicit ack is a hard error.
-    if venue_label == VenueLabel::Live && !args.i_understand_real_money {
-        bail!(
-            "Launching a mainnet live run requires the explicit flag \
-             --i-understand-real-money (real funds will be at risk). \
-             Re-run with that flag to proceed."
-        );
-    }
 
     let stop_policy = StopPolicy {
         bar_limit: args.bar_limit,
@@ -171,24 +153,37 @@ pub async fn run(args: LiveArgs) -> CliResult<()> {
     // single-threaded CLI entry point (no competing reads at this stage).
     std::env::set_var("BYREAL_NETWORK", &network_env);
 
-    let live_config = build_live_launch(&args).map_err(|e| CliError {
+    let mut live_config = build_live_launch(&args).map_err(|e| CliError {
         exit: XvnExit::Usage,
         source: e,
     })?;
 
-    // Validate the config before touching the DB.
     live_config.validate().map_err(|e| CliError {
         exit: XvnExit::Usage,
         source: anyhow::anyhow!("live config validation failed: {e}"),
     })?;
 
+    // Open context EARLY — pre-flight needs it
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
 
+    // Pre-flight pipeline
+    let effective_max_dd = crate::commands::live_preflight::run_preflight(
+        &ctx, &args, &live_config,
+    ).await?;
+
+    // Thread max drawdown into SafetyLimits
+    if (effective_max_dd - 0.0).abs() > 1e-9 {
+        live_config.safety_limits = Some(SafetyLimits {
+            max_drawdown_usd: Some(effective_max_dd),
+            ..Default::default()
+        });
+    }
+
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
-        scenario_id: String::new(), // live runs have no historical scenario
+        scenario_id: String::new(),
         mode: RunMode::Live,
         params_override: None,
         live_config: Some(live_config),
@@ -202,13 +197,9 @@ pub async fn run(args: LiveArgs) -> CliResult<()> {
         trajectory_mode: RunTrajectoryMode::Live,
     };
 
-    // Banner — operator-facing, never on stdout.
     eprintln!(
-        "Starting live run — strategy={} venue={} network={} venue_label={}",
-        req.agent_id,
-        args.venue,
-        args.network,
-        args.network.to_ascii_lowercase(),
+        "Starting live run — strategy={} venue={} network={}",
+        req.agent_id, args.venue, args.network,
     );
 
     let run = eval::run(&ctx, req).await.map_err(|e| CliError {
@@ -224,7 +215,6 @@ pub async fn run(args: LiveArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    // Non-JSON path: print the run id so the operator can `xvn eval watch <id>`.
     println!("Live run launched: {}", run.id);
     println!("  status   {}", run.status.as_str());
     println!("  strategy {}", run.agent_id);
@@ -254,7 +244,6 @@ mod tests {
         LiveArgs {
             venue: "byreal".into(),
             network: "mainnet".into(),
-            i_understand_real_money: false,
             strategy: "st_01TEST".into(),
             display_name: "Test live run".into(),
             asset: "BTC/USD".into(),
@@ -265,25 +254,16 @@ mod tests {
             warmup_bars: 200,
             xvn_home: None,
             json: false,
+            yes: false,
+            max_drawdown: None,
         }
     }
 
-    // (a) mainnet + no ack ⇒ Err mentioning --i-understand-real-money
-    #[test]
-    fn mainnet_without_ack_is_rejected() {
-        let args = base_args(); // i_understand_real_money = false, network = mainnet
-        let err = build_live_launch(&args).unwrap_err();
-        assert!(
-            err.to_string().contains("--i-understand-real-money"),
-            "error must mention --i-understand-real-money; got: {err}"
-        );
-    }
 
-    // (b) mainnet + ack ⇒ Ok with venue_label==Live and broker_creds_ref=="byreal"
+    // (a) mainnet ⇒ Ok with venue_label==Live and broker_creds_ref=="byreal"
     #[test]
-    fn mainnet_with_ack_builds_live_config() {
-        let mut args = base_args();
-        args.i_understand_real_money = true;
+    fn mainnet_builds_live_config() {
+        let args = base_args();
         let cfg = build_live_launch(&args).expect("should build ok");
         assert_eq!(cfg.venue_label, VenueLabel::Live);
         assert_eq!(cfg.broker_creds_ref, "byreal");
@@ -291,13 +271,13 @@ mod tests {
         assert_eq!(cfg.capital.initial, 1_000.0);
     }
 
-    // (c) testnet + no ack ⇒ Ok with venue_label==Testnet
+    // (b) testnet ⇒ Ok with venue_label==Testnet
     #[test]
-    fn testnet_without_ack_is_ok() {
+    fn testnet_builds_config() {
+
         let mut args = base_args();
         args.network = "testnet".into();
-        // i_understand_real_money remains false
-        let cfg = build_live_launch(&args).expect("testnet must not require ack");
+        let cfg = build_live_launch(&args).expect("testnet must build a config");
         assert_eq!(cfg.venue_label, VenueLabel::Testnet);
         assert_eq!(cfg.broker_creds_ref, "byreal");
     }
@@ -314,8 +294,7 @@ mod tests {
     // Extra: asset ref is parsed correctly (BTC from BTC/USD)
     #[test]
     fn asset_ref_parsed_from_slash_pair() {
-        let mut args = base_args();
-        args.i_understand_real_money = true;
+        let args = base_args();
         let cfg = build_live_launch(&args).unwrap();
         assert_eq!(cfg.assets.len(), 1);
         assert_eq!(cfg.assets[0].symbol, "BTC");
@@ -326,7 +305,7 @@ mod tests {
     #[test]
     fn stop_policy_flows_through() {
         let mut args = base_args();
-        args.i_understand_real_money = true;
+
         args.bar_limit = Some(100);
         args.decision_limit = Some(50);
         args.time_limit_secs = Some(3600);
