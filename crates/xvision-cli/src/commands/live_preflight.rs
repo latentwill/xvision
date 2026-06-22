@@ -356,7 +356,7 @@ pub async fn run_preflight(
     args: &LiveArgs,
     _live_config: &LiveConfig,
 ) -> CliResult<f64> {
-    let network_is_mainnet = args.network.to_ascii_lowercase() == "mainnet";
+    let network_is_mainnet = args.network.eq_ignore_ascii_case("mainnet");
 
     eprintln!("Pre-flight checks (7 gates)...");
 
