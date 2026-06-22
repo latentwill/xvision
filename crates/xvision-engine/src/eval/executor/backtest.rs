@@ -810,11 +810,7 @@ impl Executor {
             .market_data
             .as_ref()
             .map(|ctx| ctx.supported_timeframes(asset_sym))
-<<<<<<< HEAD
-            .unwrap_or_else(|| vec![scenario.granularity.canonical()]);
-=======
             .unwrap_or_else(|| vec![strategy.native_timeframe().as_str().to_string()]);
->>>>>>> feat/multi-timeframe-strategies
         // F-8 stats: snapshot the global counter so we can log the
         // per-run cache-hint delta at finalize.
         let cache_hint_start =

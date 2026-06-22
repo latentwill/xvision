@@ -1493,10 +1493,7 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start: now, end: now },
-<<<<<<< HEAD
-        granularity: cfg.granularity,
-=======
->>>>>>> feat/multi-timeframe-strategies
+
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -3820,18 +3817,12 @@ async fn load_market_data_context_for_scenario(
     assets: &[xvision_core::trading::AssetSymbol],
 ) -> ApiResult<crate::eval::market_data::MarketDataContext> {
     let mut market_data = crate::eval::market_data::MarketDataContext::new();
-<<<<<<< HEAD
-    for asset in assets {
-        let bars = market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset).await?);
-        market_data.insert_series(*asset, scenario.granularity, bars);
-=======
     let native_granularity = crate::strategies::bar_granularity_for_cadence(
         strategy.manifest.decision_cadence_minutes,
     );
     for asset in assets {
         let bars = market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
         market_data.insert_series(*asset, native_granularity, bars);
->>>>>>> feat/multi-timeframe-strategies
     }
     for (tf, support) in strategy.supported_timeframes() {
         if support == crate::strategies::TimeframeSupport::Native {
@@ -3937,11 +3928,7 @@ async fn build_backtest_executor(
             strategy.manifest.decision_cadence_minutes,
         );
         for asset in &active {
-<<<<<<< HEAD
-            match market_data.series(*asset, scenario.granularity) {
-=======
             match market_data.series(*asset, native_granularity) {
->>>>>>> feat/multi-timeframe-strategies
                 Some(bars) if !bars.is_empty() => {
                     asset_bars.insert(*asset, bars.to_vec());
                 }

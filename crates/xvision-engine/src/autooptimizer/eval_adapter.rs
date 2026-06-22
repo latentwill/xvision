@@ -579,18 +579,12 @@ async fn build_market_data_context(
     assets: &[AssetSymbol],
 ) -> Result<MarketDataContext> {
     let mut market_data = MarketDataContext::new();
-<<<<<<< HEAD
-    for asset in assets {
-        let bars = load_ohlcv_for_scenario(ctx, scenario, *asset).await?;
-        market_data.insert_series(*asset, scenario.granularity, bars);
-=======
     let native_granularity = crate::strategies::bar_granularity_for_cadence(
         strategy.manifest.decision_cadence_minutes,
     );
     for asset in assets {
         let bars = load_ohlcv_for_scenario(ctx, scenario, *asset, native_granularity).await?;
         market_data.insert_series(*asset, native_granularity, bars);
->>>>>>> feat/multi-timeframe-strategies
     }
     for (tf, support) in strategy.supported_timeframes() {
         if support == crate::strategies::TimeframeSupport::Native {
@@ -662,11 +656,7 @@ async fn build_cached_backtest_executor(
     let mut asset_bars = BTreeMap::new();
     for asset in &active {
         let bars = market_data
-<<<<<<< HEAD
-            .series(*asset, scenario.granularity)
-=======
             .series(*asset, native_granularity)
->>>>>>> feat/multi-timeframe-strategies
             .with_context(|| format!("missing native bars for {}", asset.as_alpaca_pair()))?;
         asset_bars.insert(*asset, bars.to_vec());
     }
@@ -715,11 +705,7 @@ async fn load_ohlcv_for_scenario(
     let asset_pair = asset.as_alpaca_pair();
     let cache_key = bars::compute_cache_key(
         &asset_pair,
-<<<<<<< HEAD
-        scenario.granularity,
-=======
         granularity,
->>>>>>> feat/multi-timeframe-strategies
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
