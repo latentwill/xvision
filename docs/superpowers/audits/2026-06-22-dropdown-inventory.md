@@ -4,7 +4,7 @@
 
 | Category | Count | Decision |
 |---|---:|---|
-| Signal primitives already compliant | 17 | Keep / improve primitive |
+| Signal primitives already compliant | 18 | Keep / improve primitive |
 | Searchable strategy/entity pickers | 9 | Migrate first |
 | Native enum selects | 24 | Migrate to SignalSelectMenu |
 | Bespoke comboboxes | 4 | Align or migrate |
