@@ -3645,6 +3645,20 @@ impl Executor {
                 counts.join(", "),
             );
             for (asset, bars) in warmup {
+                // Emit initial-equity chart points for warmup bars so the
+                // dashboard chart shows the full lookback window, not just
+                // bars arriving after the stream enters the live phase.
+                for bar in &bars {
+                    equity_samples_buf.push((bar.timestamp, equity));
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Equity(ChartEquityPoint {
+                            time: bar.timestamp.timestamp(),
+                            equity_usd: equity,
+                        }),
+                    )
+                    .await;
+                }
                 if let Some(hist) = history.get_mut(&asset) {
                     hist.extend(bars);
                 }
@@ -3949,6 +3963,22 @@ impl Executor {
             // Filter gate: when the DSL filter suppressed this bar,
             // skip token counting, fill tracking, and history push.
             // Continue to the next bar so the loop stays alive.
+
+            // Stop-policy time limit: checked BEFORE the filter gate so a
+            // time-limited run always terminates, even when the filter
+            // blocks every bar.  Bar/decision/trade limits stay after the
+            // gate — they count only bars that pass the filter.
+            if let Some(secs) = stop_policy.time_limit_secs {
+                if run_started.elapsed().as_secs() >= secs {
+                    tracing::info!(
+                        target: "xvision_engine::live_executor",
+                        run_id = %run.id,
+                        bar_count,
+                        "live run reached time_limit_secs {secs}; ending stream loop"
+                    );
+                    break;
+                }
+            }
             if outcome.filter_gated {
                 continue;
             }
