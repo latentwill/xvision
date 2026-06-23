@@ -110,17 +110,8 @@ pub async fn aggregate_run_token_totals(pool: &SqlitePool, eval_run_id: &str) ->
         return aggregate_run_actual_tokens(pool, eval_run_id).await;
     }
 
-    let mut input_tokens = sum_in.and_then(|n| u64::try_from(n).ok());
-    let mut output_tokens = sum_out.and_then(|n| u64::try_from(n).ok());
-    if input_tokens.is_none() || output_tokens.is_none() {
-        let (actual_input, actual_output) = load_run_actual_tokens(pool, eval_run_id).await;
-        if input_tokens.is_none() {
-            input_tokens = actual_input.and_then(|n| u64::try_from(n).ok());
-        }
-        if output_tokens.is_none() {
-            output_tokens = actual_output.and_then(|n| u64::try_from(n).ok());
-        }
-    }
+    let input_tokens = sum_in.and_then(|n| u64::try_from(n).ok());
+    let output_tokens = sum_out.and_then(|n| u64::try_from(n).ok());
     // `cost_estimate_complete` is true only when *every* row had a known
     // cost; one NULL row tips it to false. A run with zero rows is handled
     // above; we only get here when rows > 0.
@@ -136,7 +127,7 @@ pub async fn aggregate_run_token_totals(pool: &SqlitePool, eval_run_id: &str) ->
     }
 }
 
-async fn load_run_actual_tokens(pool: &SqlitePool, eval_run_id: &str) -> (Option<i64>, Option<i64>) {
+async fn aggregate_run_actual_tokens(pool: &SqlitePool, eval_run_id: &str) -> RunTokenTotals {
     let row: Result<Option<(Option<i64>, Option<i64>)>, _> = sqlx::query_as(
         "SELECT actual_input_tokens, actual_output_tokens \
          FROM eval_runs WHERE id = ?",
@@ -145,11 +136,9 @@ async fn load_run_actual_tokens(pool: &SqlitePool, eval_run_id: &str) -> (Option
     .fetch_optional(pool)
     .await;
 
-    row.ok().flatten().unwrap_or((None, None))
-}
-
-async fn aggregate_run_actual_tokens(pool: &SqlitePool, eval_run_id: &str) -> RunTokenTotals {
-    let (actual_input, actual_output) = load_run_actual_tokens(pool, eval_run_id).await;
+    let Ok(Some((actual_input, actual_output))) = row else {
+        return RunTokenTotals::default();
+    };
     if actual_input.is_none() && actual_output.is_none() {
         return RunTokenTotals::default();
     }
@@ -277,126 +266,5 @@ mod tests {
         assert_eq!(totals.cost_usd_estimate, None);
         assert!(!totals.cost_estimate_complete);
         assert_eq!(totals.model_call_count, 0);
-    }
-
-    #[tokio::test]
-    async fn aggregate_run_token_totals_uses_actuals_when_model_call_tokens_are_null() {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE eval_runs (
-                id TEXT PRIMARY KEY,
-                actual_input_tokens INTEGER,
-                actual_output_tokens INTEGER
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, eval_run_id TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE spans (id TEXT PRIMARY KEY, run_id TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "CREATE TABLE model_calls (
-                span_id TEXT,
-                input_token_count INTEGER,
-                output_token_count INTEGER,
-                cost_usd REAL
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens)
-             VALUES ('run-1', 410969, 34665)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO agent_runs (id, eval_run_id) VALUES ('agent-run-1', 'run-1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO spans (id, run_id) VALUES ('span-1', 'agent-run-1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO model_calls (span_id, input_token_count, output_token_count, cost_usd) VALUES ('span-1', NULL, NULL, NULL)")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let totals = aggregate_run_token_totals(&pool, "run-1").await;
-
-        assert_eq!(totals.input_tokens, Some(410_969));
-        assert_eq!(totals.output_tokens, Some(34_665));
-        assert_eq!(totals.model_call_count, 1);
-        assert!(!totals.cost_estimate_complete);
-    }
-
-    #[tokio::test]
-    async fn aggregate_run_token_totals_prefers_model_call_tokens_when_present() {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE eval_runs (
-                id TEXT PRIMARY KEY,
-                actual_input_tokens INTEGER,
-                actual_output_tokens INTEGER
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, eval_run_id TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE spans (id TEXT PRIMARY KEY, run_id TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "CREATE TABLE model_calls (
-                span_id TEXT,
-                input_token_count INTEGER,
-                output_token_count INTEGER,
-                cost_usd REAL
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens)
-             VALUES ('run-1', 999999, 999999)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO agent_runs (id, eval_run_id) VALUES ('agent-run-1', 'run-1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO spans (id, run_id) VALUES ('span-1', 'agent-run-1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO model_calls (span_id, input_token_count, output_token_count, cost_usd) VALUES ('span-1', 100, 25, 0.01)")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let totals = aggregate_run_token_totals(&pool, "run-1").await;
-
-        assert_eq!(totals.input_tokens, Some(100));
-        assert_eq!(totals.output_tokens, Some(25));
-        assert_eq!(totals.cost_usd_estimate, Some(0.01));
-        assert!(totals.cost_estimate_complete);
-        assert_eq!(totals.model_call_count, 1);
     }
 }

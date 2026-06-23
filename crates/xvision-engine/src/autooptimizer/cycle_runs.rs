@@ -16,12 +16,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
 
 use super::lineage::{row_to_node, LineageNode, SELECT_COLS_PREFIX};
 use super::regime_results::load_regime_results;
 use crate::autooptimizer::config::RegimeSide;
-use crate::eval::report::aggregate_run_token_totals;
 use crate::eval::run::MetricsSummary;
 
 /// One completed (or in-progress) optimizer cycle, aggregated from the lineage
@@ -81,12 +79,12 @@ pub struct CycleCost {
 /// all-`None`, `recorded: false` record rather than an error, so the Live-tab
 /// poll degrades gracefully.
 pub async fn get_cycle_cost(pool: &SqlitePool, cycle_id: &str) -> CycleCost {
-    let (cost_row_present, cost_usd, cycle_input, cycle_output, unpriced_calls) =
-        load_cycle_cost(pool, cycle_id).await;
+    let (cost_usd, cycle_input, cycle_output, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
     let (eval_input, eval_output) = load_cycle_eval_usage(pool, cycle_id).await;
     let input_tokens = add_optional_i64(cycle_input, eval_input);
     let output_tokens = add_optional_i64(cycle_output, eval_output);
-    let recorded = cost_row_present;
+    let recorded =
+        cost_usd.is_some() || input_tokens.is_some() || output_tokens.is_some() || unpriced_calls.is_some();
     CycleCost {
         cycle_id: cycle_id.to_string(),
         cost_usd,
@@ -288,13 +286,12 @@ pub async fn persist_cycle_cost(
     Ok(())
 }
 
-/// `(row_present, cost_usd, input_tokens, output_tokens, unpriced_calls)` for a
-/// cycle, or `row_present = false` with all `None` when no cost row exists / the
-/// table is absent.
+/// `(cost_usd, input_tokens, output_tokens, unpriced_calls)` for a cycle, or all
+/// `None` when no cost row exists / the table is absent.
 async fn load_cycle_cost(
     pool: &SqlitePool,
     cycle_id: &str,
-) -> (bool, Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
+) -> (Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
     let row = sqlx::query(
         "SELECT cost_usd, input_tokens, output_tokens, unpriced_calls \
          FROM cycle_cost WHERE cycle_id = ?",
@@ -306,13 +303,12 @@ async fn load_cycle_cost(
     .flatten();
     match row {
         Some(r) => (
-            true,
             r.try_get("cost_usd").ok(),
             r.try_get("input_tokens").ok(),
             r.try_get("output_tokens").ok(),
             r.try_get("unpriced_calls").ok(),
         ),
-        None => (false, None, None, None, None),
+        None => (None, None, None, None),
     }
 }
 
@@ -323,74 +319,67 @@ fn add_optional_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
     }
 }
 
-fn u64_to_i64_saturating(value: u64) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
-}
-
 async fn enrich_cycle_summaries_with_eval_usage(pool: &SqlitePool, summaries: &mut [CycleRunSummary]) {
-    let cycle_ids: Vec<String> = summaries.iter().map(|summary| summary.cycle_id.clone()).collect();
-    let usage_by_cycle = load_cycles_eval_usage(pool, &cycle_ids).await;
     for summary in summaries {
-        if let Some((eval_input, eval_output)) = usage_by_cycle.get(&summary.cycle_id) {
-            summary.input_tokens = add_optional_i64(summary.input_tokens, *eval_input);
-            summary.output_tokens = add_optional_i64(summary.output_tokens, *eval_output);
-        }
+        let (eval_input, eval_output) = load_cycle_eval_usage(pool, &summary.cycle_id).await;
+        summary.input_tokens = add_optional_i64(summary.input_tokens, eval_input);
+        summary.output_tokens = add_optional_i64(summary.output_tokens, eval_output);
     }
 }
 
-/// Token totals for distinct eval runs linked to cycles by
-/// `MutationGated.eval_run_id` events. Missing tables/JSON support degrade to
-/// an empty map; callers still show the cycle meter.
-async fn load_cycles_eval_usage(
-    pool: &SqlitePool,
-    cycle_ids: &[String],
-) -> HashMap<String, (Option<i64>, Option<i64>)> {
-    if cycle_ids.is_empty() {
-        return HashMap::new();
-    }
-
-    let placeholders = std::iter::repeat("?")
-        .take(cycle_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT DISTINCT cycle_id, json_extract(payload_json, '$.eval_run_id') AS eval_run_id \
+/// `(actual_input_tokens, actual_output_tokens)` summed across distinct eval
+/// runs linked to this cycle by `MutationGated.eval_run_id` events. Missing
+/// tables/JSON support degrade to `None`; callers still show the cycle meter.
+async fn load_cycle_eval_usage(pool: &SqlitePool, cycle_id: &str) -> (Option<i64>, Option<i64>) {
+    let run_ids: Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT DISTINCT json_extract(payload_json, '$.eval_run_id') AS eval_run_id \
          FROM autooptimizer_events \
-         WHERE kind = 'mutation_gated' \
-           AND cycle_id IN ({placeholders}) \
-           AND json_valid(payload_json) \
-           AND json_extract(payload_json, '$.eval_run_id') IS NOT NULL"
-    );
-    let mut query = sqlx::query(&sql);
-    for cycle_id in cycle_ids {
-        query = query.bind(cycle_id);
-    }
-    let rows = match query.fetch_all(pool).await {
-        Ok(rows) => rows,
-        Err(_) => return HashMap::new(),
+         WHERE cycle_id = ? \
+           AND json_extract(payload_json, '$.eval_run_id') IS NOT NULL",
+    )
+    .bind(cycle_id)
+    .fetch_all(pool)
+    .await;
+    let Ok(run_ids) = run_ids else {
+        return (None, None);
     };
 
-    let mut usage_by_cycle: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
-    for row in rows {
-        let Ok(cycle_id) = row.try_get::<String, _>("cycle_id") else {
+    let mut input_tokens = None;
+    let mut output_tokens = None;
+    for (run_id,) in run_ids {
+        if eval_run_has_model_calls(pool, &run_id).await {
             continue;
-        };
-        let Ok(run_id) = row.try_get::<String, _>("eval_run_id") else {
-            continue;
-        };
-        let totals = aggregate_run_token_totals(pool, &run_id).await;
-        let run_input = totals.input_tokens.map(u64_to_i64_saturating);
-        let run_output = totals.output_tokens.map(u64_to_i64_saturating);
-        let entry = usage_by_cycle.entry(cycle_id).or_insert((None, None));
-        entry.0 = add_optional_i64(entry.0, run_input);
-        entry.1 = add_optional_i64(entry.1, run_output);
+        }
+        let (run_input, run_output) = load_eval_run_actual_usage(pool, &run_id).await;
+        input_tokens = add_optional_i64(input_tokens, run_input);
+        output_tokens = add_optional_i64(output_tokens, run_output);
     }
-    usage_by_cycle
+    (input_tokens, output_tokens)
 }
 
-async fn load_cycle_eval_usage(pool: &SqlitePool, cycle_id: &str) -> (Option<i64>, Option<i64>) {
-    let usage = load_cycles_eval_usage(pool, &[cycle_id.to_string()]).await;
-    usage.get(cycle_id).copied().unwrap_or((None, None))
+async fn eval_run_has_model_calls(pool: &SqlitePool, eval_run_id: &str) -> bool {
+    let count: Result<i64, _> = sqlx::query_scalar(
+        "SELECT COUNT(*) \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.eval_run_id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_one(pool)
+    .await;
+    count.map(|n| n > 0).unwrap_or(false)
+}
+
+async fn load_eval_run_actual_usage(pool: &SqlitePool, eval_run_id: &str) -> (Option<i64>, Option<i64>) {
+    let row: Result<Option<(Option<i64>, Option<i64>)>, _> = sqlx::query_as(
+        "SELECT actual_input_tokens, actual_output_tokens \
+         FROM eval_runs WHERE id = ?",
+    )
+    .bind(eval_run_id)
+    .fetch_optional(pool)
+    .await;
+    row.ok().flatten().unwrap_or((None, None))
 }
 
 /// Fetch one cycle's summary + all of its nodes (ordered oldest-first), or
@@ -430,7 +419,7 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         .filter(|n| matches!(n.status, super::lineage::LineageStatus::Rejected))
         .count() as i64;
     let node_count = nodes.len() as i64;
-    let (_cost_row_present, cost_usd, cycle_input_tokens, cycle_output_tokens, unpriced_calls) =
+    let (cost_usd, cycle_input_tokens, cycle_output_tokens, unpriced_calls) =
         load_cycle_cost(pool, cycle_id).await;
     let (eval_input_tokens, eval_output_tokens) = load_cycle_eval_usage(pool, cycle_id).await;
     let input_tokens = add_optional_i64(cycle_input_tokens, eval_input_tokens);
@@ -753,7 +742,7 @@ mod tests {
         for ddl in [
             "CREATE TABLE agent_runs (id TEXT PRIMARY KEY, eval_run_id TEXT)",
             "CREATE TABLE spans (id TEXT PRIMARY KEY, run_id TEXT)",
-            "CREATE TABLE model_calls (span_id TEXT, input_token_count INTEGER, output_token_count INTEGER, cost_usd REAL)",
+            "CREATE TABLE model_calls (span_id TEXT)",
         ] {
             sqlx::query(ddl)
                 .execute(&pool)
@@ -794,7 +783,7 @@ mod tests {
         .expect("insert eval run");
         sqlx::query(
             "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
-             VALUES ('run-token-2', 9999, 9999)",
+             VALUES ('run-token-2', 1000, 1000)",
         )
         .execute(&pool)
         .await
@@ -807,7 +796,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert span");
-        sqlx::query("INSERT INTO model_calls (span_id, input_token_count, output_token_count, cost_usd) VALUES ('span-2', 1000, 1000, 0.01)")
+        sqlx::query("INSERT INTO model_calls (span_id) VALUES ('span-2')")
             .execute(&pool)
             .await
             .expect("insert model call");
@@ -846,46 +835,19 @@ mod tests {
         .expect("insert model-call-backed event");
 
         let summaries = list_cycle_runs(&pool, 10, 0).await.expect("list cycles");
-        assert_eq!(summaries[0].input_tokens, Some(1500));
-        assert_eq!(summaries[0].output_tokens, Some(1110));
+        assert_eq!(summaries[0].input_tokens, Some(500));
+        assert_eq!(summaries[0].output_tokens, Some(110));
 
         let detail = get_cycle_run(&pool, cycle_id)
             .await
             .expect("get cycle")
             .expect("cycle exists");
-        assert_eq!(detail.summary.input_tokens, Some(1500));
-        assert_eq!(detail.summary.output_tokens, Some(1110));
+        assert_eq!(detail.summary.input_tokens, Some(500));
+        assert_eq!(detail.summary.output_tokens, Some(110));
 
         let cost = get_cycle_cost(&pool, cycle_id).await;
         assert!(cost.recorded);
-        assert_eq!(cost.input_tokens, Some(1500));
-        assert_eq!(cost.output_tokens, Some(1110));
-
-        sqlx::query(
-            "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
-             VALUES ('run-token-3', 7, 8)",
-        )
-        .execute(&pool)
-        .await
-        .expect("insert eval run without cycle cost");
-        let no_cost_payload = serde_json::json!({
-            "type": "mutation_gated",
-            "eval_run_id": "run-token-3"
-        })
-        .to_string();
-        sqlx::query(
-            "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts) \
-             VALUES ('sess-token', 'cycle-no-cost', 'mutation_gated', ?, ?)",
-        )
-        .bind(&no_cost_payload)
-        .bind(ts)
-        .execute(&pool)
-        .await
-        .expect("insert event without cycle cost");
-
-        let no_cost = get_cycle_cost(&pool, "cycle-no-cost").await;
-        assert!(!no_cost.recorded);
-        assert_eq!(no_cost.input_tokens, Some(7));
-        assert_eq!(no_cost.output_tokens, Some(8));
+        assert_eq!(cost.input_tokens, Some(500));
+        assert_eq!(cost.output_tokens, Some(110));
     }
 }
