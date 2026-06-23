@@ -249,6 +249,7 @@ async fn get_eval_run_completed_has_flat_metric_fields() {
         inference_cost_quote_total: None,
         net_return_pct: None,
         baselines: None,
+        ..Default::default()
     };
     store.finalize(&run_id, &metrics).await.unwrap();
 

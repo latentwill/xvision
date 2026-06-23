@@ -3060,6 +3060,7 @@ mod tests {
                 fill_size: Some(0.1),
                 fee: Some(1.0),
                 pnl_realized: None,
+                delayed: false,
             })
             .await
             .unwrap();
@@ -3073,6 +3074,7 @@ mod tests {
             inference_cost_quote_total: None,
             net_return_pct: None,
             baselines: None,
+            ..Default::default()
         };
         store.finalize(&run.id, &metrics).await.unwrap();
         run.id

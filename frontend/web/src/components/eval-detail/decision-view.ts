@@ -53,6 +53,9 @@ export type TimelineDecision = {
   /** Exit reason for mechanistic strategy decisions. Present when the
    *  backend populates `exit_reason` on the `DecisionRowDto`. */
   exit_reason?: string | null;
+  /** true when the decision was accepted on a stale bar (bar age >
+   *  stale-data-max-age-ms). Live/forward-test only. */
+  delayed?: boolean;
 };
 
 const SYNTHETIC_MARKERS = [
@@ -231,7 +234,7 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
   return rows.map((row) => {
     const phase = derivePhase(row);
     if (phase === "filtered") {
-      return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
+      return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset, delayed: row.delayed };
     }
     const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
     // exit_reason: either a future DTO field or extracted from the "sltp: <reason>" justification prefix
@@ -254,6 +257,7 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
       pnl: row.pnl_realized,
       asset: row.asset,
       exit_reason,
+      delayed: row.delayed,
     };
   });
 }

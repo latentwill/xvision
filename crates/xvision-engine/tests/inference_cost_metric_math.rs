@@ -97,6 +97,7 @@ fn base_metrics() -> MetricsSummary {
         baselines: None,
         inference_cost_quote_total: None,
         net_return_pct: None,
+        ..Default::default()
     }
 }
 
@@ -295,6 +296,7 @@ fn inference_cost_metric_backward_compat_new_fields_round_trip() {
         baselines: None,
         inference_cost_quote_total: Some(15.50),
         net_return_pct: Some(1.845),
+        ..Default::default()
     };
     let json = serde_json::to_string(&m).unwrap();
     let m2: MetricsSummary = serde_json::from_str(&json).unwrap();

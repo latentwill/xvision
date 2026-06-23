@@ -83,6 +83,9 @@ pub struct DecisionRow {
     pub fill_size: Option<f64>,
     pub fee: Option<f64>,
     pub pnl_realized: Option<f64>,
+    /// True when the decision bar's age exceeds the configured
+    /// stale-data threshold. Only set in live/forward-test mode.
+    pub delayed: bool,
 }
 
 async fn eval_runs_has_column(pool: &SqlitePool, column: &str) -> Result<bool> {
@@ -1070,8 +1073,8 @@ impl RunStore {
         sqlx::query(
             "INSERT INTO eval_decisions \
              (run_id, decision_index, timestamp, asset, action, conviction, justification, reasoning, \
-              order_size, fill_price, fill_size, fee, pnl_realized) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              order_size, fill_price, fill_size, fee, pnl_realized, delayed) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.run_id)
         .bind(row.decision_index as i64)
@@ -1086,6 +1089,7 @@ impl RunStore {
         .bind(row.fill_size)
         .bind(row.fee)
         .bind(row.pnl_realized)
+        .bind(row.delayed)
         .execute(&self.pool)
         .await
         .with_context(|| {
@@ -1198,7 +1202,7 @@ impl RunStore {
     pub async fn read_decisions(&self, run_id: &str) -> Result<Vec<DecisionRow>> {
         let rows = sqlx::query(
             "SELECT run_id, decision_index, timestamp, asset, action, conviction, justification, reasoning, \
-                    order_size, fill_price, fill_size, fee, pnl_realized \
+                    order_size, fill_price, fill_size, fee, pnl_realized, delayed \
              FROM eval_decisions WHERE run_id = ? ORDER BY decision_index ASC",
         )
         .bind(run_id)
@@ -2310,6 +2314,7 @@ fn row_to_decision(row: &sqlx::sqlite::SqliteRow) -> Result<DecisionRow> {
         fill_size: row.try_get("fill_size").context("read fill_size")?,
         fee: row.try_get("fee").context("read fee")?,
         pnl_realized: row.try_get("pnl_realized").context("read pnl_realized")?,
+        delayed: row.try_get("delayed").context("read delayed")?,
     })
 }
 

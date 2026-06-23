@@ -199,6 +199,12 @@ const MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA: &str =
 /// single `sqlx::query` cannot batch. Idempotent — all DDL uses
 /// `CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`.
 const MIGRATION_069_NANOCHAT: &str = include_str!("../../migrations/069_nanochat_models.sql");
+
+/// Migration 071: adds `delayed` BOOLEAN column to `eval_decisions`
+/// for graceful LLM delay tracking — `true` when the decision bar's
+/// age exceeds the configured stale-data threshold.
+const MIGRATION_071_DECISIONS_DELAYED: &str =
+    include_str!("../../migrations/071_decisions_delayed.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -515,6 +521,8 @@ impl ApiContext {
         import_legacy_lineage_db(&pool, xvn_home).await;
         // Migration 069: nanochat filter agent tables.
         migrate_nanochat_tables(&pool).await?;
+        // Migration 071: decisions.delayed for graceful LLM delay tracking
+        sqlx::query(MIGRATION_071_DECISIONS_DELAYED).execute(&pool).await?;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the

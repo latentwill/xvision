@@ -316,6 +316,17 @@ pub struct RunSummary {
     /// / pre-first-fill — surfaced as "—" in the UI, NEVER a faked 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unrealized_pnl_usd: Option<f64>,
+    /// Live/forward-test only: bars where dispatch was skipped because
+    /// the agent was still processing a previous bar.
+    #[serde(default)]
+    pub skipped_dispatches: u64,
+    /// Live/forward-test only: decisions accepted but flagged delayed
+    /// because the bar was stale (age > stale-data-max-age-ms).
+    #[serde(default)]
+    pub delayed_decisions: u64,
+    /// Live/forward-test only: agents force-cancelled via --max-agent-ms.
+    #[serde(default)]
+    pub forced_cancels: u64,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -362,6 +373,7 @@ pub struct DecisionRowDto {
     pub fill_size: Option<f64>,
     pub fee: Option<f64>,
     pub pnl_realized: Option<f64>,
+    pub delayed: bool,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1092,6 +1104,7 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
             fill_size: d.fill_size,
             fee: d.fee,
             pnl_realized: d.pnl_realized,
+            delayed: d.delayed,
         })
         .collect();
 
@@ -5435,6 +5448,11 @@ fn summarise(run: Run) -> RunSummary {
         ),
         None => (None, None, None, None, None),
     };
+
+    let (skipped_dispatches, delayed_decisions, forced_cancels) = match &run.metrics {
+        Some(m) => (m.skipped_dispatches, m.delayed_decisions, m.forced_cancels),
+        None => (0, 0, 0),
+    };
     RunSummary {
         id: run.id,
         agent_id: run.agent_id,
@@ -5466,6 +5484,9 @@ fn summarise(run: Run) -> RunSummary {
         live_config: run.live_config,
         source: run.source,
         unrealized_pnl_usd: run.unrealized_pnl_usd,
+        skipped_dispatches,
+        delayed_decisions,
+        forced_cancels,
     }
 }
 
