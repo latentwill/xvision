@@ -129,9 +129,6 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
     <section data-testid="capital-risk-strip" aria-label="Capital risk">
       <Card className="px-5 py-3">
         {!agg.hasData ? (
-          // Below the data floor: honest insufficient-data state. NOT a $0 grid.
-          // When live/paper runs exist but no real capital is deployed, surface
-          // the paper-trading status instead of a generic "no data" message.
           <div
             data-testid="capital-risk-empty"
             className="flex items-center gap-2 text-[12px] leading-5"
@@ -140,9 +137,7 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
               {DASH}
             </span>
             <span className="text-text-3">
-              {agg.liveCount > 0
-                ? "Capital risk — paper trading active; no live capital deployed."
-                : "Capital risk — insufficient data; no live capital deployed yet."}
+              Capital risk — insufficient data; no live capital deployed yet.
             </span>
             <Link
               to="/live"
