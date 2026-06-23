@@ -58,7 +58,6 @@ import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
 import { buildDeployReadiness } from "@/features/home/deploy-readiness";
 import { aggregateCapitalRisk } from "@/features/home/capital-risk";
-import { failedRunNags } from "@/features/home/failed-runs";
 import {
   computeSinceDelta,
   persistVisitOnce,
@@ -249,22 +248,11 @@ export function HomeRoute() {
     staleTime: 60_000,
     retry: false,
   });
-
   const attentionItems = buildAttention({
-    runs: runs.data ?? [],
-    providers: providers.data?.providers,
     brokers: brokers.data,
   });
 
   const liveness = agentRuns.data ? livenessCounts(agentRuns.data) : null;
-
-  const readinessChecks = buildDeployReadiness({
-    providers: providers.data?.providers,
-    brokers: brokers.data,
-    brokerTest: brokerTest.data,
-    safety: safety.data,
-    inflightRuns: inflightRuns.data ?? [],
-  });
 
   // 8s4: capital-risk strip aggregate. REUSES the live-deployments poll above
   // (no second fetch). With zero live deployments we say nothing — never imply
@@ -325,9 +313,6 @@ export function HomeRoute() {
           <OptimizerPanel />
         </div>
 
-        {/* 8wn: slim cost rollup strip — optimizer-adjacent (spend is dominated
-            by optimizer cycles + eval runs). Full-width inline strip, no side
-            column / popup. Honest empty state when spend is null / cap unset. */}
         <div className="xvn-card-in" style={{ animationDelay: "175ms" }}>
           <CostRollupStrip
             sinceLastVisit={costSinceVisit.data ?? null}
@@ -351,32 +336,12 @@ export function HomeRoute() {
 // ─── attention rollup (nag items only — perf-drop/eval-failure live in other sections) ──
 
 function buildAttention(input: {
-  runs: RunSummary[];
-  providers: ProviderRow[] | undefined;
   brokers: BrokersReport | undefined;
 }): AttentionItem[] {
   const out: AttentionItem[] = [];
 
-  // 1zs: stale-infra-failure nags lead — an upstream-broke run still sitting
-  // failed is more actionable than a missing config key. Config nags follow
-  // (lowest priority per §6). failedRunNags already returns AttentionItem-
-  // compatible rows (tone/title/detail/link).
-  out.push(...failedRunNags(input.runs));
-
-  const missingKeys = (input.providers ?? []).filter(
-    (p) => !p.synthetic && p.api_key_env !== "" && !p.api_key_set,
-  );
-  if (missingKeys.length > 0) {
-    out.push({
-      tone: "warn",
-      title: `${missingKeys.length} provider${missingKeys.length === 1 ? "" : "s"} missing API key`,
-      detail: missingKeys
-        .map((p) => `${p.name} → ${p.api_key_env}`)
-        .join(", "),
-      link: { to: "/settings/providers", label: "configure" },
-    });
-  }
-
+  // Only live-trading-specific issues belong here — general config
+  // nags and eval failures are surfaced elsewhere on the dashboard.
   if (input.brokers && !input.brokers.alpaca.configured) {
     out.push(brokerAttention(input.brokers.alpaca));
   }

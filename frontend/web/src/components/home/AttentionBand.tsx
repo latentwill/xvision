@@ -1,8 +1,9 @@
 // frontend/web/src/components/home/AttentionBand.tsx
 //
 // Home "live & attention" band (dashboard redesign §2): calm card with
-// live-trading summary, active deployments, and config nags. Rows that
-// have nothing to say render nothing, so the band shrinks gracefully.
+// live-trading summary, active deployments, and live-trading-specific
+// issues (missing broker credentials). General config nags and eval
+// failures are surfaced elsewhere on the dashboard.
 
 import type { LiveDeploymentSummary } from "@/api/types.gen";
 import { Card } from "@/components/primitives/Card";
@@ -11,7 +12,7 @@ import { LiveSummaryStrip } from "./LiveSummaryStrip";
 import { NagStrip, type AttentionItem } from "./NagStrip";
 
 export interface AttentionBandProps {
-  /** Config + stale-infra-failure nags. */
+  /** Live-trading-specific issues (broker credentials). */
   nagItems: AttentionItem[];
   /** Live/paper deployment rows from the home route's 5s poll. */
   deployments?: LiveDeploymentSummary[];
