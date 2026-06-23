@@ -58,8 +58,6 @@ pub struct SafetyLimitCheck {
     pub current_leverage: f64,
     /// Current drawdown from peak equity, as a percentage.
     pub current_loss_pct: f64,
-    /// Current drawdown from peak equity, in USD.
-    pub current_drawdown_usd: f64,
 }
 
 /// A single limit breach. Carries the kind, actual value, and the cap.
@@ -107,15 +105,6 @@ impl SafetyLimits {
                 return Some(LimitBreach {
                     kind: "loss_pct",
                     value: counters.current_loss_pct,
-                    limit: cap,
-                });
-            }
-        }
-        if let Some(cap) = self.max_drawdown_usd {
-            if counters.current_drawdown_usd > cap {
-                return Some(LimitBreach {
-                    kind: "drawdown_usd",
-                    value: counters.current_drawdown_usd,
                     limit: cap,
                 });
             }
@@ -184,26 +173,6 @@ mod tests {
         };
         let breach = limits.check(&high).unwrap();
         assert_eq!(breach.kind, "loss_pct");
-    }
-
-    #[test]
-    fn max_drawdown_usd_breaches() {
-        let limits = SafetyLimits {
-            max_drawdown_usd: Some(100.0),
-            ..Default::default()
-        };
-        let low = SafetyLimitCheck {
-            current_drawdown_usd: 99.0,
-            ..Default::default()
-        };
-        assert!(limits.check(&low).is_none());
-        let high = SafetyLimitCheck {
-            current_drawdown_usd: 100.01,
-            ..Default::default()
-        };
-        let breach = limits.check(&high).unwrap();
-        assert_eq!(breach.kind, "drawdown_usd");
-        assert_eq!(breach.limit, 100.0);
     }
 
     #[test]
