@@ -457,7 +457,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_004).execute(&pool).await?;
         sqlx::query(MIGRATION_005_AGENTS).execute(&pool).await?;
         sqlx::query(MIGRATION_007_SKILLS).execute(&pool).await?;
-        seed_default_skills(&pool).await?;
+        sqlx::query(MIGRATION_010_BARS_CACHE).execute(&pool).await?;
         sqlx::query(MIGRATION_011_SCENARIOS).execute(&pool).await?;
         sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
         sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
@@ -521,16 +521,9 @@ impl ApiContext {
         import_legacy_lineage_db(&pool, xvn_home).await;
         // Migration 069: nanochat filter agent tables.
         migrate_nanochat_tables(&pool).await?;
-        // Migration 071: decisions.delayed for graceful LLM delay tracking.
-        // Idempotent — tolerates "duplicate column" if already applied.
-        if let Err(e) = sqlx::query(MIGRATION_071_DECISIONS_DELAYED).execute(&pool).await {
-            let msg = e.to_string();
-            if msg.contains("duplicate column") {
-                tracing::info!(target: "xvision_engine::migration", "071: column already exists, skipping");
-            } else {
-                return Err(ApiError::Internal(format!("migration 071: {e}")));
-            }
-        }
+        // Migration 071: decisions.delayed for graceful LLM delay tracking
+        sqlx::query(MIGRATION_071_DECISIONS_DELAYED).execute(&pool).await?;
+
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
         // engine continues without a recorder so existing CLI / dash
@@ -984,51 +977,6 @@ async fn apply_eval_foundation_migration(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
-
-/// Seed built-in skills when the `skills` table is empty.  Idempotent —
-/// existing rows are never overwritten.
-async fn seed_default_skills(pool: &SqlitePool) -> ApiResult<()> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM skills")
-        .fetch_one(pool)
-        .await?;
-    if count > 0 {
-        return Ok(());
-    }
-    let now = chrono::Utc::now().to_rfc3339();
-    // ohlcv — OHLCV bar history fetcher
-    sqlx::query(
-        "INSERT INTO skills (skill_id, name, description, kind, config_json, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
-    )
-    .bind("skill-ohlcv")
-    .bind("ohlcv")
-    .bind("Fetch OHLCV bar history for the current decision asset")
-    .bind("tool")
-    .bind("{}")
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await?;
-    // indicator_panel — technical indicator computer
-    sqlx::query(
-        "INSERT INTO skills (skill_id, name, description, kind, config_json, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
-    )
-    .bind("skill-indicator-panel")
-    .bind("indicator_panel")
-    .bind("Compute technical indicators (RSI, MACD, Bollinger, EMA) for the current decision asset")
-    .bind("tool")
-    .bind("{}")
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await?;
-    tracing::info!(
-        target: "xvision_engine::migration",
-        "seeded 2 default skills: ohlcv, indicator_panel"
-    );
-    Ok(())
-}
 async fn migrate_eval_agent_id(pool: &SqlitePool) -> ApiResult<()> {
     let legacy_column = legacy_eval_strategy_column();
     let runs_have_legacy = table_has_column(pool, "eval_runs", &legacy_column).await?;
