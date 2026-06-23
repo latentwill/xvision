@@ -1,99 +1,49 @@
+// frontend/web/src/components/home/AttentionBand.test.tsx
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
 
-import type { RunSummary } from "@/api/types.gen";
-import type { StrategyListItem } from "@/api/strategies";
 import { AttentionBand } from "./AttentionBand";
 
 vi.mock("@/api/agent-runs", () => ({
-  agentRunKeys: {
-    all: ["agent-runs"],
-    list: (p?: unknown) => ["agent-runs", "list", p ?? {}],
-  },
-  listAgentRuns: vi.fn().mockResolvedValue([]),
+  agentRunKeys: { list: vi.fn(() => ["agent-runs"]) },
 }));
-
-vi.mock("@/api/eval", () => ({
-  evalKeys: { runs: (p?: unknown) => ["eval", "runs", p ?? {}] },
-  listRuns: vi.fn().mockResolvedValue([]),
-  cancelRun: vi.fn(),
+vi.mock("@/api/agent-runs", () => ({
+  agentRunKeys: { list: vi.fn(() => ["agent-runs"]) },
+  listAgentRuns: vi.fn(() => Promise.resolve([])),
 }));
-
-vi.mock("@/api/eval-review", () => ({
-  listCriticalFindings: vi.fn().mockResolvedValue([]),
+vi.mock("@/api/live-deployments", () => ({
+  deploymentKeys: { list: vi.fn(() => ["deployments"]) },
+  listDeployments: vi.fn(() => Promise.resolve([])),
 }));
-
-vi.mock("@/features/autooptimizer/api", () => ({
-  useOptimizerStatus: vi.fn(() => undefined),
-  usePauseCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
-  useResumeCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
-}));
-
-function strategy(over: Partial<StrategyListItem>): StrategyListItem {
-  return {
-    agent_id: "strat-1",
-    display_name: "Strategy One",
-    template: "trend_follower",
-    decision_cadence_minutes: 60,
-    ...over,
-  };
-}
-
-function renderBand(
-  strategies: StrategyListItem[] = [],
-  runs: RunSummary[] = [],
-  nagItems: Parameters<typeof AttentionBand>[0]["nagItems"] = [],
-) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>
-        <AttentionBand runs={runs} strategies={strategies} nagItems={nagItems} />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
-}
 
 describe("AttentionBand", () => {
-  it("renders the live summary and critical findings rows inside one card", async () => {
-    renderBand();
-    expect(await screen.findByTestId("live-summary-strip")).toBeInTheDocument();
-    expect(screen.getByTestId("critical-findings-row")).toBeInTheDocument();
-    expect(screen.getByTestId("attention-band")).toBeInTheDocument();
-  });
-
-  it("phrases awaiting-first-eval as a routed next action, segmented by origin", () => {
-    renderBand([
-      strategy({ agent_id: "u1" }),
-      strategy({ agent_id: "u2" }),
-      strategy({ agent_id: "o1", origin: "optimizer" }),
-    ]);
-    const action = screen.getByTestId("awaiting-eval-action");
-    expect(action).toHaveTextContent(
-      /evaluate 2 user strategies awaiting first eval/i,
-    );
-    expect(action).toHaveTextContent(
-      /1 optimizer-generated \(evaluated in lineage\)/i,
-    );
-    const link = screen.getByRole("link", {
-      name: /evaluate 2 user strategies/i,
+  function renderBand(nagItems: any[] = []) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
     });
-    expect(link).toHaveAttribute("href", "/eval-runs");
-  });
+    return render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <AttentionBand nagItems={nagItems} deployments={[]} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
 
-  it("omits the awaiting action when every user strategy is evaluated", () => {
-    renderBand([strategy({ agent_id: "done", evaluated: true })]);
-    expect(screen.queryByTestId("awaiting-eval-action")).toBeNull();
+  it("renders the live summary strip", async () => {
+    renderBand();
+    expect(
+      await screen.findByTestId("live-summary-strip"),
+    ).toBeInTheDocument();
   });
 
   it("renders nag items when present and hides the strip when clean", () => {
-    const { unmount } = renderBand([], [], [
+    const { unmount } = renderBand([
       {
-        tone: "warn",
+        tone: "warn" as const,
         title: "1 provider missing API key",
         detail: "OpenAI → OPENAI_API_KEY",
         link: { to: "/settings/providers", label: "configure" },
@@ -104,36 +54,7 @@ describe("AttentionBand", () => {
     );
     unmount();
 
-    renderBand([], [], []);
+    renderBand([]);
     expect(screen.queryByTestId("nag-strip")).toBeNull();
-  });
-
-  it("forwards suspicious failed-run findings into the findings surface", async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={client}>
-          <AttentionBand
-            runs={[]}
-            strategies={[]}
-            nagItems={[]}
-            failedRunFindings={[
-              {
-                id: "failed-run:run-7",
-                runId: "run-7",
-                strategyName: "Gamma",
-                summary: "panic in scoring",
-              },
-            ]}
-          />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-    expect(await screen.findByText("panic in scoring")).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /view run/i }),
-    ).toHaveAttribute("href", "/eval-runs/run-7");
   });
 });

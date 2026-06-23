@@ -58,7 +58,7 @@ import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
 import { buildDeployReadiness } from "@/features/home/deploy-readiness";
 import { aggregateCapitalRisk } from "@/features/home/capital-risk";
-import { failedRunFindings, failedRunNags } from "@/features/home/failed-runs";
+import { failedRunNags } from "@/features/home/failed-runs";
 import {
   computeSinceDelta,
   persistVisitOnce,
@@ -316,11 +316,7 @@ export function HomeRoute() {
 
         <div className="xvn-card-in" style={{ animationDelay: "70ms" }}>
           <AttentionBand
-            runs={runs.data ?? []}
-            findingsRuns={windowedRuns}
-            strategies={strategies.data ?? []}
             nagItems={attentionItems}
-            failedRunFindings={failedRunFindings(windowedRuns)}
             deployments={deployments.data ?? []}
           />
         </div>
