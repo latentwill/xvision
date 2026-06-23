@@ -100,6 +100,19 @@ if [[ "${XVN_AUTOMIGRATE:-0}" == "1" ]]; then
   xvn init --xvn-home "$XVN_HOME"
 fi
 
+# Kill any stale xvision-agentd Node processes left from a prior crashed
+# container run. A stale agentd holds the Alpaca WebSocket slot (free tier
+# allows 1 concurrent connection), causing HTTP 406 on the next live run.
+# The agentd is spawned fresh by xvn on each live run, so killing old ones
+# is always safe.
+STALE_PIDS=$(pgrep -f 'xvision-agentd' 2>/dev/null || true)
+if [[ -n "$STALE_PIDS" ]]; then
+  echo "[entrypoint] killing stale xvision-agentd processes (PIDs: $(echo "$STALE_PIDS" | tr '\n' ' '))" >&2
+  pkill -f 'xvision-agentd' 2>/dev/null || true
+  # Give TCP connections time to tear down so Alpaca releases the WS slot.
+  sleep 2
+fi
+
 if [[ $# -eq 0 ]]; then
   set -- --help
 fi
