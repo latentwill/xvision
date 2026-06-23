@@ -4662,17 +4662,62 @@ async fn build_live_executor(
             .await
             .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
         } else if venue == LiveVenue::ByrealSpot {
-            // Byreal spot: poll byreal-cli token price → one synthetic bar per
-            // poll. No warmup history available in v1 (forward-test marks).
+            // Byreal spot: live marks from byreal-cli token price, warmup
+            // from HlBarFetcher (Hyperliquid public candles — Byreal tokens
+            // trade on HL).  One synthetic bar per poll for live marks;
+            // warmup gets full OHLCV candles for indicator history.
             let assets = byreal_spot_assets
                 .clone()
                 .expect("byreal_spot_assets loaded above when venue == ByrealSpot");
-            let fetcher = std::sync::Arc::new(crate::eval::executor::ByrealSpotPriceFetcher::new(
+            let mark_fetcher = std::sync::Arc::new(crate::eval::executor::ByrealSpotPriceFetcher::new(
                 xvision_execution::SubprocessByrealSpotApi::from_env(),
                 assets,
             ));
-            let poll = AlpacaLivePoll::new(fetcher, asset.clone(), granularity);
-            crate::eval::executor::LiveStream::new_poll_only(Vec::new(), poll)
+            let poll = AlpacaLivePoll::new(mark_fetcher, asset.clone(), granularity);
+
+            let byreal_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
+            let is_testnet = byreal_network
+                .as_deref()
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            let hl_base = if is_testnet {
+                xvision_data::hl_bars::HL_TESTNET_INFO
+            } else {
+                xvision_data::hl_bars::HL_MAINNET_INFO
+            };
+            let hl_fetcher = xvision_data::hl_bars::production_hl_fetcher(hl_base);
+            let warmup = if warmup_bars == 0 {
+                Vec::new()
+            } else {
+                let end = Utc::now();
+                let start = end
+                    - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
+                let bars = hl_fetcher
+                    .fetch_window(&asset, granularity, start, end)
+                    .await
+                    .map_err(|e| ApiError::Validation(format!("byreal-spot hl warmup for {asset}: {e}")))?;
+                let mut ohlcv = market_bars_to_ohlcv(bars);
+                if ohlcv.len() > warmup_bars as usize {
+                    ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
+                }
+                let got = ohlcv.len() as u32;
+                if got == 0 {
+                    tracing::warn!(
+                        target: "xvision_engine::live_source",
+                        asset, granularity = %granularity, requested = warmup_bars,
+                        "byreal-spot warmup: HL returned 0 bars. \
+                         Agent starts cold — indicators have no history until live bars accumulate.",
+                    );
+                } else if got < warmup_bars / 2 {
+                    tracing::warn!(
+                        target: "xvision_engine::live_source",
+                        asset, granularity = %granularity, got, requested = warmup_bars,
+                        "byreal-spot warmup: only {got}/{warmup_bars} bars loaded",
+                    );
+                }
+                ohlcv
+            };
+            crate::eval::executor::LiveStream::new_poll_only(warmup, poll)
         } else {
             // HL-native venues (degen_arena, hyperliquid): Hyperliquid-native candles
             // via HlBarFetcher, poll-only (no Alpaca websocket). Warmup is fetched up
@@ -4706,6 +4751,21 @@ async fn build_live_executor(
                 let mut ohlcv = market_bars_to_ohlcv(bars);
                 if ohlcv.len() > warmup_bars as usize {
                     ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
+                }
+                let got = ohlcv.len() as u32;
+                if got == 0 {
+                    tracing::warn!(
+                        target: "xvision_engine::live_source",
+                        asset, granularity = %granularity, requested = warmup_bars,
+                        "HL warmup: fetcher returned 0 bars. \
+                         Agent starts cold — indicators have no history until live bars accumulate.",
+                    );
+                } else if got < warmup_bars / 2 {
+                    tracing::warn!(
+                        target: "xvision_engine::live_source",
+                        asset, granularity = %granularity, got, requested = warmup_bars,
+                        "HL warmup: only {got}/{warmup_bars} bars loaded",
+                    );
                 }
                 ohlcv
             };
