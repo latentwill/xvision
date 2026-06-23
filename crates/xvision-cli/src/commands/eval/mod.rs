@@ -1589,7 +1589,7 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         if !decisions.is_empty() {
             println!("\nDecisions");
             for d in &decisions {
-                let delayed_mark = if d.delayed { " (delayed)" } else { "" };
+                let delayed_mark = if d.delayed.unwrap_or(false) { " (delayed)" } else { "" };
                 println!(
                     "  #{:<4} {}  {:<6}  {:<12}{}",
                     d.decision_index,

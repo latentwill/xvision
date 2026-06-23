@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use ulid::Ulid;
@@ -1448,6 +1448,7 @@ impl Executor {
                                     fill_size: Some(sltp_position.abs()),
                                     fee: Some(sltp_fee),
                                     pnl_realized: Some(sltp_pnl - borrow_cost),
+                                    delayed: Some(false),
                                 };
                                 store.record_decision(&sltp_row).await?;
                                 self.emit_chart(
@@ -1550,6 +1551,7 @@ impl Executor {
                                     fill_size: Some(close_units),
                                     fee: Some(fee),
                                     pnl_realized: Some(pnl),
+                                    delayed: Some(false),
                                 };
                                 store.record_decision(&pt1_row).await?;
                                 self.emit_chart(
@@ -1667,8 +1669,8 @@ impl Executor {
                         fill_size: None,
                         fee: None,
                         pnl_realized: None,
+                        delayed: Some(false),
                     };
-                    store.record_decision(&inherited_row).await?;
                     self.emit_chart(
                         &run.id,
                         RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
@@ -2993,6 +2995,7 @@ impl Executor {
                     } else {
                         None
                     },
+                    delayed: Some(false),
                 };
                 store.record_decision(&decision_row).await?;
                 self.emit_chart(
@@ -3626,6 +3629,31 @@ impl Executor {
 
         // In-memory episodic store for per-decision recall.
         let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
+        // Graceful LLM delay: track skipped dispatches and flag delayed
+        // decisions. The live loop currently calls decide_one_live
+        // synchronously, so these counters are infrastructure for the
+        // eventual async-dispatch upgrade. When the agent takes multiple
+        // bars to respond, skipped_dispatches counts bars that arrived
+        // during agent think-time, and delayed_decisions counts decisions
+        // whose bar age exceeds the cadence period.
+        let mut skipped_dispatches: u64 = 0;
+        let mut delayed_decisions: u64 = 0;
+        /// Count of agents force-cancelled via --max-agent-ms.
+        let mut forced_cancels: u64 = 0;
+        // Track the bar timestamp this agent was dispatched for.
+        // Used to compute staleness when the decision arrives.
+        let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
+
+
+        tracing::info!(
+            target: "xvision_engine::live_executor",
+            run_id = %run.id,
+            strategy = %strategy.manifest.id,
+            active_assets = ?active.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            filter = %filter_hook.as_ref().map_or("none", |_| "active"),
+            bar_limit = ?stop_policy.bar_limit,
+            "live loop: entering bar stream",
+        );
 
         // Drain warmup history from the bar source into per-asset buffers so
         // the first tradable bar has a complete lookback window.  Without
@@ -3633,6 +3661,7 @@ impl Executor {
         // but `run_inner_live` never consumes it — indicators see zero
         // history and the first several bars are wasted.
         let warmup = runtime.bar_source.take_warmup_history();
+        let mut bar_count: u32 = 0;
         if !warmup.is_empty() {
             let counts: Vec<String> = warmup
                 .iter()
@@ -3646,8 +3675,7 @@ impl Executor {
             );
             for (asset, bars) in warmup {
                 // Emit initial-equity chart points for warmup bars so the
-                // dashboard chart shows the full lookback window, not just
-                // bars arriving after the stream enters the live phase.
+                // dashboard chart shows the full lookback window.
                 for bar in &bars {
                     equity_samples_buf.push((bar.timestamp, equity));
                     self.emit_chart(
@@ -3658,7 +3686,46 @@ impl Executor {
                         }),
                     )
                     .await;
+                    // Emit bar event for SSE subscribers and record in
+                    // eval_run_bars so the chart endpoint can render candles
+                    // even before the first decision.
+                    self.emit_chart(
+                        &run.id,
+                        RunChartEvent::Bar(crate::api::chart::ChartBar {
+                            time: bar.timestamp.timestamp(),
+                            open: bar.open,
+                            high: bar.high,
+                            low: bar.low,
+                            close: bar.close,
+                            volume: bar.volume,
+                        }),
+                    )
+                    .await;
+                    store
+                        .record_bar(
+                            &run.id,
+                            bar_count,
+                            bar.timestamp,
+                            bar.open,
+                            bar.high,
+                            bar.low,
+                            bar.close,
+                            bar.volume,
+                        )
+                        .await
+                        .with_context(|| format!("record warmup bar idx={bar_count}"))?;
+                    bar_count += 1;
                 }
+                // Push warmup bars through the filter hook so the
+                // indicator engine accumulates the bars it needs to exit
+                // the Warming state. Must run BEFORE hist.extend() which
+                // consumes `bars`.
+                if let Some(hook) = filter_hook.as_mut() {
+                    for bar in &bars {
+                        hook.evaluate(bar, false);
+                    }
+                }
+                // Seed per-asset history for the LLM seed context.
                 if let Some(hist) = history.get_mut(&asset) {
                     hist.extend(bars);
                 }
@@ -3675,7 +3742,7 @@ impl Executor {
             "live loop: entering bar stream",
         );
 
-        let mut bar_count: u32 = 0;
+
         // F36: capture-on-interrupt for the live loop too — a cancelled or
         // crashed live/real-money run must record the metrics+tokens it
         // accumulated, not NULL.
@@ -3825,7 +3892,32 @@ impl Executor {
                 .cloned()
                 .unwrap_or_else(|| asset_sym.as_alpaca_pair());
             bar_count += 1;
-            // Per-bar operational log at info level so operators can confirm
+            // Emit bar event for SSE subscribers and persist in eval_run_bars.
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::Bar(crate::api::chart::ChartBar {
+                    time: bar.timestamp.timestamp(),
+                    open: bar.open,
+                    high: bar.high,
+                    low: bar.low,
+                    close: bar.close,
+                    volume: bar.volume,
+                }),
+            )
+            .await;
+            store
+                .record_bar(
+                    &run.id,
+                    bar_count,
+                    bar.timestamp,
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                )
+                .await
+                .with_context(|| format!("record live bar idx={bar_count}"))?;
             // the live stream is yielding bars without bumping to debug.
             // Throttled to every 50th bar (roughly every 50 min at 1m
             // granularity) to avoid spamming container logs.
@@ -3884,7 +3976,27 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
-            let outcome = self
+            // Graceful LLM delay: determine if this decision is stale.
+            // Compare the bar this agent was dispatched for against the
+            // current decision timestamp. In async mode, the agent may
+            // have taken several bars to complete — when it does, the
+            // decision is flagged as delayed.
+            let delayed = if let Some(agent_bar) = current_agent_bar.take() {
+                let bar_age_ms = (decision_ts - agent_bar).num_milliseconds();
+                let cadence_ms = strategy.manifest.decision_cadence_minutes as i64 * 60_000;
+                if bar_age_ms >= cadence_ms {
+                    delayed_decisions += 1;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            current_agent_bar = Some(decision_ts);
+            let dispatch_start = Instant::now();
+
+            let outcome = match self
                 .decide_one_live(
                     DecideOneLiveCtx {
                         run,
@@ -3922,11 +4034,63 @@ impl Executor {
                         bar_secs,
                         early_stop_state: &mut early_stop_state,
                         early_stop_cfg: &early_stop_cfg,
+                        delayed,
                     },
                     &mut runtime.fill_sink,
                     &mut book,
                 )
-                .await?;
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "xvision_engine::live",
+                        error = %e,
+                        bar_count,
+                        "live agent dispatch failed; skipping bar, will retry next cycle"
+                    );
+                    skipped_dispatches += 1;
+                    let limits = self.limits.as_ref();
+                    let max_skips = limits.map(|l| l.max_consecutive_skips).unwrap_or(5);
+                    if skipped_dispatches > 0 && skipped_dispatches % max_skips as u64 == 0 {
+                        self.emit(ProgressEvent::MetricsUpdated {
+                            run_id: run.id.clone(),
+                            equity,
+                            drawdown_pct: 0.0,
+                            n_trades,
+                            deployed_capital_usd: None,
+                            unrealized_pnl_usd: None,
+                            realized_pnl_usd: None,
+                            daily_loss_limit_remaining_usd: None,
+                        });
+                        tracing::warn!(
+                            target: "xvision_engine::live",
+                            consecutive_skips = skipped_dispatches,
+                            "max-consecutive-skips threshold reached \u{2014} agent may be stuck"
+                        );
+                    }
+                    // Still mark-to-market so equity stays current.
+                    book.mark(asset_sym, bar.close);
+                    let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+                    equity = book.equity(&marks);
+                    equity_samples_buf.push((decision_ts, equity));
+                    decision_idx += 1;
+                    continue;
+                }
+            };
+            // Hang belt: check dispatch elapsed against --max-agent-ms
+            let dispatch_elapsed = dispatch_start.elapsed();
+            if let Some(max_ms) = self.limits.as_ref().and_then(|l| l.max_agent_ms) {
+                if dispatch_elapsed.as_millis() as u64 > max_ms {
+                    forced_cancels += 1;
+                    tracing::warn!(
+                        target: "xvision_engine::live",
+                        elapsed_ms = dispatch_elapsed.as_millis(),
+                        max_agent_ms = max_ms,
+                        "agent dispatch exceeded max-agent-ms; decision accepted but flagged as forced-cancel"
+                    );
+                }
+            }
 
             // Always mark-to-market and record an equity sample, even
             // when the filter gate suppresses dispatch.  Without this,
@@ -4258,7 +4422,7 @@ impl Executor {
 
         // Live runs do not compute the four backtest baselines (they replay a
         // single forward stream, not a fixed window).
-        let metrics = compute_run_metrics(
+        let mut metrics = compute_run_metrics(
             &equity_curve,
             initial,
             equity,
@@ -4269,6 +4433,10 @@ impl Executor {
             decision_idx,
             None,
         );
+        // Set live-only counters on the metrics summary.
+        metrics.skipped_dispatches = skipped_dispatches;
+        metrics.delayed_decisions = delayed_decisions;
+        metrics.forced_cancels = forced_cancels;
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -4338,6 +4506,7 @@ impl Executor {
             bar_secs: _,
             early_stop_state,
             early_stop_cfg,
+            delayed,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -4562,6 +4731,7 @@ impl Executor {
                             } else {
                                 None
                             },
+                            delayed: Some(delayed),
                         };
                         store.record_decision(&row).await?;
                         self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
@@ -4631,6 +4801,7 @@ impl Executor {
                             } else {
                                 None
                             },
+                            delayed: Some(delayed),
                         };
                         store.record_decision(&row).await?;
                         self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
@@ -5144,6 +5315,7 @@ impl Executor {
             } else {
                 None
             },
+            delayed: Some(delayed),
         };
         store.record_decision(&decision_row).await?;
         self.emit_chart(
@@ -5493,6 +5665,7 @@ impl Executor {
                 } else {
                     None
                 },
+                delayed: Some(false),
             };
             if let Err(e) = store.record_decision(&decision_row).await {
                 // The broker DID close the position (book already settled);
@@ -5681,6 +5854,10 @@ struct DecideOneLiveCtx<'a> {
         xvision_core::trading::AssetSymbol,
         crate::eval::executor::sltp::PositionRiskState,
     >,
+    /// True when the decision's bar age exceeds the cadence period
+    /// (agent took >1 bar to respond). Only set in live/forward-test
+    /// mode; always false in backtest.
+    delayed: bool,
     wake_never: bool,
     short_bars_held: &'a mut std::collections::BTreeMap<xvision_core::trading::AssetSymbol, u32>,
     default_slip_bps: f64,
@@ -6615,6 +6792,7 @@ fn inherited_early_stop_row(
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: Some(false),
     }
 }
 

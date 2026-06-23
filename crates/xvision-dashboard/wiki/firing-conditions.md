@@ -174,10 +174,47 @@ before generating a payload. The important contracts are:
   signal-cache granularity is `Bar` and whose predicate consults a
   bar-counter. The composer makes this composable; the engine doesn't
   ship a "cooldown" primitive separately.
-- **Not a tool-use restriction.** Tool allowlists live on the agent
-  template (`AgentSlot.allowed_tools`). A firing condition gates
-  dispatch; tool allowlists gate which tools the agent can call when
-  it does dispatch.
+- **Not a tool-use restriction.** Tool allowlists live on the agent template (`AgentSlot.allowed_tools`). A firing condition gates dispatch; tool allowlists gate which tools the agent can call when it does dispatch.
+
+## Reading filter evaluations
+
+When a strategy runs with a filter, the eval run detail page shows a
+**filter timeline** — one tick per bar, color-coded by what the filter
+decided. Each tick is one of five states:
+
+| State | Color | Meaning |
+|---|---|---|
+| **Triggered** | Gold | Filter conditions passed → agent was dispatched. This bar cost tokens. |
+| **In position** | Amber | Filter conditions passed, but the strategy already holds a position in the asset and `wake_when_in_position` suppressed the dispatch. Saves an LLM call. |
+| **Cooldown** | Blue | Filter fired recently and is in a mandatory rest period (`cooldown_bars`). Suppressed regardless of conditions. |
+| **Daily cap** | Red | Filter has hit its `max_wakeups_per_day` limit. No more dispatches today. |
+| **Not triggered** | Neutral | Filter conditions evaluated false. No dispatch, no suppression — just a quiet bar. |
+
+The filter summary panel (top of the run detail page) shows aggregate
+counters: `wakeups`, `in-position`, `cooldown`, `daily cap`, and
+`LLM calls saved`. The "calls saved" figure estimates how many LLM
+dispatches the filter avoided versus an every-bar baseline.
+
+### In position vs cooldown
+
+These are often confused but serve different purposes:
+
+- **In position** = the strategy has an open trade. The filter's
+  `wake_when_in_position` policy (`Never` / `OnInvalidationOrTargetOnly`
+  / `Always`) decides whether to wake the trader. The default
+  (`OnInvalidationOrTargetOnly`) only wakes on a fresh condition trip —
+  sustained-true bars while holding are suppressed.
+- **Cooldown** = the filter fired N bars ago and must rest. This is
+  position-agnostic — a flat strategy still observes cooldown. Set via
+  `cooldown_bars` in the filter config.
+
+### Why "in position" exists
+
+Without it, a filter that stays true (e.g. `close > EMA_20`) would
+dispatch the trader on every bar while in a position, burning tokens to
+re-ask "should I stay in?" when the strategy already answered. The
+default policy saves these calls while still allowing exits on new
+signals.
 
 ## Cost framing
 
