@@ -316,17 +316,6 @@ pub struct RunSummary {
     /// / pre-first-fill — surfaced as "—" in the UI, NEVER a faked 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unrealized_pnl_usd: Option<f64>,
-    /// Live/forward-test only: bars where dispatch was skipped because
-    /// the agent was still processing a previous bar.
-    #[serde(default)]
-    pub skipped_dispatches: u64,
-    /// Live/forward-test only: decisions accepted but flagged delayed
-    /// because the bar was stale (age > stale-data-max-age-ms).
-    #[serde(default)]
-    pub delayed_decisions: u64,
-    /// Live/forward-test only: agents force-cancelled via --max-agent-ms.
-    #[serde(default)]
-    pub forced_cancels: u64,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -373,7 +362,6 @@ pub struct DecisionRowDto {
     pub fill_size: Option<f64>,
     pub fee: Option<f64>,
     pub pnl_realized: Option<f64>,
-    pub delayed: bool,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1104,7 +1092,6 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
             fill_size: d.fill_size,
             fee: d.fee,
             pnl_realized: d.pnl_realized,
-            delayed: d.delayed,
         })
         .collect();
 
@@ -1506,7 +1493,7 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start: now, end: now },
-
+        granularity: cfg.granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -3265,27 +3252,7 @@ async fn run_inner(
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     validate_live_request_shape(&req)?;
-    let mut live_config = req.live_config.clone();
-    // Derive live bar granularity from the strategy's decision cadence
-    // when the operator hasn't explicitly set it.  The legacy default was
-    // always Minute1, which wastes 60× the data for a 1h strategy.
-    if let Some(ref mut cfg) = live_config {
-        if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
-            && strategy.manifest.decision_cadence_minutes != 1
-        {
-            let derived = crate::strategies::bar_granularity_for_cadence(
-                strategy.manifest.decision_cadence_minutes,
-            );
-            tracing::info!(
-                target: "xvision_engine::live",
-                strategy_id = %strategy.manifest.id,
-                cadence_min = strategy.manifest.decision_cadence_minutes,
-                granularity = ?derived,
-                "live config: overriding default 1m granularity from strategy cadence"
-            );
-            cfg.granularity = derived;
-        }
-    }
+    let live_config = req.live_config.clone();
 
     // 2. Look up the scenario for Backtest, or synthesize the scenario-like
     //    envelope Live still needs internally for capital/venue/cadence helpers.
@@ -3771,14 +3738,18 @@ async fn load_bars_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
     asset: xvision_core::trading::AssetSymbol,
-    granularity: xvision_data::alpaca::BarGranularity,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
     let asset = asset.as_alpaca_pair();
     // Multi-asset correctness (QA 2026-06-03): per-asset bar loads MUST key the
-    // cache by asset and strategy-derived granularity, not by scenario id.
+    // cache by the asset, not by the scenario-level `bar_cache_policy.cache_key`
+    // (which is asset-independent — see `api/scenario.rs` + `compute_scenario_cache_key`).
+    // Reusing the scenario key made every asset in a multi-asset universe read the
+    // same cache row, so all assets were fed the first-seeded asset's bars (BTC).
+    // Compute the per-asset key the same way `xvn bars fetch`, the chart path, and
+    // warmup loads do so this read hits the per-asset rows those paths seed.
     let cache_key = crate::eval::bars::compute_cache_key(
         &asset,
-        granularity,
+        scenario.granularity,
         scenario.time_window.start,
         scenario.time_window.end,
         "alpaca-historical-v1",
@@ -3788,7 +3759,7 @@ async fn load_bars_for_scenario(
         &crate::eval::bars::BarCacheArgs {
             cache_key,
             asset_pair: asset,
-            granularity,
+            granularity: scenario.granularity,
             start: scenario.time_window.start,
             end: scenario.time_window.end,
             data_source_tag: "alpaca-historical-v1".into(),
@@ -3806,13 +3777,12 @@ async fn load_warmup_for_scenario(
     ctx: &ApiContext,
     scenario: &Scenario,
     asset: xvision_core::trading::AssetSymbol,
-    granularity: xvision_data::alpaca::BarGranularity,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
     let asset = asset.as_alpaca_pair();
     crate::eval::bars::load_warmup_bars(
         ctx,
         &asset,
-        granularity,
+        scenario.granularity,
         scenario.time_window.start,
         scenario.warmup_bars,
     )
@@ -3823,7 +3793,7 @@ async fn load_warmup_for_scenario(
             scenario.id,
             msg,
             asset,
-            granularity.as_alpaca_str(),
+            scenario.granularity.as_alpaca_str(),
             scenario.time_window.start.to_rfc3339(),
         )),
         other => other,
@@ -3841,69 +3811,6 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
             volume: b.volume,
         })
         .collect()
-}
-
-async fn load_market_data_context_for_scenario(
-    ctx: &ApiContext,
-    scenario: &Scenario,
-    strategy: &crate::strategies::Strategy,
-    assets: &[xvision_core::trading::AssetSymbol],
-) -> ApiResult<crate::eval::market_data::MarketDataContext> {
-    let mut market_data = crate::eval::market_data::MarketDataContext::new();
-    let native_granularity =
-        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
-    for asset in assets {
-        let bars =
-            market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
-        market_data.insert_series(*asset, native_granularity, bars);
-    }
-    for (tf, support) in strategy.supported_timeframes() {
-        if support == crate::strategies::TimeframeSupport::Native {
-            continue;
-        }
-        let granularity = match tf.as_str() {
-            "1m" => xvision_data::alpaca::BarGranularity::Minute1,
-            "5m" => xvision_data::alpaca::BarGranularity::Minute5,
-            "15m" => xvision_data::alpaca::BarGranularity::Minute15,
-            "30m" => xvision_data::alpaca::BarGranularity::new(
-                30,
-                xvision_data::alpaca::BarGranularityUnit::Minute,
-            )
-            .expect("validated 30m granularity"),
-            "1h" => xvision_data::alpaca::BarGranularity::Hour1,
-            "2h" => {
-                xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
-                    .expect("validated 2h granularity")
-            }
-            "4h" => xvision_data::alpaca::BarGranularity::Hour4,
-            "1d" => xvision_data::alpaca::BarGranularity::Day1,
-            _ => continue,
-        };
-        for asset in assets {
-            let pair = asset.as_alpaca_pair();
-            let cache_key = crate::eval::bars::compute_cache_key(
-                &pair,
-                granularity,
-                scenario.time_window.start,
-                scenario.time_window.end,
-                "alpaca-historical-v1",
-            );
-            let bars = crate::eval::bars::load_bars(
-                ctx,
-                &crate::eval::bars::BarCacheArgs {
-                    cache_key,
-                    asset_pair: pair,
-                    granularity,
-                    start: scenario.time_window.start,
-                    end: scenario.time_window.end,
-                    data_source_tag: "alpaca-historical-v1".into(),
-                },
-            )
-            .await?;
-            market_data.insert_series(*asset, granularity, market_bars_to_ohlcv(bars));
-        }
-    }
-    Ok(market_data)
 }
 
 // `load_ohlcv_for_scenario`, `build_paper_executor`, and
@@ -3959,25 +3866,21 @@ async fn build_backtest_executor(
         .first()
         .ok_or_else(|| ApiError::Validation("strategy asset_universe resolved empty".into()))?;
     if from_db {
-        let market_data = load_market_data_context_for_scenario(ctx, scenario, strategy, &active).await?;
         let mut asset_bars = std::collections::BTreeMap::new();
         let mut first_err: Option<String> = None;
-        let native_granularity =
-            crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
         for asset in &active {
-            match market_data.series(*asset, native_granularity) {
-                Some(bars) if !bars.is_empty() => {
-                    asset_bars.insert(*asset, bars.to_vec());
+            match load_bars_for_scenario(ctx, scenario, *asset).await {
+                Ok(bars) => {
+                    if bars.is_empty() {
+                        first_err.get_or_insert_with(|| {
+                            format!("{}: no bars loaded for scenario window", asset.as_alpaca_pair())
+                        });
+                    } else {
+                        asset_bars.insert(*asset, market_bars_to_ohlcv(bars));
+                    }
                 }
-                Some(_) => {
-                    first_err.get_or_insert_with(|| {
-                        format!("{}: no bars loaded for scenario window", asset.as_alpaca_pair())
-                    });
-                }
-                None => {
-                    first_err.get_or_insert_with(|| {
-                        format!("{}: missing native timeframe context", asset.as_alpaca_pair())
-                    });
+                Err(e) => {
+                    first_err.get_or_insert_with(|| format!("{}: {e}", asset.as_alpaca_pair()));
                 }
             }
         }
@@ -3988,9 +3891,7 @@ async fn build_backtest_executor(
             // Warmup is a hard preflight error when DB-resolved: an
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
-            let warmup = market_bars_to_ohlcv(
-                load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?,
-            );
+            let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset).await?);
             let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
@@ -3998,11 +3899,17 @@ async fn build_backtest_executor(
                 Executor::new().with_asset_bars(asset_bars)
             };
             bt = bt
-                .with_market_data(market_data)
                 .with_warmup(warmup)
                 .with_event_bus(ctx.event_bus.clone())
                 .with_provider_catalogs(provider_catalogs)
                 .with_cline_runtime(agent_runtime, cline);
+            // Task C3: thread the asset subset into the executor so its own
+            // `active_assets` call (inside `run`) agrees with the bars we just
+            // loaded. Without this the executor would call
+            // `active_assets(universe, None)` → full universe, then filter to
+            // only assets with bars — functionally equivalent for the DB path,
+            // but the explicit subset makes the two resolutions agree and avoids
+            // any divergence if future executor logic changes.
             if let Some(subset) = assets_subset {
                 bt = bt.with_asset_subset(subset.to_vec());
             }
@@ -4328,11 +4235,7 @@ async fn build_live_executor(
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
-    let orderly_creds = broker_settings::resolve_orderly_credentials(&ctx.xvn_home).await?;
-    let orderly_base_url = orderly_creds
-        .as_ref()
-        .and_then(|c| c.base_url.clone())
-        .or_else(|| std::env::var("ORDERLY_BASE_URL").ok());
+    let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
     let byreal_network = std::env::var("BYREAL_NETWORK").ok();
     let byreal_spot_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
     // Resolve Degen Arena creds (stored via Settings → Brokers / deploy ingest
@@ -4421,10 +4324,6 @@ async fn build_live_executor(
     };
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
-        tracing::info!(
-            target: "xvision_engine::live",
-            "Alpaca credentials loaded from broker store (Settings → Brokers)"
-        );
         (
             c.api_key_id,
             c.api_secret_key,
@@ -4433,10 +4332,6 @@ async fn build_live_executor(
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
     } else if uses_alpaca_data {
-        tracing::warn!(
-            target: "xvision_engine::live",
-            "Alpaca credentials NOT found in broker store, falling back to APCA_API_KEY_ID / APCA_API_SECRET_KEY env vars"
-        );
         let key_id =
             std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
@@ -4472,27 +4367,14 @@ async fn build_live_executor(
                 AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
                     .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
             ),
-            LiveVenue::OrderlyTestnet | LiveVenue::OrderlyMainnet => {
-                let c = orderly_creds.ok_or_else(|| {
-                    ApiError::Validation(
-                        "Orderly venue selected but no credentials configured — \
-                         store credentials in Settings -> Brokers or set \
-                         ORDERLY_KEY / ORDERLY_SECRET / ORDERLY_ACCOUNT_ID."
-                            .into(),
-                    )
-                })?;
-                Arc::new(
-                    OrderlyLiveSurface::connect(
-                        xvision_execution::orderly::Credentials {
-                            orderly_key: c.api_key,
-                            orderly_secret: c.api_secret,
-                            orderly_account_id: c.account_id,
-                        },
-                        c.base_url.as_deref(),
-                    )
-                    .map_err(|e| ApiError::Validation(format!("build Orderly broker: {e}")))?,
-                )
-            }
+            LiveVenue::OrderlyTestnet => Arc::new(
+                OrderlyLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
+            ),
+            LiveVenue::OrderlyMainnet => Arc::new(
+                OrderlyLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Orderly mainnet broker: {e}")))?,
+            ),
             LiveVenue::ByrealLive => Arc::new(
                 ByrealLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
@@ -4576,7 +4458,6 @@ async fn build_live_executor(
         cfg.venue_label,
         broker_lbl,
         AuthContext::system(),
-        cfg.safety_limits.clone(),
     ));
     let granularity = cfg.granularity;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
@@ -4603,121 +4484,37 @@ async fn build_live_executor(
         let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
         let stream = if uses_alpaca_data {
-            // Retry WebSocket subscription with exponential backoff.
-            // Alpaca free tier allows 1 concurrent WS connection; a stale
-            // agentd or prior run may hold it. Retry up to 3 times with
-            // 5s / 10s / 20s backoff so the stale connection has time to
-            // time out on Alpaca's side.
-            let mut ws = None;
-            let mut last_err = String::new();
-            for attempt in 0u32..3u32 {
-                match live_client.subscribe_bars(&asset, granularity).await {
-                    Ok(sub) => {
-                        ws = Some(sub);
-                        break;
-                    }
-                    Err(e) => {
-                        last_err = e.to_string();
-                        if attempt < 2 && last_err.contains("connection limit exceeded") {
-                            let wait = std::time::Duration::from_secs(5 * 2u64.pow(attempt));
-                            tracing::warn!(
-                                target: "xvision_engine::live",
-                                asset = %asset,
-                                attempt = attempt + 1,
-                                wait_secs = wait.as_secs(),
-                                "Alpaca WS connection limit (HTTP 406) — retrying after backoff. \
-                                 Kill stale xvision-agentd processes or wait for connection timeout."
-                            );
-                            tokio::time::sleep(wait).await;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            let ws = ws.ok_or_else(|| {
-                ApiError::Validation(format!(
-                    "subscribe Alpaca live bars for {asset}: {last_err}"
-                ))
-            })?;
+            let ws = live_client
+                .subscribe_bars(&asset, granularity)
+                .await
+                .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
             let poll = AlpacaLivePoll::new(
                 production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
                 asset.clone(),
                 granularity,
             );
-            let warmup_fetcher = xvision_data::alpaca::AlpacaBarsFetcher::new(
-                data_base_url.clone(),
-                key_id.clone(),
-                secret.clone(),
-            );
-            crate::eval::executor::LiveStream::new_with_warmup_and_fetcher(
+            crate::eval::executor::LiveStream::new_with_warmup(
                 ctx,
                 &asset,
                 granularity,
                 warmup_bars,
                 ws,
                 poll,
-                Some(&warmup_fetcher),
             )
             .await
             .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
         } else if venue == LiveVenue::ByrealSpot {
-            // Byreal spot: live marks from byreal-cli token price, warmup
-            // from HlBarFetcher (Hyperliquid public candles — Byreal tokens
-            // trade on HL).  One synthetic bar per poll for live marks;
-            // warmup gets full OHLCV candles for indicator history.
+            // Byreal spot: poll byreal-cli token price → one synthetic bar per
+            // poll. No warmup history available in v1 (forward-test marks).
             let assets = byreal_spot_assets
                 .clone()
                 .expect("byreal_spot_assets loaded above when venue == ByrealSpot");
-            let mark_fetcher = std::sync::Arc::new(crate::eval::executor::ByrealSpotPriceFetcher::new(
+            let fetcher = std::sync::Arc::new(crate::eval::executor::ByrealSpotPriceFetcher::new(
                 xvision_execution::SubprocessByrealSpotApi::from_env(),
                 assets,
             ));
-            let poll = AlpacaLivePoll::new(mark_fetcher, asset.clone(), granularity);
-
-            let byreal_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
-            let is_testnet = byreal_network
-                .as_deref()
-                .map(|n| n.to_ascii_lowercase().contains("testnet"))
-                .unwrap_or(false);
-            let hl_base = if is_testnet {
-                xvision_data::hl_bars::HL_TESTNET_INFO
-            } else {
-                xvision_data::hl_bars::HL_MAINNET_INFO
-            };
-            let hl_fetcher = xvision_data::hl_bars::production_hl_fetcher(hl_base);
-            let warmup = if warmup_bars == 0 {
-                Vec::new()
-            } else {
-                let end = Utc::now();
-                let start = end
-                    - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
-                let bars = hl_fetcher
-                    .fetch_window(&asset, granularity, start, end)
-                    .await
-                    .map_err(|e| ApiError::Validation(format!("byreal-spot hl warmup for {asset}: {e}")))?;
-                let mut ohlcv = market_bars_to_ohlcv(bars);
-                if ohlcv.len() > warmup_bars as usize {
-                    ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
-                }
-                let got = ohlcv.len() as u32;
-                if got == 0 {
-                    tracing::warn!(
-                        target: "xvision_engine::live_source",
-                        asset, granularity = %granularity, requested = warmup_bars,
-                        "byreal-spot warmup: HL returned 0 bars. \
-                         Agent starts cold — indicators have no history until live bars accumulate.",
-                    );
-                } else if got < warmup_bars / 2 {
-                    tracing::warn!(
-                        target: "xvision_engine::live_source",
-                        asset, granularity = %granularity, got, requested = warmup_bars,
-                        "byreal-spot warmup: only {got}/{warmup_bars} bars loaded",
-                    );
-                }
-                ohlcv
-            };
-            crate::eval::executor::LiveStream::new_poll_only(warmup, poll)
+            let poll = AlpacaLivePoll::new(fetcher, asset.clone(), granularity);
+            crate::eval::executor::LiveStream::new_poll_only(Vec::new(), poll)
         } else {
             // HL-native venues (degen_arena, hyperliquid): Hyperliquid-native candles
             // via HlBarFetcher, poll-only (no Alpaca websocket). Warmup is fetched up
@@ -4751,21 +4548,6 @@ async fn build_live_executor(
                 let mut ohlcv = market_bars_to_ohlcv(bars);
                 if ohlcv.len() > warmup_bars as usize {
                     ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
-                }
-                let got = ohlcv.len() as u32;
-                if got == 0 {
-                    tracing::warn!(
-                        target: "xvision_engine::live_source",
-                        asset, granularity = %granularity, requested = warmup_bars,
-                        "HL warmup: fetcher returned 0 bars. \
-                         Agent starts cold — indicators have no history until live bars accumulate.",
-                    );
-                } else if got < warmup_bars / 2 {
-                    tracing::warn!(
-                        target: "xvision_engine::live_source",
-                        asset, granularity = %granularity, got, requested = warmup_bars,
-                        "HL warmup: only {got}/{warmup_bars} bars loaded",
-                    );
                 }
                 ohlcv
             };
@@ -4861,19 +4643,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     validate_provider_override_shape(req.provider_override.as_ref())?;
     validate_live_request_shape(&req)?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let mut live_config = req.live_config.clone();
-    // Derive live bar granularity from the strategy's decision cadence
-    // when the operator hasn't explicitly set it (see same block in run_inner).
-    if let Some(ref mut cfg) = live_config {
-        if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
-            && strategy.manifest.decision_cadence_minutes != 1
-        {
-            let derived = crate::strategies::bar_granularity_for_cadence(
-                strategy.manifest.decision_cadence_minutes,
-            );
-            cfg.granularity = derived;
-        }
-    }
+    let live_config = req.live_config.clone();
     let (scenario, from_db) = if let Some(cfg) = live_config.as_ref() {
         (scenario_from_live_config(cfg), false)
     } else {
@@ -5546,11 +5316,6 @@ fn summarise(run: Run) -> RunSummary {
         ),
         None => (None, None, None, None, None),
     };
-
-    let (skipped_dispatches, delayed_decisions, forced_cancels) = match &run.metrics {
-        Some(m) => (m.skipped_dispatches, m.delayed_decisions, m.forced_cancels),
-        None => (0, 0, 0),
-    };
     RunSummary {
         id: run.id,
         agent_id: run.agent_id,
@@ -5582,9 +5347,6 @@ fn summarise(run: Run) -> RunSummary {
         live_config: run.live_config,
         source: run.source,
         unrealized_pnl_usd: run.unrealized_pnl_usd,
-        skipped_dispatches,
-        delayed_decisions,
-        forced_cancels,
     }
 }
 
@@ -6233,7 +5995,6 @@ mod tests {
                 execution_mode: Default::default(),
                 capital_mode: Default::default(),
                 decision_cadence_minutes: 60,
-                timeframe_requirements: Default::default(),
                 attested_with: Vec::new(),
                 required_tools: Vec::new(),
                 risk_preset_or_config: "balanced".into(),
@@ -6503,6 +6264,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("at least one canonical scenario");
+        scenario.granularity = BarGranularity::Hour1;
         scenario.time_window = crate::eval::scenario::TimeWindow {
             start: chrono::DateTime::parse_from_rfc3339("2025-01-06T00:00:00Z")
                 .unwrap()
@@ -6511,20 +6273,19 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
-        let granularity = BarGranularity::Hour1;
         scenario.bar_cache_policy.cache_key = crate::eval::bars::compute_cache_key(
             &AssetSymbol::Btc.as_alpaca_pair(),
-            granularity,
+            scenario.granularity,
             scenario.time_window.start,
             scenario.time_window.end,
             "alpaca-historical-v1",
         );
 
         // Resolve BTC first so the pre-fix code caches BTC under the scenario key.
-        let btc_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Btc, granularity)
+        let btc_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Btc)
             .await
             .unwrap();
-        let eth_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Eth, granularity)
+        let eth_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Eth)
             .await
             .unwrap();
         let btc_close = btc_bars.first().expect("btc bars non-empty").close;

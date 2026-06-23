@@ -242,7 +242,7 @@ export function DecisionsTable({
             </span>
           )}
         </div>
-        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus</span>
+        <span className="text-[10px] font-mono text-text-3 shrink-0">click row → focus / expand</span>
       </div>
 
       {/* Toolbar — search + sort */}
