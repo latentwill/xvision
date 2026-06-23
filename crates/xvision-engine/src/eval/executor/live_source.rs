@@ -57,7 +57,7 @@ use xvision_data::alpaca_live::{BarStreamEvent, BarSubscription};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError};
 
 use crate::api::ApiContext;
-use crate::eval::bars::load_warmup_window;
+use crate::eval::bars::{load_warmup_window, load_warmup_window_with_fetcher};
 use crate::eval::executor::traits::BarSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,8 +102,24 @@ impl LiveStream {
         ws: BarSubscription,
         poll: AlpacaLivePoll,
     ) -> Result<Self, LiveStreamError> {
+        Self::new_with_warmup_and_fetcher(ctx, asset, granularity, warmup_bars, ws, poll, None).await
+    }
+
+    /// Production constructor with an explicit AlpacaBarsFetcher for the
+    /// warmup fetch.  When `Some`, the warmup uses `fetcher` directly
+    /// (with the caller's credentials); when `None`, falls back to the
+    /// context's default fetcher (which may be uncredentialed).
+    pub async fn new_with_warmup_and_fetcher(
+        ctx: &ApiContext,
+        asset: &str,
+        granularity: BarGranularity,
+        warmup_bars: u32,
+        ws: BarSubscription,
+        poll: AlpacaLivePoll,
+        alpaca_fetcher: Option<&xvision_data::alpaca::AlpacaBarsFetcher>,
+    ) -> Result<Self, LiveStreamError> {
         let now = Utc::now();
-        let warmup = load_warmup_window(ctx, asset, granularity, now, warmup_bars)
+        let warmup = load_warmup_window_with_fetcher(ctx, asset, granularity, now, warmup_bars, alpaca_fetcher)
             .await
             .map_err(|e| LiveStreamError::Warmup(format!("{e:?}")))?;
         Ok(Self {
