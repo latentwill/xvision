@@ -55,10 +55,12 @@ pub struct Probe {
 /// Errors short-circuit the report rather than aborting the request — a probe
 /// failing is the *content* of the response, not a 500.
 pub async fn check(ctx: &ApiContext) -> ApiResult<HealthReport> {
-    let mut probes = Vec::with_capacity(3);
+    let mut probes = Vec::with_capacity(5);
     probes.push(probe_data_dir(ctx));
     probes.push(probe_db(ctx).await);
     probes.push(probe_strategies(ctx));
+    probes.push(probe_agent_sidecar().await);
+    probes.push(probe_provider_active(ctx).await);
 
     Ok(HealthReport {
         status: aggregate(&probes),
@@ -138,6 +140,67 @@ fn probe_strategies(ctx: &ApiContext) -> Probe {
             detail: Some(e.to_string()),
             latency_ms: None,
         },
+    }
+}
+/// Check that the Cline sidecar (xvision-agentd) binary is reachable.
+/// Reads `XVN_AGENTD_BIN` from the environment and verifies the file
+/// exists. If the env var is unset, the probe returns Degraded with a
+/// hint to set it — eval runs will fail without it.
+async fn probe_agent_sidecar() -> Probe {
+    match std::env::var("XVN_AGENTD_BIN") {
+        Ok(path) if !path.trim().is_empty() => {
+            let p = std::path::Path::new(&path);
+            if p.exists() {
+                Probe {
+                    name: "agent_sidecar".into(),
+                    status: HealthStatus::Ok,
+                    detail: Some(path),
+                    latency_ms: None,
+                }
+            } else {
+                Probe {
+                    name: "agent_sidecar".into(),
+                    status: HealthStatus::Degraded,
+                    detail: Some(format!("XVN_AGENTD_BIN={path} but file not found")),
+                    latency_ms: None,
+                }
+            }
+        }
+        _ => Probe {
+            name: "agent_sidecar".into(),
+            status: HealthStatus::Degraded,
+            detail: Some("XVN_AGENTD_BIN not set — eval runs require the Cline sidecar".into()),
+            latency_ms: None,
+        },
+    }
+}
+
+/// Check that at least one LLM provider has an API key configured.
+/// Degraded when no providers have keys — eval runs will fail.
+async fn probe_provider_active(ctx: &ApiContext) -> Probe {
+    let config_path = xvision_core::config::runtime_config_path(&ctx.xvn_home);
+    let providers = crate::api::settings::providers::effective_providers_with_paths(
+        &ctx.xvn_home,
+        &config_path,
+    )
+    .await
+    .unwrap_or_default();
+
+    let active_count = providers.iter().filter(|p| p.has_key).count();
+    if active_count > 0 {
+        Probe {
+            name: "providers".into(),
+            status: HealthStatus::Ok,
+            detail: Some(format!("{active_count} with API key")),
+            latency_ms: None,
+        }
+    } else {
+        Probe {
+            name: "providers".into(),
+            status: HealthStatus::Degraded,
+            detail: Some("no LLM provider configured — add an API key in Settings → Providers".into()),
+            latency_ms: None,
+        }
     }
 }
 

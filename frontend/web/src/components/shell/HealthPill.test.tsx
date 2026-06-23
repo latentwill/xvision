@@ -45,7 +45,7 @@ describe("HealthPill", () => {
     expect(screen.getByText("checking…")).toBeInTheDocument();
 
     resolveHealth(report("ok"));
-    expect(await screen.findByText("paper · localhost")).toBeInTheDocument();
+    expect(await screen.findByText("engine ok")).toBeInTheDocument();
   });
 
   it("renders degraded and down states", async () => {

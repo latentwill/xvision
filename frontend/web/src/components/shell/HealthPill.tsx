@@ -16,7 +16,7 @@ const DOT_FOR: Record<HealthStatus, string> = {
 };
 
 const LABEL_FOR: Record<HealthStatus, string> = {
-  ok: "paper · localhost",
+  ok: "engine ok",
   degraded: "degraded",
   down: "engine down",
 };

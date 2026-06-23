@@ -326,7 +326,7 @@ pub fn resolve(config_path: &Path, overrides: &CliOverrides) -> Result<ResolvedV
     // run); warning every time would be noise. The wording on the
     // explicit path is unchanged so the contract-grep still matches.
     if view.mode.value == RetentionMode::FullDebug && view.mode.source != Source::Default {
-        tracing::warn!(
+        tracing::info!(
             target: "xvision_observability",
             "full_debug retention enabled. Prompts, responses, and tool \
              payloads may be stored on disk. Disable for shared / client \

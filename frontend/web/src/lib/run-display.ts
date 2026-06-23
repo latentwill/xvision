@@ -31,7 +31,7 @@ export function evalRunLabels(
     displayStrategyName(summary.agent_id, strategies);
   const scenarioName =
     summary.scenario?.display_name?.trim() ||
-    displayScenarioName(summary.scenario_id, scenarios, summary.mode);
+    displayScenarioName(summary.scenario_id, scenarios, summary.mode, summary.live_config?.stop_policy);
   return {
     strategyName,
     scenarioName,
@@ -57,12 +57,19 @@ export function displayScenarioName(
   id: string,
   scenarios: NamedScenario[] = [],
   mode?: string,
+  stopPolicy?: { bar_limit?: number | null; decision_limit?: number | null; time_limit_secs?: bigint | null; trade_limit?: number | null },
 ): string {
-  if (mode === 'live') return 'Forward Test';
-  return (
-    scenarios.find((s) => s.id === id)?.display_name?.trim() ||
-    fallbackName("Scenario", id)
-  );
+  if (mode === 'live') {
+    const parts: string[] = [];
+    if (stopPolicy?.time_limit_secs) {
+      const hours = Math.round(Number(stopPolicy.time_limit_secs) / 3600);
+      parts.push(`${hours}h`);
+    }
+    if (stopPolicy?.bar_limit) parts.push(`${stopPolicy.bar_limit} bars`);
+    if (stopPolicy?.decision_limit) parts.push(`${stopPolicy.decision_limit} decisions`);
+    if (stopPolicy?.trade_limit) parts.push(`${stopPolicy.trade_limit} trades`);
+    return parts.length > 0 ? `Forward Test · ${parts.join(' · ')}` : 'Forward Test';
+  }
 }
 
 export function shortId(id: string, len = 10): string {
