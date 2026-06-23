@@ -60,6 +60,20 @@ pub struct EvalLimits {
     /// hard caps.
     #[serde(default)]
     pub cancel_on_token_limit: bool,
+    /// Flag decisions as delayed when the decision bar's age exceeds
+    /// this many milliseconds. Only for live/forward-test mode.
+    /// `None` = never flag (all decisions accepted, none delayed).
+    #[serde(default)]
+    pub stale_data_max_age_ms: Option<u64>,
+    /// Hang belt: cancel an agent that has been running longer than
+    /// this many milliseconds without producing a decision.
+    /// Only for live/forward-test mode. Opt-in.
+    #[serde(default)]
+    pub max_agent_ms: Option<u64>,
+    /// Maximum consecutive skips before emitting a Degraded health
+    /// event. Default 5. Only for live/forward-test mode.
+    #[serde(default)]
+    pub max_consecutive_skips: u32,
 }
 
 impl EvalLimits {
@@ -70,6 +84,8 @@ impl EvalLimits {
             && self.max_input_tokens.is_none()
             && self.max_output_tokens.is_none()
             && self.max_wall_clock_secs.is_none()
+            && self.stale_data_max_age_ms.is_none()
+            && self.max_agent_ms.is_none()
     }
 
     /// Wall-clock cap parsed as a `Duration`. Returns `None` when

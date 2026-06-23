@@ -306,6 +306,20 @@ pub struct RunArgs {
     ///   deep  -> openrouter / deepseek/deepseek-chat  / 180 decisions
     #[arg(long, value_enum)]
     pub profile: Option<EvalProfile>,
+    /// Flag decisions as delayed when the decision bar's age exceeds
+    /// this many milliseconds. Only for live/forward-test mode.
+    /// Not set = never flag (all decisions accepted, none delayed).
+    #[arg(long = "stale-data-max-age-ms")]
+    pub stale_data_max_age_ms: Option<u64>,
+    /// Hang belt: cancel an agent that has been running longer than
+    /// this many milliseconds without producing a decision.
+    /// Only for live/forward-test mode. Opt-in.
+    #[arg(long = "max-agent-ms")]
+    pub max_agent_ms: Option<u64>,
+    /// Maximum consecutive skips before emitting a Degraded health
+    /// event. Default 5. Only for live/forward-test mode.
+    #[arg(long = "max-consecutive-skips", default_value = "5")]
+    pub max_consecutive_skips: u32,
 }
 
 #[derive(Args, Debug)]
@@ -678,6 +692,9 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             max_output_tokens: args.max_output_tokens,
             max_wall_clock_secs: args.max_wall_clock_secs,
             cancel_on_token_limit: args.cancel_on_token_limit,
+            stale_data_max_age_ms: args.stale_data_max_age_ms,
+            max_agent_ms: args.max_agent_ms,
+            max_consecutive_skips: args.max_consecutive_skips,
         };
         if l.is_empty() && !l.cancel_on_token_limit {
             None
@@ -2322,6 +2339,7 @@ async fn run_sweep_window(
         max_output_tokens: None,
         max_wall_clock_secs: None,
         cancel_on_token_limit: false,
+        ..Default::default()
     });
     crate::progress!("[{}/{}] {} scenario={}", i + 1, total, clone_name, cloned.id);
     let req = EvalRunRequest {

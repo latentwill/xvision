@@ -480,6 +480,17 @@ pub struct MetricsSummary {
     /// for paper-mode runs where bars are not available post-hoc.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baselines: Option<BaselinesReport>,
+    /// Live/forward-test only: bars where dispatch was skipped because
+    /// the agent was still processing a previous bar.
+    #[serde(default)]
+    pub skipped_dispatches: u64,
+    /// Live/forward-test only: decisions accepted but flagged delayed
+    /// because the bar was stale (age > stale-data-max-age-ms).
+    #[serde(default)]
+    pub delayed_decisions: u64,
+    /// Live/forward-test only: agents force-cancelled via --max-agent-ms.
+    #[serde(default)]
+    pub forced_cancels: u64,
 }
 
 impl MetricsSummary {

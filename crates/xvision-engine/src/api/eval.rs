@@ -362,6 +362,7 @@ pub struct DecisionRowDto {
     pub fill_size: Option<f64>,
     pub fee: Option<f64>,
     pub pnl_realized: Option<f64>,
+    pub delayed: bool,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1092,6 +1093,7 @@ async fn get_run_inner(ctx: &ApiContext, id: &str) -> ApiResult<RunDetail> {
             fill_size: d.fill_size,
             fee: d.fee,
             pnl_realized: d.pnl_realized,
+            delayed: d.delayed,
         })
         .collect();
 

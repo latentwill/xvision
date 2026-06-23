@@ -1448,6 +1448,7 @@ impl Executor {
                                     fill_size: Some(sltp_position.abs()),
                                     fee: Some(sltp_fee),
                                     pnl_realized: Some(sltp_pnl - borrow_cost),
+                                    delayed: false,
                                 };
                                 store.record_decision(&sltp_row).await?;
                                 self.emit_chart(
@@ -1550,6 +1551,7 @@ impl Executor {
                                     fill_size: Some(close_units),
                                     fee: Some(fee),
                                     pnl_realized: Some(pnl),
+                                    delayed: false,
                                 };
                                 store.record_decision(&pt1_row).await?;
                                 self.emit_chart(
@@ -1667,8 +1669,8 @@ impl Executor {
                         fill_size: None,
                         fee: None,
                         pnl_realized: None,
+                        delayed: false,
                     };
-                    store.record_decision(&inherited_row).await?;
                     self.emit_chart(
                         &run.id,
                         RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
@@ -2993,6 +2995,7 @@ impl Executor {
                     } else {
                         None
                     },
+                    delayed: false,
                 };
                 store.record_decision(&decision_row).await?;
                 self.emit_chart(
@@ -3626,6 +3629,20 @@ impl Executor {
 
         // In-memory episodic store for per-decision recall.
         let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
+        // Graceful LLM delay: track skipped dispatches and flag delayed
+        // decisions. The live loop currently calls decide_one_live
+        // synchronously, so these counters are infrastructure for the
+        // eventual async-dispatch upgrade. When the agent takes multiple
+        // bars to respond, skipped_dispatches counts bars that arrived
+        // during agent think-time, and delayed_decisions counts decisions
+        // whose bar age exceeds the cadence period.
+        let mut skipped_dispatches: u64 = 0;
+        let mut delayed_decisions: u64 = 0;
+        /// Count of agents force-cancelled via --max-agent-ms.
+        let mut forced_cancels: u64 = 0;
+        // Track the bar timestamp this agent was dispatched for.
+        // Used to compute staleness when the decision arrives.
+        let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
 
         // Drain warmup history from the bar source into per-asset buffers so
         // the first tradable bar has a complete lookback window.  Without
@@ -3904,6 +3921,24 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
+            // Graceful LLM delay: determine if this decision is stale.
+            // Compare the bar this agent was dispatched for against the
+            // current decision timestamp. In async mode, the agent may
+            // have taken several bars to complete — when it does, the
+            // decision is flagged as delayed.
+            let delayed = if let Some(agent_bar) = current_agent_bar.take() {
+                let bar_age_ms = (decision_ts - agent_bar).num_milliseconds();
+                if bar_age_ms > 0 {
+                    delayed_decisions += 1;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            current_agent_bar = Some(decision_ts);
+
             let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
@@ -3942,6 +3977,7 @@ impl Executor {
                         bar_secs,
                         early_stop_state: &mut early_stop_state,
                         early_stop_cfg: &early_stop_cfg,
+                        delayed,
                     },
                     &mut runtime.fill_sink,
                     &mut book,
@@ -4262,7 +4298,7 @@ impl Executor {
 
         // Live runs do not compute the four backtest baselines (they replay a
         // single forward stream, not a fixed window).
-        let metrics = compute_run_metrics(
+        let mut metrics = compute_run_metrics(
             &equity_curve,
             initial,
             equity,
@@ -4273,6 +4309,10 @@ impl Executor {
             decision_idx,
             None,
         );
+        // Set live-only counters on the metrics summary.
+        metrics.skipped_dispatches = skipped_dispatches;
+        metrics.delayed_decisions = delayed_decisions;
+        metrics.forced_cancels = forced_cancels;
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -4342,6 +4382,7 @@ impl Executor {
             bar_secs: _,
             early_stop_state,
             early_stop_cfg,
+            delayed,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -4566,6 +4607,7 @@ impl Executor {
                             } else {
                                 None
                             },
+                            delayed,
                         };
                         store.record_decision(&row).await?;
                         self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
@@ -4635,6 +4677,7 @@ impl Executor {
                             } else {
                                 None
                             },
+                            delayed,
                         };
                         store.record_decision(&row).await?;
                         self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
@@ -5148,6 +5191,7 @@ impl Executor {
             } else {
                 None
             },
+            delayed,
         };
         store.record_decision(&decision_row).await?;
         self.emit_chart(
@@ -5497,6 +5541,7 @@ impl Executor {
                 } else {
                     None
                 },
+                delayed: false,
             };
             if let Err(e) = store.record_decision(&decision_row).await {
                 // The broker DID close the position (book already settled);
@@ -5685,6 +5730,10 @@ struct DecideOneLiveCtx<'a> {
         xvision_core::trading::AssetSymbol,
         crate::eval::executor::sltp::PositionRiskState,
     >,
+    /// True when the decision's bar age exceeds the cadence period
+    /// (agent took >1 bar to respond). Only set in live/forward-test
+    /// mode; always false in backtest.
+    delayed: bool,
     wake_never: bool,
     short_bars_held: &'a mut std::collections::BTreeMap<xvision_core::trading::AssetSymbol, u32>,
     default_slip_bps: f64,
@@ -6619,6 +6668,7 @@ fn inherited_early_stop_row(
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: false,
     }
 }
 

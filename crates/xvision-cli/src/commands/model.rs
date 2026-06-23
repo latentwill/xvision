@@ -479,6 +479,7 @@ async fn run_bakeoff_cmd(args: BakeoffArgs) -> CliResult<()> {
         max_output_tokens: args.max_output_tokens,
         max_wall_clock_secs: args.max_wall_clock,
         cancel_on_token_limit: args.cancel_on_token_limit,
+        ..Default::default()
     };
 
     // Always print the plan to stderr. Same shape as
