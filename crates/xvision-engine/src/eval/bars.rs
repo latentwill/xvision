@@ -159,50 +159,64 @@ pub async fn load_warmup_window(
     now: DateTime<Utc>,
     warmup_bars: u32,
 ) -> ApiResult<Vec<xvision_core::market::Ohlcv>> {
+    load_warmup_window_with_fetcher(ctx, asset, granularity, now, warmup_bars, None).await
+}
+
+/// Same as [`load_warmup_window`] but uses `alpaca_fetcher` (when `Some`)
+/// instead of the context's default fetcher.  Callers with live API
+/// credentials pass them here so the warmup fetch uses the same keys as
+/// the live poll — the context default fetcher is uncredentialed.
+pub async fn load_warmup_window_with_fetcher(
+    ctx: &ApiContext,
+    asset: &str,
+    granularity: BarGranularity,
+    now: DateTime<Utc>,
+    warmup_bars: u32,
+    alpaca_fetcher: Option<&xvision_data::alpaca::AlpacaBarsFetcher>,
+) -> ApiResult<Vec<xvision_core::market::Ohlcv>> {
     if warmup_bars == 0 {
         return Ok(Vec::new());
     }
     let secs = (granularity.seconds() as i64) * (warmup_bars as i64);
     let start = now - chrono::Duration::seconds(secs);
     let end = now;
-    let cache_key = compute_cache_key(asset, granularity, start, end, LIVE_WARMUP_DATA_SOURCE_TAG);
-    let market_bars = load_bars(
-        ctx,
-        &BarCacheArgs {
-            cache_key,
-            asset_pair: asset.to_string(),
-            granularity,
-            start,
-            end,
-            data_source_tag: LIVE_WARMUP_DATA_SOURCE_TAG.into(),
-        },
-    )
-    .await?;
+
+    let market_bars = if let Some(fetcher) = alpaca_fetcher {
+        fetcher
+            .fetch_crypto_bars(asset, granularity, start, end)
+            .await
+            .map_err(|e| ApiError::Validation(format!("alpaca warmup fetch ({asset}): {e}")))?
+    } else {
+        let cache_key = compute_cache_key(asset, granularity, start, end, LIVE_WARMUP_DATA_SOURCE_TAG);
+        load_bars(
+            ctx,
+            &BarCacheArgs {
+                cache_key,
+                asset_pair: asset.to_string(),
+                granularity,
+                start,
+                end,
+                data_source_tag: LIVE_WARMUP_DATA_SOURCE_TAG.into(),
+            },
+        )
+        .await?
+    };
 
     let got = market_bars.len() as u32;
     if got == 0 {
         tracing::warn!(
             target: "xvision_engine::live_source",
-            asset,
-            granularity = %granularity,
-            requested = warmup_bars,
-            start = %start,
-            end = %end,
-            "live warmup: Alpaca returned 0 bars for the requested window. \
-             The agent will need to accumulate ~{warmup_bars} live bars before \
-             indicators have enough history. Check that APCA_API_KEY_ID / \
-             APCA_API_SECRET_KEY are set and the Alpaca crypto bar endpoint \
-             has data for {asset} at {granularity} in [{start}, {end}].",
+            asset, granularity = %granularity, requested = warmup_bars,
+            start = %start, end = %end,
+            "live warmup: Alpaca returned 0 bars. \
+             Agent needs ~{warmup_bars} live bars before indicators have history. \
+             Check APCA_API_KEY_ID / APCA_API_SECRET_KEY.",
         );
     } else if got < warmup_bars / 2 {
         tracing::warn!(
             target: "xvision_engine::live_source",
-            asset,
-            granularity = %granularity,
-            got,
-            requested = warmup_bars,
-            "live warmup: Alpaca returned only {got}/{warmup_bars} bars — \
-             indicators may have less history than expected.",
+            asset, granularity = %granularity, got, requested = warmup_bars,
+            "live warmup: only {got}/{warmup_bars} bars loaded",
         );
     }
 

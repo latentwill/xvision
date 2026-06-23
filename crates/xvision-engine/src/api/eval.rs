@@ -4645,13 +4645,19 @@ async fn build_live_executor(
                 asset.clone(),
                 granularity,
             );
-            crate::eval::executor::LiveStream::new_with_warmup(
+            let warmup_fetcher = xvision_data::alpaca::AlpacaBarsFetcher::new(
+                data_base_url.clone(),
+                key_id.clone(),
+                secret.clone(),
+            );
+            crate::eval::executor::LiveStream::new_with_warmup_and_fetcher(
                 ctx,
                 &asset,
                 granularity,
                 warmup_bars,
                 ws,
                 poll,
+                Some(&warmup_fetcher),
             )
             .await
             .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
