@@ -137,7 +137,7 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
               {DASH}
             </span>
             <span className="text-text-3">
-              Capital risk — insufficient data; no live capital deployed yet.
+              No live trading strategies have been launched.
             </span>
             <Link
               to="/live"
