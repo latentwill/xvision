@@ -521,9 +521,16 @@ impl ApiContext {
         import_legacy_lineage_db(&pool, xvn_home).await;
         // Migration 069: nanochat filter agent tables.
         migrate_nanochat_tables(&pool).await?;
-        // Migration 071: decisions.delayed for graceful LLM delay tracking
-        sqlx::query(MIGRATION_071_DECISIONS_DELAYED).execute(&pool).await?;
-
+        // Migration 071: decisions.delayed for graceful LLM delay tracking.
+        // Idempotent — tolerates "duplicate column" if already applied.
+        if let Err(e) = sqlx::query(MIGRATION_071_DECISIONS_DELAYED).execute(&pool).await {
+            let msg = e.to_string();
+            if msg.contains("duplicate column") {
+                tracing::info!(target: "xvision_engine::migration", "071: column already exists, skipping");
+            } else {
+                return Err(ApiError::Internal(format!("migration 071: {e}")));
+            }
+        }
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
         // engine continues without a recorder so existing CLI / dash
