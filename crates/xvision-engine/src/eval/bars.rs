@@ -178,6 +178,34 @@ pub async fn load_warmup_window(
         },
     )
     .await?;
+
+    let got = market_bars.len() as u32;
+    if got == 0 {
+        tracing::warn!(
+            target: "xvision_engine::live_source",
+            asset,
+            granularity = %granularity,
+            requested = warmup_bars,
+            start = %start,
+            end = %end,
+            "live warmup: Alpaca returned 0 bars for the requested window. \
+             The agent will need to accumulate ~{warmup_bars} live bars before \
+             indicators have enough history. Check that APCA_API_KEY_ID / \
+             APCA_API_SECRET_KEY are set and the Alpaca crypto bar endpoint \
+             has data for {asset} at {granularity} in [{start}, {end}].",
+        );
+    } else if got < warmup_bars / 2 {
+        tracing::warn!(
+            target: "xvision_engine::live_source",
+            asset,
+            granularity = %granularity,
+            got,
+            requested = warmup_bars,
+            "live warmup: Alpaca returned only {got}/{warmup_bars} bars — \
+             indicators may have less history than expected.",
+        );
+    }
+
     Ok(market_bars.into_iter().map(market_bar_to_ohlcv).collect())
 }
 
