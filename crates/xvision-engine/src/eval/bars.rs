@@ -159,6 +159,21 @@ pub async fn load_warmup_window(
     now: DateTime<Utc>,
     warmup_bars: u32,
 ) -> ApiResult<Vec<xvision_core::market::Ohlcv>> {
+    load_warmup_window_with_fetcher(ctx, asset, granularity, now, warmup_bars, None).await
+}
+
+/// Same as [`load_warmup_window`] but uses `alpaca_fetcher` (when `Some`)
+/// instead of the context's default fetcher.  Callers with live API
+/// credentials pass them here so the warmup fetch uses the same keys as
+/// the live poll — the context default fetcher is uncredentialed.
+pub async fn load_warmup_window_with_fetcher(
+    ctx: &ApiContext,
+    asset: &str,
+    granularity: BarGranularity,
+    now: DateTime<Utc>,
+    warmup_bars: u32,
+    alpaca_fetcher: Option<&xvision_data::alpaca::AlpacaBarsFetcher>,
+) -> ApiResult<Vec<xvision_core::market::Ohlcv>> {
     if warmup_bars == 0 {
         return Ok(Vec::new());
     }
@@ -166,68 +181,46 @@ pub async fn load_warmup_window(
     let start = now - chrono::Duration::seconds(secs);
     let end = now;
 
-    // For live warmup, fetch directly from Alpaca to guarantee a contiguous
-    // window. Cached bars may have gaps from partial fetches or market
-    // closures. Any remaining gaps (e.g. outside market hours) are filled
-    // with forward-filled synthetic bars so indicators always have enough
-    // history to compute.
-    let mut market_bars = ctx
-        .alpaca_fetcher()
-        .fetch_crypto_bars(asset, granularity, start, end)
-        .await
-        .map_err(|e| ApiError::Validation(format!("alpaca warmup fetch for {asset}: {e}")))?;
+    let market_bars = if let Some(fetcher) = alpaca_fetcher {
+        fetcher
+            .fetch_crypto_bars(asset, granularity, start, end)
+            .await
+            .map_err(|e| ApiError::Validation(format!("alpaca warmup fetch ({asset}): {e}")))?
+    } else {
+        let cache_key = compute_cache_key(asset, granularity, start, end, LIVE_WARMUP_DATA_SOURCE_TAG);
+        load_bars(
+            ctx,
+            &BarCacheArgs {
+                cache_key,
+                asset_pair: asset.to_string(),
+                granularity,
+                start,
+                end,
+                data_source_tag: LIVE_WARMUP_DATA_SOURCE_TAG.into(),
+            },
+        )
+        .await?
+    };
 
-    market_bars.sort_by_key(|b| b.timestamp);
-    market_bars.dedup_by_key(|b| b.timestamp);
-
-    // Fill gaps with synthetic bars so the series is contiguous.
-    let filled = fill_bar_gaps(&market_bars, granularity);
-    if filled.len() > market_bars.len() {
-        tracing::info!(
-            target: "xvision_engine::live",
-            asset = %asset,
-            fetched = market_bars.len(),
-            filled = filled.len(),
-            "warmup: filled {} gap bars for contiguous series",
-            filled.len() - market_bars.len(),
+    let got = market_bars.len() as u32;
+    if got == 0 {
+        tracing::warn!(
+            target: "xvision_engine::live_source",
+            asset, granularity = %granularity, requested = warmup_bars,
+            start = %start, end = %end,
+            "live warmup: Alpaca returned 0 bars. \
+             Agent needs ~{warmup_bars} live bars before indicators have history. \
+             Check APCA_API_KEY_ID / APCA_API_SECRET_KEY.",
+        );
+    } else if got < warmup_bars / 2 {
+        tracing::warn!(
+            target: "xvision_engine::live_source",
+            asset, granularity = %granularity, got, requested = warmup_bars,
+            "live warmup: only {got}/{warmup_bars} bars loaded",
         );
     }
 
-    Ok(filled.into_iter().map(market_bar_to_ohlcv).collect())
-}
-
-/// Fill missing bars in a sorted, deduplicated series with synthetic bars.
-/// Each gap bar carries the previous bar's close as OHLC and zero volume.
-/// Used by `load_warmup_window` to guarantee contiguous indicator history
-/// for live runs even when Alpaca returns bars with gaps (market closures,
-/// data outages).
-fn fill_bar_gaps(bars: &[MarketBar], granularity: BarGranularity) -> Vec<MarketBar> {
-    if bars.len() < 2 {
-        return bars.to_vec();
-    }
-    let step_secs = granularity.seconds().max(1) as i64;
-    let mut filled: Vec<MarketBar> = Vec::with_capacity(bars.len() + bars.len() / 10);
-    filled.push(bars[0].clone());
-    for i in 1..bars.len() {
-        let prev = &bars[i - 1];
-        let curr = &bars[i];
-        let expected = prev.timestamp + chrono::Duration::seconds(step_secs);
-        // Insert synthetic bars for each missing timestamp
-        let mut gap_ts = expected;
-        while gap_ts < curr.timestamp {
-            filled.push(MarketBar {
-                timestamp: gap_ts,
-                open: prev.close,
-                high: prev.close,
-                low: prev.close,
-                close: prev.close,
-                volume: 0.0,
-            });
-            gap_ts = gap_ts + chrono::Duration::seconds(step_secs);
-        }
-        filled.push(curr.clone());
-    }
-    filled
+    Ok(market_bars.into_iter().map(market_bar_to_ohlcv).collect())
 }
 
 fn market_bar_to_ohlcv(b: MarketBar) -> xvision_core::market::Ohlcv {

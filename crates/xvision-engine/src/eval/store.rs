@@ -1417,6 +1417,7 @@ impl RunStore {
     pub async fn record_bar(
         &self,
         run_id: &str,
+        asset: &str,
         bar_index: u32,
         timestamp: DateTime<Utc>,
         open: f64,
@@ -1426,11 +1427,12 @@ impl RunStore {
         volume: f64,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO eval_run_bars (run_id, bar_index, timestamp, open, high, low, close, volume) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(run_id, bar_index) DO NOTHING",
         )
         .bind(run_id)
+        .bind(asset)
         .bind(bar_index as i64)
         .bind(timestamp.to_rfc3339())
         .bind(open)
@@ -1478,13 +1480,13 @@ impl RunStore {
     }
 
     /// Read OHLCV bars for a run, ordered by bar_index ascending.
-    /// Returns (timestamp, open, high, low, close, volume) tuples.
+    /// Returns (timestamp, open, high, low, close, volume, asset) tuples.
     pub async fn read_bars(
         &self,
         run_id: &str,
-    ) -> Result<Vec<(DateTime<Utc>, f64, f64, f64, f64, f64)>> {
+    ) -> Result<Vec<(DateTime<Utc>, f64, f64, f64, f64, f64, String)>> {
         let rows = sqlx::query(
-            "SELECT timestamp, open, high, low, close, volume \
+            "SELECT timestamp, open, high, low, close, volume, asset \
              FROM eval_run_bars WHERE run_id = ? ORDER BY bar_index ASC",
         )
         .bind(run_id)
@@ -1502,7 +1504,8 @@ impl RunStore {
                 let low: f64 = r.try_get("low").context("read bar low")?;
                 let close: f64 = r.try_get("close").context("read bar close")?;
                 let volume: f64 = r.try_get("volume").context("read bar volume")?;
-                Ok((parsed, open, high, low, close, volume))
+                let asset: String = r.try_get("asset").context("read bar asset")?;
+                Ok((parsed, open, high, low, close, volume, asset))
             })
             .collect()
     }

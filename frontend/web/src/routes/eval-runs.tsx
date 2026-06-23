@@ -10,6 +10,8 @@ import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import { StrategyPicker } from "@/components/primitives/StrategyPicker";
+import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
 import {
   ServerPagerStrip,
   useServerPagination,
@@ -268,6 +270,8 @@ export function EvalRunsRoute() {
       const scenarioName = displayScenarioName(
         row.scenario_id,
         scenarios,
+        row.mode,
+        row.live_config?.stop_policy,
       ).toLowerCase();
       const shortId = row.id.slice(0, 8).toLowerCase();
       return name.includes(q) || scenarioName.includes(q) || shortId.includes(q);
@@ -472,7 +476,7 @@ export function EvalRunsRoute() {
             title={displayStrategyName(row.agent_id, strategies)}
             badge={row.status}
             badgeColor={badgeColorFor(row.status)}
-            subtitle={displayScenarioName(row.scenario_id, scenarios)}
+            subtitle={displayScenarioName(row.scenario_id, scenarios, row.mode)}
             meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
             rightTop={fmtPct(row.total_return_pct)}
             rightSub={fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
@@ -649,7 +653,7 @@ function DesktopRow({
         </Link>
       </td>
       <td className="px-3 py-3 text-text-2">
-        {displayScenarioName(row.scenario_id, scenarios)}
+        {displayScenarioName(row.scenario_id, scenarios, row.mode)}
       </td>
       <td className="px-3 py-3">
         <StatusPill status={row.status} />
@@ -927,29 +931,18 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label
-              htmlFor="eval-start-strategy"
-              className="block text-[12px] text-text-2 mb-1"
-            >
-              Strategy
-            </label>
-            <select
-              id="eval-start-strategy"
+            <div className="block text-[12px] text-text-2 mb-1">Strategy</div>
+            <StrategyPicker
+              strategies={strategies.data ?? []}
               value={agentId}
-              onChange={(e) => {
-                setAgentId(e.target.value);
+              onChange={(next) => {
+                setAgentId(next);
                 setPreflightError(null);
               }}
-              disabled={strategies.isPending}
-              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-            >
-              <option value="">— pick a strategy —</option>
-              {(strategies.data ?? []).map((s: StrategyListItem) => (
-                <option key={s.agent_id} value={s.agent_id}>
-                  {s.display_name || "Untitled strategy"}
-                </option>
-              ))}
-            </select>
+              loading={strategies.isPending}
+              placeholder="— pick a strategy —"
+              className="h-9 min-h-9 w-full justify-between"
+            />
             {strategies.isError ? (
               <p className="m-0 mt-1 text-[12px] text-rose-300">
                 couldn't load strategies — try refreshing
@@ -959,29 +952,28 @@ function StartEvalPanel({
 
           {mode === "backtest" ? (
             <div>
-              <label
-                htmlFor="eval-start-scenario"
-                className="block text-[12px] text-text-2 mb-1"
-              >
+              <div className="block text-[12px] text-text-2 mb-1">
                 Scenario
-              </label>
-              <select
-                id="eval-start-scenario"
+              </div>
+              <SignalSearchableSelectMenu
+                ariaLabel="Scenario"
                 value={scenarioId}
-                onChange={(e) => {
-                  setScenarioId(e.target.value);
+                options={(scenarios.data ?? []).map((scenario: Scenario) => ({
+                  value: scenario.id,
+                  label: `${scenario.display_name} · ${scenarioWindowLabel(scenario)}`,
+                  meta: scenario.id,
+                  searchText: `${scenario.display_name} ${scenario.id} ${scenarioWindowLabel(scenario)}`,
+                }))}
+                onChange={(next) => {
+                  setScenarioId(next);
                   setPreflightError(null);
                 }}
-                disabled={scenarios.isPending}
-                className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3"
-              >
-                <option value="">— pick a scenario —</option>
-                {(scenarios.data ?? []).map((s: Scenario) => (
-                  <option key={s.id} value={s.id}>
-                    {s.display_name} · {scenarioWindowLabel(s)}
-                  </option>
-                ))}
-              </select>
+                placeholder="— pick a scenario —"
+                searchPlaceholder="Search scenarios…"
+                emptyHint="No scenarios found"
+                loading={scenarios.isPending}
+                className="h-9 min-h-9 w-full justify-between"
+              />
               {scenarios.isError ? (
                 <p className="m-0 mt-1 text-[12px] text-rose-300">
                   couldn't load scenarios — try refreshing
@@ -1146,38 +1138,42 @@ function StartEvalPanel({
             </label>
             {autoFireReview ? (
               <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <select
-                  aria-label="Review provider"
+                <SignalSearchableSelectMenu
+                  ariaLabel="Review provider"
                   value={activeReviewProvider?.name ?? ""}
-                  onChange={(e) => {
-                    setReviewProvider(e.target.value);
+                  options={reviewProviderRows.map((row) => ({
+                    value: row.name,
+                    label: row.name,
+                    meta: row.enabled_models.join(", "),
+                    searchText: `${row.name} ${row.enabled_models.join(" ")}`,
+                  }))}
+                  onChange={(next) => {
+                    setReviewProvider(next);
                     const row = reviewProviderRows.find(
-                      (candidate) => candidate.name === e.target.value,
+                      (candidate) => candidate.name === next,
                     );
                     setReviewModel(row?.enabled_models[0] ?? "");
                   }}
+                  placeholder="— pick provider —"
+                  searchPlaceholder="Search providers…"
+                  emptyHint="No configured providers"
                   disabled={reviewProviderRows.length === 0}
-                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-                >
-                  {reviewProviderRows.map((row) => (
-                    <option key={row.name} value={row.name}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Review model"
+                  className="w-full justify-between font-mono"
+                />
+                <SignalSearchableSelectMenu
+                  ariaLabel="Review model"
                   value={activeReviewModel}
-                  onChange={(e) => setReviewModel(e.target.value)}
+                  options={(activeReviewProvider?.enabled_models ?? []).map((model) => ({
+                    value: model,
+                    label: model,
+                  }))}
+                  onChange={setReviewModel}
+                  placeholder="— pick model —"
+                  searchPlaceholder="Search models…"
+                  emptyHint="No enabled models"
                   disabled={!activeReviewProvider}
-                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-                >
-                  {(activeReviewProvider?.enabled_models ?? []).map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full justify-between font-mono"
+                />
               </div>
             ) : null}
           </fieldset>

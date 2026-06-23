@@ -493,13 +493,41 @@ pub async fn build_run_payload_with(
     // candles even before the first decision. Falls back to the legacy
     // decision-timestamp logic when eval_run_bars is empty (pre-migration).
     if run.mode == RunMode::Live || run.scenario_id.is_empty() {
+        // Slim early-return: equity-only, no bars needed.
+        if !include.needs_bars() {
+            return Ok(RunChartPayload {
+                run_id: run_id.into(),
+                scenario_id: run.scenario_id.clone(),
+                asset: String::new(),
+                granularity: String::new(),
+                time_window: TimeWindow {
+                    start: Default::default(),
+                    end: Default::default(),
+                },
+                bars: vec![],
+                indicators: Indicators::default(),
+                equity,
+                drawdown,
+                position: vec![],
+                markers: ChartMarkers {
+                    trades: vec![],
+                    vetoes: vec![],
+                    holds: vec![],
+                },
+                baseline_equity: None,
+            });
+        }
         let decisions = store
             .read_decisions(run_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
 
         // Primary: eval_run_bars table (073_eval_run_bars).
-        let bars_from_store = store.read_bars(run_id).await.unwrap_or_default();
+        let bars_from_store = if include.bars {
+            store.read_bars(run_id).await.unwrap_or_default()
+        } else {
+            vec![]
+        };
         if !bars_from_store.is_empty() {
             let asset_sym = resolve_run_asset_for_chart(ctx, &run, &decisions)
                 .await
@@ -509,7 +537,7 @@ pub async fn build_run_payload_with(
                 .unwrap_or(xvision_data::alpaca::BarGranularity::Hour1);
             let bars: Vec<MarketBar> = bars_from_store
                 .iter()
-                .map(|(ts, o, h, l, c, v)| MarketBar {
+                .map(|(ts, o, h, l, c, v, _asset)| MarketBar {
                     timestamp: *ts,
                     open: *o,
                     high: *h,
@@ -518,6 +546,12 @@ pub async fn build_run_payload_with(
                     volume: *v,
                 })
                 .collect();
+            if bars.len() > MAX_BARS {
+                return Err(ApiError::Validation(format!(
+                    "payload exceeds 100K bars ({}); downsample granularity or shorten time_window",
+                    bars.len()
+                )));
+            }
             let time_window = if let (Some(s), Some(e)) = (
                 bars.first().map(|b| b.timestamp),
                 bars.last().map(|b| b.timestamp + chrono::Duration::seconds(granularity.seconds() as i64)),

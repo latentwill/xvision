@@ -49,6 +49,12 @@ flatten_requested: boolean,
  */
 live_config?: LiveConfig, 
 /**
+ * CT5 per-run mark-to-market unrealized PnL in USD
+ * (`eval_runs.unrealized_pnl_usd`, migration 065). `None` when unavailable
+ * / pre-first-fill — surfaced as "—" in the UI, NEVER a faked 0.
+ */
+unrealized_pnl_usd: number | null,
+/**
  * Live/forward-test only: bars where dispatch was skipped because the
  * agent was still processing a previous bar.
  */

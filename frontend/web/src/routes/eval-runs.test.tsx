@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { EvalRunsRoute } from "./eval-runs";
@@ -21,11 +22,13 @@ import type {
   ProviderRow,
   Scenario,
 } from "@/api/types.gen";
+import type * as EvalApiModule from "@/api/eval";
+import type * as ScenariosApiModule from "@/api/scenarios";
+import type * as SettingsApiModule from "@/api/settings";
+import type * as StrategiesApiModule from "@/api/strategies";
 
 vi.mock("@/api/eval", async () => {
-  const actual = await vi.importActual<typeof import("@/api/eval")>(
-    "@/api/eval",
-  );
+  const actual = await vi.importActual<typeof EvalApiModule>("@/api/eval");
   return {
     ...actual,
     listRuns: vi.fn(),
@@ -43,7 +46,7 @@ vi.mock("@/api/chart", () => ({
 }));
 
 vi.mock("@/api/scenarios", async () => {
-  const actual = await vi.importActual<typeof import("@/api/scenarios")>(
+  const actual = await vi.importActual<typeof ScenariosApiModule>(
     "@/api/scenarios",
   );
   return {
@@ -53,7 +56,7 @@ vi.mock("@/api/scenarios", async () => {
 });
 
 vi.mock("@/api/settings", async () => {
-  const actual = await vi.importActual<typeof import("@/api/settings")>(
+  const actual = await vi.importActual<typeof SettingsApiModule>(
     "@/api/settings",
   );
   return {
@@ -64,7 +67,7 @@ vi.mock("@/api/settings", async () => {
 });
 
 vi.mock("@/api/strategies", async () => {
-  const actual = await vi.importActual<typeof import("@/api/strategies")>(
+  const actual = await vi.importActual<typeof StrategiesApiModule>(
     "@/api/strategies",
   );
   return {
@@ -87,6 +90,20 @@ function renderRoute(initialEntry = "/eval-runs") {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+async function pickScenario(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Scenario" }));
+  await user.click(await screen.findByRole("option", { name: /User 4H/ }));
+}
+
+async function pickReviewModel(user: ReturnType<typeof userEvent.setup>, model: string) {
+  await user.click(await screen.findByRole("button", { name: "Review model" }));
+  await user.click(await screen.findByRole("option", { name: model }));
+}
+
+async function openReviewProvider(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Review provider" }));
 }
 
 function provider(overrides: Partial<ProviderRow> = {}): ProviderRow {
@@ -204,6 +221,15 @@ function mockReady({
       base_url: null,
       note: null,
     }),
+    byreal_spot: broker({
+      name: "Byreal Spot",
+      kind: "byreal_spot",
+      configured: false,
+      stored: false,
+      stored_key_id_suffix: null,
+      base_url: null,
+      note: null,
+    }),
     degen_arena: broker({
       name: "Degen Arena",
       kind: "degen_arena",
@@ -286,11 +312,13 @@ describe("EvalRunsRoute", () => {
 
 
   it("loads launcher scenarios from the scenario registry", async () => {
+    const user = userEvent.setup();
     mockReady();
 
     renderRoute("/eval-runs?start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
+    await user.click(await screen.findByRole("button", { name: "Scenario" }));
+    expect(await screen.findByRole("option", { name: /User 4H/ })).toBeInTheDocument();
     expect(scenariosApi.listScenarios).toHaveBeenCalled();
   });
 
@@ -576,14 +604,13 @@ describe("EvalRunsRoute", () => {
   });
 
   it("blocks eval launch when no provider with credentials is configured", async () => {
+    const user = userEvent.setup();
     mockReady({ providers: [provider({ api_key_set: false })] });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
-    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    await pickScenario(user);
     const startButton = screen.getByRole("button", { name: "Start" });
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
@@ -593,14 +620,13 @@ describe("EvalRunsRoute", () => {
   });
 
   it("shows a provider setup action when no providers are configured", async () => {
+    const user = userEvent.setup();
     mockReady({ providers: [] });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
-    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    await pickScenario(user);
     const startButton = screen.getByRole("button", { name: "Start" });
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
@@ -610,7 +636,42 @@ describe("EvalRunsRoute", () => {
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 
+
+  it("searches the start-eval strategy picker by strategy id", async () => {
+    mockReady();
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "agent-one",
+        display_name: "First strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openai"],
+        models: ["gpt-4.1-mini"],
+      },
+      {
+        agent_id: "agent-two",
+        display_name: "Second strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["openai"],
+        models: ["gpt-4.1-mini"],
+      },
+    ]);
+    const user = userEvent.setup();
+
+    renderRoute("/eval-runs?start=1");
+
+    const picker = await screen.findByRole("button", { name: "Strategy" });
+    await user.click(picker);
+    await user.type(screen.getByRole("textbox", { name: "Search Strategy" }), "agent-two");
+    await user.click(await screen.findByRole("option", { name: /Second strategy/i }));
+
+    expect(screen.getByRole("button", { name: "Strategy" })).toHaveTextContent(
+      "Second strategy",
+    );
+  });
   it("starts a backtest when the attached strategy agent provider is ready", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [
         provider({
@@ -650,10 +711,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    fireEvent.change(screen.getByLabelText("Scenario"), {
-      target: { value: "user-scenario-4h" },
-    });
+    await pickScenario(user);
     const startButton = screen.getByRole("button", { name: "Start" });
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
@@ -673,6 +731,7 @@ describe("EvalRunsRoute", () => {
   });
 
   it("persists the selected review model when auto-fire review is enabled", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [
         provider({
@@ -712,14 +771,9 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    fireEvent.change(screen.getByLabelText("Scenario"), {
-      target: { value: "user-scenario-4h" },
-    });
-    fireEvent.click(screen.getByLabelText("auto-run review annotations on completion"));
-    fireEvent.change(screen.getByLabelText("Review model"), {
-      target: { value: "qwen/qwen3" },
-    });
+    await pickScenario(user);
+    await user.click(screen.getByLabelText("auto-run review annotations on completion"));
+    await pickReviewModel(user, "qwen/qwen3");
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
     await waitFor(() => {
@@ -736,6 +790,7 @@ describe("EvalRunsRoute", () => {
   });
 
   it("allows eval launch when the strategy uses a no-auth provider (Ollama/local)", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [
         provider({
@@ -777,10 +832,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    fireEvent.change(screen.getByLabelText("Scenario"), {
-      target: { value: "user-scenario-4h" },
-    });
+    await pickScenario(user);
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
     await waitFor(() => expect(evalApi.startRun).toHaveBeenCalled());
@@ -788,6 +840,7 @@ describe("EvalRunsRoute", () => {
   });
 
   it("excludes unconfigured providers from the reviewer dropdown", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [
         provider({
@@ -806,20 +859,15 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    fireEvent.click(screen.getByLabelText("auto-run review annotations on completion"));
-
-    await waitFor(() => {
-      const reviewProviderSelect = screen.getByLabelText("Review provider");
-      const options = Array.from(reviewProviderSelect.querySelectorAll("option")).map(
-        (o) => o.value,
-      );
-      expect(options).toContain("openai");
-      expect(options).not.toContain("unkeyed");
-    });
+    await screen.findByRole("button", { name: "Scenario" });
+    await user.click(screen.getByLabelText("auto-run review annotations on completion"));
+    await openReviewProvider(user);
+    expect(await screen.findByRole("option", { name: /openai/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /unkeyed/ })).not.toBeInTheDocument();
   });
 
   it("blocks eval launch when the selected strategy uses an unconfigured provider", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [
         provider({
@@ -833,9 +881,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
-    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    await pickScenario(user);
     const startButton = screen.getByRole("button", { name: "Start" });
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
@@ -845,6 +891,7 @@ describe("EvalRunsRoute", () => {
   });
 
   it("blocks eval launch when the selected strategy uses a disabled model", async () => {
+    const user = userEvent.setup();
     mockReady({
       providers: [provider()],
       strategyProviderModels: [
@@ -855,9 +902,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
-    const scenarioSelect = screen.getByLabelText("Scenario") as HTMLSelectElement;
-    fireEvent.change(scenarioSelect, { target: { value: "user-scenario-4h" } });
+    await pickScenario(user);
     const startButton = screen.getByRole("button", { name: "Start" });
     await waitFor(() => expect(startButton).not.toBeDisabled());
     fireEvent.click(startButton);
@@ -1058,7 +1103,8 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
+    await screen.findByRole("button", { name: "Scenario" });
+    expect(screen.queryByLabelText("paper")).not.toBeInTheDocument();
     expect(screen.getByLabelText("backtest")).toBeChecked();
     expect(screen.getByLabelText("Scenario")).toBeVisible();
     fireEvent.click(screen.getByLabelText("forward test"));
@@ -1102,7 +1148,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
+    await screen.findByRole("button", { name: "Scenario" });
     fireEvent.click(screen.getByLabelText("forward test"));
     fireEvent.change(screen.getByLabelText("Forward-test bar limit"), {
       target: { value: "" },
@@ -1144,7 +1190,7 @@ describe("EvalRunsRoute", () => {
 
     renderRoute("/eval-runs?strategy=01TEST&start=1");
 
-    await screen.findByRole("option", { name: /User 4H/ });
+    await screen.findByRole("button", { name: "Scenario" });
     fireEvent.click(screen.getByLabelText("forward test"));
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 

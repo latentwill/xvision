@@ -3704,9 +3704,9 @@ impl Executor {
                     store
                         .record_bar(
                             &run.id,
+                            &asset.as_alpaca_pair(),
                             bar_count,
                             bar.timestamp,
-                            bar.open,
                             bar.high,
                             bar.low,
                             bar.close,
@@ -3747,6 +3747,7 @@ impl Executor {
         // crashed live/real-money run must record the metrics+tokens it
         // accumulated, not NULL.
         let mut last_partial_persist = Instant::now();
+        let mut live_bar_count: u32 = 0;
         loop {
             // (c) cancellation / external stop.
             if store.is_terminal(&run.id).await? {
@@ -3892,6 +3893,7 @@ impl Executor {
                 .cloned()
                 .unwrap_or_else(|| asset_sym.as_alpaca_pair());
             bar_count += 1;
+            live_bar_count += 1;
             // Emit bar event for SSE subscribers and persist in eval_run_bars.
             self.emit_chart(
                 &run.id,
@@ -3908,6 +3910,7 @@ impl Executor {
             store
                 .record_bar(
                     &run.id,
+                    &asset,
                     bar_count,
                     bar.timestamp,
                     bar.open,
@@ -3921,10 +3924,10 @@ impl Executor {
             // the live stream is yielding bars without bumping to debug.
             // Throttled to every 50th bar (roughly every 50 min at 1m
             // granularity) to avoid spamming container logs.
-            if bar_count % 50 == 1 {
+            if live_bar_count % 50 == 1 {
                 tracing::info!(
                     target: "xvision_engine::live_executor",
-                    bar_count,
+                    live_bar_count,
                     asset = %asset_sym,
                     "live bar received"
                 );
