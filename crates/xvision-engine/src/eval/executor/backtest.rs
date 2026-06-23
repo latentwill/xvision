@@ -3644,29 +3644,6 @@ impl Executor {
         // Used to compute staleness when the decision arrives.
         let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
 
-        // Drain warmup history from the bar source into per-asset buffers so
-        // the first tradable bar has a complete lookback window.  Without
-        // this, `MultiLiveStream::new()` collects warmup via `take_warmup()`
-        // but `run_inner_live` never consumes it — indicators see zero
-        // history and the first several bars are wasted.
-        let warmup = runtime.bar_source.take_warmup_history();
-        if !warmup.is_empty() {
-            let counts: Vec<String> = warmup
-                .iter()
-                .map(|(a, bars)| format!("{}:{} bars", a, bars.len()))
-                .collect();
-            tracing::info!(
-                target: "xvision_engine::live_executor",
-                "live loop: seeding per-asset history from warmup ({} assets: {})",
-                warmup.len(),
-                counts.join(", "),
-            );
-            for (asset, bars) in warmup {
-                if let Some(hist) = history.get_mut(&asset) {
-                    hist.extend(bars);
-                }
-            }
-        }
 
         tracing::info!(
             target: "xvision_engine::live_executor",
@@ -3697,8 +3674,7 @@ impl Executor {
             );
             for (asset, bars) in warmup {
                 // Emit initial-equity chart points for warmup bars so the
-                // dashboard chart shows the full lookback window, not just
-                // bars arriving after the stream enters the live phase.
+                // dashboard chart shows the full lookback window.
                 for bar in &bars {
                     equity_samples_buf.push((bar.timestamp, equity));
                     self.emit_chart(
@@ -3710,6 +3686,16 @@ impl Executor {
                     )
                     .await;
                 }
+                // Push warmup bars through the filter hook so the
+                // indicator engine accumulates the bars it needs to exit
+                // the Warming state. Must run BEFORE hist.extend() which
+                // consumes `bars`.
+                if let Some(hook) = filter_hook.as_mut() {
+                    for bar in &bars {
+                        hook.evaluate(bar, false);
+                    }
+                }
+                // Seed per-asset history for the LLM seed context.
                 if let Some(hist) = history.get_mut(&asset) {
                     hist.extend(bars);
                 }
