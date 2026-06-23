@@ -3265,7 +3265,27 @@ async fn run_inner(
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     validate_live_request_shape(&req)?;
-    let live_config = req.live_config.clone();
+    let mut live_config = req.live_config.clone();
+    // Derive live bar granularity from the strategy's decision cadence
+    // when the operator hasn't explicitly set it.  The legacy default was
+    // always Minute1, which wastes 60× the data for a 1h strategy.
+    if let Some(ref mut cfg) = live_config {
+        if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
+            && strategy.manifest.decision_cadence_minutes != 1
+        {
+            let derived = crate::strategies::bar_granularity_for_cadence(
+                strategy.manifest.decision_cadence_minutes,
+            );
+            tracing::info!(
+                target: "xvision_engine::live",
+                strategy_id = %strategy.manifest.id,
+                cadence_min = strategy.manifest.decision_cadence_minutes,
+                granularity = ?derived,
+                "live config: overriding default 1m granularity from strategy cadence"
+            );
+            cfg.granularity = derived;
+        }
+    }
 
     // 2. Look up the scenario for Backtest, or synthesize the scenario-like
     //    envelope Live still needs internally for capital/venue/cadence helpers.
@@ -4775,7 +4795,19 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     validate_provider_override_shape(req.provider_override.as_ref())?;
     validate_live_request_shape(&req)?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
-    let live_config = req.live_config.clone();
+    let mut live_config = req.live_config.clone();
+    // Derive live bar granularity from the strategy's decision cadence
+    // when the operator hasn't explicitly set it (see same block in run_inner).
+    if let Some(ref mut cfg) = live_config {
+        if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
+            && strategy.manifest.decision_cadence_minutes != 1
+        {
+            let derived = crate::strategies::bar_granularity_for_cadence(
+                strategy.manifest.decision_cadence_minutes,
+            );
+            cfg.granularity = derived;
+        }
+    }
     let (scenario, from_db) = if let Some(cfg) = live_config.as_ref() {
         (scenario_from_live_config(cfg), false)
     } else {
