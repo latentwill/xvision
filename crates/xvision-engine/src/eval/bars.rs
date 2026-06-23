@@ -165,20 +165,69 @@ pub async fn load_warmup_window(
     let secs = (granularity.seconds() as i64) * (warmup_bars as i64);
     let start = now - chrono::Duration::seconds(secs);
     let end = now;
-    let cache_key = compute_cache_key(asset, granularity, start, end, LIVE_WARMUP_DATA_SOURCE_TAG);
-    let market_bars = load_bars(
-        ctx,
-        &BarCacheArgs {
-            cache_key,
-            asset_pair: asset.to_string(),
-            granularity,
-            start,
-            end,
-            data_source_tag: LIVE_WARMUP_DATA_SOURCE_TAG.into(),
-        },
-    )
-    .await?;
-    Ok(market_bars.into_iter().map(market_bar_to_ohlcv).collect())
+
+    // For live warmup, fetch directly from Alpaca to guarantee a contiguous
+    // window. Cached bars may have gaps from partial fetches or market
+    // closures. Any remaining gaps (e.g. outside market hours) are filled
+    // with forward-filled synthetic bars so indicators always have enough
+    // history to compute.
+    let mut market_bars = ctx
+        .alpaca_fetcher()
+        .fetch_crypto_bars(asset, granularity, start, end)
+        .await
+        .map_err(|e| ApiError::Validation(format!("alpaca warmup fetch for {asset}: {e}")))?;
+
+    market_bars.sort_by_key(|b| b.timestamp);
+    market_bars.dedup_by_key(|b| b.timestamp);
+
+    // Fill gaps with synthetic bars so the series is contiguous.
+    let filled = fill_bar_gaps(&market_bars, granularity);
+    if filled.len() > market_bars.len() {
+        tracing::info!(
+            target: "xvision_engine::live",
+            asset = %asset,
+            fetched = market_bars.len(),
+            filled = filled.len(),
+            "warmup: filled {} gap bars for contiguous series",
+            filled.len() - market_bars.len(),
+        );
+    }
+
+    Ok(filled.into_iter().map(market_bar_to_ohlcv).collect())
+}
+
+/// Fill missing bars in a sorted, deduplicated series with synthetic bars.
+/// Each gap bar carries the previous bar's close as OHLC and zero volume.
+/// Used by `load_warmup_window` to guarantee contiguous indicator history
+/// for live runs even when Alpaca returns bars with gaps (market closures,
+/// data outages).
+fn fill_bar_gaps(bars: &[MarketBar], granularity: BarGranularity) -> Vec<MarketBar> {
+    if bars.len() < 2 {
+        return bars.to_vec();
+    }
+    let step_secs = granularity.seconds().max(1) as i64;
+    let mut filled: Vec<MarketBar> = Vec::with_capacity(bars.len() + bars.len() / 10);
+    filled.push(bars[0].clone());
+    for i in 1..bars.len() {
+        let prev = &bars[i - 1];
+        let curr = &bars[i];
+        let expected = prev.timestamp + chrono::Duration::seconds(step_secs);
+        // Insert synthetic bars for each missing timestamp
+        let mut gap_ts = expected;
+        while gap_ts < curr.timestamp {
+            filled.push(MarketBar {
+                timestamp: gap_ts,
+                open: prev.close,
+                high: prev.close,
+                low: prev.close,
+                close: prev.close,
+                volume: 0.0,
+            });
+            gap_ts = gap_ts + chrono::Duration::seconds(step_secs);
+        }
+        filled.push(curr.clone());
+    }
+    filled
 }
 
 fn market_bar_to_ohlcv(b: MarketBar) -> xvision_core::market::Ohlcv {
