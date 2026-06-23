@@ -270,6 +270,8 @@ export function EvalRunsRoute() {
       const scenarioName = displayScenarioName(
         row.scenario_id,
         scenarios,
+        row.mode,
+        row.live_config?.stop_policy,
       ).toLowerCase();
       const shortId = row.id.slice(0, 8).toLowerCase();
       return name.includes(q) || scenarioName.includes(q) || shortId.includes(q);
