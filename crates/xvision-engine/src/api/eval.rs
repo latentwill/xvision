@@ -4388,6 +4388,10 @@ async fn build_live_executor(
     };
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
+        tracing::info!(
+            target: "xvision_engine::live",
+            "Alpaca credentials loaded from broker store (Settings → Brokers)"
+        );
         (
             c.api_key_id,
             c.api_secret_key,
@@ -4396,6 +4400,10 @@ async fn build_live_executor(
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
     } else if uses_alpaca_data {
+        tracing::warn!(
+            target: "xvision_engine::live",
+            "Alpaca credentials NOT found in broker store, falling back to APCA_API_KEY_ID / APCA_API_SECRET_KEY env vars"
+        );
         let key_id =
             std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
@@ -4562,10 +4570,43 @@ async fn build_live_executor(
         let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
         let stream = if uses_alpaca_data {
-            let ws = live_client
-                .subscribe_bars(&asset, granularity)
-                .await
-                .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+            // Retry WebSocket subscription with exponential backoff.
+            // Alpaca free tier allows 1 concurrent WS connection; a stale
+            // agentd or prior run may hold it. Retry up to 3 times with
+            // 5s / 10s / 20s backoff so the stale connection has time to
+            // time out on Alpaca's side.
+            let mut ws = None;
+            let mut last_err = String::new();
+            for attempt in 0u32..3u32 {
+                match live_client.subscribe_bars(&asset, granularity).await {
+                    Ok(sub) => {
+                        ws = Some(sub);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                        if attempt < 2 && last_err.contains("connection limit exceeded") {
+                            let wait = std::time::Duration::from_secs(5 * 2u64.pow(attempt));
+                            tracing::warn!(
+                                target: "xvision_engine::live",
+                                asset = %asset,
+                                attempt = attempt + 1,
+                                wait_secs = wait.as_secs(),
+                                "Alpaca WS connection limit (HTTP 406) — retrying after backoff. \
+                                 Kill stale xvision-agentd processes or wait for connection timeout."
+                            );
+                            tokio::time::sleep(wait).await;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            let ws = ws.ok_or_else(|| {
+                ApiError::Validation(format!(
+                    "subscribe Alpaca live bars for {asset}: {last_err}"
+                ))
+            })?;
             let poll = AlpacaLivePoll::new(
                 production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
                 asset.clone(),
