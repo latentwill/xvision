@@ -7,9 +7,13 @@ strategies — the same agent can appear in multiple strategies simultaneously.
 Editing an agent propagates to every strategy that references it on its next
 run.
 
-> **Capability set update** — the Capability enum is now exactly { Trader,
-> Filter, Router }. The Intern and Critic stages have been retired and
-> folded into the single-stage agent model.
+> **Capability-first agent model** — every agent slot carries a typed
+> `Capability` that determines its dispatch path and output shape. The
+> recognized engine set is `{ Trader, Filter, Router }`. A **Filter-capable
+> agent** emits a `FilterSignal` (a typed JSON payload consumed by downstream
+> edge predicates); a **Trader agent** proposes a sized trading decision. The
+> Intern and Critic stages have been retired and folded into the
+> single-stage agent model.
 
 ---
 
@@ -21,15 +25,14 @@ Open `/agents/new`. The form has three sections:
   and optional tags.
 - **Behavior (slots)** — one or more agent slots. Each slot exposes:
   - **Provider** — picked from your enabled providers.
-  - **Model** — picked from the models available for that provider.
-  - **System prompt** — the prompt handed to the model at dispatch time.
-  - **Skills** — attached skills from the workspace skill registry (managed
-    at `/agents/skills`; shown only when skills are already linked).
-- **Template picker** — before reaching the form, the dashboard offers three
-  starter templates: *Single-prompt trader* (one slot), *Analyst → Executor*
-  (two slots, sequential), and *Risk-checked trader* (three slots,
-  trader / risk / executor). Templates seed the form; rename or extend freely
-  after creation. You can also skip to a blank agent.
+- **Template picker** — before reaching the form, the dashboard offers nine
+  starter templates ranging from simple single-slot traders to multi-asset
+  compositions. Highlights: *Single-prompt trader*, *Momentum trader*,
+  *Mean-reversion trader*, *Analyst → Executor*, *Risk-checked trader*,
+  *Regime-aware trader* (filter + trader), *News-reader + trader*, *Paper-
+  confirmed live trader*, and *Multi-asset router with traders*. Templates
+  seed the form; rename or extend freely after creation. You can also skip
+  to a blank agent.
 
 **Chat rail path:** describe the agent you want in plain English and the rail
 composes one for you, then routes to the same form pre-filled.
@@ -170,6 +173,62 @@ launch readiness and for what can be optimized. The recognized set:
 Only `trader` and `filter` have DSPy signatures today, so only those can be
 fed to `xvn optimize`. The rest are reported by diagnostics but cannot be
 tuned yet.
+
+---
+
+## The FilterSignal contract
+
+A **Filter-capable agent** emits a `FilterSignal` — a typed JSON payload the
+engine uses to gate downstream agents and condition pipeline edges. The shape:
+
+```json
+{
+  "name": "regime_filter",
+  "payload": {
+    "regime": "high_vol",
+    "confidence": 0.87
+  },
+  "granularity": "bar",
+  "ts": "2026-06-22T14:30:00Z",
+  "scope": "global"
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | `string` | The producer's `AgentRef.role`. Briefing surfaces key on this under `filter_signals[name]`. |
+| `payload` | `serde_json::Value` | The signal payload. Downstream `PipelineEdge.condition` predicates evaluate against this via dotted `signal_field` paths (e.g. `"regime"`, `"confidence"`, `"active"`). |
+| `granularity` | `"bar"` \| `"minute"` \| `"decision"` | Controls re-evaluation cadence. `Bar` re-evaluates every new bar; `Minute` re-fires for the same minute; `Decision` re-evaluates only when a downstream Trader is about to be invoked. |
+| `ts` | `ISO 8601` | Bar timestamp the signal was computed on. Used by the per-granularity signal cache for stale-signal detection. |
+| `scope` | `"global"` \| `"asset"` \| `"pair"` \| `"custom"` | Scope the signal applies to. In v1's per-asset fan-out the dispatcher tags signals `asset(current)`. `global` is the default for back-compat. |
+
+When a Filter's LLM call fails to parse, the dispatcher emits a `FilterSignal`
+with `payload: null`. Downstream edge predicates that reference a missing field
+evaluate to `false` — the edge does not fire, the cycle falls through, and a
+`filter_parse_error` observability event is recorded.
+
+---
+
+## How filter signals flow
+
+Filter signals flow through the pipeline in three paths:
+
+1. **LLM-backed Filter** — `dispatch_filter` runs the slot's LLM with an
+   output-schema constraint forcing the model to return the `FilterSignal`
+   JSON shape. The response is parsed and validated via `serde_json` with
+   `deny_unknown_fields`.
+2. **DSL-backed Filter** — slots with `provider: "dsl"` route through the
+   `xvision-filters` bridge. DSL evaluation produces an `ActivationDecision`;
+   the bridge wraps it as a `FilterSignal` with `payload: { "active": bool,
+   "reason": string? }`.
+3. **Nanochat filter** — slots with a `checkpoint` (nanochat model ref) run
+   deterministic inference through the nanochat worker, producing a
+   `FilterSignal` with a `{ direction, confidence }` payload.
+
+All three paths produce the same `FilterSignal` shape. Edge predicates
+(`EdgePredicate::Eq`) evaluate identically against the `payload` regardless
+of the producer — DSL and LLM filters are interchangeable from the
+downstream Trader's perspective.
 
 ---
 

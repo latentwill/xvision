@@ -1,6 +1,6 @@
 # Scenarios
 
-A scenario is a saved market window that strategies get backtested against. It pins every variable that affects the bar stream and the simulated fills: asset, date range, granularity, starting capital, fees, slippage, fill latency, and how many pre-window warmup bars to pre-fetch. The same scenario can drive any number of strategies through identical bars and execution conditions, making results comparable.
+A scenario is a saved market window that strategies get backtested against. Forward-test mode replays a scenario's historical bar window through the live execution stack — same strategies, same bars, same fill simulation, but routed through the real broker/agent pipeline without submitting orders. Every variable that affects the bar stream and simulated fills is pinned: asset, date range, granularity, starting capital, fees, slippage, fill latency, and how many pre-window warmup bars to pre-fetch. The same scenario can drive any number of strategies through identical bars and execution conditions, making results comparable across both backtest and forward-test runs.
 
 ---
 
@@ -18,6 +18,15 @@ A scenario captures:
 - **Tags and notes** — free-form labels and annotations
 
 Scenarios are immutable after creation. To change a field, clone the scenario and pass override flags. The clone records the parent id so the lineage stays traceable.
+
+## Backtest vs forward-test
+
+Scenarios are used in two eval modes:
+
+- **Backtest** — the engine processes bars synchronously, one decision per bar, with simulated fills. Every bar is available at dispatch time; decisions are never delayed or skipped. Use backtest for fast, reproducible strategy evaluation.
+- **Forward-test** — the engine replays the scenario's bar window through the live dispatch pipeline: real HTTP calls to agent sidecars, real broker routing, and per-bar latency tracking. Bars arrive at wall-clock speed with the same timing gaps that would occur in live trading. Forward-test surfaces real-world concerns that backtest hides: agent response latency, skipped dispatches (when the agent is still processing the previous bar), delayed decisions (when the bar ages past the cadence period), and forced agent cancellations via `--max-agent-ms`. No orders are submitted — fills are still simulated.
+
+Use backtest for iteration speed; use forward-test before going live to validate the full pipeline under realistic timing constraints. The same scenario drives both modes, keeping results directly comparable.
 
 ---
 
@@ -242,6 +251,33 @@ For machine-readable output, use `xvn scenario show <id>` (JSON by default, or `
 | `rm` | Hard-delete a scenario and its associated data |
 | `tree` | Print the clone ancestry tree for a scenario |
 
+
+## Filter warmup validation
+
+When you launch an eval run, the CLI automatically checks whether the scenario provides enough bars for every indicator in the strategy's filter. Some indicators — notably `rvol_tod_N` (relative volume by time-of-day) — require a minimum number of same-slot trading sessions to produce meaningful values. For example, `rvol_tod_20` on a 15-minute cadence needs 20 × 96 = 1,920 bars of history; the default warmup of 200 bars is insufficient.
+
+The check is non-fatal: the CLI emits a warning like
+
+```
+filter warmup: rvol_tod_20 needs 1920 bars, scenario provides 470
+```
+
+but does not abort the eval. A scenario that is too short may produce zero decisions when the filter never exits warmup, so treat warmup warnings as a signal to either lengthen the scenario window, lower the indicator's lookback parameter, or switch to a simpler filter.
+
+The validation runs automatically as part of `xvn eval start` and `xvn experiment run` whenever the strategy has a filter. It lives in `xvision-filters::check_filter_warmup` — a pure function over the filter, cadence, and scenario duration, exercisable in unit tests without a running server.
+
+## Scenario chart API
+
+`GET /api/scenarios/:id/chart` returns the OHLCV bars for a scenario and its cache status. The payload includes a `CacheStatus` field (`FullyCached` / `PartiallyCached` / `NotCached`) and, when bars are available, the full bar series with timestamps. Optional query parameters:
+
+| Query param | Effect |
+|---|---|
+| `?granularity=<g>` | Fetch bars at a specific granularity (defaults to the scenario's stored granularity) |
+| `?asset=<sym>` | Fetch bars for a specific asset (e.g. `ETH/USD`; defaults to the scenario's asset) |
+
+Returns 404 when the scenario id is not found, and 400 when the requested asset is not on the supported symbol list.
+
+The companion `GET /api/scenarios/preview` endpoint returns a transient chart payload for the new-scenario wizard without creating a DB row. Accept `?asset=`, `?from=`, `?to=`, `?granularity=`, and `?baseline=true` (optional, adds baseline bars).
 ---
 
 ## See also

@@ -31,6 +31,30 @@ that strategies draw from.
 4. Click **Save**. The dashboard validates the strategy and surfaces any
    missing-agent or missing-provider issues inline.
 
+
+## Multi-timeframe
+
+Strategies can declare multiple timeframes in their manifest under
+`timeframe_requirements.auxiliary`. Each entry is a timeframe string
+(`"15m"`, `"1h"`, `"4h"`, etc.) specifying an additional bar series the
+agent receives alongside the strategy's native decision cadence. This
+enables multi-timeframe analysis in a single dispatch — the agent gets
+bar history for each declared timeframe and can reason across them.
+
+Set auxiliary timeframes via the dashboard under the Timeframe section
+of the strategy editor (click **+ Add timeframe**), or directly in the
+strategy JSON:
+
+```json
+{
+  "timeframe_requirements": {
+    "auxiliary": ["15m", "1h"]
+  }
+}
+```
+
+When `auxiliary` is empty or omitted, the strategy uses its native
+timeframe only — the legacy single-timeframe behavior is preserved.
 ---
 
 ## Author a strategy from the CLI
@@ -102,6 +126,30 @@ prompt text mentions a different asset than `--asset`).
 
 ---
 
+## Filters
+
+Strategies can gate agent dispatch behind firing conditions — typed
+predicates that decide, per bar, whether an agent should fire or skip.
+See [Firing Conditions](/docs?slug=firing-conditions) for the full
+authoring workflow, filter timeline states, and cost framing.
+
+xvision supports two filter paths:
+
+1. **Filter-capable LLM agent** — a dedicated agent that emits a
+   `FilterSignal` wired to a Trader via a `PipelineEdge` with an
+   `EdgePredicate`. Author from the SPA strategy editor or via
+   `xvn strategy add-filter`. This is the primary path for
+   regime-conditional dispatch gates.
+2. **Inline deterministic Filter DSL** — a pure indicator-condition
+   tree under `strategy.filter`, installed via `xvn strategy
+   set-filter --from-json`. No LLM call; the engine evaluates
+   indicator conditions directly. See [Filter DSL
+   Catalog](/docs?slug=filter-dsl-catalog) for the indicator/operator
+   reference and copyable JSON examples.
+
+A strategy with no filter fires its Trader on every bar. The validator
+flags this with an advisory warning (see [Validate](#validate)).
+
 ## Validate
 
 Shape-only check (no scenario required):
@@ -124,6 +172,9 @@ With `--scenario`, the preflight checks:
 - The scenario asset is in the strategy's asset universe.
 - The scenario granularity matches the strategy's timeframe.
 - Warmup bar adequacy.
+- Filter indicators have adequate warmup bars for the scenario duration
+  (e.g. `rvol_tod_20` needs 20 same-slot sessions × bars-per-day;
+  under-provisioned scenarios emit a warning).
 
 `--json` output:
 
