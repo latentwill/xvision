@@ -505,6 +505,15 @@ async fn handle_disconnect(
             .await;
         return false;
     }
+    // If the receiver has been dropped (nobody is consuming the stream),
+    // exit immediately rather than reconnecting and holding a stale WS slot.
+    if tx.is_closed() {
+        tracing::info!(
+            target: "xvision_data::alpaca_live",
+            "live bar stream: receiver dropped, exiting without reconnect"
+        );
+        return false;
+    }
     true
 }
 

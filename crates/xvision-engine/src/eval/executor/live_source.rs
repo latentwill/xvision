@@ -12,10 +12,9 @@
 //! ## Construction
 //!
 //! Production callers use [`LiveStream::new_with_warmup`], which
-//! synchronously loads the most-recent `warmup_bars` bars through
-//! the same cache + singleflight path as backtest scenarios
-//! ([`crate::eval::bars::load_warmup_window`]). Unit tests use the
-//! `_for_test` variant which accepts a pre-built warmup buffer +
+//! synchronously loads the most-recent `warmup_bars` bars directly
+//! from Alpaca and fills gaps through [`crate::eval::bars::load_warmup_window`].
+//! Unit tests use the `_for_test` variant which accepts a pre-built warmup buffer +
 //! injected websocket/poll handles so the test doesn't need a
 //! running `ApiContext`.
 //!
