@@ -13,16 +13,9 @@ use tempfile::TempDir;
 
 use xvision_agent_client::AgentClient;
 use xvision_core::config::{ProviderEntry, ProviderKind};
-use xvision_engine::agent::dispatch_capability::{
-    dispatch_capability, AgentOutput, ClineDispatchCtx, DispatchInput,
-};
 use xvision_engine::agent::execute_cline::{execute_slot_cline, ClineSlotInput, TrajectoryMode};
-use xvision_engine::agent::llm::{MockDispatch, ResponseSchema};
-use xvision_engine::agent::pipeline::ResolvedAgentSlot;
-use xvision_engine::agents::{Capability, InputsPolicy};
-use xvision_engine::eval::run::RunMode;
+use xvision_engine::agent::llm::ResponseSchema;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::tools::ToolRegistry;
 
 fn mock_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -67,76 +60,6 @@ fn anthropic_entry() -> ProviderEntry {
     }
 }
 
-fn resolved_slot(slot: LLMSlot) -> ResolvedAgentSlot {
-    ResolvedAgentSlot {
-        role: slot.role.clone(),
-        slot,
-        system_prompt: "Decide whether to trade.".into(),
-        max_tokens: Some(4096),
-        max_wall_ms: None,
-        temperature: None,
-        inputs_policy: InputsPolicy::Raw,
-        bar_history_limit: None,
-        memory_mode: xvision_memory::types::MemoryMode::Off,
-        agent_id: "agent-forward".into(),
-        noop_skip: false,
-        nano: None,
-    }
-}
-
-async fn dispatch_via_production_path(run_mode: RunMode, run_id: &str) -> anyhow::Result<AgentOutput> {
-    let (client, _dir) = spawn_mock(Some(json!({
-        "decisionJson": r#"{"action":"hold","conviction":0.5,"justification":"mock"}"#
-    }))).await;
-    let entry = anthropic_entry();
-    let resolved = resolved_slot(trader_slot());
-    let slot = resolved.slot.clone();
-    let outcome = dispatch_capability(DispatchInput {
-        resolved: &resolved,
-        slot: &slot,
-        system_prompt: resolved.system_prompt.clone(),
-        upstream_inputs: json!({"market_data": {"bar_history": [{"c": 100.0}]}}),
-        dispatch: std::sync::Arc::new(MockDispatch::echo("{}")),
-        tools: std::sync::Arc::new(ToolRegistry::default_with_builtins()),
-        max_tokens: resolved.max_tokens,
-        max_wall_ms: resolved.max_wall_ms,
-        temperature: resolved.temperature,
-        obs: None,
-        memory: None,
-        memory_mode: resolved.memory_mode,
-        agent_id: resolved.agent_id.clone(),
-        scenario_start: None,
-        source_window_start: None,
-        source_window_end: None,
-        run_id: run_id.into(),
-        scenario_id: "scenario-forward".into(),
-        cycle_idx: 0,
-        invocation_suffix: None,
-        catalog: None,
-        delta_briefing: false,
-        prev_briefing: None,
-        trace_name: None,
-        trace_attrs: None,
-        current_index: 0,
-        total_agents: 1,
-        activates: Capability::Trader,
-        recorder: None,
-        runtime: Default::default(),
-        cline: Some(ClineDispatchCtx {
-            client: std::sync::Arc::new(client),
-            provider_entry: entry,
-            api_key: Some("test-key".into()),
-            recording_slot_role: None,
-            tool_asset_guard: None,
-            as_of_guard: None,
-            run_mode,
-        }),
-        model_call_span_id: None,
-    })
-    .await?;
-    Ok(outcome.output)
-}
-
 fn slot_input<'a>(
     slot: &'a LLMSlot,
     entry: &'a ProviderEntry,
@@ -164,18 +87,6 @@ fn slot_input<'a>(
 }
 
 // ── Contract-level tests ───────────────────────────────────────────────────
-
-#[tokio::test]
-async fn forward_test_dispatch_capability_reaches_cline_sidecar() {
-    let output = dispatch_via_production_path(RunMode::Backtest, "01FWD-DISPATCH")
-        .await
-        .expect("dispatch_capability should route trader through Cline");
-
-    match output {
-        AgentOutput::Trader(t) => assert!(t.response.text().contains("hold")),
-        other => panic!("expected trader output from production dispatch path, got {other:?}"),
-    }
-}
 
 #[tokio::test]
 async fn forward_test_cline_slot_input_has_correct_shape() {

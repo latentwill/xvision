@@ -26,8 +26,7 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
     let out = tool
         .invoke(serde_json::json!({
             "asset": "BTC/USD",
-            "fixture": "test-fixture-btc-2024-01",
-            "timeframe": "4h"
+            "fixture": "test-fixture-btc-2024-01"
         }))
         .await
         .expect("invoke must succeed");
@@ -38,7 +37,27 @@ async fn ohlcv_tool_returns_real_bars_for_known_fixture() {
         !bars.as_array().unwrap().is_empty(),
         "bars array must not be empty"
     );
-    assert_eq!(out.get("timeframe").and_then(|v| v.as_str()), Some("4h"));
+    assert!(out.get("timeframe").is_none());
+}
+
+#[tokio::test]
+async fn ohlcv_tool_rejects_timeframe_specific_fixture_requests() {
+    xvision_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01").expect("fixture creation");
+
+    let reg = ToolRegistry::default_with_builtins();
+    let tool = reg
+        .get(&ToolName::new("ohlcv"))
+        .expect("ohlcv tool must be registered");
+    let err = tool
+        .invoke(serde_json::json!({
+            "asset": "BTC/USD",
+            "fixture": "test-fixture-btc-2024-01",
+            "timeframe": "4h"
+        }))
+        .await
+        .expect_err("fixture tool must not relabel bars as a requested timeframe");
+
+    assert!(err.to_string().contains("timeframe"));
 }
 
 #[tokio::test]
@@ -53,8 +72,7 @@ async fn indicator_panel_tool_returns_panel_for_known_fixture() {
     let out = tool
         .invoke(serde_json::json!({
             "asset": "BTC/USD",
-            "fixture": "test-fixture-btc-2024-01",
-            "timeframe": "1d"
+            "fixture": "test-fixture-btc-2024-01"
         }))
         .await
         .expect("invoke must succeed");
@@ -65,5 +83,25 @@ async fn indicator_panel_tool_returns_panel_for_known_fixture() {
             "{field} must be a numeric indicator value"
         );
     }
-    assert_eq!(out.get("timeframe").and_then(|v| v.as_str()), Some("1d"));
+    assert!(out.get("timeframe").is_none());
+}
+
+#[tokio::test]
+async fn indicator_panel_tool_rejects_timeframe_specific_fixture_requests() {
+    xvision_data::fixtures::ensure_test_fixture("test-fixture-btc-2024-01").expect("fixture creation");
+
+    let reg = ToolRegistry::default_with_builtins();
+    let tool = reg
+        .get(&ToolName::new("indicator_panel"))
+        .expect("indicator_panel tool must be registered");
+    let err = tool
+        .invoke(serde_json::json!({
+            "asset": "BTC/USD",
+            "fixture": "test-fixture-btc-2024-01",
+            "timeframe": "1d"
+        }))
+        .await
+        .expect_err("fixture tool must not relabel indicators as a requested timeframe");
+
+    assert!(err.to_string().contains("timeframe"));
 }

@@ -1493,6 +1493,7 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start: now, end: now },
+
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -2790,7 +2791,8 @@ async fn spawn_cline_ctx(
     // Bug 2: the sidecar can intermittently fail to start (timing race or
     // cold Node start). Retry up to 3 times with a short delay — the gist
     // repro says retry "usually succeeds on second attempt".
-    let mut client_result: Result<AgentClient, xvision_agent_client::AgentClientError> = Err(xvision_agent_client::AgentClientError::TransportClosed);
+    let mut client_result: Result<AgentClient, xvision_agent_client::AgentClientError> =
+        Err(xvision_agent_client::AgentClientError::TransportClosed);
     for attempt in 1..=3u32 {
         match AgentClient::spawn_with_event_sink(
             std::path::Path::new(&bin),
@@ -3392,6 +3394,8 @@ async fn run_inner(
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await
         }
@@ -3813,11 +3817,11 @@ async fn load_market_data_context_for_scenario(
     assets: &[xvision_core::trading::AssetSymbol],
 ) -> ApiResult<crate::eval::market_data::MarketDataContext> {
     let mut market_data = crate::eval::market_data::MarketDataContext::new();
-    let native_granularity = crate::strategies::bar_granularity_for_cadence(
-        strategy.manifest.decision_cadence_minutes,
-    );
+    let native_granularity =
+        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
     for asset in assets {
-        let bars = market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
+        let bars =
+            market_bars_to_ohlcv(load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await?);
         market_data.insert_series(*asset, native_granularity, bars);
     }
     for (tf, support) in strategy.supported_timeframes() {
@@ -3828,11 +3832,16 @@ async fn load_market_data_context_for_scenario(
             "1m" => xvision_data::alpaca::BarGranularity::Minute1,
             "5m" => xvision_data::alpaca::BarGranularity::Minute5,
             "15m" => xvision_data::alpaca::BarGranularity::Minute15,
-            "30m" => xvision_data::alpaca::BarGranularity::new(30, xvision_data::alpaca::BarGranularityUnit::Minute)
-                .expect("validated 30m granularity"),
+            "30m" => xvision_data::alpaca::BarGranularity::new(
+                30,
+                xvision_data::alpaca::BarGranularityUnit::Minute,
+            )
+            .expect("validated 30m granularity"),
             "1h" => xvision_data::alpaca::BarGranularity::Hour1,
-            "2h" => xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
-                .expect("validated 2h granularity"),
+            "2h" => {
+                xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
+                    .expect("validated 2h granularity")
+            }
             "4h" => xvision_data::alpaca::BarGranularity::Hour4,
             "1d" => xvision_data::alpaca::BarGranularity::Day1,
             _ => continue,
@@ -3920,9 +3929,8 @@ async fn build_backtest_executor(
         let market_data = load_market_data_context_for_scenario(ctx, scenario, strategy, &active).await?;
         let mut asset_bars = std::collections::BTreeMap::new();
         let mut first_err: Option<String> = None;
-        let native_granularity = crate::strategies::bar_granularity_for_cadence(
-            strategy.manifest.decision_cadence_minutes,
-        );
+        let native_granularity =
+            crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
         for asset in &active {
             match market_data.series(*asset, native_granularity) {
                 Some(bars) if !bars.is_empty() => {
@@ -3947,7 +3955,9 @@ async fn build_backtest_executor(
             // Warmup is a hard preflight error when DB-resolved: an
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
-            let warmup = market_bars_to_ohlcv(load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?);
+            let warmup = market_bars_to_ohlcv(
+                load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?,
+            );
             let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
@@ -4280,10 +4290,16 @@ async fn build_live_executor(
     obs: Option<crate::agent::observability::ObsEmitter>,
     provider_catalogs: std::collections::HashMap<String, std::sync::Arc<xvision_core::providers::Catalog>>,
     limits: Option<&crate::eval::limits::EvalLimits>,
+    agent_runtime: AgentRuntime,
+    cline_ctx: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
-    let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
+    let orderly_creds = broker_settings::resolve_orderly_credentials(&ctx.xvn_home).await?;
+    let orderly_base_url = orderly_creds
+        .as_ref()
+        .and_then(|c| c.base_url.clone())
+        .or_else(|| std::env::var("ORDERLY_BASE_URL").ok());
     let byreal_network = std::env::var("BYREAL_NETWORK").ok();
     let byreal_spot_network = std::env::var("BYREAL_SPOT_NETWORK").ok();
     // Resolve Degen Arena creds (stored via Settings → Brokers / deploy ingest
@@ -4372,6 +4388,10 @@ async fn build_live_executor(
     };
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
+        tracing::info!(
+            target: "xvision_engine::live",
+            "Alpaca credentials loaded from broker store (Settings → Brokers)"
+        );
         (
             c.api_key_id,
             c.api_secret_key,
@@ -4380,6 +4400,10 @@ async fn build_live_executor(
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
     } else if uses_alpaca_data {
+        tracing::warn!(
+            target: "xvision_engine::live",
+            "Alpaca credentials NOT found in broker store, falling back to APCA_API_KEY_ID / APCA_API_SECRET_KEY env vars"
+        );
         let key_id =
             std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
@@ -4415,14 +4439,27 @@ async fn build_live_executor(
                 AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
                     .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
             ),
-            LiveVenue::OrderlyTestnet => Arc::new(
-                OrderlyLiveSurface::from_env()
-                    .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
-            ),
-            LiveVenue::OrderlyMainnet => Arc::new(
-                OrderlyLiveSurface::from_env()
-                    .map_err(|e| ApiError::Validation(format!("build Orderly mainnet broker: {e}")))?,
-            ),
+            LiveVenue::OrderlyTestnet | LiveVenue::OrderlyMainnet => {
+                let c = orderly_creds.ok_or_else(|| {
+                    ApiError::Validation(
+                        "Orderly venue selected but no credentials configured — \
+                         store credentials in Settings -> Brokers or set \
+                         ORDERLY_KEY / ORDERLY_SECRET / ORDERLY_ACCOUNT_ID."
+                            .into(),
+                    )
+                })?;
+                Arc::new(
+                    OrderlyLiveSurface::connect(
+                        xvision_execution::orderly::Credentials {
+                            orderly_key: c.api_key,
+                            orderly_secret: c.api_secret,
+                            orderly_account_id: c.account_id,
+                        },
+                        c.base_url.as_deref(),
+                    )
+                    .map_err(|e| ApiError::Validation(format!("build Orderly broker: {e}")))?,
+                )
+            }
             LiveVenue::ByrealLive => Arc::new(
                 ByrealLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
@@ -4506,8 +4543,9 @@ async fn build_live_executor(
         cfg.venue_label,
         broker_lbl,
         AuthContext::system(),
+        cfg.safety_limits.clone(),
     ));
-    let granularity = xvision_data::alpaca::BarGranularity::Minute1;
+    let granularity = cfg.granularity;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
         key_id: key_id.clone(),
         secret_key: secret.clone(),
@@ -4532,10 +4570,43 @@ async fn build_live_executor(
         let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
         let stream = if uses_alpaca_data {
-            let ws = live_client
-                .subscribe_bars(&asset, granularity)
-                .await
-                .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+            // Retry WebSocket subscription with exponential backoff.
+            // Alpaca free tier allows 1 concurrent WS connection; a stale
+            // agentd or prior run may hold it. Retry up to 3 times with
+            // 5s / 10s / 20s backoff so the stale connection has time to
+            // time out on Alpaca's side.
+            let mut ws = None;
+            let mut last_err = String::new();
+            for attempt in 0u32..3u32 {
+                match live_client.subscribe_bars(&asset, granularity).await {
+                    Ok(sub) => {
+                        ws = Some(sub);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                        if attempt < 2 && last_err.contains("connection limit exceeded") {
+                            let wait = std::time::Duration::from_secs(5 * 2u64.pow(attempt));
+                            tracing::warn!(
+                                target: "xvision_engine::live",
+                                asset = %asset,
+                                attempt = attempt + 1,
+                                wait_secs = wait.as_secs(),
+                                "Alpaca WS connection limit (HTTP 406) — retrying after backoff. \
+                                 Kill stale xvision-agentd processes or wait for connection timeout."
+                            );
+                            tokio::time::sleep(wait).await;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            let ws = ws.ok_or_else(|| {
+                ApiError::Validation(format!(
+                    "subscribe Alpaca live bars for {asset}: {last_err}"
+                ))
+            })?;
             let poll = AlpacaLivePoll::new(
                 production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
                 asset.clone(),
@@ -4608,7 +4679,8 @@ async fn build_live_executor(
     let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
         .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
         .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs);
+        .with_provider_catalogs(provider_catalogs)
+        .with_cline_runtime(agent_runtime, cline_ctx);
     if let Some(recorder) = ctx.memory_recorder.clone() {
         live = live.with_memory_recorder(recorder);
     }
@@ -4822,6 +4894,8 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                 obs_emitter.clone(),
                 provider_catalogs.clone(),
                 req.limits.as_ref(),
+                agent_runtime,
+                cline_ctx,
             )
             .await?
         }

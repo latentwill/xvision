@@ -1448,7 +1448,6 @@ impl Executor {
                                     fill_size: Some(sltp_position.abs()),
                                     fee: Some(sltp_fee),
                                     pnl_realized: Some(sltp_pnl - borrow_cost),
-                                    delayed: false,
                                 };
                                 store.record_decision(&sltp_row).await?;
                                 self.emit_chart(
@@ -1551,7 +1550,6 @@ impl Executor {
                                     fill_size: Some(close_units),
                                     fee: Some(fee),
                                     pnl_realized: Some(pnl),
-                                    delayed: false,
                                 };
                                 store.record_decision(&pt1_row).await?;
                                 self.emit_chart(
@@ -1669,8 +1667,8 @@ impl Executor {
                         fill_size: None,
                         fee: None,
                         pnl_realized: None,
-                        delayed: false,
                     };
+                    store.record_decision(&inherited_row).await?;
                     self.emit_chart(
                         &run.id,
                         RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),
@@ -2995,7 +2993,6 @@ impl Executor {
                     } else {
                         None
                     },
-                    delayed: false,
                 };
                 store.record_decision(&decision_row).await?;
                 self.emit_chart(
@@ -3600,13 +3597,16 @@ impl Executor {
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
 
+
         // SLTP parity: per-asset stop-loss / take-profit state.
         let mut sltp_state: std::collections::BTreeMap<
             xvision_core::trading::AssetSymbol,
             crate::eval::executor::sltp::PositionRiskState,
         > = std::collections::BTreeMap::new();
-        let mut short_bars_held: std::collections::BTreeMap<xvision_core::trading::AssetSymbol, u32> =
-            std::collections::BTreeMap::new();
+        let mut short_bars_held: std::collections::BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            u32,
+        > = std::collections::BTreeMap::new();
         let wake_never = strategy
             .filter
             .as_ref()
@@ -3629,31 +3629,6 @@ impl Executor {
 
         // In-memory episodic store for per-decision recall.
         let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
-        // Graceful LLM delay: track skipped dispatches and flag delayed
-        // decisions. The live loop currently calls decide_one_live
-        // synchronously, so these counters are infrastructure for the
-        // eventual async-dispatch upgrade. When the agent takes multiple
-        // bars to respond, skipped_dispatches counts bars that arrived
-        // during agent think-time, and delayed_decisions counts decisions
-        // whose bar age exceeds the cadence period.
-        let mut skipped_dispatches: u64 = 0;
-        let mut delayed_decisions: u64 = 0;
-        /// Count of agents force-cancelled via --max-agent-ms.
-        let mut forced_cancels: u64 = 0;
-        // Track the bar timestamp this agent was dispatched for.
-        // Used to compute staleness when the decision arrives.
-        let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
-
-
-        tracing::info!(
-            target: "xvision_engine::live_executor",
-            run_id = %run.id,
-            strategy = %strategy.manifest.id,
-            active_assets = ?active.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
-            filter = %filter_hook.as_ref().map_or("none", |_| "active"),
-            bar_limit = ?stop_policy.bar_limit,
-            "live loop: entering bar stream",
-        );
 
         // Drain warmup history from the bar source into per-asset buffers so
         // the first tradable bar has a complete lookback window.  Without
@@ -3673,29 +3648,6 @@ impl Executor {
                 counts.join(", "),
             );
             for (asset, bars) in warmup {
-                // Emit initial-equity chart points for warmup bars so the
-                // dashboard chart shows the full lookback window.
-                for bar in &bars {
-                    equity_samples_buf.push((bar.timestamp, equity));
-                    self.emit_chart(
-                        &run.id,
-                        RunChartEvent::Equity(ChartEquityPoint {
-                            time: bar.timestamp.timestamp(),
-                            equity_usd: equity,
-                        }),
-                    )
-                    .await;
-                }
-                // Push warmup bars through the filter hook so the
-                // indicator engine accumulates the bars it needs to exit
-                // the Warming state. Must run BEFORE hist.extend() which
-                // consumes `bars`.
-                if let Some(hook) = filter_hook.as_mut() {
-                    for bar in &bars {
-                        hook.evaluate(bar, false);
-                    }
-                }
-                // Seed per-asset history for the LLM seed context.
                 if let Some(hist) = history.get_mut(&asset) {
                     hist.extend(bars);
                 }
@@ -3921,26 +3873,7 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
-            // Graceful LLM delay: determine if this decision is stale.
-            // Compare the bar this agent was dispatched for against the
-            // current decision timestamp. In async mode, the agent may
-            // have taken several bars to complete — when it does, the
-            // decision is flagged as delayed.
-            let delayed = if let Some(agent_bar) = current_agent_bar.take() {
-                let bar_age_ms = (decision_ts - agent_bar).num_milliseconds();
-                if bar_age_ms > 0 {
-                    delayed_decisions += 1;
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            current_agent_bar = Some(decision_ts);
-            let dispatch_start = Instant::now();
-
-            let outcome = match self
+            let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
                         run,
@@ -3978,63 +3911,11 @@ impl Executor {
                         bar_secs,
                         early_stop_state: &mut early_stop_state,
                         early_stop_cfg: &early_stop_cfg,
-                        delayed,
                     },
                     &mut runtime.fill_sink,
                     &mut book,
                 )
-                .await
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "xvision_engine::live",
-                        error = %e,
-                        bar_count,
-                        "live agent dispatch failed; skipping bar, will retry next cycle"
-                    );
-                    skipped_dispatches += 1;
-                    let limits = self.limits.as_ref();
-                    let max_skips = limits.map(|l| l.max_consecutive_skips).unwrap_or(5);
-                    if skipped_dispatches > 0 && skipped_dispatches % max_skips as u64 == 0 {
-                        self.emit(ProgressEvent::MetricsUpdated {
-                            run_id: run.id.clone(),
-                            equity,
-                            drawdown_pct: 0.0,
-                            n_trades,
-                            deployed_capital_usd: None,
-                            unrealized_pnl_usd: None,
-                            realized_pnl_usd: None,
-                            daily_loss_limit_remaining_usd: None,
-                        });
-                        tracing::warn!(
-                            target: "xvision_engine::live",
-                            consecutive_skips = skipped_dispatches,
-                            "max-consecutive-skips threshold reached \u{2014} agent may be stuck"
-                        );
-                    }
-                    // Still mark-to-market so equity stays current.
-                    book.mark(asset_sym, bar.close);
-                    let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
-                    equity = book.equity(&marks);
-                    equity_samples_buf.push((decision_ts, equity));
-                    decision_idx += 1;
-                    continue;
-                }
-            };
-            // Hang belt: check dispatch elapsed against --max-agent-ms
-            let dispatch_elapsed = dispatch_start.elapsed();
-            if let Some(max_ms) = self.limits.as_ref().and_then(|l| l.max_agent_ms) {
-                if dispatch_elapsed.as_millis() as u64 > max_ms {
-                    forced_cancels += 1;
-                    tracing::warn!(
-                        target: "xvision_engine::live",
-                        elapsed_ms = dispatch_elapsed.as_millis(),
-                        max_agent_ms = max_ms,
-                        "agent dispatch exceeded max-agent-ms; decision accepted but flagged as forced-cancel"
-                    );
-                }
-            }
+                .await?;
 
             // Always mark-to-market and record an equity sample, even
             // when the filter gate suppresses dispatch.  Without this,
@@ -4071,22 +3952,6 @@ impl Executor {
             // Filter gate: when the DSL filter suppressed this bar,
             // skip token counting, fill tracking, and history push.
             // Continue to the next bar so the loop stays alive.
-
-            // Stop-policy time limit: checked BEFORE the filter gate so a
-            // time-limited run always terminates, even when the filter
-            // blocks every bar.  Bar/decision/trade limits stay after the
-            // gate — they count only bars that pass the filter.
-            if let Some(secs) = stop_policy.time_limit_secs {
-                if run_started.elapsed().as_secs() >= secs {
-                    tracing::info!(
-                        target: "xvision_engine::live_executor",
-                        run_id = %run.id,
-                        bar_count,
-                        "live run reached time_limit_secs {secs}; ending stream loop"
-                    );
-                    break;
-                }
-            }
             if outcome.filter_gated {
                 continue;
             }
@@ -4366,7 +4231,7 @@ impl Executor {
 
         // Live runs do not compute the four backtest baselines (they replay a
         // single forward stream, not a fixed window).
-        let mut metrics = compute_run_metrics(
+        let metrics = compute_run_metrics(
             &equity_curve,
             initial,
             equity,
@@ -4377,10 +4242,6 @@ impl Executor {
             decision_idx,
             None,
         );
-        // Set live-only counters on the metrics summary.
-        metrics.skipped_dispatches = skipped_dispatches;
-        metrics.delayed_decisions = delayed_decisions;
-        metrics.forced_cancels = forced_cancels;
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -4444,13 +4305,12 @@ impl Executor {
             episodic_store,
             sltp_state,
             wake_never,
-            short_bars_held: _,
-            default_slip_bps: _,
-            default_taker_bps: _,
-            bar_secs: _,
+            short_bars_held,
+            default_slip_bps,
+            default_taker_bps,
+            bar_secs,
             early_stop_state,
             early_stop_cfg,
-            delayed,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -4504,14 +4364,8 @@ impl Executor {
                 next_bar_open: next_open,
                 reference_price_source: "live_bar.close",
                 bars_held: sltp_state.get(&asset_sym).map(|s| s.bars_held).unwrap_or(0),
-                stop_loss_price: sltp_state
-                    .get(&asset_sym)
-                    .map(|s| s.get_effective_sl_price())
-                    .unwrap_or(0.0),
-                take_profit_price: sltp_state
-                    .get(&asset_sym)
-                    .map(|s| s.get_effective_tp_price())
-                    .unwrap_or(0.0),
+                stop_loss_price: sltp_state.get(&asset_sym).map(|s| s.get_effective_sl_price()).unwrap_or(0.0),
+                take_profit_price: sltp_state.get(&asset_sym).map(|s| s.get_effective_tp_price()).unwrap_or(0.0),
                 risk_config: &strategy.risk,
                 perps: perps_ctx,
             },
@@ -4596,24 +4450,16 @@ impl Executor {
                 })
                 .unwrap_or([0.0_f64; 4]);
             if let Some(episodes_json) = episodic_store.to_seed_json(query_vec, 5) {
-                let sanitized = sanitize_prior_episodes_for_policy(episodes_json, inputs_policy);
                 if let Some(obj) = seed.as_object_mut() {
-                    obj.insert("prior_episodes".to_string(), sanitized);
+                    obj.insert("prior_episodes".to_string(), episodes_json);
                 }
             }
         }
 
-        // When the filter gate is closed and there is no open SLTP-managed
-        // position, skip the LLM pipeline entirely. Open positions still flow
-        // through the deterministic SLTP check below before returning gated.
-        let filter_gated_position_sltp_check = filter_gated
-            && book.position(asset_sym).abs() > f64::EPSILON
-            && sltp_state.contains_key(&asset_sym);
-        if live_filter_gate_should_short_circuit(
-            filter_gated,
-            book.position(asset_sym).abs() > f64::EPSILON,
-            sltp_state.contains_key(&asset_sym),
-        ) {
+        // When the filter gate is closed, skip the LLM pipeline entirely.
+        // Return a zero-token outcome with filter_gated=true; the loop
+        // driver treats this identically to a skipped bar.
+        if filter_gated {
             return Ok(LiveDecisionOutcome {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -4626,6 +4472,7 @@ impl Executor {
                 filter_gated: true,
             });
         }
+
 
         // SLTP check: deterministic exits before LLM pipeline (parity with backtest).
         if book.position(asset_sym).abs() > f64::EPSILON {
@@ -4635,28 +4482,16 @@ impl Executor {
                     Some(SltpTrigger::FullExit { reason }) => {
                         let sltp_pos = book.position(asset_sym);
                         let sltp_entry = book.entry_price(asset_sym);
-                        let mut req = live_sltp_close_request(
-                            asset,
-                            sltp_pos,
-                            sltp_entry,
-                            next_open,
-                            scenario.venue.fees.taker_bps as f64,
-                            equity,
-                            u64::from(strategy.manifest.decision_cadence_minutes.max(1)),
+                        let (sltp_pnl, sltp_fee) = apply_sltp_full_exit(
+                            sltp_pos, sltp_entry, next_open,
+                            default_slip_bps, default_taker_bps,
                         );
-                        req.bar_ts = bar.timestamp;
-                        req.bar_open = bar.open;
-                        req.bar_high = bar.high;
-                        req.bar_low = bar.low;
-                        req.bar_close = bar.close;
-                        let fill = fill_sink.submit(req).await;
-                        let broker_error = fill.broker_error.clone();
-                        let fill_happened = fill.fill_price.is_some();
-                        if fill_happened {
-                            book.set_position(asset_sym, fill.new_pos, fill.new_entry);
-                            book.add_realized(fill.realized_pnl);
-                            sltp_state.remove(&asset_sym);
-                        }
+                        book.add_realized(sltp_pnl);
+                        book.set_position(asset_sym, 0.0, 0.0);
+                        sltp_state.remove(&asset_sym);
+                        let fill_price = next_open
+                            * (1.0 - default_slip_bps / 10_000.0
+                                * if sltp_pos > 0.0 { 1.0 } else { -1.0 });
                         let row = crate::eval::store::DecisionRow {
                             run_id: run.id.clone(),
                             decision_index: decision_idx,
@@ -4666,67 +4501,39 @@ impl Executor {
                             conviction: Some(1.0),
                             justification: Some(format!("sltp: {reason}")),
                             reasoning: None,
-                            order_size: fill.fill_size,
-                            fill_price: fill.fill_price,
-                            fill_size: fill.fill_size,
-                            fee: fill.fee,
-                            pnl_realized: if fill.realized_pnl != 0.0 {
-                                Some(fill.realized_pnl)
-                            } else {
-                                None
-                            },
-                            delayed,
+                            order_size: Some(sltp_pos.abs()),
+                            fill_price: Some(fill_price),
+                            fill_size: Some(sltp_pos.abs()),
+                            fee: Some(sltp_fee),
+                            pnl_realized: Some(sltp_pnl),
                         };
                         store.record_decision(&row).await?;
-                        self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
-                            .await;
-                        if fill_happened {
-                            self.emit(ProgressEvent::FillRecorded {
-                                run_id: run.id.clone(),
-                                side: fill_side_for_action(reason, sltp_pos).into(),
-                                price: fill.fill_price.unwrap_or(0.0),
-                                qty: fill.fill_size.unwrap_or(0.0),
-                                fee: fill.fee.unwrap_or(0.0),
-                            });
-                        }
-                        let mut outcome = live_sltp_exit_outcome(
-                            fill_happened,
-                            false,
-                            broker_error,
-                            if fill_happened { None } else { last_open_direction },
-                        );
-                        outcome.daily_loss_day = daily_loss_day;
-                        outcome.daily_realized_at_day_start = daily_realized_at_day_start;
-                        return Ok(outcome);
+                        self.emit_chart(&run.id, RunChartEvent::Decision(
+                            LiveDecisionRow::from(&row),
+                        )).await;
+                        self.emit(ProgressEvent::FillRecorded {
+                            run_id: run.id.clone(),
+                            side: fill_side_for_action(reason, sltp_pos).into(),
+                            price: fill_price, qty: sltp_pos.abs(), fee: sltp_fee,
+                        });
+                        return Ok(LiveDecisionOutcome {
+                            input_tokens: 0, output_tokens: 0,
+                            fill_happened: true, last_open_direction: None,
+                            broker_error: None, daily_loss_day, daily_realized_at_day_start,
+                            risk_vetoed: false, filter_gated: false,
+                        });
                     }
                     Some(SltpTrigger::PartialTp1 { fraction }) => {
                         let pos = book.position(asset_sym);
                         let entry = book.entry_price(asset_sym);
-                        let close_units = live_sltp_close_units(pos, fraction);
-                        let mut req = live_sltp_close_request(
-                            asset,
-                            close_units.copysign(pos),
-                            entry,
-                            next_open,
-                            scenario.venue.fees.taker_bps as f64,
-                            equity,
-                            u64::from(strategy.manifest.decision_cadence_minutes.max(1)),
-                        );
-                        req.bar_ts = bar.timestamp;
-                        req.bar_open = bar.open;
-                        req.bar_high = bar.high;
-                        req.bar_low = bar.low;
-                        req.bar_close = bar.close;
-                        let fill = fill_sink.submit(req).await;
-                        let broker_error = fill.broker_error.clone();
-                        let fill_happened = fill.fill_price.is_some();
-                        if fill_happened {
-                            let filled_units = fill.fill_size.unwrap_or(close_units);
-                            let remaining = live_sltp_remaining_position(pos, filled_units);
-                            book.add_realized(fill.realized_pnl);
-                            book.set_position(asset_sym, remaining, entry);
-                            sltp.tp1_taken = true;
-                        }
+                        let close_units = pos.abs() * fraction;
+                        let fill_price = next_open;
+                        let fee = close_units * fill_price * default_taker_bps / 10_000.0;
+                        let pnl = pos * fraction * (fill_price - entry) - fee;
+                        let remaining = pos * (1.0 - fraction);
+                        book.add_realized(pnl);
+                        book.set_position(asset_sym, remaining, entry);
+                        sltp.tp1_taken = true;
                         let row = crate::eval::store::DecisionRow {
                             run_id: run.id.clone(),
                             decision_index: decision_idx,
@@ -4736,52 +4543,24 @@ impl Executor {
                             conviction: Some(1.0),
                             justification: Some(format!("sltp: partial_tp1 {:.2}%", fraction * 100.0)),
                             reasoning: None,
-                            order_size: fill.fill_size,
-                            fill_price: fill.fill_price,
-                            fill_size: fill.fill_size,
-                            fee: fill.fee,
-                            pnl_realized: if fill.realized_pnl != 0.0 {
-                                Some(fill.realized_pnl)
-                            } else {
-                                None
-                            },
-                            delayed,
+                            order_size: Some(close_units),
+                            fill_price: Some(fill_price),
+                            fill_size: Some(close_units),
+                            fee: Some(fee),
+                            pnl_realized: Some(pnl),
                         };
                         store.record_decision(&row).await?;
-                        self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
-                            .await;
-                        if fill_happened {
-                            self.emit(ProgressEvent::FillRecorded {
-                                run_id: run.id.clone(),
-                                side: fill_side_for_action("flat", pos).into(),
-                                price: fill.fill_price.unwrap_or(0.0),
-                                qty: fill.fill_size.unwrap_or(0.0),
-                                fee: fill.fee.unwrap_or(0.0),
-                            });
-                        }
-                        let mut outcome =
-                            live_sltp_exit_outcome(fill_happened, false, broker_error, last_open_direction);
-                        outcome.daily_loss_day = daily_loss_day;
-                        outcome.daily_realized_at_day_start = daily_realized_at_day_start;
-                        return Ok(outcome);
+                        self.emit_chart(&run.id, RunChartEvent::Decision(
+                            LiveDecisionRow::from(&row),
+                        )).await;
+                        self.emit(ProgressEvent::FillRecorded {
+                            run_id: run.id.clone(),
+                            side: "sell".to_string(), price: fill_price, qty: close_units, fee,
+                        });
                     }
                     None => {}
                 }
             }
-        }
-
-        if filter_gated_position_sltp_check {
-            return Ok(LiveDecisionOutcome {
-                input_tokens: 0,
-                output_tokens: 0,
-                fill_happened: false,
-                last_open_direction,
-                broker_error: None,
-                daily_loss_day,
-                daily_realized_at_day_start,
-                risk_vetoed: false,
-                filter_gated: true,
-            });
         }
 
         // Early-stop: skip pipeline during flat-degeneracy streaks.
@@ -4806,21 +4585,10 @@ impl Executor {
                     es.recent_convictions.clear();
                 }
             }
-            if early_stop_state.get(&asset_sym).unwrap().inherit_remaining > 0 {
-                let row = inherited_early_stop_row(&run.id, decision_idx, bar.timestamp, asset);
-                store.record_decision(&row).await?;
-                self.emit_chart(&run.id, RunChartEvent::Decision(LiveDecisionRow::from(&row)))
-                    .await;
-                self.emit(ProgressEvent::DecisionEmitted {
-                    run_id: run.id.clone(),
-                    action: "flat".into(),
-                    asset: asset.to_string(),
-                    size: 0.0,
-                    conviction: 0.0,
-                });
-                let es = early_stop_state.get_mut(&asset_sym).unwrap();
+            let es = early_stop_state.get_mut(&asset_sym).unwrap();
+            if es.inherit_remaining > 0 {
                 es.inherit_remaining -= 1;
-                es.prev_position = book.position(asset_sym);
+                // Inherit flat — skip pipeline
                 return Ok(LiveDecisionOutcome {
                     input_tokens: 0,
                     output_tokens: 0,
@@ -4839,143 +4607,96 @@ impl Executor {
         let pre_fill_position = book.position(asset_sym);
         let pre_fill_entry = book.entry_price(asset_sym);
 
-        let (input_tokens, output_tokens, parsed) =
-            if strategy.decision_mode == crate::strategies::DecisionMode::Mechanistic {
-                let cfg = strategy
-                    .mechanistic_config
-                    .as_ref()
-                    .expect("validate_strategy ensures mechanistic_config");
-                let parsed = mechanistic_action(cfg, pre_fill_position, pre_fill_entry, bar.close);
-                (0u64, 0u64, parsed)
-            } else {
-                // WS-17: open decision span for live observability.
-                let span_id = crate::agent::observability::fresh_span_id();
-                if let Some(obs) = self.obs_emitter.as_ref() {
-                    obs.emit_decision_span_started(
-                        &span_id,
-                        None,
-                        decision_idx as i64,
-                        Some(asset),
-                        Some(bar.timestamp),
-                        Some(bar.close),
-                        Some(pre_fill_position),
-                        None,
-                    )
-                    .await;
-                    let payload = serde_json::json!({
-                        "decision_index": decision_idx,
-                        "asset": asset,
-                        "bar_ts": bar.timestamp.to_rfc3339(),
-                    });
-                    obs.emit_engine_event(
-                        "decision_started",
-                        Some(span_id.clone()),
-                        Some(payload.to_string()),
-                    )
-                    .await;
+        let (input_tokens, output_tokens, parsed) = if strategy.decision_mode
+            == crate::strategies::DecisionMode::Mechanistic
+        {
+            let cfg = strategy
+                .mechanistic_config
+                .as_ref()
+                .expect("validate_strategy ensures mechanistic_config");
+            let parsed = mechanistic_action(cfg, pre_fill_position, pre_fill_entry, bar.close);
+            (0u64, 0u64, parsed)
+        } else {
+            // WS-17: open decision span for live observability.
+            let span_id = crate::agent::observability::fresh_span_id();
+            if let Some(obs) = self.obs_emitter.as_ref() {
+                obs.emit_decision_span_started(
+                    &span_id, None, decision_idx as i64,
+                    Some(asset), Some(bar.timestamp), Some(bar.close),
+                    Some(pre_fill_position), None,
+                ).await;
+                let payload = serde_json::json!({
+                    "decision_index": decision_idx,
+                    "asset": asset,
+                    "bar_ts": bar.timestamp.to_rfc3339(),
+                });
+                obs.emit_engine_event(
+                    "decision_started", Some(span_id.clone()), Some(payload.to_string()),
+                ).await;
+            }
+
+            let outs = run_pipeline(PipelineInputs {
+                strategy,
+                agent_slots,
+                seed_inputs: seed,
+                dispatch: dispatch.clone(),
+                tools: tools.clone(),
+                obs: self.obs_emitter.clone(),
+                memory_recorder: self.memory_recorder.clone(),
+                scenario_start: None,
+                source_window_start: Some(source_window_start),
+                source_window_end: Some(source_window_end),
+                run_id: run.id.clone(),
+                scenario_id: scenario.id.clone(),
+                cycle_idx: decision_idx as i64,
+                trace_attrs: None,
+                provider_catalogs: self.provider_catalogs.clone(),
+                filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
+                    signal_cache,
+                    bar_period_minutes,
+                    multi_filter_config,
+                    bar_ts: bar.timestamp,
+                    strategy_id: strategy.manifest.id.clone(),
+                    scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
+                }),
+                recorder: self.recorder.as_deref(),
+                runtime: self.agent_runtime,
+                cline: self.cline.clone(),
+                model_call_span_id: Some(span_id.clone()),
+            })
+            .await?;
+
+            let input_tokens = outs.total_input_tokens as u64;
+            let output_tokens = outs.total_output_tokens as u64;
+
+            let trader = match outs.trader.as_ref() {
+                Some(t) => t,
+                None => {
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_span_finished_error(&span_id, "missing trader response").await;
+                    }
+                    let err = TraderOutput::missing_response_error(&run.id, decision_idx);
+                    return Err(err.into());
                 }
-
-                let decision_model_span_id = self
-                    .obs_emitter
-                    .as_ref()
-                    .map(|_| crate::agent::observability::fresh_span_id());
-                if let (Some(obs), Some(dm_span_id)) =
-                    (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
-                {
-                    let provider = trader_provider(agent_slots, strategy).unwrap_or_default();
-                    let model = trader_model_id(agent_slots, strategy).unwrap_or_default();
-                    obs.emit_model_call_started(
-                        dm_span_id,
-                        Some(span_id.clone()),
-                        &provider,
-                        &model,
-                        Some("trader"),
-                        None,
-                        None,
-                    )
-                    .await;
-                }
-
-                let outs = run_pipeline(PipelineInputs {
-                    strategy,
-                    agent_slots,
-                    seed_inputs: seed,
-                    dispatch: dispatch.clone(),
-                    tools: tools.clone(),
-                    obs: self.obs_emitter.clone(),
-                    memory_recorder: self.memory_recorder.clone(),
-                    scenario_start: None,
-                    source_window_start: Some(source_window_start),
-                    source_window_end: Some(source_window_end),
-                    run_id: run.id.clone(),
-                    scenario_id: scenario.id.clone(),
-                    cycle_idx: decision_idx as i64,
-                    trace_attrs: None,
-                    provider_catalogs: self.provider_catalogs.clone(),
-                    filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
-                        signal_cache,
-                        bar_period_minutes,
-                        multi_filter_config,
-                        bar_ts: bar.timestamp,
-                        strategy_id: strategy.manifest.id.clone(),
-                        scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
-                    }),
-                    recorder: self.recorder.as_deref(),
-                    runtime: self.agent_runtime,
-                    cline: self.cline.clone(),
-                    model_call_span_id: decision_model_span_id.clone(),
-                })
-                .await;
-                if let (Some(obs), Some(dm_span_id)) =
-                    (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
-                {
-                    match &outs {
-                        Ok(_) => obs.emit_span_finished_ok(dm_span_id).await,
-                        Err(e) => obs.emit_span_finished_error(dm_span_id, &e.to_string()).await,
-                    }
-                }
-                let outs = match outs {
-                    Ok(outs) => outs,
-                    Err(e) => {
-                        if let Some(obs) = self.obs_emitter.as_ref() {
-                            obs.emit_span_finished_error(&span_id, &e.to_string()).await;
-                        }
-                        return Err(e);
-                    }
-                };
-
-                let input_tokens = outs.total_input_tokens as u64;
-                let output_tokens = outs.total_output_tokens as u64;
-
-                let trader = match outs.trader.as_ref() {
-                    Some(t) => t,
-                    None => {
-                        if let Some(obs) = self.obs_emitter.as_ref() {
-                            obs.emit_span_finished_error(&span_id, "missing trader response")
-                                .await;
-                        }
-                        let err = TraderOutput::missing_response_error(&run.id, decision_idx);
-                        return Err(err.into());
-                    }
-                };
-                let trader_model_id = trader_model_id(agent_slots, strategy);
-                let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
-                    Ok(p) => {
-                        if let Some(obs) = self.obs_emitter.as_ref() {
-                            obs.emit_span_finished_ok(&span_id).await;
-                        }
-                        p
-                    }
-                    Err(e) => {
-                        if let Some(obs) = self.obs_emitter.as_ref() {
-                            obs.emit_span_finished_error(&span_id, &e.to_string()).await;
-                        }
-                        let err = e.with_model_hint(trader_model_id.as_deref());
-                        return Err(err.into());
-                    }
-                };
-                (input_tokens, output_tokens, parsed)
             };
+            let trader_model_id = trader_model_id(agent_slots, strategy);
+            let parsed = match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                Ok(p) => {
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_span_finished_ok(&span_id).await;
+                    }
+                    p
+                }
+                Err(e) => {
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_span_finished_error(&span_id, &e.to_string()).await;
+                    }
+                    let err = e.with_model_hint(trader_model_id.as_deref());
+                    return Err(err.into());
+                }
+            };
+            (input_tokens, output_tokens, parsed)
+        };
 
         // Pyramid-flip guardrail (F-7), shared with backtest.
         let original_action = GuardAction::parse(&parsed.action);
@@ -5200,15 +4921,22 @@ impl Executor {
                 xvision_core::trading::Direction::Short
             };
             let entry_atr = crate::eval::executor::sltp::compute_atr14(&history_slice);
-            let state = build_live_sltp_state(
-                direction,
-                fill.new_entry,
-                &parsed,
-                wake_never,
-                strategy.risk.stop_loss_atr_multiple,
-                entry_atr,
+            let sl_atr_mult = if strategy.risk.stop_loss_atr_multiple > 0.0 {
+                Some(strategy.risk.stop_loss_atr_multiple)
+            } else {
+                None
+            };
+            sltp_state.insert(
+                asset_sym,
+                crate::eval::executor::sltp::PositionRiskState::new(
+                    direction, fill.new_entry,
+                    0.0, // stop_loss_pct — use ATR-based instead
+                    0.0, // take_profit_pct — use ATR-based instead
+                    entry_atr,
+                    None, None, None, None, None, None, None,
+                    sl_atr_mult, None, None, None, None,
+                ),
             );
-            sltp_state.insert(asset_sym, state);
         } else if fill.new_pos.abs() <= f64::EPSILON {
             sltp_state.remove(&asset_sym);
         }
@@ -5259,7 +4987,6 @@ impl Executor {
             } else {
                 None
             },
-            delayed,
         };
         store.record_decision(&decision_row).await?;
         self.emit_chart(
@@ -5306,6 +5033,7 @@ impl Executor {
         if let Some(marker) = marker_event {
             self.emit_chart(&run.id, RunChartEvent::Marker(marker)).await;
         }
+
 
         // Push this decision as an episodic observation (parity with backtest).
         {
@@ -5609,7 +5337,6 @@ impl Executor {
                 } else {
                     None
                 },
-                delayed: false,
             };
             if let Err(e) = store.record_decision(&decision_row).await {
                 // The broker DID close the position (book already settled);
@@ -5798,17 +5525,19 @@ struct DecideOneLiveCtx<'a> {
         xvision_core::trading::AssetSymbol,
         crate::eval::executor::sltp::PositionRiskState,
     >,
-    /// True when the decision's bar age exceeds the cadence period
-    /// (agent took >1 bar to respond). Only set in live/forward-test
-    /// mode; always false in backtest.
-    delayed: bool,
     wake_never: bool,
-    short_bars_held: &'a mut std::collections::BTreeMap<xvision_core::trading::AssetSymbol, u32>,
+    short_bars_held: &'a mut std::collections::BTreeMap<
+        xvision_core::trading::AssetSymbol,
+        u32,
+    >,
     default_slip_bps: f64,
     default_taker_bps: f64,
     bar_secs: u64,
     /// Per-asset early-stop state for flat-degeneracy detection.
-    early_stop_state: &'a mut std::collections::BTreeMap<xvision_core::trading::AssetSymbol, EarlyStopState>,
+    early_stop_state: &'a mut std::collections::BTreeMap<
+        xvision_core::trading::AssetSymbol,
+        EarlyStopState,
+    >,
     /// Early-stop policy configuration (env-driven, read once at run start).
     early_stop_cfg: &'a EarlyStopConfig,
 }
@@ -6545,199 +6274,6 @@ fn compute_borrow_cost(
     let bars_per_day = 86_400.0 / bar_secs as f64;
     let daily_cost = abs_pos * entry * borrow_bps_per_day / 10_000.0;
     daily_cost * bars_held as f64 / bars_per_day
-}
-
-fn live_filter_gate_should_short_circuit(
-    filter_gated: bool,
-    in_position: bool,
-    has_sltp_state: bool,
-) -> bool {
-    filter_gated && !(in_position && has_sltp_state)
-}
-
-fn sanitize_prior_episodes_for_policy(
-    episodes_json: serde_json::Value,
-    inputs_policy: InputsPolicy,
-) -> serde_json::Value {
-    if inputs_policy != InputsPolicy::Causal {
-        return episodes_json;
-    }
-    if let serde_json::Value::Array(arr) = episodes_json {
-        let cleaned: Vec<serde_json::Value> = arr
-            .into_iter()
-            .map(|mut ep| {
-                if let serde_json::Value::Object(ref mut m) = ep {
-                    m.remove("bar_timestamp");
-                    m.remove("decision_idx");
-                }
-                ep
-            })
-            .collect();
-        serde_json::Value::Array(cleaned)
-    } else {
-        episodes_json
-    }
-}
-
-fn live_sltp_close_units(pos: f64, fraction: f64) -> f64 {
-    pos.abs() * fraction.clamp(0.0, 1.0)
-}
-
-fn live_sltp_remaining_position(pos: f64, close_units: f64) -> f64 {
-    let remaining_abs = (pos.abs() - close_units).max(0.0);
-    remaining_abs.copysign(pos)
-}
-
-fn live_sltp_close_request(
-    asset: &str,
-    pos: f64,
-    entry: f64,
-    next_open: f64,
-    taker_bps: f64,
-    equity: f64,
-    bar_duration_minutes: u64,
-) -> FillRequest {
-    FillRequest {
-        pos,
-        entry,
-        action: "flat".to_string(),
-        next_open,
-        bar_volume: f64::INFINITY,
-        slip_bps: 0.0,
-        spread_bps: 0.0,
-        taker_bps,
-        maker_bps: 0.0,
-        equity,
-        risk_pct: 0.0,
-        slippage_model: crate::eval::scenario::SlippageModel::None,
-        fee_source: crate::eval::scenario::FeeSource::Default,
-        asset: asset.to_string(),
-        bar_ts: chrono::Utc::now(),
-        bar_open: next_open,
-        bar_high: next_open,
-        bar_low: next_open,
-        bar_close: next_open,
-        decision_to_fill_ms: 0,
-        bar_duration_ms: bar_duration_minutes.max(1) * 60_000,
-    }
-}
-
-fn live_sltp_exit_outcome(
-    fill_happened: bool,
-    risk_vetoed: bool,
-    broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
-    last_open_direction: Option<GuardAction>,
-) -> LiveDecisionOutcome {
-    LiveDecisionOutcome {
-        input_tokens: 0,
-        output_tokens: 0,
-        fill_happened,
-        last_open_direction,
-        broker_error,
-        daily_loss_day: None,
-        daily_realized_at_day_start: 0.0,
-        risk_vetoed,
-        filter_gated: false,
-    }
-}
-
-fn build_live_sltp_state(
-    direction: xvision_core::trading::Direction,
-    entry_price: f64,
-    parsed: &TraderOutput,
-    wake_never: bool,
-    config_atr_mult: f64,
-    entry_atr: Option<f64>,
-) -> crate::eval::executor::sltp::PositionRiskState {
-    let sl_pct = if wake_never {
-        0.0
-    } else {
-        parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0)
-    };
-    let tp_pct = if wake_never {
-        0.0
-    } else {
-        parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0)
-    };
-    let model_sl_atr_mult = if wake_never { None } else { parsed.sl_atr_mult };
-    let model_tp_atr_mult = if wake_never { None } else { parsed.tp_atr_mult };
-    let effective_sl_atr_mult = model_sl_atr_mult.or_else(|| {
-        if sl_pct <= 0.0 && config_atr_mult > 0.0 {
-            Some(config_atr_mult)
-        } else {
-            None
-        }
-    });
-    let (
-        trailing_stop_pct,
-        breakeven_trigger_pct,
-        breakeven_offset_pct,
-        fade_sl_bars,
-        fade_sl_start_pct,
-        fade_sl_end_pct,
-        max_bars_held,
-        tp1_pct,
-        tp1_close_fraction,
-        tp2_pct,
-    ) = if wake_never {
-        (None, None, None, None, None, None, None, None, None, None)
-    } else {
-        (
-            parsed.trailing_stop_pct,
-            parsed.breakeven_trigger_pct,
-            parsed.breakeven_offset_pct,
-            parsed.fade_sl_bars,
-            parsed.fade_sl_start_pct,
-            parsed.fade_sl_end_pct,
-            parsed.max_bars_held,
-            parsed.tp1_pct,
-            parsed.tp1_close_fraction,
-            parsed.tp2_pct,
-        )
-    };
-    crate::eval::executor::sltp::PositionRiskState::new(
-        direction,
-        entry_price,
-        sl_pct,
-        tp_pct,
-        entry_atr,
-        trailing_stop_pct,
-        breakeven_trigger_pct,
-        breakeven_offset_pct,
-        fade_sl_bars,
-        fade_sl_start_pct,
-        fade_sl_end_pct,
-        max_bars_held,
-        effective_sl_atr_mult,
-        model_tp_atr_mult,
-        tp1_pct,
-        tp1_close_fraction,
-        tp2_pct,
-    )
-}
-
-fn inherited_early_stop_row(
-    run_id: &str,
-    decision_idx: u32,
-    timestamp: chrono::DateTime<chrono::Utc>,
-    asset: &str,
-) -> DecisionRow {
-    DecisionRow {
-        run_id: run_id.to_string(),
-        decision_index: decision_idx,
-        timestamp,
-        asset: asset.to_string(),
-        action: "flat".into(),
-        conviction: Some(0.0),
-        justification: Some("inherited from early-stop policy".into()),
-        reasoning: None,
-        order_size: None,
-        fill_price: None,
-        fill_size: None,
-        fee: None,
-        pnl_realized: None,
-        delayed: false,
-    }
 }
 
 /// Compute fill price, fee, and realized PnL for a full SLTP exit.
@@ -7589,7 +7125,6 @@ async fn publish_decision_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     /// The F-8 truncation math is shared by the backtest and live decision
     /// loops via `bar_history_limit_offset`; pin it so the two can't drift.
@@ -7818,128 +7353,6 @@ mod tests {
         let strategy = empty_strategy();
         let slots = vec![resolved("regime", "claude-opus-4-7")];
         assert!(trader_model_id(&slots, &strategy).is_none());
-    }
-
-    #[test]
-    fn live_filter_gate_does_not_skip_open_position_sltp_checks() {
-        assert!(live_filter_gate_should_short_circuit(true, false, false));
-        assert!(!live_filter_gate_should_short_circuit(true, true, true));
-        assert!(live_filter_gate_should_short_circuit(true, true, false));
-        assert!(!live_filter_gate_should_short_circuit(false, true, true));
-    }
-
-    #[test]
-    fn live_sltp_state_preserves_trader_brackets() {
-        let parsed = crate::eval::executor::trader_output::TraderOutput::parse_strict(
-            r#"{
-                "action":"long_open",
-                "conviction":0.7,
-                "justification":"breakout",
-                "stop_loss_pct":2.0,
-                "take_profit_pct":6.0,
-                "trailing_stop_pct":1.5,
-                "breakeven_trigger_pct":3.0,
-                "breakeven_offset_pct":0.2,
-                "fade_sl_bars":4,
-                "fade_sl_start_pct":2.0,
-                "fade_sl_end_pct":0.5,
-                "max_bars_held":9,
-                "sl_atr_mult":1.2,
-                "tp_atr_mult":3.4,
-                "tp1_pct":4.0,
-                "tp1_close_fraction":0.5,
-                "tp2_pct":8.0
-            }"#,
-            "01TEST",
-            0,
-        )
-        .expect("valid trader brackets parse");
-
-        let state = build_live_sltp_state(
-            xvision_core::trading::Direction::Long,
-            100.0,
-            &parsed,
-            false,
-            2.5,
-            Some(1.75),
-        );
-
-        assert_eq!(state.stop_loss_pct, 2.0);
-        assert_eq!(state.take_profit_pct, 6.0);
-        assert_eq!(state.entry_atr, Some(1.75));
-        assert_eq!(state.trailing_stop_pct, Some(1.5));
-        assert_eq!(state.breakeven_trigger_pct, Some(3.0));
-        assert_eq!(state.breakeven_offset_pct, Some(0.2));
-        assert_eq!(state.fade_sl_bars, Some(4));
-        assert_eq!(state.fade_sl_start_pct, Some(2.0));
-        assert_eq!(state.fade_sl_end_pct, Some(0.5));
-        assert_eq!(state.max_bars_held, Some(9));
-        assert_eq!(state.sl_atr_mult, Some(1.2));
-        assert_eq!(state.tp_atr_mult, Some(3.4));
-        assert_eq!(state.tp1_pct, Some(4.0));
-        assert_eq!(state.tp1_close_fraction, Some(0.5));
-        assert_eq!(state.tp2_pct, Some(8.0));
-    }
-
-    #[test]
-    fn causal_prior_episodes_strip_temporal_ids() {
-        let episodes = serde_json::json!([
-            {
-                "bar_timestamp": "2024-01-01T00:00:00Z",
-                "decision_idx": 7,
-                "action": "flat"
-            }
-        ]);
-
-        let sanitized = sanitize_prior_episodes_for_policy(episodes, InputsPolicy::Causal);
-        let first = sanitized.as_array().unwrap()[0].as_object().unwrap();
-        assert!(!first.contains_key("bar_timestamp"));
-        assert!(!first.contains_key("decision_idx"));
-        assert_eq!(first.get("action").and_then(|v| v.as_str()), Some("flat"));
-    }
-
-    #[test]
-    fn live_early_stop_inherited_row_is_persistable_flat_decision() {
-        let ts = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let row = inherited_early_stop_row("run-1", 42, ts, "BTC/USD");
-
-        assert_eq!(row.run_id, "run-1");
-        assert_eq!(row.decision_index, 42);
-        assert_eq!(row.asset, "BTC/USD");
-        assert_eq!(row.action, "flat");
-        assert_eq!(row.conviction, Some(0.0));
-        assert_eq!(
-            row.justification.as_deref(),
-            Some("inherited from early-stop policy")
-        );
-        assert!(row.fill_price.is_none());
-        assert!(row.pnl_realized.is_none());
-    }
-
-    #[test]
-    fn live_sltp_full_exit_uses_broker_flat_request() {
-        let req = live_sltp_close_request("BTC/USD", 0.75, 100.0, 101.0, 25.0, 100_000.0, 5);
-
-        assert_eq!(req.action, "flat");
-        assert_eq!(req.pos, 0.75);
-        assert_eq!(req.entry, 100.0);
-        assert_eq!(req.asset, "BTC/USD");
-        assert_eq!(req.next_open, 101.0);
-    }
-
-    #[test]
-    fn live_sltp_partial_tp_closes_fraction_and_returns() {
-        let pos = 0.75;
-        let fraction = 0.4;
-        let close_units = live_sltp_close_units(pos, fraction);
-        let remaining = live_sltp_remaining_position(pos, close_units);
-        let outcome = live_sltp_exit_outcome(true, false, None, None);
-
-        assert_eq!(close_units, 0.30000000000000004);
-        assert_eq!(remaining, 0.44999999999999996);
-        assert!(outcome.fill_happened);
-        assert_eq!(outcome.last_open_direction, None);
-        assert_eq!(outcome.broker_error, None);
     }
 
     #[tokio::test]
