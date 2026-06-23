@@ -6,6 +6,9 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use futures::stream;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tokio::time::{sleep, timeout, Duration};
 
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, BarStreamEvent, LiveBarItem};
@@ -166,4 +169,42 @@ async fn successful_bar_resets_disconnect_counter() {
         assert_bar_eq(b, &bar_at(60));
         true
     })));
+}
+
+#[tokio::test]
+async fn receiver_drop_stops_reconnect_loop() {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let stream_polls = Arc::clone(&polls);
+    let stream = stream::unfold((), move |_| {
+        let stream_polls = Arc::clone(&stream_polls);
+        async move {
+            stream_polls.fetch_add(1, Ordering::SeqCst);
+            Some((
+                LiveBarItem::Disconnect {
+                    reason: "websocket closed".into(),
+                },
+                (),
+            ))
+        }
+    });
+
+    let sub = client()
+        .with_reconnect_budget(100)
+        .subscription_from_stream(BarGranularity::Minute1, stream);
+    drop(sub);
+
+    timeout(Duration::from_secs(1), async {
+        while polls.load(Ordering::SeqCst) == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("subscription task should observe at least one disconnect");
+    sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        1,
+        "dropped receivers must stop the reconnect loop instead of burning reconnect budget"
+    );
 }
