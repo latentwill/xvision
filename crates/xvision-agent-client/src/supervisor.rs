@@ -46,29 +46,58 @@ impl Supervisor {
         // reaped, so a later read would miss it (U13).
         let pid = child.id();
 
-        // Wait for the structured `ready` event on stderr.
+        // Wait for the structured `ready` event on stderr, then spawn a
+        // background task to forward all subsequent stderr to tracing so
+        // Node runtime errors and panics survive in Docker logs.
         let stderr = child.stderr.take().ok_or(AgentClientError::TransportClosed)?;
-        let mut lines = BufReader::new(stderr).lines();
-        // Once we find the ready line, `lines` is dropped and stderr is no
-        // longer drained. Post-ready stderr from the sidecar (Node runtime
-        // errors, panics) buffers in the pipe and is not surfaced here.
-        // Task 7+ will spawn a background reader that forwards to tracing.
+        let mut reader = BufReader::new(stderr);
+        let mut buf = String::new();
 
         let ready = tokio::time::timeout(Duration::from_secs(5), async {
-            while let Some(line) = lines.next_line().await? {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+            loop {
+                buf.clear();
+                let n = reader.read_line(&mut buf).await?;
+                if n == 0 {
+                    return Err(AgentClientError::TransportClosed);
+                }
+                let line = buf.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                     if v.get("event").and_then(|x| x.as_str()) == Some("ready") {
+                        // Spawn background reader for post-ready stderr.
+                        tokio::spawn(async move {
+                            let mut buf2 = String::new();
+                            loop {
+                                buf2.clear();
+                                match reader.read_line(&mut buf2).await {
+                                    Ok(0) => return,
+                                    Ok(_) => {
+                                        let l = buf2.trim();
+                                        if !l.is_empty() {
+                                            tracing::error!(
+                                                target: "xvision_agentd::stderr",
+                                                "{l}"
+                                            );
+                                        }
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        });
                         return Ok::<(), AgentClientError>(());
                     }
                 }
+                // Pre-ready stderr — log at warn so startup issues are visible.
+                tracing::warn!(
+                    target: "xvision_agentd::stderr",
+                    "{line}"
+                );
             }
-            Err(AgentClientError::TransportClosed)
         })
         .await;
 
-        // Wave 1: coarse error mapping. Timeout, EOF, and missing stderr all
-        // collapse to TransportClosed. Task 7 will introduce
-        // SidecarSpawnFailed { reason } so callers can distinguish them.
         match ready {
             Ok(Ok(())) => Ok(Self {
                 child: Some(child),
@@ -91,8 +120,7 @@ impl Supervisor {
 
     pub(crate) async fn shutdown(mut self) -> Result<()> {
         if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
-            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+            child.kill().await?;
         }
         Ok(())
     }
@@ -101,7 +129,9 @@ impl Supervisor {
 impl Drop for Supervisor {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
+            tokio::task::spawn(async move {
+                let _ = child.kill().await;
+            });
         }
     }
 }

@@ -35,7 +35,15 @@ async fn main() -> ExitCode {
     match cli.run().await {
         Ok(()) => XvnExit::Success.into(),
         Err(e) => {
+            // CliError::Display already uses alternate formatting ({e:#})
+            // for the anyhow source. Walk the error chain explicitly to
+            // surface deeply-nested causes in Docker/stderr logs.
             eprintln!("{e}");
+            let mut cause: &dyn std::error::Error = &e;
+            while let Some(next) = std::error::Error::source(cause) {
+                eprintln!("  cause: {next}");
+                cause = next;
+            }
             e.exit.into()
         }
     }
