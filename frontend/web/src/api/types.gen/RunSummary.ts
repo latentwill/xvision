@@ -47,4 +47,18 @@ flatten_requested: boolean,
  * policy, capital, display name. `None` for backtests. Surfaced so the
  * live inspector can render deployment config without a second fetch.
  */
-live_config?: LiveConfig, };
+live_config?: LiveConfig, 
+/**
+ * Live/forward-test only: bars where dispatch was skipped because the
+ * agent was still processing a previous bar.
+ */
+skipped_dispatches: number,
+/**
+ * Live/forward-test only: decisions accepted but flagged delayed because
+ * the bar was stale (age > stale-data-max-age-ms).
+ */
+delayed_decisions: number,
+/**
+ * Live/forward-test only: agents force-cancelled via --max-agent-ms.
+ */
+forced_cancels: number, };

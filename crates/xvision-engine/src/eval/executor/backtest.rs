@@ -3938,8 +3938,9 @@ impl Executor {
                 false
             };
             current_agent_bar = Some(decision_ts);
+            let dispatch_start = Instant::now();
 
-            let outcome = self
+            let outcome = match self
                 .decide_one_live(
                     DecideOneLiveCtx {
                         run,
@@ -3982,7 +3983,58 @@ impl Executor {
                     &mut runtime.fill_sink,
                     &mut book,
                 )
-                .await?;
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "xvision_engine::live",
+                        error = %e,
+                        bar_count,
+                        "live agent dispatch failed; skipping bar, will retry next cycle"
+                    );
+                    skipped_dispatches += 1;
+                    let limits = self.limits.as_ref();
+                    let max_skips = limits.map(|l| l.max_consecutive_skips).unwrap_or(5);
+                    if skipped_dispatches > 0 && skipped_dispatches % max_skips as u64 == 0 {
+                        self.emit(ProgressEvent::MetricsUpdated {
+                            run_id: run.id.clone(),
+                            equity,
+                            drawdown_pct: 0.0,
+                            n_trades,
+                            deployed_capital_usd: None,
+                            unrealized_pnl_usd: None,
+                            realized_pnl_usd: None,
+                            daily_loss_limit_remaining_usd: None,
+                        });
+                        tracing::warn!(
+                            target: "xvision_engine::live",
+                            consecutive_skips = skipped_dispatches,
+                            "max-consecutive-skips threshold reached \u{2014} agent may be stuck"
+                        );
+                    }
+                    // Still mark-to-market so equity stays current.
+                    book.mark(asset_sym, bar.close);
+                    let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+                    equity = book.equity(&marks);
+                    equity_samples_buf.push((decision_ts, equity));
+                    decision_idx += 1;
+                    continue;
+                }
+            };
+            // Hang belt: check dispatch elapsed against --max-agent-ms
+            let dispatch_elapsed = dispatch_start.elapsed();
+            if let Some(max_ms) = self.limits.as_ref().and_then(|l| l.max_agent_ms) {
+                if dispatch_elapsed.as_millis() as u64 > max_ms {
+                    forced_cancels += 1;
+                    tracing::warn!(
+                        target: "xvision_engine::live",
+                        elapsed_ms = dispatch_elapsed.as_millis(),
+                        max_agent_ms = max_ms,
+                        "agent dispatch exceeded max-agent-ms; decision accepted but flagged as forced-cancel"
+                    );
+                }
+            }
 
             // Always mark-to-market and record an equity sample, even
             // when the filter gate suppresses dispatch.  Without this,

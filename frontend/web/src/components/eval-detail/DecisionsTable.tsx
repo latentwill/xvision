@@ -369,12 +369,13 @@ export function DecisionsTable({
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-28">CONVICTION</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px]">JUSTIFICATION</th>
               <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-24 text-right">PNL</th>
+              <th className="px-4 py-2 font-normal tracking-[0.18em] text-[10px] w-14">DELAYED</th>
             </tr>
           </thead>
           <tbody>
             {filteredView.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-text-3">
+                <td colSpan={9} className="px-4 py-8 text-center text-text-3">
                   No decisions match these filters.
                 </td>
               </tr>
@@ -436,6 +437,7 @@ export function DecisionsTable({
                         <span className="text-text-4">—</span>
                       ) : (
                         <ActionPill action={d.action} />
+                        {d.delayed && <span className="text-warn ml-1 text-[10px]">· delayed</span>}
                       )}
                     </td>
                     <td className="px-4 py-2 tabular-nums text-text">
@@ -480,6 +482,9 @@ export function DecisionsTable({
                       }}
                     >
                       {isFiltered ? "—" : fmtPnl(d.pnl)}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {d.delayed ? <span className="text-[10px] text-gold">delayed</span> : null}
                     </td>
                   </tr>
                 );

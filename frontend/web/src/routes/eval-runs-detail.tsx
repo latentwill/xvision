@@ -792,6 +792,27 @@ function SummaryCard({
         />
       </div>
 
+      {/* Live/forward-test delay counters */}
+      {(summary.skipped_dispatches > 0 || summary.delayed_decisions > 0) && (
+        <div
+          className="mx-5 flex items-center gap-5 py-2"
+          style={{ borderTop: "1px solid var(--border-soft)" }}
+        >
+          {summary.skipped_dispatches > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-text-3">Skipped dispatches</span>
+              <span className="text-[12px] text-text-2 tabular-nums">{summary.skipped_dispatches}</span>
+            </div>
+          )}
+          {summary.delayed_decisions > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-text-3">Delayed decisions</span>
+              <span className="text-[12px] text-warn tabular-nums">{summary.delayed_decisions}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="px-5 pb-5 pt-3">
         <RunSummaryPanel error={summary.error} />
       </div>
@@ -1009,6 +1030,12 @@ function MetaCard({
           </div>
         ))}
       </div>
+
+      {summary.mode === 'live' && summary.skipped_dispatches > 0 && (
+        <p className="text-[11px] text-text-3 mt-1 px-4 pb-3">
+          {summary.skipped_dispatches} bar{summary.skipped_dispatches !== 1 ? 's' : ''} skipped while agent was processing prior decision.
+        </p>
+      )}
     </Card>
   );
 }
