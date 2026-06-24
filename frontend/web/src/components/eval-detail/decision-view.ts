@@ -17,11 +17,11 @@
 //         model decision"; OR
 //     (b) it is a no-op HOLD/flat-from-flat step that produced no order, no
 //         conviction, and no justification (the trader never engaged).
-//   Everything else (any real BUY/SELL/SHORT/COVER, or a HOLD that the trader
+//   Everything else (any real LONG/SELL/SHORT/CLOSE, or a HOLD that the trader
 //   deliberately reasoned out) is ENGAGED.
 //
 // Action mapping reuses the same prior-side logic the legacy table used so the
-// pill verb matches intent: long_open→BUY, short_open→SHORT,
+// pill verb matches intent: long_open→LONG, short_open→SHORT,
 // flat-after-long→SELL, flat-after-short→CLOSE(cover), hold→HOLD.
 
 import type { DecisionRowDto } from "@/api/types.gen";
@@ -82,7 +82,7 @@ function derivePhase(row: DecisionRowDto): Phase {
 }
 
 export function mapAction(action: string, priorSide: PositionSide): ActionPillAction {
-  if (action === "long_open") return "BUY";
+  if (action === "long_open") return "LONG";
   if (action === "short_open") return "SHORT";
   if (action === "flat") {
     if (priorSide === "long") return "SELL";
@@ -237,13 +237,21 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset, delayed: row.delayed };
     }
     const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
+    // Management heartbeat detection: SLTP actions with no fill are position-
+    // management no-ops, not trade exits.  The agent reaffirms stop_loss every
+    // bar while in position, but without a fill these are heartbeats → HOLD.
+    const isManagementNoop = row.order_size == null || row.order_size === 0;
     // exit_reason: either a future DTO field or extracted from the "sltp: <reason>" justification prefix
     const exit_reason =
       extractSltpExitReason(row.justification);
     let action: ActionPillAction;
-    if (exit_reason) {
-      // Position was force-closed by risk engine; show actual closing action
+    if (exit_reason && !isManagementNoop) {
+      // Position was force-closed by risk engine WITH a fill; show actual closing action
       action = priorSideForRow === "short" ? "CLOSE" : "SELL";
+    } else if (exit_reason || isManagementNoop) {
+      // exit_reason with no fill (management heartbeat), or any no-fill decision
+      // that would otherwise fall through to mapAction's SLTP force-close arm
+      action = "HOLD";
     } else {
       action = mapAction(row.action, priorSideForRow);
     }

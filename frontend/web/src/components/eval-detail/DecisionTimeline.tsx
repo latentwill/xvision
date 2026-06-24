@@ -21,7 +21,7 @@ import { matchesActionFilter } from "./decision-table-state";
 import { fmtStepStamp, type TimelineDecision } from "./decision-view";
 
 const COLOR_BY_ACTION: Record<string, string> = {
-  BUY: "var(--gold)",
+  LONG: "var(--gold)",
   SELL: "var(--danger)",
   SHORT: "var(--danger)",
   CLOSE: "var(--danger)",
@@ -121,7 +121,7 @@ export function DecisionTimeline({
         <div className="flex items-center gap-3 text-[10px] font-mono text-text-3">
           <span className="inline-flex items-center gap-1.5">
             <span style={{ width: 9, height: 9, background: "var(--gold)" }} />
-            buy
+            long
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span style={{ width: 9, height: 9, background: "var(--danger)" }} />
@@ -244,7 +244,7 @@ export function DecisionTimeline({
                   color:
                     hover.d.phase === "filtered"
                       ? "var(--text-3)"
-                      : hover.d.action === "BUY"
+                      : hover.d.action === "LONG"
                         ? "var(--gold)"
                         : hover.d.action === "SELL" || hover.d.action === "SHORT" || hover.d.action === "CLOSE"
                           ? "var(--danger)"

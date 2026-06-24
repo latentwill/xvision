@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 
+import type { DecisionRowDto } from "@/api/types.gen";
+
 import {
   decisionCounts,
   fmtStepStamp,
   shortAsset,
   stepOrdinalsByDecision,
+  toTimelineDecisions,
   type TimelineDecision,
 } from "./decision-view";
 
@@ -132,5 +135,79 @@ describe("decisionCounts", () => {
     expect(c.viewedTraderCalls).toBe(0);
     expect(c.totalSteps).toBe(2);
     expect(c.totalTraderCalls).toBe(4);
+  });
+});
+
+// ── DecisionRowDto helper for toTimelineDecisions tests ─────────────────────
+function dto(
+  overrides: Partial<DecisionRowDto> & { decision_index: number; action: string },
+): DecisionRowDto {
+  return {
+    decision_index: overrides.decision_index,
+    timestamp: "2024-01-01T20:00:00+00:00",
+    asset: "BTC/USD",
+    action: overrides.action,
+    conviction: overrides.conviction ?? null,
+    justification: overrides.justification ?? null,
+    reasoning: overrides.reasoning ?? null,
+    order_size: overrides.order_size ?? null,
+    fill_price: overrides.fill_price ?? null,
+    fill_size: overrides.fill_size ?? null,
+    fee: overrides.fee ?? null,
+    pnl_realized: overrides.pnl_realized ?? null,
+    delayed: overrides.delayed ?? false,
+  };
+}
+
+describe("toTimelineDecisions", () => {
+  test("mixed rows: long_open fill, heartbeat sltp rows, and a final sltp fill produce correct action counts", () => {
+    const rows: DecisionRowDto[] = [
+      dto({ decision_index: 0, action: "long_open", order_size: 0.0023, fill_size: 0.0023, fill_price: 50000, conviction: 0.9 }),
+    ];
+    // 152 heartbeat stop_loss entries — no fill, position management only
+    for (let i = 1; i <= 152; i++) {
+      rows.push(dto({ decision_index: i, action: "stop_loss", order_size: null }));
+    }
+    // One filled stop_loss exit
+    rows.push(
+      dto({ decision_index: 153, action: "stop_loss", order_size: 0.0023, conviction: 0.5 }),
+    );
+
+    const result = toTimelineDecisions(rows);
+    const longs = result.filter((d) => d.action === "LONG").length;
+    const sells = result.filter((d) => d.action === "SELL").length;
+    const holds = result.filter((d) => d.action === "HOLD").length;
+
+    expect(longs).toBe(1);
+    expect(sells).toBe(1);
+    expect(holds).toBe(152);
+  });
+
+  test("take_profit with a fill from a long position → SELL", () => {
+    const rows: DecisionRowDto[] = [
+      dto({ decision_index: 0, action: "long_open", order_size: 0.0023, fill_size: 0.0023, fill_price: 50000, conviction: 0.9 }),
+      dto({ decision_index: 1, action: "take_profit", order_size: 0.001, conviction: 0.7 }),
+    ];
+    const result = toTimelineDecisions(rows);
+    expect(result[0]!.action).toBe("LONG");
+    expect(result[1]!.action).toBe("SELL");
+  });
+
+  test("trailing_stop with a fill from a short position → CLOSE", () => {
+    const rows: DecisionRowDto[] = [
+      dto({ decision_index: 0, action: "short_open", order_size: 0.0023, fill_size: 0.0023, fill_price: 50000, conviction: 0.9 }),
+      dto({ decision_index: 1, action: "trailing_stop", order_size: 0.001, conviction: 0.7 }),
+    ];
+    const result = toTimelineDecisions(rows);
+    expect(result[0]!.action).toBe("SHORT");
+    expect(result[1]!.action).toBe("CLOSE");
+  });
+
+  test("partial_tp2 with null order_size → HOLD (management heartbeat)", () => {
+    const rows: DecisionRowDto[] = [
+      dto({ decision_index: 0, action: "partial_tp2", order_size: null, conviction: 0.7 }),
+    ];
+    const result = toTimelineDecisions(rows);
+    expect(result[0]!.action).toBe("HOLD");
   });
 });

@@ -26,8 +26,8 @@ function makeSummary(overrides: Partial<FilterSummary> = {}): FilterSummary {
 const TS_A = "2024-01-01T20:00:00+00:00";
 const TS_B = "2024-01-07T13:00:00+00:00";
 const decisions: TimelineDecision[] = [
-  { i: 0, t: TS_A, phase: "engaged", action: "BUY", conv: 0.7, just: "btc entry", pnl: -3.75, asset: "BTC/USD" },
-  { i: 1, t: TS_A, phase: "engaged", action: "BUY", conv: 0.7, just: "eth entry", pnl: -3.75, asset: "ETH/USD" },
+  { i: 0, t: TS_A, phase: "engaged", action: "LONG", conv: 0.7, just: "btc entry", pnl: -3.75, asset: "BTC/USD" },
+  { i: 1, t: TS_A, phase: "engaged", action: "LONG", conv: 0.7, just: "eth entry", pnl: -3.75, asset: "ETH/USD" },
   { i: 2, t: TS_B, phase: "engaged", action: "HOLD", conv: 0.6, just: "btc hold", pnl: null, asset: "BTC/USD" },
   { i: 3, t: TS_B, phase: "engaged", action: "HOLD", conv: 0.5, just: "eth hold", pnl: null, asset: "ETH/USD" },
 ];
@@ -130,12 +130,12 @@ describe("DecisionsTable step + asset columns", () => {
     expect(stamps[0]?.getAttribute("title")).toBe(TS_A);
   });
 
-  test("action-filter pill row has All/Buy/Sell/Short/Hold pills and no No-op", () => {
+  test("action-filter pill row has All/Long/Sell/Short/Hold pills and no No-op", () => {
     // No-op/Filtered pill removed: filtered rows aren't real decisions and
     // the pill added clutter. SHORT pill added for short-entry actions.
     render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
     expect(screen.getByRole("button", { name: /All/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Buy/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Long/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sell/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Short/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Hold/i })).toBeInTheDocument();
