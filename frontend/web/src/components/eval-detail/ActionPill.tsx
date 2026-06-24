@@ -10,7 +10,7 @@
 
 import type { ReactNode } from "react";
 
-export type ActionPillAction = "BUY" | "SELL" | "SHORT" | "HOLD" | "CLOSE";
+export type ActionPillAction = "LONG" | "SELL" | "SHORT" | "HOLD" | "CLOSE";
 
 type Variant = {
   label: string;
@@ -62,7 +62,7 @@ const CROSS = (
 );
 
 const VARIANTS: Record<ActionPillAction, Variant> = {
-  BUY: { label: "BUY", fg: "#001A0A", bg: "var(--gold)", bd: "var(--gold)", glyph: UP_ARROW },
+  LONG: { label: "LONG", fg: "#001A0A", bg: "var(--gold)", bd: "var(--gold)", glyph: UP_ARROW },
   SELL: { label: "SELL", fg: "#1A0000", bg: "var(--danger)", bd: "var(--danger)", glyph: DOWN_ARROW },
   SHORT: { label: "SHORT", fg: "#1A0000", bg: "rgba(200,0,0,0.85)", bd: "rgba(200,0,0,0.85)", glyph: DOWN_ARROW },
   HOLD: {

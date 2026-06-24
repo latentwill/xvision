@@ -49,8 +49,8 @@ const PILLS: {
     filled: true,
   },
   {
-    k: "BUY",
-    label: "Buy",
+    k: "LONG",
+    label: "Long",
     dotColor: "var(--gold)",
     activeBg: "var(--gold-bg)",
     activeBd: "var(--gold-soft)",

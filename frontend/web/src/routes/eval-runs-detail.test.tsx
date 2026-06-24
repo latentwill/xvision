@@ -313,7 +313,7 @@ describe("EvalRunDetailRoute", () => {
     // The Signal table renders a direction-aware ActionPill (long_open → BUY)
     // and the engaged PhaseChip. Conviction renders as a rounded percentage
     // (0.77 → 77%) in the redesigned table.
-    expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("LONG")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("ENGAGED").length).toBeGreaterThan(0);
     expect(screen.getByText("77%")).toBeInTheDocument();
   });
@@ -1446,7 +1446,7 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     renderDetail();
 
     const tape = await screen.findByTestId("eval-decision-tape");
-    expect(within(tape).getByText("BUY")).toBeInTheDocument();
+    expect(within(tape).getByText("LONG")).toBeInTheDocument();
     expect(within(tape).getByText("SELL")).toBeInTheDocument();
 
     const chartState = screen.getByText("No chart data.");
@@ -1502,7 +1502,7 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     renderDetail();
 
     // Each action verb appears at least once across the rows + density legend.
-    expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("LONG")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("SELL").length).toBeGreaterThan(0);
     // short_open now maps to SHORT (distinct from SELL which is long-exit)
     expect(screen.getAllByText("SHORT").length).toBeGreaterThan(0);
@@ -1553,16 +1553,16 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
 
     renderDetail();
 
-    // The Buy pill carries a count badge; clicking it scopes to the one buy row
+    // The Long pill carries a count badge; clicking it scopes to the one long row
     // and hides the hold row's action pill.
-    const buyPill = await screen.findByRole("button", { name: /Buy\s*1/ });
+    const buyPill = await screen.findByRole("button", { name: /Long\s*1/ });
     fireEvent.click(buyPill);
     expect(buyPill).toHaveAttribute("aria-pressed", "true");
-    // After scoping to Buy, the HOLD action pill is no longer in the table body.
+    // After scoping to Long, the HOLD action pill is no longer in the table body.
     await waitFor(() =>
       expect(screen.queryByText("HOLD")).not.toBeInTheDocument(),
     );
-    expect(screen.getAllByText("BUY").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LONG").length).toBeGreaterThan(0);
   });
 
   // ── Signals-used chip strip ─────────────────────────────────────────────────
