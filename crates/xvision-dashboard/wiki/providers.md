@@ -25,7 +25,7 @@ Providers are stored in `$XVN_HOME/config/default.toml` (default:
 ```toml
 [[providers]]
 name        = "anthropic"
-kind        = "anthropic"           # anthropic | openai-compat | local-candle | ollama | llama-cpp | vllm
+kind        = "anthropic"           # anthropic | openai-compat | local-candle
 base_url    = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"   # env var that holds the secret; empty for no-auth endpoints
 
@@ -48,35 +48,6 @@ For local endpoints that need no auth, set `api_key_env = ""`.
 
 `local-candle` is an in-process provider; `base_url` is ignored for that kind.
 
-## Dashboard management
-
-The **Settings → Providers** page in the dashboard lists every configured
-provider as a row with its kind, base URL, key-present status, and a list of
-enabled models. From here you can add, edit, or remove providers, paste API
-keys, and curate which model ids appear in the chat-rail and wizard dropdowns.
-
-Each provider row shows a **health pill** driven by two computed fields:
-
-- `api_key_set` / `has_key` — whether the provider has a usable API key
-  (env-exported, stored in `secrets/providers.toml`, or unnecessary for
-  no-auth local kinds).
-- `launchable` — the roll-up: `has_key` AND at least one model enabled (or
-  the provider is `local-candle`, which bypasses the model gate).
-
-A provider missing its API key shows a **degraded** pill state; the provider
-is visible in the list but no agent slot can dispatch through it until the key
-is supplied.
-
-The **Test connection** button (`POST /api/settings/providers/:name/test-connection`)
-hits the provider's catalog endpoint and returns `{ ok, latency_ms, model_count }`.
-Network or auth failures surface in the response body (the API always returns
-200) so the UI can render an error pill rather than breaking the page.
-
-Model management is done through **Settings → Providers → Manage models**:
-the dashboard fetches the provider's full catalog, and the operator toggles
-specific model ids into `enabled_models`. Only enabled models appear in the
-chat-rail and wizard pickers.
-
 ## Auth ladder
 
 When xvn needs the API key for a provider, it resolves in this order:
@@ -85,9 +56,8 @@ When xvn needs the API key for a provider, it resolves in this order:
    process supervisor).
 2. Inline key stored in `$XVN_HOME/secrets/providers.toml` (mode 0600) — this
    is written when you paste a key into Settings → Providers in the dashboard.
-3. If neither is present, the provider is marked as unconfigured: its `api_key_set`
-   flag is `false`, the health pill in Settings → Providers shows a degraded state,
-   and any agent referencing it will fail at run time.
+3. If neither is present, the provider is marked as unconfigured and any agent
+   referencing it will fail at run time.
 
 Never commit API keys to `config/default.toml`. Use the env var or the
 dashboard's key-paste flow.

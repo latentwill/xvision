@@ -45,9 +45,9 @@ function classify(event: FilterEventV1): TickClassification {
 // extra plumbing.
 const TICK_CLASS: Record<string, string> = {
   triggered: "bg-gold",
-  in_position: "bg-warn",
+  in_position: "bg-text-3",
   daily_cap: "bg-danger/70",
-  cooldown: "bg-info",
+  cooldown: "bg-text-2",
   idle: "bg-surface-elev border border-border-soft",
 };
 

@@ -27,7 +27,6 @@ function row(
     fill_size,
     fee: null,
     pnl_realized: null,
-    delayed: false,
   };
 }
 

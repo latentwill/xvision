@@ -460,7 +460,13 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
     } else if !coverage.covered.is_empty() {
         // Partial coverage — read cached bars, fetch only gaps from Alpaca,
         // merge everything into one contiguous window.
-        load_cached_and_fetch_gaps(ctx, args, &coverage.covered, &coverage.gaps).await?
+        load_cached_and_fetch_gaps(
+            ctx,
+            args,
+            &coverage.covered,
+            &coverage.gaps,
+        )
+        .await?
     } else {
         // No coverage at all — fetch the full window from Alpaca (original path).
         ctx.alpaca_fetcher()

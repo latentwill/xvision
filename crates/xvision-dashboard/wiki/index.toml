@@ -20,53 +20,46 @@
 # `crates/xvision-cli/src/commands/` without a same-PR edit to
 # `cli-reference.md`.
 
-
-[[page]]
-slug = "updates"
-title = "What's New"
-section = "What's New"
-last_reviewed = "2026-06-23"
-path = "updates.md"
 [[page]]
 slug = "quickstart"
 title = "Quickstart"
 section = "Quickstart"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "quickstart.md"
 
 [[page]]
 slug = "strategies"
 title = "Strategies"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "strategies.md"
 
 [[page]]
 slug = "agents"
 title = "Agents"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-24"
 path = "agents.md"
 
 [[page]]
 slug = "optimizer"
 title = "Optimizer"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-24"
 path = "optimizer.md"
 
 [[page]]
 slug = "providers"
 title = "Providers & Brokers"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "providers.md"
 
 [[page]]
 slug = "scenarios"
 title = "Scenarios"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "scenarios.md"
 
 [[page]]
@@ -80,7 +73,7 @@ path = "eval-runs.md"
 slug = "experiments"
 title = "Experiments"
 section = "Concepts"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "experiments.md"
 
 [[page]]
@@ -115,14 +108,14 @@ path = "mcp.md"
 slug = "operator-manual"
 title = "Operator Manual"
 section = "Operator"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "operator-manual.md"
 
 [[page]]
 slug = "firing-conditions"
 title = "Firing Conditions"
 section = "Operator"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-24"
 path = "firing-conditions.md"
 
 [[page]]
@@ -143,7 +136,7 @@ path = "cli-non-surfaced.md"
 slug = "runbook"
 title = "Operator Runbook"
 section = "Operator"
-last_reviewed = "2026-06-23"
+last_reviewed = "2026-05-20"
 path = "runbook.md"
 
 [[page]]

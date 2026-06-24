@@ -274,9 +274,7 @@ pub fn bar_granularity_for_cadence(cadence_minutes: u32) -> xvision_data::alpaca
         120 => BarGranularity::new(2, BarGranularityUnit::Hour).expect("validated 2h granularity"),
         240 => BarGranularity::Hour4,
         1440 => BarGranularity::Day1,
-        m if m < 60 => {
-            BarGranularity::new(m as u8, BarGranularityUnit::Minute).unwrap_or(BarGranularity::Hour1)
-        }
+        m if m < 60 => BarGranularity::new(m as u8, BarGranularityUnit::Minute).unwrap_or(BarGranularity::Hour1),
         m if m % 60 == 0 && m / 60 < 24 => {
             BarGranularity::new((m / 60) as u8, BarGranularityUnit::Hour).unwrap_or(BarGranularity::Hour1)
         }
@@ -293,20 +291,18 @@ impl Strategy {
     ///
 
     pub fn native_timeframe(&self) -> crate::strategies::manifest::TimeframeSpec {
-        crate::strategies::manifest::TimeframeSpec(
-            match self.manifest.decision_cadence_minutes {
-                1 => "1m",
-                5 => "5m",
-                15 => "15m",
-                30 => "30m",
-                60 => "1h",
-                120 => "2h",
-                240 => "4h",
-                1440 => "1d",
-                other => return crate::strategies::manifest::TimeframeSpec(format!("{other}m")),
-            }
-            .to_string(),
-        )
+        crate::strategies::manifest::TimeframeSpec(match self.manifest.decision_cadence_minutes {
+            1 => "1m",
+            5 => "5m",
+            15 => "15m",
+            30 => "30m",
+            60 => "1h",
+            120 => "2h",
+            240 => "4h",
+            1440 => "1d",
+            other => return crate::strategies::manifest::TimeframeSpec(format!("{other}m")),
+        }
+        .to_string())
     }
 
     pub fn supported_timeframes(

@@ -4,9 +4,9 @@ use ulid::Ulid;
 
 use crate::autooptimizer::config::{BaselineUntouchedWindow, DayWindow};
 use crate::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::safety::VenueLabel;
 use crate::strategies::bar_granularity_for_cadence;
@@ -236,9 +236,6 @@ mod tests {
     fn baseline_inherits_cadence_cache_key() {
         let day = synthesize_optimizer_day_scenario(&day_window(), 15, "test");
         let baseline = synthesize_baseline_untouched_scenario(&day, &baseline_window()).unwrap();
-        assert!(baseline
-            .bar_cache_policy
-            .cache_key
-            .contains(&day.bar_cache_policy.cache_key));
+        assert!(baseline.bar_cache_policy.cache_key.contains(&day.bar_cache_policy.cache_key));
     }
 }

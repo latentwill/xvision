@@ -126,7 +126,6 @@ function decision(overrides: Partial<DecisionRowDto> = {}): DecisionRowDto {
     fill_size: 220,
     fee: 0.4,
     pnl_realized: 2150,
-    delayed: false,
     ...overrides,
   };
 }
@@ -157,10 +156,6 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       max_annotations_per_review: 8,
       paused: false,
       paused_at: null,
-      unrealized_pnl_usd: null,
-      skipped_dispatches: 0,
-      delayed_decisions: 0,
-      forced_cancels: 0,
       flatten_requested: false,
     },
     decisions: [decision()],

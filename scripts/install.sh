@@ -33,12 +33,6 @@ detect_platform() {
                 *) echo "unsupported Linux arch: $arch" >&2; exit 1 ;;
             esac
             ;;
-        mingw*|msys*|cygwin*)
-            case "$arch" in
-                x86_64|amd64) target="x86_64-pc-windows-msvc" ;;
-                *) echo "unsupported Windows arch: $arch" >&2; exit 1 ;;
-            esac
-            ;;
         *)
             echo "unsupported OS: $os" >&2; exit 1
             ;;
@@ -79,11 +73,8 @@ main() {
     fi
     echo "Latest version: $latest_tag"
 
-    local ext
-    case "$platform" in
-        *windows*) ext="zip" ;;
-        *)         ext="tar.gz" ;;
-    esac
+    local file_prefix="xvn-${platform}"
+    local ext="tar.gz"
 
     artifact_url="https://github.com/${REPO}/releases/download/${latest_tag}/${file_prefix}.${ext}"
     checksum_url="${artifact_url}.sha256"
@@ -108,10 +99,8 @@ main() {
     fi
     echo "SHA256 verified"
 
-    case "$ext" in
-        zip) unzip -o "$tmpdir/xvn.${ext}" -d "$tmpdir" ;;
-        *)   tar xzf "$tmpdir/xvn.${ext}" -C "$tmpdir" ;;
-    esac
+    # Extract and install
+    tar xzf "$tmpdir/xvn.${ext}" -C "$tmpdir"
 
     if [ "$INSTALL_DIR" = "/usr/local/bin" ] && [ ! -w "$INSTALL_DIR" ]; then
         sudo mv "$tmpdir/$BINARY_NAME" "$INSTALL_DIR/"

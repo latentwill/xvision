@@ -92,7 +92,6 @@ pub async fn run_review(
         crate::eval::RunStatus::Completed
             | crate::eval::RunStatus::Failed
             | crate::eval::RunStatus::Cancelled
-            | crate::eval::RunStatus::Disconnected
     ) {
         return Err(ReviewError::RunNotCompleted(format!("{:?}", run.status)));
     }

@@ -24,7 +24,7 @@ describe("AttentionBand", () => {
     return render(
       <MemoryRouter>
         <QueryClientProvider client={client}>
-          <AttentionBand deployments={[]} nagItems={[]} />
+          <AttentionBand deployments={[]} />
         </QueryClientProvider>
       </MemoryRouter>,
     );

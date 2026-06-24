@@ -1,9 +1,9 @@
 use chrono::{TimeZone, Utc};
 use xvision_engine::autooptimizer::{synthesize_baseline_untouched_scenario, BaselineUntouchedWindow};
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
-    LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
-    ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+    AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario, ScenarioSource,
+    SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::safety::VenueLabel;
 
