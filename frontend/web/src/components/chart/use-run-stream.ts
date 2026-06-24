@@ -32,10 +32,26 @@ type WireMarker =
   | ({ kind: "veto" } & VetoMarker)
   | ({ kind: "hold" } & HoldMarker);
 
+type WireDecision = {
+  decision_index: number;
+  timestamp: string;
+  asset: string;
+  action: string;
+  conviction: number | null;
+  justification: string | null;
+  reasoning: string | null;
+  order_size: number | null;
+  fill_price: number | null;
+  fill_size: number | null;
+  fee: number | null;
+  pnl_realized: number | null;
+};
+
 type WireEvent =
   | { event: "bar"; data: ChartBar }
   | { event: "equity"; data: ChartEquityPoint }
   | { event: "marker"; data: WireMarker }
+  | { event: "decision"; data: WireDecision }
   | { event: "status"; data: { phase: string; message: string | null } }
   | {
       event: "indicator_tail";
@@ -153,6 +169,41 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
     });
   }, []);
 
+  const mergeDecision = useCallback((d: WireDecision) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const markers = { ...prev.markers };
+      // Only emit trade markers for decisions with fill data.
+      // Holds without fills are skipped (the REST reload picks them up).
+      if (d.fill_price != null && d.fill_size != null) {
+        const action = d.action;
+        const side =
+          action === "long_open" ? "Buy" as const :
+          action === "short_open" || action === "flat" ||
+            action === "stop_loss" || action === "take_profit" ||
+            action === "max_bars_held" || action === "partial_tp1"
+            ? "Sell" as const
+            : null;
+        if (side) {
+          markers.trades = [
+            ...markers.trades,
+            {
+              time: new Date(d.timestamp).getTime() / 1000,
+              side,
+              price: d.fill_price,
+              size: d.fill_size,
+              fee: d.fee ?? 0,
+              pnl_realized: d.pnl_realized ?? null,
+              decision_index: d.decision_index,
+              justification: d.justification ?? null,
+            },
+          ];
+        }
+      }
+      return { ...prev, markers };
+    });
+  }, []);
+
   const mergeIndicatorTail = useCallback((tail: IndicatorTail) => {
     setData((prev) =>
       prev
@@ -245,6 +296,16 @@ export function useRunStream(runId: string, initial?: RunChartPayload) {
         if (parsed?.event === "marker") {
           trace.debug("chart.merge.marker", { kind: parsed.data.kind });
           mergeMarker(parsed.data);
+        }
+      });
+      es.addEventListener("decision", (e) => {
+        const parsed = parseEvent(e, "decision");
+        if (parsed?.event === "decision") {
+          trace.debug("chart.merge.decision", {
+            action: parsed.data.action,
+            decision_index: parsed.data.decision_index,
+          });
+          mergeDecision(parsed.data);
         }
       });
       es.addEventListener("indicator_tail", (e) => {
