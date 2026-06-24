@@ -44,7 +44,9 @@ struct StubPollFetcher {
 
 impl StubPollFetcher {
     fn new(batches: Vec<Vec<MarketBar>>) -> Self {
-        Self { batches: std::sync::Mutex::new(batches) }
+        Self {
+            batches: std::sync::Mutex::new(batches),
+        }
     }
 }
 
@@ -69,10 +71,7 @@ impl LivePollFetcher for StubPollFetcher {
 #[tokio::test]
 async fn poll_only_with_warmup_drains_then_yields() {
     let warmup = vec![bar(1, 100.0), bar(2, 101.0), bar(3, 102.0)];
-    let poll_bars = vec![
-        vec![market_bar(4, 103.0)],
-        vec![market_bar(5, 104.0)],
-    ];
+    let poll_bars = vec![vec![market_bar(4, 103.0)], vec![market_bar(5, 104.0)]];
     let fetcher = Arc::new(StubPollFetcher::new(poll_bars));
     let poll = AlpacaLivePoll::new(fetcher, "BTC/USD".into(), BarGranularity::Minute1)
         .with_poll_interval(std::time::Duration::ZERO);
@@ -89,7 +88,10 @@ async fn poll_only_with_warmup_drains_then_yields() {
     let b2 = stream.next_bar().await.expect("second poll bar");
     assert!((b2.close - 104.0).abs() < f64::EPSILON);
 
-    assert!(stream.next_bar().await.is_none(), "stream should close after exhausting");
+    assert!(
+        stream.next_bar().await.is_none(),
+        "stream should close after exhausting"
+    );
 }
 
 #[tokio::test]
@@ -109,9 +111,7 @@ async fn poll_only_zero_warmup_starts_direct() {
 
 #[tokio::test]
 async fn poll_only_yields_bars_in_fifo_order() {
-    let poll_batches: Vec<Vec<MarketBar>> = (0..5)
-        .map(|i| vec![market_bar(i, 100.0 + i as f64)])
-        .collect();
+    let poll_batches: Vec<Vec<MarketBar>> = (0..5).map(|i| vec![market_bar(i, 100.0 + i as f64)]).collect();
 
     let fetcher = Arc::new(StubPollFetcher::new(poll_batches));
     let poll = AlpacaLivePoll::new(fetcher, "BTC/USD".into(), BarGranularity::Minute1)

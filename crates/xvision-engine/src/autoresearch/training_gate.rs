@@ -60,9 +60,7 @@ pub fn require_training_enabled() -> Result<()> {
         (GpuStatus::Available { .. }, true) => {
             // GPU + uv present — training can run. Log the auto-detection
             // so operators know why they don't need the env var.
-            tracing::info!(
-                "local training auto-enabled: GPU detected, uv available"
-            );
+            tracing::info!("local training auto-enabled: GPU detected, uv available");
             Ok(())
         }
         (GpuStatus::Unavailable { reason }, false) => {
@@ -98,7 +96,7 @@ pub fn require_training_enabled() -> Result<()> {
 /// Outcome of GPU hardware detection.
 enum GpuStatus {
     /// CUDA GPU found with at least `vram_mb` MB.
-    Available { vram_mb: u64, },
+    Available { vram_mb: u64 },
     /// No suitable GPU found.
     Unavailable { reason: String },
 }
@@ -252,7 +250,6 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, prior }
         }
-
 
         fn remove(key: &'static str) -> Self {
             let prior = std::env::var(key).ok();

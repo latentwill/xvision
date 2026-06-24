@@ -101,11 +101,7 @@ impl LocalStream {
 }
 
 impl AsyncRead for LocalStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         #[cfg(unix)]
         {
@@ -122,11 +118,7 @@ impl AsyncRead for LocalStream {
 }
 
 impl AsyncWrite for LocalStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         #[cfg(unix)]
         {
@@ -200,9 +192,7 @@ impl LocalListener {
         {
             use tokio::net::windows::named_pipe::ServerOptions;
             let name = path.as_ref().as_os_str().to_owned();
-            let server = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&name)?;
+            let server = ServerOptions::new().first_pipe_instance(true).create(&name)?;
             Ok(LocalListener {
                 name,
                 next: Some(server),

@@ -10,13 +10,16 @@ Welcome to xvision — a multistrategy trading-agent backtest harness.
    startup, but no agent can run until one is configured.
 2. **Create a scenario.** Scenarios define a market window: asset, date
    range, granularity, fees, slippage, latency. The `/scenarios/new`
-   form gives you a quick start with safe defaults.
 3. **Create a strategy.** A strategy composes one or more agents
-   (`Agent` = prompt + model + skills). The Strategies page exposes a
-   template picker; start from "trend follower" or "custom" and tune.
-4. **Run an eval.** Pick a strategy + scenario and launch a backtest or
-   paper run. The Eval Runs list streams progress; click in to see the
-   decisions list, equity curve, and trace dock.
+   (`Agent` = prompt + model + skills + capability-based role). The
+   Strategies page exposes a template picker; start from "trend
+   follower" or "custom" and tune. Add a Filter agent with a firing
+   condition to gate dispatch and control LLM cost, or wire in an
+   optimizer-tuned child agent.
+4. **Run an eval.** Pick a strategy + scenario and launch a backtest,
+   paper, live, or forward-test run. The Eval Runs list streams
+   progress; click in to see the decisions list, equity curve, and
+   trace dock.
 
 ## What the dashboard is for
 
@@ -30,9 +33,8 @@ xvision is the eval harness, not the strategy itself. Use it to:
 ## Surfaces to know
 
 - **Strategies** — author, validate, list saved `Strategy` artifacts.
-- **Scenarios** — define market windows.
-- **Eval Runs** — launch and watch backtests; results land in
-  `RunStore` (SQLite).
+- **Eval Runs** — launch and watch backtests, paper, live, and
+  forward-test runs; results land in `RunStore` (SQLite).
 - **Agents** — manage the reusable agent library
   (`Vec<AgentSlot>` per agent).
 - **Settings** — providers, brokers, observability retention.

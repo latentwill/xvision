@@ -247,10 +247,7 @@ pub enum OpenAiCompatError {
     /// some local/Ollama models reject `json_schema` response_format. The
     /// caller can retry with `response_schema: None` and rely on JSON
     /// parsing (F31/F35).
-    ResponseFormatUnsupported {
-        url: String,
-        body: String,
-    },
+    ResponseFormatUnsupported { url: String, body: String },
 }
 
 impl OpenAiCompatError {
@@ -507,7 +504,8 @@ impl ResponseSchema {
         // F34: OpenAI strict mode requires additionalProperties: false on every
         // schema object. Without it, create_filter yields 400. Filter objects are
         // validated server-side; the schema just needs to satisfy the provider.
-        let create_filter_prop = || serde_json::json!({ "type": ["object", "null"], "additionalProperties": false });
+        let create_filter_prop =
+            || serde_json::json!({ "type": ["object", "null"], "additionalProperties": false });
         Self {
             name: "mutation_diff".into(),
             schema: serde_json::json!({
@@ -1659,10 +1657,12 @@ impl OpenaiCompatDispatch {
                 // unavailable now"; OpenAI strict mode returns errors about
                 // additionalProperties. Both mention "response_format" in the body.
                 if status.as_u16() == 400 && text.to_lowercase().contains("response_format") {
-                    return OpenAiAttempt::Fatal(anyhow::Error::new(OpenAiCompatError::ResponseFormatUnsupported {
-                        url: url.to_string(),
-                        body: text,
-                    }));
+                    return OpenAiAttempt::Fatal(anyhow::Error::new(
+                        OpenAiCompatError::ResponseFormatUnsupported {
+                            url: url.to_string(),
+                            body: text,
+                        },
+                    ));
                 }
                 return OpenAiAttempt::Fatal(anyhow::anyhow!(
                     "OpenAI-compat API error {} at {}: {}",

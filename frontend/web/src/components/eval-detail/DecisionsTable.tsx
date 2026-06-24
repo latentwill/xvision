@@ -436,8 +436,10 @@ export function DecisionsTable({
                       {isFiltered || !d.action ? (
                         <span className="text-text-4">—</span>
                       ) : (
-                        <ActionPill action={d.action} />
-                        {d.delayed && <span className="text-warn ml-1 text-[10px]">· delayed</span>}
+                        <span>
+                          <ActionPill action={d.action} />
+                          {d.delayed && <span className="text-warn ml-1 text-[10px]">· delayed</span>}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-2 tabular-nums text-text">

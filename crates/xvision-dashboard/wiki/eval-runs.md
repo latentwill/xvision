@@ -255,3 +255,60 @@ identical recoverable broker rejections.
 **Catch-all**:
 
 `unclassified` — anything the classifier did not match.
+
+---
+
+## Live & forward-test runs
+
+Live runs connect to a broker and process real-time market data. Forward-test
+runs use the same live execution path but against historical bars — they
+replay a scenario's bar window through the live broker/routing stack without
+actually submitting orders.
+
+### Bar chart
+
+The run detail chart renders OHLCV candles from the first bar onward,
+including warmup bars. Bars are persisted to `eval_run_bars` as they arrive
+and streamed via SSE for real-time updates. The chart no longer requires a
+decision to exist before rendering.
+
+### Delayed decisions
+
+When an LLM agent is dispatched on bar N but doesn't respond until bar N+1
+(or later), the resulting decision is flagged as **delayed**. The delay
+threshold is the strategy's decision cadence — a decision that spans ≥1 full
+bar period is delayed; a same-bar response is not.
+
+Three counters appear in the run summary and on the detail page:
+
+| Counter | Meaning |
+|---|---|
+| `skipped_dispatches` | Bars where no agent was dispatched because the previous dispatch hadn't finished |
+| `delayed_decisions` | Decisions that arrived ≥1 bar period after dispatch |
+| `forced_cancels` | Agents killed by the `--max-agent-ms` deadline |
+
+These counters are live/forward-test only. Backtests process bars
+synchronously and never skip or delay.
+
+### Unrealized PnL
+
+The detail page shows unrealized PnL — the mark-to-market value of open
+positions — next to the Sharpe ratio. The value comes from the server-side
+book: `equity - initial - realized`. It updates every bar in live mode and
+appears as `unrealized_pnl_usd` in the API response.
+
+### Filter timeline
+
+The filter timeline below the chart shows one tick per bar, color-coded by
+what the filter decided:
+
+| Color | State | Meaning |
+|---|---|---|
+| Gold | Triggered | Filter passed → agent dispatched |
+| Amber | In position | Filter passed but suppressed because the strategy holds a position |
+| Blue | Cooldown | Filter in mandatory rest period after a recent fire |
+| Red | Daily cap | Filter hit `max_wakeups_per_day` |
+| Neutral | Not triggered | Filter conditions evaluated false |
+
+See [Firing Conditions](/docs?slug=firing-conditions) for the full state
+table and policy explanation.

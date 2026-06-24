@@ -105,7 +105,6 @@ const STATUS_FILTER: FilterDef = {
     { value: "queued", label: "Queued" },
     { value: "failed", label: "Failed" },
     { value: "cancelled", label: "Cancelled" },
-    { value: "disconnected", label: "Disconnected" },
   ],
 };
 

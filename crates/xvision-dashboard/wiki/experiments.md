@@ -11,6 +11,16 @@ numbers.
 Experiments are additive — they wrap batches, they do not replace or modify
 eval runs. The same batch can be bound to at most one experiment.
 
+Experiments can also run in **forward-test mode**: instead of replaying
+historical bars through a scenario, the experiment subscribes to a live
+market feed and executes real-time decisions through the strategy's filter
+pipeline. The filter timeline — every filter evaluation event and its
+outcome (pass / skip / delay) — is recorded as an observable signal
+alongside the decision trace. Delayed decisions (those deferred by a
+time-window or count-based cooldown) appear as distinct events in the
+result summary, giving the operator a full picture of when and why the
+strategy acted or held back.
+
 For the hypothesis manifest that lives on the strategy, see
 [Strategies](/docs?slug=strategies). For eval batches and individual runs, see
 [Eval Runs](/docs?slug=eval-runs).

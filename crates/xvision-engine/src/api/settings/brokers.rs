@@ -1823,10 +1823,7 @@ mod tests {
             !report.byreal_spot.configured,
             "byreal-cli spot runtime uses its keystore; storing this key must not imply execution is configured"
         );
-        assert_eq!(
-            report.byreal_spot.stored_key_id_suffix.as_deref(),
-            Some("9f3c")
-        );
+        assert_eq!(report.byreal_spot.stored_key_id_suffix.as_deref(), Some("9f3c"));
     }
 
     #[tokio::test]

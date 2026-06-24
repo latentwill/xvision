@@ -193,6 +193,7 @@ fn run_status_str(status: RunStatus) -> &'static str {
         RunStatus::Completed => "completed",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
+        RunStatus::Disconnected => "disconnected",
     }
 }
 

@@ -113,10 +113,16 @@ mod tests {
             "max_total_exposure_pct": 150.0
         }"#;
 
-        let config: RiskConfig = serde_json::from_str(json)
-            .expect("should deserialize old format without max_drawdown fields");
+        let config: RiskConfig =
+            serde_json::from_str(json).expect("should deserialize old format without max_drawdown fields");
 
-        assert_eq!(config.max_drawdown_usd, 0.0, "max_drawdown_usd should default to 0.0");
-        assert_eq!(config.max_drawdown_pct, None, "max_drawdown_pct should default to None");
+        assert_eq!(
+            config.max_drawdown_usd, 0.0,
+            "max_drawdown_usd should default to 0.0"
+        );
+        assert_eq!(
+            config.max_drawdown_pct, None,
+            "max_drawdown_pct should default to None"
+        );
     }
 }

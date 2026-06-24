@@ -53,6 +53,11 @@
 // 25. DELETE /api/eval/runs/:id                       eval_runs::delete_run
 // 26. POST   /api/eval/runs/:id/cancel                eval_runs::cancel_run
 // 27. POST   /api/eval/runs/:id/retry                 eval_runs::retry_run
+// 27a. POST  /api/eval/runs/:id/pause                  eval_runs::pause_run
+// 27b. POST  /api/eval/runs/:id/resume                 eval_runs::resume_run
+// 27c. POST  /api/eval/runs/:id/flatten                eval_runs::flatten_run
+// 27d. POST  /api/eval/runs/:id/reconcile              eval_runs::reconcile_run
+// 27e. POST  /api/eval/runs/:id/reconnect             eval_runs::reconnect_run
 // 28. POST   /api/eval/runs/:id/review                eval_review::generate
 // 29. PATCH  /api/eval/agent-profiles/:id             eval_agent_profiles::patch
 // 30. POST   /api/cli/jobs                            cli::create
@@ -747,6 +752,8 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id/pause", post(eval_runs::pause_run))
         .route("/api/eval/runs/:id/resume", post(eval_runs::resume_run))
         .route("/api/eval/runs/:id/flatten", post(eval_runs::flatten_run))
+        .route("/api/eval/runs/:id/reconcile", post(eval_runs::reconcile_run))
+        .route("/api/eval/runs/:id/reconnect", post(eval_runs::reconnect_run))
         .route("/api/eval/runs/:id/retry", post(eval_runs::retry_run))
         // ── Eval review ───────────────────────────────────────────────────
         .route("/api/eval/runs/:id/review", post(eval_review::generate))

@@ -117,6 +117,7 @@ pub enum RunStatus {
     Completed,
     Failed,
     Cancelled,
+    Disconnected,
 }
 
 impl RunStatus {
@@ -129,6 +130,7 @@ impl RunStatus {
             RunStatus::Completed => "completed",
             RunStatus::Failed => "failed",
             RunStatus::Cancelled => "cancelled",
+            RunStatus::Disconnected => "disconnected",
         }
     }
 
@@ -139,6 +141,7 @@ impl RunStatus {
             "completed" => Some(RunStatus::Completed),
             "failed" => Some(RunStatus::Failed),
             "cancelled" => Some(RunStatus::Cancelled),
+            "disconnected" => Some(RunStatus::Disconnected),
             _ => None,
         }
     }
@@ -149,7 +152,7 @@ impl RunStatus {
     /// string and any unrecognised token are errors; the error message names
     /// the offending token so callers can surface it in a user-facing message.
     ///
-    /// Valid tokens: `queued`, `running`, `completed`, `failed`, `cancelled`.
+    /// Valid tokens: `queued`, `running`, `completed`, `failed`, `cancelled`, `disconnected`.
     ///
     /// # Examples
     /// ```text
@@ -169,13 +172,14 @@ impl RunStatus {
             .map(|t| RunStatus::parse(t).ok_or_else(|| format!("unknown run status '{t}'")))
             .collect()
     }
-
-    /// True for the two terminal states. Once a run is terminal it never
-    /// transitions again.
+    /// True for terminal states. Once a run is terminal it never
+    /// transitions again. `Disconnected` is terminal but the run may
+    /// be resumable — it represents an interrupted connection, not
+    /// a logical failure.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled | RunStatus::Disconnected
         )
     }
 }

@@ -238,7 +238,7 @@ fn derive_status(status: RunStatus, paused: bool, global_safety_paused: bool) ->
                 DeploymentStatus::Running
             }
         }
-        RunStatus::Completed | RunStatus::Cancelled => DeploymentStatus::Stopped,
+        RunStatus::Completed | RunStatus::Cancelled | RunStatus::Disconnected => DeploymentStatus::Stopped,
         RunStatus::Failed => DeploymentStatus::Failed,
     }
 }

@@ -349,6 +349,10 @@ describe("EvalRunsRoute", () => {
     paused: false,
     paused_at: null,
     flatten_requested: false,
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0
       },
     ]);
 
@@ -390,6 +394,10 @@ describe("EvalRunsRoute", () => {
     paused: false,
     paused_at: null,
     flatten_requested: false,
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0
       },
     ]);
 
@@ -589,6 +597,10 @@ describe("EvalRunsRoute", () => {
     paused: false,
     paused_at: null,
     flatten_requested: false,
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0
     });
 
     renderRoute();
@@ -943,6 +955,10 @@ describe("EvalRunsRoute", () => {
     paused: false,
     paused_at: null,
     flatten_requested: false,
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0
       },
     ]);
 
@@ -992,6 +1008,10 @@ describe("EvalRunsRoute", () => {
         max_annotations_per_review: 8,
         paused: false,
         paused_at: null,
+        unrealized_pnl_usd: null,
+        skipped_dispatches: 0,
+        delayed_decisions: 0,
+        forced_cancels: 0,
         flatten_requested: false,
       },
     ]);
@@ -1037,6 +1057,10 @@ describe("EvalRunsRoute", () => {
         max_annotations_per_review: 8,
         paused: false,
         paused_at: null,
+        unrealized_pnl_usd: null,
+        skipped_dispatches: 0,
+        delayed_decisions: 0,
+        forced_cancels: 0,
         flatten_requested: false,
       },
     ]);
@@ -1086,6 +1110,10 @@ describe("EvalRunsRoute", () => {
     paused: false,
     paused_at: null,
     flatten_requested: false,
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0
       },
     ]);
 

@@ -44,6 +44,7 @@ function dec(over: Partial<DecisionRowDto> = {}): DecisionRowDto {
     fill_size: null,
     fee: null,
     pnl_realized: null,
+    delayed: false,
     ...over,
   };
 }

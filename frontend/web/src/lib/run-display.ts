@@ -70,6 +70,8 @@ export function displayScenarioName(
     if (stopPolicy?.trade_limit) parts.push(`${stopPolicy.trade_limit} trades`);
     return parts.length > 0 ? `Forward Test · ${parts.join(' · ')}` : 'Forward Test';
   }
+  const found = scenarios.find((s) => s.id === id);
+  return found?.display_name?.trim() || id.slice(0, 8);
 }
 
 export function shortId(id: string, len = 10): string {
