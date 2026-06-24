@@ -14,9 +14,9 @@ use crate::agent::dispatch_capability::ClineDispatchCtx;
 use crate::agent::llm::LlmDispatch;
 use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
+use crate::eval::market_data::MarketDataContext;
 use crate::eval::executor::asset_set::active_assets;
 use crate::eval::executor::{Executor, RunExecutor};
-use crate::eval::market_data::MarketDataContext;
 use crate::eval::run::{DeploymentSource, MetricsSummary, Run, RunMode};
 use crate::eval::scenario::Scenario;
 use crate::eval::scenario_store;
@@ -571,6 +571,7 @@ impl PaperTestRunner for BudgetCappedPaperTester {
     }
 }
 
+
 async fn build_market_data_context(
     ctx: &ApiContext,
     strategy: &Strategy,
@@ -578,8 +579,9 @@ async fn build_market_data_context(
     assets: &[AssetSymbol],
 ) -> Result<MarketDataContext> {
     let mut market_data = MarketDataContext::new();
-    let native_granularity =
-        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
+    let native_granularity = crate::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    );
     for asset in assets {
         let bars = load_ohlcv_for_scenario(ctx, scenario, *asset, native_granularity).await?;
         market_data.insert_series(*asset, native_granularity, bars);
@@ -598,10 +600,11 @@ async fn build_market_data_context(
             )
             .expect("validated 30m granularity"),
             "1h" => xvision_data::alpaca::BarGranularity::Hour1,
-            "2h" => {
-                xvision_data::alpaca::BarGranularity::new(2, xvision_data::alpaca::BarGranularityUnit::Hour)
-                    .expect("validated 2h granularity")
-            }
+            "2h" => xvision_data::alpaca::BarGranularity::new(
+                2,
+                xvision_data::alpaca::BarGranularityUnit::Hour,
+            )
+            .expect("validated 2h granularity"),
             "4h" => xvision_data::alpaca::BarGranularity::Hour4,
             "1d" => xvision_data::alpaca::BarGranularity::Day1,
             _ => continue,
@@ -628,13 +631,7 @@ async fn build_market_data_context(
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| {
-                format!(
-                    "load {} bars for {asset_pair} in scenario {}",
-                    tf.as_str(),
-                    scenario.id
-                )
-            })?;
+            .with_context(|| format!("load {} bars for {asset_pair} in scenario {}", tf.as_str(), scenario.id))?;
             market_data.insert_series(*asset, granularity, market_bars_to_ohlcv(bars));
         }
     }
@@ -653,8 +650,9 @@ async fn build_cached_backtest_executor(
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
     let market_data = build_market_data_context(ctx, strategy, scenario, &active).await?;
 
-    let native_granularity =
-        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
+    let native_granularity = crate::strategies::bar_granularity_for_cadence(
+        strategy.manifest.decision_cadence_minutes,
+    );
     let mut asset_bars = BTreeMap::new();
     for asset in &active {
         let bars = market_data

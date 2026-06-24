@@ -5,11 +5,10 @@ candidates against a metric on a corpus, and lets you accept the winner as a
 **child agent** with a recorded lineage edge. It is a research/authoring tool —
 it never runs inside an eval or on the live decision path.
 
-It is driven from the CLI (`xvn optimize …`) or launched from the dashboard's
-**Improve this agent** panel, and surfaced read/write in the dashboard. The
-objective: search over the things a `Strategy`/`Agent` can vary (instruction
-text, demonstrations) as *data*, instead of hand-editing prompts, so a
-DSPy-style optimizer can reach hypotheses a hardcoded harness can't.
+It is driven from the CLI (`xvn optimize …`) and surfaced read-only in the
+dashboard. The objective: search over the things a `Strategy`/`Agent` can vary
+(instruction text, demonstrations) as *data*, instead of hand-editing prompts,
+so a DSPy-style optimizer can reach hypotheses a hardcoded harness can't.
 
 ---
 
@@ -128,17 +127,16 @@ signature hash, and metric — enough to re-derive the same result:
 }
 ```
 
-`POST /api/optimizations/:id/accept` records the lineage edge and leaves the
-parent unchanged; `POST /api/optimizations/:id/revert` clears the accept flag
-and the edge. Both are dashboard API endpoints; there is no longer a separate
-CLI verb — the dashboard's **Improve this agent** panel triggers the full
-cycle. A `FAILED` run still keeps its partial candidates so the evidence isn't
+`accept-as-child-agent <snapshot-id>` records the lineage edge and leaves the
+parent unchanged; `revert-accepted <snapshot-id>` clears the accept flag and the
+edge. A `FAILED` run still keeps its partial candidates so the evidence isn't
 lost.
 
-Export keeps demos portable across workspaces via the cycle-level export:
+Export/import keep demos portable across workspaces:
 
 ```
-xvn optimize export <run-id> --output snapshot.json
+xvn optimize export-demos <snapshot-id|demo-set> --output demos.json
+xvn optimize import-demos demos.json
 ```
 
 ---
@@ -155,30 +153,22 @@ train/holdout split:
   on training data only — no holdout confirmation — cannot be accepted as a
   child agent. You tune on train, confirm on holdout, then accept.
 - The dashboard run-detail renders the train/holdout split alongside the metric
-This is the optimizer-side analogue of the anti-overfit holdout discipline on
-eval metrics: a measured improvement only counts if it survives data the search
-never saw. The `holdout_min_improvement` setting in `autooptimizer.toml`
-enforces the minimum delta required for acceptance.
+  delta so the holdout result is visible before you accept.
+
+This is the optimizer-side analogue of the anti-overfit `xvn gate` on eval
+metrics: a measured improvement only counts if it survives data the search never
+saw.
+
 ---
 
 ## Surfaces
 
-- **CLI** — `xvn optimize run` (launch), `xvn optimize inspect` (read results), `xvn optimize diff` (compare candidates), `xvn optimize export` (portable snapshot), `xvn optimize lineage ls/show` (trace child agent ancestry). Distinct exit codes 10–15 per failure class; see [CLI Reference](/docs?slug=cli-reference).
+- **CLI** — `xvn optimize run/inspect/export-demos/import-demos/accept-as-child-agent/revert-accepted/explain-missing-data`. Distinct exit codes 10–15 per failure class; see [CLI Reference](/docs?slug=cli-reference).
+- **Dashboard (read-only mutation via accept/revert)** —
   - `GET /api/optimizations?agent=&slot=` — list runs, slot filter narrows.
   - `GET /api/optimizations/:id` — run detail: candidate table, snapshot, lineage.
   - `POST /api/optimizations/:id/accept` — mint a child agent from a snapshot.
   - `POST /api/optimizations/:id/revert` — unwind an accepted snapshot.
-  - **Launch:** `POST /api/autooptimizer/run-cycle` launches a new optimizer
-    run under the job supervisor. The same endpoint is called by the
-    **Improve this agent** panel on the agent edit page — click the button,
-    the dashboard spawns `xvn optimize run` (the exact same verb operators
-    use), cancels are supported, and runtime/output are capped. Live progress
-    streams to the `/optimizer` page via SSE (`GET /api/autooptimizer/events`)
-    over a Unix socket. Start the dashboard server with
-    `--autooptimizer-ipc-socket /tmp/xvn-optimizer.sock` and the optimizer CLI
-    auto-connects to it. See [Optimizer Config](/docs?slug=autooptimizer-config)
-    for the `autooptimizer.toml` cycle settings (evaluation windows, caps,
-    memory guidance).
   - UI: the **Improve this agent** panel on the agent edit page lists a slot's
     runs and links each to a routed (non-popup) run-detail view with the
     candidate table, prompt diff, metric delta, and holdout split inline.
@@ -186,6 +176,7 @@ enforces the minimum delta required for acceptance.
   stream as `optimization_candidate_started` / `optimization_candidate_metric`
   (carrying the `split`) / `optimization_candidate_selected` /
   `optimization_completed` rows.
+
 ---
 
 ## Failure classes
@@ -209,6 +200,4 @@ branch without parsing text:
 
 - [Agents](/docs?slug=agents) — capabilities, the Improve-this-agent flow, lineage.
 - [CLI Reference](/docs?slug=cli-reference) — full `xvn optimize` flag inventory + exit codes.
-- [Optimizer Config](/docs?slug=autooptimizer-config) — `autooptimizer.toml` cycle settings, evaluation windows, caps, memory guidance.
 - [Strategies](/docs?slug=strategies) — what a tuned child agent gets swapped into.
-

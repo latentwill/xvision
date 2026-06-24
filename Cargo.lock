@@ -8025,7 +8025,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -8034,7 +8034,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-agent-client"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8056,7 +8056,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-cli"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "anyhow",
@@ -8092,7 +8092,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-core"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "chrono",
  "garde",
@@ -8110,7 +8110,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-dashboard"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "anyhow",
@@ -8157,7 +8157,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-data"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "apca",
@@ -8188,7 +8188,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-engine"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -8240,7 +8240,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-eval"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8258,7 +8258,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-execution"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "anyhow",
@@ -8285,7 +8285,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-filters"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "chrono",
  "pretty_assertions",
@@ -8299,7 +8299,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-identity"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "chrono",
@@ -8315,7 +8315,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-ipc"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "tempfile",
  "tokio",
@@ -8323,7 +8323,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-marketplace"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "async-trait",
@@ -8340,7 +8340,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-mcp"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "alloy",
  "anyhow",
@@ -8384,7 +8384,7 @@ dependencies = [
 
 [[package]]
 name = "xvision-observability"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",

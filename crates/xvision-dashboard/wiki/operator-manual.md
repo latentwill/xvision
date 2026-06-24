@@ -3,60 +3,15 @@
 Tasks that cannot be completed from inside a clean repo or a CI pipeline. Each
 section describes what to do, what env vars to set, and what success looks like.
 
-## Live & forward-test runs
+## Live-node remote control
 
-### Launching from the dashboard
+To drive a running xvision node over Tailscale:
 
-Forward-test runs replay a scenario's bar window through the live execution
-path without submitting real orders — they exercise the full broker/routing
-stack against historical data. Launch from **Eval Runs → New Forward Test**:
-
-1. Select the strategy and the scenario (or run against live market data by
-   picking a venue).
-2. Set the mode to **forward-test** (backtest and paper-mirror are also
-   available).
-3. Optionally cap LLM cost with `--max-agent-ms` and `--decision-budget`.
-4. Hit **Run**. The run appears in the eval-runs list with a lightning-bolt
-   badge. Progress streams live via SSE.
-
-The `/live` route is the deployment dashboard for the xvision node
-itself — health, uptime, connected venues, active runs, and broker balance.
-It is the first stop when confirming the node is running and reachable.
-
-### Reading the filter timeline
-
-Below the OHLCV chart on any eval-run detail page, the **filter timeline**
-renders one tick per bar, color-coded by what the filter decided:
-
-| Color | State | Meaning |
-|---|---|---|
-| Gold | Triggered | Filter passed → agent was dispatched |
-| Amber | In position | Filter passed but suppressed (position already held) |
-| Blue | Cooldown | Filter in mandatory rest period |
-| Red | Daily cap | `max_wakeups_per_day` limit hit |
-| Neutral | Not triggered | Filter evaluated false |
-
-The filter summary panel above the chart shows aggregate counters
-(`wakeups`, `in-position`, `cooldown`, `daily cap`, `LLM calls saved`).
-See [Firing Conditions](/docs?slug=firing-conditions) for the full state
-table and the difference between in-position and cooldown suppression.
-
-### Interpreting delayed decisions
-
-When an LLM agent is dispatched on bar N but responds on bar N+1 or later,
-the decision is flagged **delayed**. Three counters appear in the run
-summary:
-
-- `skipped_dispatches` — bars where no agent was dispatched because the
-  previous dispatch hadn't finished.
-- `delayed_decisions` — decisions that arrived ≥1 bar period after dispatch.
-- `forced_cancels` — agents killed by the `--max-agent-ms` deadline.
-
-Delayed decisions are live/forward-test only; backtests process bars
-synchronously and never skip or delay. If `skipped_dispatches` or
-`forced_cancels` climb in a live run, increase `--max-agent-ms` or switch
-to a faster provider. See [Eval Runs](/docs?slug=eval-runs) for the full
-lifecycle.
+- Use `scripts/xvn-remote.py exec ...` for backtests and other long-running CLI
+  work. It wraps the dashboard's remote CLI job API.
+- Use `GET /api/cli/jobs/:id` and `GET /api/cli/jobs/:id/output` to reconnect
+  after a disconnect.
+- Do not assume general SSH access or an interactive shell on the node.
 
 ## Alpaca paper account setup
 
@@ -174,12 +129,6 @@ export OPENAI_API_KEY=$(op read 'op://Personal/xvision-openai/api_key')
 export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # or api.openai.com/v1
 ```
 
-Providers can also be configured via **Settings → Providers** in the
-dashboard — paste the API key in the UI rather than setting an env var.
-The key is stored in `$XVN_HOME/secrets/providers.toml` (mode 0600) and
-takes precedence over the env var at run time. See
-[Providers & Brokers](/docs?slug=providers) for the full auth ladder.
-
 ## One-time setup: local model files
 
 ### Qwen3-32B GGUF
@@ -278,7 +227,7 @@ Pull secrets with `op read 'op://...'` rather than pasting them inline. Use
 xvision v1 is designed for a single operator. Key breakpoints to plan around:
 
 **N = 1 (current):** single `CREDENTIAL_SECRET` env var, SQLite store, manual
-review via the dashboard's eval-runs detail page. Acceptable for single-operator use.
+`xvn eod` review. Acceptable for single-operator use.
 
 **N = 10:** the single env-var-derived secret encrypts every user's trading key —
 one compromise loses all keys. Migrate to per-user HKDF-derived keys

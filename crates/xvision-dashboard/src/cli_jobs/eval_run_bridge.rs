@@ -161,6 +161,5 @@ fn map_run_status(status: RunStatus) -> CliJobStatus {
         RunStatus::Completed => CliJobStatus::Succeeded,
         RunStatus::Failed => CliJobStatus::Failed,
         RunStatus::Cancelled => CliJobStatus::Cancelled,
-        RunStatus::Disconnected => CliJobStatus::Failed,
     }
 }

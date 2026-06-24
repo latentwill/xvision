@@ -10,6 +10,8 @@ import {
   evalKeys,
   getRun,
   listRuns,
+  reconcileRun,
+  reconnectRun,
   retryRun,
 } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
@@ -31,14 +33,11 @@ import type {
   DecisionRowDto,
   FilterEventV1,
   FilterSummary,
+  ReconcileOutcome,
+  ReconcilePositionRow,
   RunDetail,
   RunSummary,
 } from "@/api/types.gen";
-import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
-import { MetaChip } from "@/components/eval-detail/MetaChip";
-import { SignalsUsedChips } from "@/components/eval-detail/SignalsUsedChips";
-import { ActionPill } from "@/components/eval-detail/ActionPill";
-import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
 import {
   shortAsset,
   toTimelineDecisions,
@@ -132,6 +131,15 @@ export function EvalRunDetailRoute() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: evalKeys.all });
       navigate("/eval-runs");
+    },
+  });
+  const reconcile = useMutation({
+    mutationFn: reconcileRun,
+  });
+  const reconnect = useMutation({
+    mutationFn: reconnectRun,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evalKeys.all });
     },
   });
   useLiveRunStream(id, q.data, qc);
@@ -396,6 +404,24 @@ export function EvalRunDetailRoute() {
               }
               onDelete={() => remove.mutate(detail.summary.id)}
               deleting={remove.variables === detail.summary.id && remove.isPending}
+              onReconcile={() => reconcile.mutateAsync(detail.summary.id)}
+              reconciling={reconcile.isPending}
+              reconcileError={
+                reconcile.isError && reconcile.error
+                  ? reconcile.error instanceof Error
+                    ? reconcile.error.message
+                    : String(reconcile.error)
+                  : null
+              }
+              onReconnect={() => reconnect.mutate(detail.summary.id)}
+              reconnecting={reconnect.isPending}
+              reconnectError={
+                reconnect.isError && reconnect.error
+                  ? reconnect.error instanceof Error
+                    ? reconnect.error.message
+                    : String(reconnect.error)
+                  : null
+              }
             />
 
             {/* Multi-asset: per-asset decision rollup above the decisions list. */}
@@ -555,7 +581,6 @@ function useLiveRunStream(
 function isTerminalStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled" || status === "disconnected";
 }
-
 function displayCost(summary: RunSummary, totalCostUsd: number | null): number | null {
   return summary.inference_cost_quote_total ?? totalCostUsd;
 }
@@ -585,6 +610,12 @@ function SummaryCard({
   retryError,
   onDelete,
   deleting,
+  onReconcile,
+  reconciling,
+  reconcileError,
+  onReconnect,
+  reconnecting,
+  reconnectError,
 }: {
   summary: RunSummary;
   equityCurve: ReadonlyArray<{ equity_usd: number }>;
@@ -600,6 +631,12 @@ function SummaryCard({
   retryError: string | null;
   onDelete: () => void;
   deleting: boolean;
+  onReconcile: () => Promise<ReconcileOutcome>;
+  reconciling: boolean;
+  reconcileError: string | null;
+  onReconnect: () => void;
+  reconnecting: boolean;
+  reconnectError: string | null;
 }) {
   const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
@@ -615,12 +652,13 @@ function SummaryCard({
     : "Retry: re-enqueue with the same inputs.";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [reconcileResult, setReconcileResult] = useState<ReconcileOutcome | null>(null);
   const agentRunId = traceRunId(summary);
   const displayedCostUsd = displayCost(summary, totalCostUsd);
   const verdict = summary.status === "completed" ? "PASS" : summary.status.toUpperCase();
-  const totalPnl = totalPnlUsd(equityCurve) ?? summary.unrealized_pnl_usd ?? null;
+  const totalPnl = totalPnlUsd(equityCurve);
   const realizedPnl = realizedPnlUsd(decisions);
-  const unrealizedPnl = summary.unrealized_pnl_usd ?? unrealizedPnlUsd(totalPnl, realizedPnl);
+  const unrealizedPnl = unrealizedPnlUsd(totalPnl, realizedPnl);
   const decisionTape = useMemo(
     () =>
       toTimelineDecisions(decisions)
@@ -643,6 +681,16 @@ function SummaryCard({
       setDownloadError(err instanceof Error ? err.message : String(err));
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function handleReconcile() {
+    setReconcileResult(null);
+    try {
+      const outcome = await onReconcile();
+      setReconcileResult(outcome);
+    } catch {
+      // error surfaced via reconcileError prop
     }
   }
 
@@ -736,6 +784,124 @@ function SummaryCard({
         </div>
       ) : null}
 
+      {summary.status === "disconnected" ? (
+        <>
+          <div
+            className="mx-5 mt-4 rounded-sm border px-3 py-2.5 text-[12px] leading-relaxed"
+            style={{
+              borderColor: "var(--warn-soft, rgba(234,179,8,0.3))",
+              background: "var(--warn-bg, rgba(234,179,8,0.06))",
+              color: "var(--warn, #ca8a04)",
+            }}
+          >
+            This run was interrupted — the server restarted while it was active.
+            You can reconnect to resume from the last bar or reconcile broker
+            positions first.
+          </div>
+          <div className="mx-5 mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              aria-label={`Reconcile positions for eval run ${summary.id}`}
+              onClick={handleReconcile}
+              disabled={reconciling}
+              className={`${ACTION_BTN} text-info hover:border-info/40 hover:bg-info/[0.08] hover:text-text`}
+            >
+              {reconciling ? "Reconciling…" : "Reconcile Positions"}
+            </button>
+            <button
+              type="button"
+              aria-label={`Reconnect eval run ${summary.id}`}
+              onClick={onReconnect}
+              disabled={reconnecting}
+              className={`${ACTION_BTN} text-gold hover:border-gold/40 hover:bg-gold/[0.08] hover:text-text`}
+            >
+              {reconnecting ? "Reconnecting…" : "Reconnect"}
+            </button>
+          </div>
+          {reconcileError ? (
+            <div className="mx-5 mt-3 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
+              Reconcile failed: {reconcileError}
+            </div>
+          ) : null}
+          {reconnectError ? (
+            <div className="mx-5 mt-3 rounded-sm border border-danger/30 bg-danger/[0.06] px-2 py-1 text-[12px] text-danger">
+              Reconnect failed: {reconnectError}
+            </div>
+          ) : null}
+          {reconcileResult ? (
+            <div className="mx-5 mt-3 rounded-sm border border-border-soft overflow-hidden">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="border-b border-border-soft bg-surface-elev text-text-2">
+                    <th className="px-2 py-1.5 text-left font-medium">Asset</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Side</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Broker</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Expected</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Broker MTM</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Expected MTM</th>
+                    <th className="px-2 py-1.5 text-center font-medium">Match</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reconcileResult.positions.map((p: ReconcilePositionRow, i: number) => (
+                    <tr
+                      key={i}
+                      className="border-b border-border-soft/50 last:border-b-0"
+                      style={{
+                        background: p.material ? "var(--warn-bg, rgba(234,179,8,0.04))" : undefined,
+                      }}
+                    >
+                      <td className="px-2 py-1.5 text-text font-mono">{p.asset}</td>
+                      <td className="px-2 py-1.5 text-right text-text-2">{p.side}</td>
+                      <td className="px-2 py-1.5 text-right text-text tabular-nums">
+                        {fmtNumber(p.broker_size)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-text tabular-nums">
+                        {fmtNumber(p.expected_size)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-text-2 tabular-nums">
+                        {p.broker_mtm_usd != null ? `${formatSpendUsd(p.broker_mtm_usd)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-text-2 tabular-nums">
+                        {p.expected_mtm_usd != null ? `${formatSpendUsd(p.expected_mtm_usd)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <span
+                          className="inline-block w-1.5 h-1.5 rounded-full"
+                          style={{
+                            background: p.material
+                              ? "var(--warn, #ca8a04)"
+                              : "var(--gold, #22c55e)",
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div
+                className="flex items-center gap-4 px-3 py-1.5 text-[11px] text-text-2"
+                style={{ borderTop: "1px solid var(--border-soft)" }}
+              >
+                <span>
+                  {reconcileResult.matched ? "✓ Matched" : "⚠ Mismatch"}
+                </span>
+                {reconcileResult.broker_total_usd != null && (
+                  <span>
+                    Broker total: {formatSpendUsd(reconcileResult.broker_total_usd)}
+                  </span>
+                )}
+                {reconcileResult.expected_total_usd != null && (
+                  <span>
+                    Expected total: {formatSpendUsd(reconcileResult.expected_total_usd)}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       <DecisionTape decisions={decisionTape} />
 
       {/* Equity / run chart */}
@@ -770,7 +936,7 @@ function SummaryCard({
           sub={summary.completed_at ? `@ ${fmtTime(summary.completed_at)}` : "in progress"}
           tone={drawdownMetricTone(summary.max_drawdown_pct) === "neg" ? "neg" : "neu"}
         />
-        <Stat label="SHARPE" value={fmtNumber(summary.sharpe)} sub={unrealizedPnl != null ? `${fmtPnlUsd(unrealizedPnl)} unrealized` : "annualized"} tone="neu" />
+        <Stat label="SHARPE" value={fmtNumber(summary.sharpe)} sub="annualized" tone="neu" />
         <Stat
           label="NET %"
           value={summary.net_return_pct != null ? fmtPct(summary.net_return_pct) : "—"}

@@ -85,7 +85,7 @@ pub struct DecisionRow {
     pub pnl_realized: Option<f64>,
     /// True when the decision bar's age exceeds the configured
     /// stale-data threshold. Only set in live/forward-test mode.
-    pub delayed: Option<bool>,
+    pub delayed: bool,
 }
 
 async fn eval_runs_has_column(pool: &SqlitePool, column: &str) -> Result<bool> {
@@ -569,20 +569,15 @@ impl RunStore {
         RunStatus::parse(&status).ok_or_else(|| anyhow::anyhow!("unknown RunStatus {status:?}"))
     }
 
-    /// Mark a queued/running run as failed (or disconnected). Returns false
-    /// if the run already reached a terminal state first.
-    ///
-    /// `status` defaults to `RunStatus::Failed`. Pass `Some(RunStatus::Disconnected)`
-    /// for runs interrupted by connection loss (resumable).
-    pub async fn fail_active(&self, id: &str, reason: &str, status: Option<RunStatus>) -> Result<bool> {
-        let target = status.unwrap_or(RunStatus::Failed);
+    /// Mark a queued/running run failed. Returns false if the run already
+    /// reached a terminal state first.
+    pub async fn fail_active(&self, id: &str, reason: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_runs \
-             SET status = ?, completed_at = ?, error = ? \
+             SET status = 'failed', completed_at = ?, error = ? \
              WHERE id = ? AND status IN ('queued', 'running')",
         )
-        .bind(target.as_str())
         .bind(&now)
         .bind(reason)
         .bind(id)
@@ -593,34 +588,24 @@ impl RunStore {
     }
 
     /// Sweep any runs left in `Queued` or `Running` status from a
-    /// previous process: flip them to the given status (default
-    /// `Failed`) with the given reason and set `completed_at = now`.
-    /// Called once at dashboard startup because background tasks die
-    /// with the process — without this sweep, a crash leaves rows
-    /// visually "in flight" forever.
+    /// previous process: flip them to `Failed` with the given reason
+    /// and set `completed_at = now`. Called once at dashboard startup
+    /// because background tasks die with the process — without this
+    /// sweep, a crash leaves rows visually "in flight" forever.
     /// Returns the number of rows updated.
-    pub async fn fail_active_runs(&self, reason: &str, status: Option<RunStatus>) -> Result<u64> {
-        let target = status.unwrap_or(RunStatus::Failed);
+    pub async fn fail_active_runs(&self, reason: &str) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_runs \
-             SET status = ?, completed_at = ?, error = ? \
+             SET status = 'failed', completed_at = ?, error = ? \
              WHERE status IN ('queued', 'running')",
         )
-        .bind(target.as_str())
         .bind(&now)
         .bind(reason)
         .execute(&self.pool)
         .await
         .context("fail active eval_runs")?;
         Ok(res.rows_affected())
-    }
-
-    /// Mark a queued/running run as disconnected (connection lost, potentially
-    /// resumable). Convenience wrapper around `fail_active` with
-    /// `RunStatus::Disconnected`.
-    pub async fn mark_disconnected(&self, id: &str, reason: &str) -> Result<bool> {
-        self.fail_active(id, reason, Some(RunStatus::Disconnected)).await
     }
 
     /// Overwrite `metrics_json` on a completed run. Called post-finalize when
@@ -1104,7 +1089,7 @@ impl RunStore {
         .bind(row.fill_size)
         .bind(row.fee)
         .bind(row.pnl_realized)
-        .bind(row.delayed.unwrap_or(false))
+        .bind(row.delayed)
         .execute(&self.pool)
         .await
         .with_context(|| {
@@ -1423,108 +1408,6 @@ impl RunStore {
                     .with_context(|| format!("parse equity timestamp {ts:?}"))?
                     .with_timezone(&Utc);
                 Ok((parsed, equity))
-            })
-            .collect()
-    }
-    /// Record a single OHLCV bar for a live run. Batched writes are preferred
-    /// on the hot path; this method exists for single-bar warmup seeding and
-    /// tests. Uses ON CONFLICT to be idempotent across retries.
-    pub async fn record_bar(
-        &self,
-        run_id: &str,
-        asset: &str,
-        bar_index: u32,
-        timestamp: DateTime<Utc>,
-        open: f64,
-        high: f64,
-        low: f64,
-        close: f64,
-        volume: f64,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id, bar_index) DO NOTHING",
-        )
-        .bind(run_id)
-        .bind(asset)
-        .bind(bar_index as i64)
-        .bind(timestamp.to_rfc3339())
-        .bind(open)
-        .bind(high)
-        .bind(low)
-        .bind(close)
-        .bind(volume)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert eval_run_bars run_id={run_id} idx={bar_index}"))?;
-        Ok(())
-    }
-
-    /// Write a batch of bars inside one transaction.
-    pub async fn record_bars_batch(
-        &self,
-        run_id: &str,
-        bars: &[(i64, String, f64, f64, f64, f64, f64)],
-        // (bar_index, timestamp, open, high, low, close, volume)
-    ) -> Result<()> {
-        if bars.is_empty() {
-            return Ok(());
-        }
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .context("begin tx for record_bars_batch")?;
-        for (bar_index, timestamp, open, high, low, close, volume) in bars {
-            sqlx::query(
-                "INSERT INTO eval_run_bars (run_id, bar_index, timestamp, open, high, low, close, volume) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(run_id, bar_index) DO NOTHING",
-            )
-            .bind(run_id)
-            .bind(bar_index)
-            .bind(timestamp)
-            .bind(open)
-            .bind(high)
-            .bind(low)
-            .bind(close)
-            .bind(volume)
-            .execute(&mut *tx)
-            .await
-            .with_context(|| format!("insert eval_run_bars in batch run_id={run_id} idx={bar_index}"))?;
-        }
-        tx.commit().await.context("commit record_bars_batch")?;
-        Ok(())
-    }
-
-    /// Read OHLCV bars for a run, ordered by bar_index ascending.
-    /// Returns (timestamp, open, high, low, close, volume, asset) tuples.
-    pub async fn read_bars(
-        &self,
-        run_id: &str,
-    ) -> Result<Vec<(DateTime<Utc>, f64, f64, f64, f64, f64, String)>> {
-        let rows = sqlx::query(
-            "SELECT timestamp, open, high, low, close, volume, asset \
-             FROM eval_run_bars WHERE run_id = ? ORDER BY bar_index ASC",
-        )
-        .bind(run_id)
-        .fetch_all(&self.pool)
-        .await
-        .context("read eval_run_bars")?;
-        rows.iter()
-            .map(|r| {
-                let ts: String = r.try_get("timestamp").context("read bar timestamp")?;
-                let parsed = DateTime::parse_from_rfc3339(&ts)
-                    .with_context(|| format!("parse bar timestamp {ts:?}"))?
-                    .with_timezone(&Utc);
-                let open: f64 = r.try_get("open").context("read bar open")?;
-                let high: f64 = r.try_get("high").context("read bar high")?;
-                let low: f64 = r.try_get("low").context("read bar low")?;
-                let close: f64 = r.try_get("close").context("read bar close")?;
-                let volume: f64 = r.try_get("volume").context("read bar volume")?;
-                let asset: String = r.try_get("asset").context("read bar asset")?;
-                Ok((parsed, open, high, low, close, volume, asset))
             })
             .collect()
     }

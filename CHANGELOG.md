@@ -12,7 +12,28 @@ container reports must match the tag pulled.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-06-24
+
+### Added
+
+- **`Disconnected` run status** — runs interrupted by broker connection loss are now marked `disconnected` (resumable) instead of `failed`, with migration 074.
+
 ### Changed
+
+- **Separate optimizer gate thresholds** — `holdout_min_improvement` is now independent of `min_improvement`, with the loosening schedule disabled but preserved for later opt-in.
+- **`RunStatus::Disconnected`** wired through eval retry, live deployments, and review payload surfaces.
+- **`store.fail_active`** now accepts an optional `RunStatus` parameter.
+- **`store.get()`** returns `Run` directly instead of `Option<Run>`.
+
+### Fixed
+
+- **Bar storage** — live-run OHLCV bars persisted to `eval_run_bars` with asset column (migration 073), warmup `record_bar` missing `open` field, chart slim-path guards.
+- **Delayed decisions** — `delayed` column added to `eval_decisions` (migration 071), surfaced in `DecisionRowDto` type and frontend display.
+- **Unrealized PnL** — `unrealized_pnl_usd` field added to `RunSummary`, displayed in dashboard.
+- **Frontend CI** — unclosed `<td>` in DecisionsTable, dead deploy-readiness code in home.tsx, missing test fixture fields across 21 files.
+- **Live bar counter** — `live_bar_count` now correctly used in progress/stop-policy/logging instead of warmup-inclusive `bar_count`.
+- **Windows install** — `install.sh` now detects `mingw`/`msys`/`cygwin` and uses `.zip` extension.
+- **Cargo fmt** — workspace-wide formatting applied.
 
 - **Dashboard auth is now opt-in** — the server no longer requires
   `XVN_DASHBOARD_TOKEN` to start on non-loopback binds. By default,

@@ -105,14 +105,14 @@ cp .env.example .env
 # Edit .env — add at least one LLM provider key
 
 # Pull and run (the image is private — docker login ghcr.io first)
-docker pull ghcr.io/latentwill/xvision:0.37.0
+docker pull ghcr.io/latentwill/xvision:0.38.0
 docker run --rm \
   -e XVN_AUTOMIGRATE=1 \
   -e XVN_DASHBOARD_TOKEN="$(openssl rand -hex 32)" \
   -v xvision-data:/data \
   --env-file .env \
   -p 8788:8788 \
-  ghcr.io/latentwill/xvision:0.37.0
+  ghcr.io/latentwill/xvision:0.38.0
 ```
 
 Then open **http://localhost:8788?token=YOUR_TOKEN** — the `?token=` query param

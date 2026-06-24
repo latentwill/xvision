@@ -41,45 +41,26 @@
 //! `--json`); otherwise it's part of the structured payload and belongs
 //! on stdout.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// True when the current command is producing JSON on stdout.
-/// Set by [`enter_json_mode`] before the first `print_json` call.
-static JSON_MODE: AtomicBool = AtomicBool::new(false);
-
-/// Call before entering the `--json` output path.  When active:
-/// - flushes stderr so any pending progress lines appear before the JSON
-/// - suppresses future `human!` / `progress!` output (stderr is still
-///   the right channel, but when stdout and stderr are merged — Docker,
-///   `2>&1` — extra lines corrupt the JSON stream)
-pub fn enter_json_mode() {
-    // Flush stderr so pending progress lines precede the JSON block.
-    let _ = std::io::stderr().flush();
-    JSON_MODE.store(true, Ordering::Release);
-}
-
-/// Returns true when the command is producing JSON on stdout.
-#[inline]
-pub fn is_json_mode() -> bool {
-    JSON_MODE.load(Ordering::Acquire)
-}
-
 use std::io::Write;
 
 use serde::Serialize;
 
 use crate::exit::{CliResult, ResultExt, XvnExit};
+
+/// Emit an operator-visible line to **stderr** (always).
+///
+/// Use for completion summaries, error context, deprecation notices —
+/// anything a human should see whether or not `--json` was passed.
+///
+/// Same signature as `eprintln!`; thin wrapper kept for grep-ability so
+/// a future audit can find every banner site with one query.
 #[macro_export]
 macro_rules! human {
     () => {
-        if !$crate::io::is_json_mode() {
-            eprintln!()
-        }
+        eprintln!()
     };
     ($($arg:tt)*) => {
-        if !$crate::io::is_json_mode() {
-            eprintln!($($arg)*)
-        }
+        eprintln!($($arg)*)
     };
 }
 
@@ -89,14 +70,10 @@ macro_rules! human {
 #[macro_export]
 macro_rules! progress {
     () => {
-        if !$crate::io::is_json_mode() {
-            eprintln!()
-        }
+        eprintln!()
     };
     ($($arg:tt)*) => {
-        if !$crate::io::is_json_mode() {
-            eprintln!($($arg)*)
-        }
+        eprintln!($($arg)*)
     };
 }
 
@@ -107,7 +84,6 @@ macro_rules! progress {
 ///
 /// Maps any serialization error to `XvnExit::Upstream`.
 pub fn print_json<T: Serialize>(value: &T) -> CliResult<()> {
-    enter_json_mode();
     let bytes = serde_json::to_vec_pretty(value).exit_with(XvnExit::Upstream)?;
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(&bytes).exit_with(XvnExit::Upstream)?;
@@ -118,7 +94,6 @@ pub fn print_json<T: Serialize>(value: &T) -> CliResult<()> {
 /// Same as [`print_json`] but compact (single-line) form. Use when the
 /// output is expected to be piped through `jq` or `xargs`.
 pub fn print_json_compact<T: Serialize>(value: &T) -> CliResult<()> {
-    enter_json_mode();
     let bytes = serde_json::to_vec(value).exit_with(XvnExit::Upstream)?;
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(&bytes).exit_with(XvnExit::Upstream)?;

@@ -493,13 +493,11 @@ pub async fn run_experiment_cmd(args: RunArgs) -> CliResult<()> {
     let selector_timeframe = if selector_requested {
         match args.timeframe {
             Some(tf) => tf,
-            None => {
-                xvision_engine::api::strategy::get(&ctx, &args.strategy)
-                    .await
-                    .map_err(|e| CliError::upstream(anyhow::anyhow!("load strategy cadence: {e}")))?
-                    .manifest
-                    .decision_cadence_minutes
-            }
+            None => xvision_engine::api::strategy::get(&ctx, &args.strategy)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("load strategy cadence: {e}")))?
+                .manifest
+                .decision_cadence_minutes,
         }
     } else {
         0

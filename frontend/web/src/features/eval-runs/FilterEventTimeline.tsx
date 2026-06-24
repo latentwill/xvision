@@ -45,9 +45,9 @@ function classify(event: FilterEventV1): TickClassification {
 // extra plumbing.
 const TICK_CLASS: Record<string, string> = {
   triggered: "bg-gold",
-  in_position: "bg-warn",
+  in_position: "bg-text-3",
   daily_cap: "bg-danger/70",
-  cooldown: "bg-info",
+  cooldown: "bg-text-2",
   idle: "bg-surface-elev border border-border-soft",
 };
 
@@ -161,21 +161,24 @@ const DetailPanel: FC<PreviewProps> = ({ event, classification }) => {
   );
 };
 
-const PAGE_SIZE = 250;
-
 export const FilterEventTimeline: FC<{
   events: FilterEventV1[];
+  /** Optional title displayed above the strip. Omit for tightest layout. */
   title?: string;
 }> = ({ events, title }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [page, setPage] = useState(0);
 
   if (events.length === 0) return null;
 
-  const totalPages = Math.ceil(events.length / PAGE_SIZE);
-  const start = page * PAGE_SIZE;
-  const pageEvents = events.slice(start, start + PAGE_SIZE);
+  // Range endpoints used to render here as `formatTimelineStamp(first)` /
+  // `(last)` in two corners of the strip — a "Feb 28, 07:00 PM" stamp in the
+  // top-right read as a static page-level date rather than as the last bar.
+  // The labels were also in the host's local timezone (toLocaleString) while
+  // every other timestamp surface on this page is UTC, which compounded the
+  // confusion. Each tick already carries the full bar ISO via the `title=`
+  // tooltip and aria-label, so per-bar timestamps remain one hover away.
+  // Intake 2026-05-28 §4 — keep the strip, drop the static corner stamps.
 
   const previewIndex = hoveredIndex ?? selectedIndex;
   const previewEvent = previewIndex !== null ? events[previewIndex] : null;
@@ -189,34 +192,9 @@ export const FilterEventTimeline: FC<{
       data-testid="filter-event-timeline"
       className="rounded-card border border-border p-4 mt-4"
     >
-      <div className="flex items-center justify-between mb-2">
-        {title && (
-          <h4 className="font-sans font-semibold text-[14px] text-text">{title}</h4>
-        )}
-        {totalPages > 1 && (
-          <nav className="flex items-center gap-2 text-[12px] text-text-3" aria-label="filter timeline pages">
-            <button
-              type="button"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-              className="px-1.5 py-0.5 rounded hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default"
-            >
-              ← prev
-            </button>
-            <span className="tabular-nums">
-              pg {page + 1} of {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages - 1}
-              onClick={() => setPage((p) => p + 1)}
-              className="px-1.5 py-0.5 rounded hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default"
-            >
-              next →
-            </button>
-          </nav>
-        )}
-      </div>
+      {title && (
+        <h4 className="font-sans font-semibold text-[14px] text-text mb-2">{title}</h4>
+      )}
 
       {previewEvent && (
         <PreviewStrip event={previewEvent} classification={classify(previewEvent)} />
@@ -227,13 +205,12 @@ export const FilterEventTimeline: FC<{
         aria-label="filter event timeline"
         className="flex flex-wrap gap-[3px]"
       >
-        {pageEvents.map((e, i) => {
-          const globalIndex = start + i;
+        {events.map((e, i) => {
           const c = classify(e);
-          const isSelected = selectedIndex === globalIndex;
+          const isSelected = selectedIndex === i;
           return (
             <button
-              key={`${e.bar_timestamp}-${globalIndex}`}
+              key={`${e.bar_timestamp}-${i}`}
               type="button"
               role="listitem"
               data-testid="filter-event-tick"
@@ -244,10 +221,10 @@ export const FilterEventTimeline: FC<{
               aria-label={tickAriaLabel(e, c)}
               aria-pressed={isSelected}
               title={tickTitle(e, c)}
-              onClick={() => toggleSelected(globalIndex)}
-              onMouseEnter={() => setHoveredIndex(globalIndex)}
+              onClick={() => toggleSelected(i)}
+              onMouseEnter={() => setHoveredIndex(i)}
               onMouseLeave={() => setHoveredIndex(null)}
-              onFocus={() => setHoveredIndex(globalIndex)}
+              onFocus={() => setHoveredIndex(i)}
               onBlur={() => setHoveredIndex(null)}
               className={`h-3 w-2 rounded-[1px] focus:outline-none focus:ring-1 focus:ring-gold ${
                 isSelected ? "ring-1 ring-gold" : ""

@@ -17,7 +17,6 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
-use xvision_engine::eval::run::RunStatus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +26,7 @@ use xvision_engine::api::eval::{
 };
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::export::{self, EvalRunExport};
-use xvision_engine::eval::reconcile::ReconcileOutcome;
+use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::store::RunStore;
 
 use crate::error::DashboardError;
@@ -289,39 +288,6 @@ pub async fn flatten_run(
     // `flatten_requested` value promptly (mirrors `pause_run`).
     state.eval_run_cache_invalidate(&id);
     Ok(Json(eval::summarise_run(run)))
-}
-
-/// `POST /api/eval/runs/:id/reconcile` — reconcile broker positions against
-/// xvision's expected book for a disconnected live run.
-///
-/// Returns the `ReconcileOutcome` JSON. Does NOT resume — the operator must
-/// explicitly POST `/api/eval/runs/:id/resume` after reviewing the
-/// reconciliation.
-pub async fn reconcile_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ReconcileOutcome>, DashboardError> {
-    let outcome = eval::reconcile(&state.api_context(), &id).await?;
-    Ok(Json(outcome))
-}
-
-/// `POST /api/eval/runs/:id/reconnect` — resume a disconnected live
-/// (forward-test) run by re-reading its last persisted bar index and
-/// transitioning status back to `Running`.
-///
-/// Rejected with `400 Validation` when the run is not `Disconnected`
-/// or its mode is not `Live`. Backtest runs that are `Disconnected`
-/// are intentionally NOT reconnected — only forward-test runs resume.
-///
-/// The actual executor spawn from `bar_index + 1` is a follow-up; for
-/// now the run transitions to `Running` and the operator can monitor.
-pub async fn reconnect_run(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<RunDetail>, DashboardError> {
-    let detail = eval::resume_disconnected_run(&state.api_context(), &id).await?;
-    state.eval_run_cache_invalidate(&id);
-    Ok(Json(detail))
 }
 
 /// `POST /api/eval/runs/:id/retry` — enqueue a fresh run that clones the

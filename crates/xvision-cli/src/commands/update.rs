@@ -83,8 +83,9 @@ pub async fn run(cmd: UpdateCmd) -> anyhow::Result<()> {
     } else {
         "tar.gz"
     };
-    let download_url =
-        format!("https://github.com/latentwill/xvision/releases/download/{target_tag}/{artifact}.{ext}");
+    let download_url = format!(
+        "https://github.com/latentwill/xvision/releases/download/{target_tag}/{artifact}.{ext}"
+    );
     let checksum_url = format!("{download_url}.sha256");
 
     let tmp = tempfile::tempdir()?;
@@ -106,7 +107,9 @@ pub async fn run(cmd: UpdateCmd) -> anyhow::Result<()> {
         let expected = expected_sha.split_whitespace().next().unwrap_or("");
         let actual = sha256_of_file(&archive_path)?;
         if expected.is_empty() || expected != actual {
-            anyhow::bail!("SHA256 mismatch!\n  expected: {expected}\n  got:      {actual}");
+            anyhow::bail!(
+                "SHA256 mismatch!\n  expected: {expected}\n  got:      {actual}"
+            );
         }
         println!("SHA256 verified");
     }
@@ -127,10 +130,7 @@ pub async fn run(cmd: UpdateCmd) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&backup);
         std::fs::rename(&current_exe, &backup)?;
         std::fs::copy(&extracted, &current_exe)?;
-        println!(
-            "Updated to {target_tag}. Old binary backed up to {}",
-            backup.display()
-        );
+        println!("Updated to {target_tag}. Old binary backed up to {}", backup.display());
     }
     Ok(())
 }
@@ -157,9 +157,7 @@ fn sha256_of_file(path: &std::path::Path) -> anyhow::Result<String> {
     let mut buf = [0u8; 8192];
     loop {
         let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
+        if n == 0 { break; }
         hasher.update(&buf[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))

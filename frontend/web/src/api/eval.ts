@@ -277,6 +277,48 @@ export function retryRun(id: string): Promise<RunDetail> {
     });
 }
 
+
+/// `POST /api/eval/runs/:id/reconnect` — resume a disconnected
+/// live/forward-test run from its last persisted bar.
+export function reconnectRun(id: string): Promise<RunDetail> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.reconnect.start");
+  return apiFetch<RunDetail>(
+    `/api/eval/runs/${encodeURIComponent(id)}/reconnect`,
+    { method: "POST" },
+  ).then((r) => {
+    trace.info("eval.reconnect.ok", {
+      duration_ms: Math.round(durationSince(started)),
+    });
+    return r;
+  }).catch((e) => {
+    trace.error("eval.reconnect.err", errorSummary(e));
+    throw e;
+  });
+}
+
+/// `POST /api/eval/runs/:id/reconcile` — query broker for open
+/// positions and diff against xvision's expected book state.
+export function reconcileRun(
+  id: string,
+): Promise<import("./types.gen/ReconcileOutcome").ReconcileOutcome> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.reconcile.start");
+  return apiFetch<import("./types.gen/ReconcileOutcome").ReconcileOutcome>(
+    `/api/eval/runs/${encodeURIComponent(id)}/reconcile`,
+    { method: "POST" },
+  ).then((r) => {
+    trace.info("eval.reconcile.ok", {
+      duration_ms: Math.round(durationSince(started)),
+    });
+    return r;
+  }).catch((e) => {
+    trace.error("eval.reconcile.err", errorSummary(e));
+    throw e;
+  });
+}
 export function compareRuns(ids: string[]): Promise<ComparisonReport> {
   const qs = ids.map(encodeURIComponent).join(",");
   return apiFetch<ComparisonReport>(`/api/eval/compare?ids=${qs}`);
