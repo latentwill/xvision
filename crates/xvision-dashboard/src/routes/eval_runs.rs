@@ -17,7 +17,6 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
-use xvision_engine::eval::run::RunStatus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +28,7 @@ use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::export::{self, EvalRunExport};
 use xvision_engine::eval::reconcile::ReconcileOutcome;
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::run::RunStatus;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -201,10 +201,10 @@ async fn current_run_status_is_terminal(state: &AppState, id: &str) -> Result<bo
 }
 
 /// Centralized predicate matching the frontend's `isTerminalStatus`
-/// (`completed | failed | cancelled`). Lifted here so the cache-bypass
+/// (`completed | failed | cancelled | disconnected`). Lifted here so the cache-bypass
 /// rule and any future caller share one source of truth.
 fn is_terminal_status(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "cancelled")
+    matches!(status, "completed" | "failed" | "cancelled" | "disconnected")
 }
 
 /// `GET /api/eval/runs/:id/export` — full `EvalRunExport` snapshot of a
@@ -522,7 +522,7 @@ fn to_sse_event(ev: RunChartEvent) -> Option<Event> {
 /// stays open until the bus drops the channel (terminal Status) or the
 /// client disconnects.
 ///
-/// If the run is already in a terminal state (Completed / Failed / Cancelled)
+/// If the run is already in a terminal state (Completed / Failed / Cancelled / Disconnected)
 /// when the client connects — meaning the executor already dropped the bus
 /// channel — a single synthetic `status` event is emitted immediately and
 /// the stream closes. This prevents late subscribers from hanging forever on
@@ -546,6 +546,7 @@ pub async fn stream(
                 RunStatus::Completed => "completed",
                 RunStatus::Failed => "failed",
                 RunStatus::Cancelled => "cancelled",
+                RunStatus::Disconnected => "disconnected",
                 _ => unreachable!(),
             };
             Some((phase.to_string(), run.error.clone()))
