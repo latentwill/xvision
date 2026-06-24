@@ -276,9 +276,7 @@ pub fn classify(err: &anyhow::Error) -> FailureClass {
                     message: body.clone(),
                     provider: provider.clone(),
                 },
-                OpenAiCompatError::ResponseFormatUnsupported { .. } => {
-                    FailureClass::ProviderHttpError
-                }
+                OpenAiCompatError::ResponseFormatUnsupported { .. } => FailureClass::ProviderHttpError,
             };
         }
     }

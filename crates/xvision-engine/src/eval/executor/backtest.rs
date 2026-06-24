@@ -605,7 +605,7 @@ impl RunExecutor for Executor {
                     return result;
                 }
                 let reason = super::format_failure_reason(e);
-                let _ = store.fail_active(&run.id, &reason).await;
+                let _ = store.fail_active(&run.id, &reason, None).await;
                 run.status = RunStatus::Failed;
                 run.error = Some(reason.clone());
                 self.emit(ProgressEvent::RunFailed {
@@ -3644,7 +3644,6 @@ impl Executor {
         // Used to compute staleness when the decision arrives.
         let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
 
-
         tracing::info!(
             target: "xvision_engine::live_executor",
             run_id = %run.id,
@@ -3742,7 +3741,6 @@ impl Executor {
             bar_limit = ?stop_policy.bar_limit,
             "live loop: entering bar stream",
         );
-
 
         // F36: capture-on-interrupt for the live loop too — a cancelled or
         // crashed live/real-money run must record the metrics+tokens it
@@ -4380,7 +4378,8 @@ impl Executor {
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
             // first terminates the loop cleanly (not an error).
-            if let Some(stop) = live_stop_reason(&stop_policy, live_bar_count, decision_idx, n_trades, run_started)
+            if let Some(stop) =
+                live_stop_reason(&stop_policy, live_bar_count, decision_idx, n_trades, run_started)
             {
                 tracing::info!(
                     run_id = %run.id,

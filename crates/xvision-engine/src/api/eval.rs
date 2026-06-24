@@ -723,6 +723,22 @@ pub async fn flatten(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     result
 }
 
+/// Broker position reconciliation for a disconnected live run.
+///
+/// Loads the run's `LiveConfig`, queries the broker for open positions,
+/// loads `eval_decisions` to compute expected positions, and returns the
+/// reconcile result. Does NOT resume — the operator must explicitly
+/// choose Resume after reviewing the reconciliation.
+pub async fn reconcile(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> ApiResult<crate::eval::reconcile::ReconcileOutcome> {
+    let result = crate::eval::reconcile::reconcile_positions(&ctx.db, run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("reconcile: {e}")))?;
+    Ok(crate::eval::reconcile::to_outcome(&result))
+}
+
 /// Shared body for [`pause`]/[`resume`]: flips `eval_runs.paused`, audits the
 /// op (mirroring `cancel`), and returns the refreshed run.
 async fn set_paused_inner(ctx: &ApiContext, run_id: &str, paused: bool, action: &str) -> ApiResult<Run> {
@@ -760,6 +776,68 @@ async fn set_paused_inner(ctx: &ApiContext, run_id: &str, paused: bool, action: 
     )
     .await;
     result
+}
+
+/// Resume a `Disconnected` live (forward-test) run by re-reading its
+/// last persisted bar index and transitioning status back to `Running`.
+///
+/// The actual executor spawn is a follow-up; this validates the run,
+/// loads the resume checkpoint from `eval_run_bars`, and marks the run
+/// as `Running` so the operator can see it transition. The executor
+/// will be spawned from `bar_index + 1` in the follow-up PR.
+///
+/// # Validation
+/// - `NotFound` — the run id doesn't exist.
+/// - `Validation` — status is not `Disconnected`, or mode is not `Live`.
+///   Backtest runs that are `Disconnected` are intentionally NOT
+///   auto-resumable — only forward-test (live mode) runs reconnect.
+pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResult<RunDetail> {
+    let store = RunStore::new(ctx.db.clone());
+
+    // 1. Load + validate the run
+    let run = get_inner(ctx, run_id).await?;
+
+    if run.status != RunStatus::Disconnected {
+        return Err(ApiError::Validation(format!(
+            "run '{run_id}' is {} — only Disconnected runs can be reconnected",
+            run.status.as_str()
+        )));
+    }
+
+    if run.mode != RunMode::Live {
+        return Err(ApiError::Validation(format!(
+            "run '{run_id}' is a backtest — only live (forward-test) runs can be reconnected"
+        )));
+    }
+
+    // 2. Read last bar index from eval_run_bars
+    let last_bar_index: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(bar_index) FROM eval_run_bars WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_optional(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("read eval_run_bars for {run_id}: {e}")))?
+            .flatten();
+
+    let _resume_from = last_bar_index.map(|i| i + 1).unwrap_or(0);
+
+    // 3. Transition status back to Running
+    store
+        .update_status(run_id, RunStatus::Running, None)
+        .await
+        .map_err(|e| ApiError::Internal(format!("resume {run_id}: {e}")))?;
+
+    // 4. Re-read for the detail response
+    let detail = get_run(ctx, run_id).await?;
+
+    tracing::info!(
+        target: "xvision_engine::eval",
+        run_id = %run_id,
+        resume_from_bar = _resume_from,
+        "resumed disconnected live run (executor spawn follow-up)"
+    );
+
+    Ok(detail)
 }
 
 async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
@@ -885,11 +963,11 @@ pub async fn retry_with_outcome(ctx: &ApiContext, source_id: &str) -> ApiResult<
 async fn retry_inner(ctx: &ApiContext, source_id: &str) -> ApiResult<RetryOutcome> {
     let source = get_inner(ctx, source_id).await?;
     let reason = match source.status {
-        RunStatus::Failed | RunStatus::Cancelled => RetryReason::FailureRecovery,
+        RunStatus::Failed | RunStatus::Cancelled | RunStatus::Disconnected => RetryReason::FailureRecovery,
         RunStatus::Completed => RetryReason::ManualRerun,
         RunStatus::Queued | RunStatus::Running => {
             return Err(ApiError::Validation(format!(
-                "run '{source_id}' cannot be retried from status {}; retry requires a 'failed', 'cancelled', or 'completed' run",
+                "run '{source_id}' cannot be retried from status {}; retry requires a failed, cancelled, disconnected, or completed run",
                 source.status.as_str()
             )));
         }
@@ -3273,9 +3351,8 @@ async fn run_inner(
         if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
             && strategy.manifest.decision_cadence_minutes != 1
         {
-            let derived = crate::strategies::bar_granularity_for_cadence(
-                strategy.manifest.decision_cadence_minutes,
-            );
+            let derived =
+                crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
             tracing::info!(
                 target: "xvision_engine::live",
                 strategy_id = %strategy.manifest.id,
@@ -4636,9 +4713,7 @@ async fn build_live_executor(
                 }
             }
             let ws = ws.ok_or_else(|| {
-                ApiError::Validation(format!(
-                    "subscribe Alpaca live bars for {asset}: {last_err}"
-                ))
+                ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {last_err}"))
             })?;
             let poll = AlpacaLivePoll::new(
                 production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
@@ -4690,8 +4765,8 @@ async fn build_live_executor(
                 Vec::new()
             } else {
                 let end = Utc::now();
-                let start = end
-                    - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
+                let start =
+                    end - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
                 let bars = hl_fetcher
                     .fetch_window(&asset, granularity, start, end)
                     .await
@@ -4868,9 +4943,8 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
         if cfg.granularity == xvision_data::alpaca::BarGranularity::Minute1
             && strategy.manifest.decision_cadence_minutes != 1
         {
-            let derived = crate::strategies::bar_granularity_for_cadence(
-                strategy.manifest.decision_cadence_minutes,
-            );
+            let derived =
+                crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
             cfg.granularity = derived;
         }
     }
@@ -5332,7 +5406,7 @@ async fn route_mark_failed(ctx: &ApiContext, store: &RunStore, run_id: &str, err
                 error = %e,
                 "finalize_writer failed; falling back to direct fail_active",
             );
-            let _ = store.fail_active(run_id, err_msg).await;
+            let _ = store.fail_active(run_id, err_msg, None).await;
         }
     }
 }
@@ -5349,9 +5423,11 @@ fn fire_chain_attestation_after_finalize(run: &Run) {
 fn fire_chain_attestation_after_finalize(_run: &Run) {}
 
 /// Sweep any `Queued` or `Running` rows from a previous process and
-/// transition them to `Failed`. Background tasks die with the dashboard
-/// process so a clean restart should fail orphans out before serving
-/// traffic — otherwise the runs list shows phantom "Running" rows.
+/// transition them to terminal status. Live-mode runs become
+/// `Disconnected` (interrupted, potentially resumable); backtest runs
+/// become `Failed`. Background tasks die with the dashboard process so
+/// a clean restart should fail orphans out before serving traffic —
+/// otherwise the runs list shows phantom "Running" rows.
 ///
 /// Stays on the direct `RunStore` path (not the `FinalizeWriter`)
 /// because it fires at most once per process start, so it never
@@ -5359,10 +5435,35 @@ fn fire_chain_attestation_after_finalize(_run: &Run) {}
 /// boot-time complexity for no batching benefit.
 pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
     let store = RunStore::new(ctx.db.clone());
-    store
-        .fail_active_runs("daemon restarted before run completed")
+    let active = store
+        .list(ListFilter {
+            status: Some(vec![RunStatus::Queued, RunStatus::Running]),
+            ..Default::default()
+        })
         .await
-        .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
+        .map_err(|e| ApiError::Internal(format!("list orphan runs: {e}")))?;
+
+    let reason = "daemon restarted before run completed";
+    let mut count: u64 = 0;
+    for run in &active {
+        let ok = match run.mode {
+            RunMode::Live => store.mark_disconnected(&run.id, reason).await,
+            RunMode::Backtest => store.fail_active(&run.id, reason, None).await,
+        };
+        match ok {
+            Ok(true) => count += 1,
+            Ok(false) => {} // already terminal
+            Err(e) => {
+                tracing::warn!(
+                    target: "xvision::api",
+                    run_id = %run.id,
+                    error = %e,
+                    "failed to mark orphan run as terminal",
+                );
+            }
+        }
+    }
+    Ok(count)
 }
 
 fn effective_obs_config(ctx: &ApiContext) -> Arc<xvision_observability::ObservabilityConfig> {

@@ -176,7 +176,7 @@ pub async fn sweep_once(
             continue;
         }
 
-        match store.fail_active(&id, TIMEOUT_REASON).await {
+        match store.fail_active(&id, TIMEOUT_REASON, None).await {
             Ok(true) => {
                 finalized += 1;
                 tracing::info!(

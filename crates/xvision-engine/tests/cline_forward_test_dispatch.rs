@@ -87,7 +87,8 @@ fn resolved_slot(slot: LLMSlot) -> ResolvedAgentSlot {
 async fn dispatch_via_production_path(run_mode: RunMode, run_id: &str) -> anyhow::Result<AgentOutput> {
     let (client, _dir) = spawn_mock(Some(json!({
         "decisionJson": r#"{"action":"hold","conviction":0.5,"justification":"mock"}"#
-    }))).await;
+    })))
+    .await;
     let entry = anthropic_entry();
     let resolved = resolved_slot(trader_slot());
     let slot = resolved.slot.clone();
@@ -241,5 +242,8 @@ async fn forward_test_slot_input_has_response_schema() {
     let input = slot_input(&slot, &entry, std::sync::Arc::new(client), "01FWD-SCHEMA");
     let schema_str = serde_json::to_string(&input.response_schema).unwrap();
     assert!(!schema_str.is_empty());
-    assert!(schema_str.contains("trader_output"), "response schema should be trader_output");
+    assert!(
+        schema_str.contains("trader_output"),
+        "response schema should be trader_output"
+    );
 }

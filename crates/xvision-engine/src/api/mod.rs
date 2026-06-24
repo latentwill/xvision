@@ -203,14 +203,12 @@ const MIGRATION_069_NANOCHAT: &str = include_str!("../../migrations/069_nanochat
 /// Migration 071: adds `delayed` BOOLEAN column to `eval_decisions`
 /// for graceful LLM delay tracking — `true` when the decision bar's
 /// age exceeds the configured stale-data threshold.
-const MIGRATION_071_DECISIONS_DELAYED: &str =
-    include_str!("../../migrations/071_decisions_delayed.sql");
+const MIGRATION_071_DECISIONS_DELAYED: &str = include_str!("../../migrations/071_decisions_delayed.sql");
 /// Migration 073: `eval_run_bars` table for live-run OHLCV candle storage
 /// so the chart endpoint can serve bars independently of decision state
 /// (warmup, filter-gated, pre-first-decision). Uses `CREATE TABLE IF NOT EXISTS`
 /// / `CREATE INDEX IF NOT EXISTS` — re-applying is safe.
-const MIGRATION_073_EVAL_RUN_BARS: &str =
-    include_str!("../../migrations/073_eval_run_bars.sql");
+const MIGRATION_073_EVAL_RUN_BARS: &str = include_str!("../../migrations/073_eval_run_bars.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -993,7 +991,6 @@ async fn apply_eval_foundation_migration(pool: &SqlitePool) -> ApiResult<()> {
 
     Ok(())
 }
-
 
 /// Seed built-in skills when the `skills` table is empty.  Idempotent —
 /// existing rows are never overwritten.

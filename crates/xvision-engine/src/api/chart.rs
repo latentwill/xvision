@@ -565,29 +565,52 @@ pub async fn build_run_payload_with(
             }
             let time_window = if let (Some(s), Some(e)) = (
                 bars.first().map(|b| b.timestamp),
-                bars.last().map(|b| b.timestamp + chrono::Duration::seconds(granularity.seconds() as i64)),
+                bars.last()
+                    .map(|b| b.timestamp + chrono::Duration::seconds(granularity.seconds() as i64)),
             ) {
                 TimeWindow { start: s, end: e }
-            } else { TimeWindow { start: Default::default(), end: Default::default() } };
+            } else {
+                TimeWindow {
+                    start: Default::default(),
+                    end: Default::default(),
+                }
+            };
             let chart_bars: Vec<ChartBar> = if include.bars {
                 bars.iter().map(bar_to_chart_bar).collect()
-            } else { vec![] };
+            } else {
+                vec![]
+            };
             let indicators = if include.needs_indicators() {
                 compute_indicators(&bars)
-            } else { Indicators::default() };
+            } else {
+                Indicators::default()
+            };
             let position = if include.needs_indicators() {
                 compute_position(&decisions, &bars)
-            } else { vec![] };
+            } else {
+                vec![]
+            };
             let markers = if include.markers {
                 split_markers(&decisions, &bars)
-            } else { ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] } };
+            } else {
+                ChartMarkers {
+                    trades: vec![],
+                    vetoes: vec![],
+                    holds: vec![],
+                }
+            };
             return Ok(RunChartPayload {
                 run_id: run_id.into(),
                 scenario_id: run.scenario_id.clone(),
                 asset: asset_sym.as_short().to_string(),
                 granularity: granularity.as_alpaca_str().to_string(),
                 time_window,
-                bars: chart_bars, indicators, equity, drawdown, position, markers,
+                bars: chart_bars,
+                indicators,
+                equity,
+                drawdown,
+                position,
+                markers,
                 baseline_equity: None,
             });
         }
@@ -606,38 +629,66 @@ pub async fn build_run_payload_with(
             timestamps.sort();
             if let (Some(s), Some(e)) = (
                 timestamps.first().copied(),
-                timestamps.last().map(|ts| *ts + chrono::Duration::seconds(granularity.seconds() as i64)),
+                timestamps
+                    .last()
+                    .map(|ts| *ts + chrono::Duration::seconds(granularity.seconds() as i64)),
             ) {
                 let cache_key = crate::eval::bars::compute_cache_key(
-                    &asset_pair, granularity, s, e, "alpaca-historical-v1",
+                    &asset_pair,
+                    granularity,
+                    s,
+                    e,
+                    "alpaca-historical-v1",
                 );
                 if let Ok(bars) = crate::eval::bars::load_bars(
                     ctx,
                     &crate::eval::bars::BarCacheArgs {
-                        cache_key, asset_pair, granularity, start: s, end: e,
+                        cache_key,
+                        asset_pair,
+                        granularity,
+                        start: s,
+                        end: e,
                         data_source_tag: "alpaca-historical-v1".into(),
                     },
-                ).await
+                )
+                .await
                 {
                     let chart_bars: Vec<ChartBar> = if include.bars {
                         bars.iter().map(bar_to_chart_bar).collect()
-                    } else { vec![] };
+                    } else {
+                        vec![]
+                    };
                     let indicators = if include.needs_indicators() {
                         compute_indicators(&bars)
-                    } else { Indicators::default() };
+                    } else {
+                        Indicators::default()
+                    };
                     let position = if include.needs_indicators() {
                         compute_position(&decisions, &bars)
-                    } else { vec![] };
+                    } else {
+                        vec![]
+                    };
                     let markers = if include.markers {
                         split_markers(&decisions, &bars)
-                    } else { ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] } };
+                    } else {
+                        ChartMarkers {
+                            trades: vec![],
+                            vetoes: vec![],
+                            holds: vec![],
+                        }
+                    };
                     return Ok(RunChartPayload {
                         run_id: run_id.into(),
                         scenario_id: run.scenario_id.clone(),
                         asset: asset_sym.as_short().to_string(),
                         granularity: granularity.as_alpaca_str().to_string(),
                         time_window: TimeWindow { start: s, end: e },
-                        bars: chart_bars, indicators, equity, drawdown, position, markers,
+                        bars: chart_bars,
+                        indicators,
+                        equity,
+                        drawdown,
+                        position,
+                        markers,
                         baseline_equity: None,
                     });
                 }
@@ -647,14 +698,28 @@ pub async fn build_run_payload_with(
         // Metric-only payload when we have neither persisted bars nor decisions.
         let markers = if include.markers {
             split_markers(&decisions, &[])
-        } else { ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] } };
+        } else {
+            ChartMarkers {
+                trades: vec![],
+                vetoes: vec![],
+                holds: vec![],
+            }
+        };
         return Ok(RunChartPayload {
             run_id: run_id.into(),
             scenario_id: run.scenario_id.clone(),
             asset: String::new(),
             granularity: String::new(),
-            time_window: TimeWindow { start: Default::default(), end: Default::default() },
-            bars: vec![], indicators: Indicators::default(), equity, drawdown, position: vec![], markers,
+            time_window: TimeWindow {
+                start: Default::default(),
+                end: Default::default(),
+            },
+            bars: vec![],
+            indicators: Indicators::default(),
+            equity,
+            drawdown,
+            position: vec![],
+            markers,
             baseline_equity: None,
         });
     }
@@ -1181,7 +1246,6 @@ pub async fn build_scenario_payload_with_granularity(
         scenario.time_window.end,
         data_source_tag,
     );
-
 
     // Compute expected bar count from the window and granularity.
     let window_secs = (scenario.time_window.end - scenario.time_window.start)

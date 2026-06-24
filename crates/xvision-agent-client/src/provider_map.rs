@@ -72,9 +72,7 @@ fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
         || lower.contains(":11434")
     {
         "ollama"
-    } else if lower.contains("localhost:1234")
-        || lower.contains("127.0.0.1:1234")
-        || lower.contains(":1234")
+    } else if lower.contains("localhost:1234") || lower.contains("127.0.0.1:1234") || lower.contains(":1234")
     {
         "lmstudio"
     } else {

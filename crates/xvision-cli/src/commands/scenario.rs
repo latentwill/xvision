@@ -15,9 +15,9 @@ use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::regime::derive_regime_labels;
 use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel, LimitOrderFill,
-    MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue,
-    VenueSettings,
+    AdjustmentMode, AssetClass, CalendarRef, Capital, DataSource, Fees, FillModel, LatencyModel,
+    LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource, SlippageModel,
+    TimeWindow, Venue, VenueSettings,
 };
 use xvision_engine::eval::scenario_store;
 
@@ -428,7 +428,6 @@ async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> 
         .await
         .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))
 }
-
 
 fn parse_slippage(s: &str) -> CliResult<SlippageModel> {
     if let Some(bps_str) = s.strip_prefix("linear:") {
@@ -1601,7 +1600,7 @@ pub mod select {
     ) -> Scenario {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
         let end = start + chrono::Duration::seconds(window_secs);
-                Scenario {
+        Scenario {
             id: id.to_string(),
             parent_scenario_id: None,
             source: ScenarioSource::User,
@@ -1843,8 +1842,7 @@ pub mod select {
         assert_eq!(rows_expansion.len(), 1, "column 'expansion' should match");
 
         // Bear tag should NOT match since column overrides.
-        let rows_bear =
-            select_scenarios(&[s], 60, &["bear".to_string()], Some(100), false, None, 4).unwrap();
+        let rows_bear = select_scenarios(&[s], 60, &["bear".to_string()], Some(100), false, None, 4).unwrap();
         assert!(
             rows_bear.is_empty(),
             "tag 'bear' should not match when column says 'expansion'"
@@ -1869,8 +1867,7 @@ pub mod select {
     fn scenario_without_regime_excluded_when_regime_filter_set() {
         // No regime in column AND no regime tag → excluded when filter is active.
         let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
-        let rows =
-            select_scenarios(&[s], 60, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
+        let rows = select_scenarios(&[s], 60, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 

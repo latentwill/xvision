@@ -36,8 +36,7 @@ async fn spawn_mock(record_steps_path: &std::path::Path) -> (AgentClient, TempDi
         "decisionJson": r#"{"action":"hold","conviction":0.5,"justification":"mock"}"#,
         "recordStepsPath": record_steps_path,
     });
-    std::fs::write(sock.with_extension("sock.cfg"), serde_json::to_vec(&cfg).unwrap())
-        .expect("write cfg");
+    std::fs::write(sock.with_extension("sock.cfg"), serde_json::to_vec(&cfg).unwrap()).expect("write cfg");
     let client = AgentClient::spawn(&mock_bin(), &sock)
         .await
         .expect("spawn mock sidecar (is `node` on PATH?)");

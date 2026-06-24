@@ -569,15 +569,20 @@ impl RunStore {
         RunStatus::parse(&status).ok_or_else(|| anyhow::anyhow!("unknown RunStatus {status:?}"))
     }
 
-    /// Mark a queued/running run failed. Returns false if the run already
-    /// reached a terminal state first.
-    pub async fn fail_active(&self, id: &str, reason: &str) -> Result<bool> {
+    /// Mark a queued/running run as failed (or disconnected). Returns false
+    /// if the run already reached a terminal state first.
+    ///
+    /// `status` defaults to `RunStatus::Failed`. Pass `Some(RunStatus::Disconnected)`
+    /// for runs interrupted by connection loss (resumable).
+    pub async fn fail_active(&self, id: &str, reason: &str, status: Option<RunStatus>) -> Result<bool> {
+        let target = status.unwrap_or(RunStatus::Failed);
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_runs \
-             SET status = 'failed', completed_at = ?, error = ? \
+             SET status = ?, completed_at = ?, error = ? \
              WHERE id = ? AND status IN ('queued', 'running')",
         )
+        .bind(target.as_str())
         .bind(&now)
         .bind(reason)
         .bind(id)
@@ -588,24 +593,34 @@ impl RunStore {
     }
 
     /// Sweep any runs left in `Queued` or `Running` status from a
-    /// previous process: flip them to `Failed` with the given reason
-    /// and set `completed_at = now`. Called once at dashboard startup
-    /// because background tasks die with the process — without this
-    /// sweep, a crash leaves rows visually "in flight" forever.
+    /// previous process: flip them to the given status (default
+    /// `Failed`) with the given reason and set `completed_at = now`.
+    /// Called once at dashboard startup because background tasks die
+    /// with the process — without this sweep, a crash leaves rows
+    /// visually "in flight" forever.
     /// Returns the number of rows updated.
-    pub async fn fail_active_runs(&self, reason: &str) -> Result<u64> {
+    pub async fn fail_active_runs(&self, reason: &str, status: Option<RunStatus>) -> Result<u64> {
+        let target = status.unwrap_or(RunStatus::Failed);
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE eval_runs \
-             SET status = 'failed', completed_at = ?, error = ? \
+             SET status = ?, completed_at = ?, error = ? \
              WHERE status IN ('queued', 'running')",
         )
+        .bind(target.as_str())
         .bind(&now)
         .bind(reason)
         .execute(&self.pool)
         .await
         .context("fail active eval_runs")?;
         Ok(res.rows_affected())
+    }
+
+    /// Mark a queued/running run as disconnected (connection lost, potentially
+    /// resumable). Convenience wrapper around `fail_active` with
+    /// `RunStatus::Disconnected`.
+    pub async fn mark_disconnected(&self, id: &str, reason: &str) -> Result<bool> {
+        self.fail_active(id, reason, Some(RunStatus::Disconnected)).await
     }
 
     /// Overwrite `metrics_json` on a completed run. Called post-finalize when
@@ -1456,7 +1471,11 @@ impl RunStore {
         if bars.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await.context("begin tx for record_bars_batch")?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("begin tx for record_bars_batch")?;
         for (bar_index, timestamp, open, high, low, close, volume) in bars {
             sqlx::query(
                 "INSERT INTO eval_run_bars (run_id, bar_index, timestamp, open, high, low, close, volume) \
