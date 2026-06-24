@@ -1,0 +1,14 @@
+-- Add 'disconnected' as a valid RunStatus value for eval_runs.status.
+--
+-- The status column is TEXT NOT NULL with no CHECK constraint (see 002_eval.sql
+-- line 12), so no ALTER is required. The Rust RunStatus enum (run.rs) is the
+-- source of truth for valid values; 'disconnected' is accepted by RunStatus::parse
+-- and emitted by RunStatus::as_str.
+--
+-- Disconnected is a terminal status (like Failed) but signals an interrupted
+-- connection rather than a logical failure. RunStore::fail_active and
+-- fail_active_runs now accept an optional RunStatus parameter so callers can
+-- choose Disconnected instead of the default Failed.
+--
+-- For live-mode runs, fail_orphan_runs (api/eval.rs) marks orphaned rows as
+-- 'disconnected' instead of 'failed', enabling future auto-resume workflows.

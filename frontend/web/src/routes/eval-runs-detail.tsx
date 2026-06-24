@@ -620,7 +620,7 @@ function SummaryCard({
   const verdict = summary.status === "completed" ? "PASS" : summary.status.toUpperCase();
   const totalPnl = totalPnlUsd(equityCurve);
   const realizedPnl = realizedPnlUsd(decisions);
-  const unrealizedPnl = unrealizedPnlUsd(totalPnl, realizedPnl);
+  const unrealizedPnl = summary.unrealized_pnl_usd ?? unrealizedPnlUsd(totalPnl, realizedPnl);
   const decisionTape = useMemo(
     () =>
       toTimelineDecisions(decisions)
@@ -770,7 +770,7 @@ function SummaryCard({
           sub={summary.completed_at ? `@ ${fmtTime(summary.completed_at)}` : "in progress"}
           tone={drawdownMetricTone(summary.max_drawdown_pct) === "neg" ? "neg" : "neu"}
         />
-        <Stat label="SHARPE" value={fmtNumber(summary.sharpe)} sub="annualized" tone="neu" />
+        <Stat label="SHARPE" value={fmtNumber(summary.sharpe)} sub={unrealizedPnl != null ? `${fmtPnlUsd(unrealizedPnl)} unrealized` : "annualized"} tone="neu" />
         <Stat
           label="NET %"
           value={summary.net_return_pct != null ? fmtPct(summary.net_return_pct) : "—"}

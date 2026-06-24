@@ -244,7 +244,7 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
     let run = api::eval::get(ctx, run_id).await?;
     if !is_terminal(run.status) {
         return Err(ApiError::Validation(format!(
-            "run {} is in status `{}`; export is only defined for terminal runs (completed/failed/cancelled)",
+            "run {} is in status `{}`; export is only defined for terminal runs (completed/failed/cancelled/disconnected)",
             run.id,
             run.status.as_str(),
         )));
@@ -622,7 +622,7 @@ fn provider_model_pair(provider: Option<&str>, model: Option<&str>) -> Option<(S
 fn is_terminal(status: RunStatus) -> bool {
     matches!(
         status,
-        RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled,
+        RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled | RunStatus::Disconnected,
     )
 }
 

@@ -1,11 +1,22 @@
 # Operator Runbook
 
-## Dashboard authentication
+Shipped with the `qa-dashboard-auth-hardening` wave. The dashboard uses a
+**two-layer** auth model:
 
-Shipped with the `qa-dashboard-auth-hardening` wave. This section covers the
-HTTP auth gate, the CLI-jobs allowlist, and the danger-op typed-phrase
-verification.
+1. **Outer gate** (`gate.rs` / `auth_middleware`) — coarse non-loopback
+   barrier. On a non-loopback bind the server requires
+   `XVN_DASHBOARD_TOKEN` and refuses to start without it. Loopback binds
+   (`127.0.0.1`, `::1`) pass through unchanged so local dev stays
+   frictionless.
 
+2. **Inner layer** (`require_auth.rs` / `require_auth_middleware`) —
+   per-route session validation on mutating endpoints. If no operator
+   password has been set in the `dashboard_auth` table, all requests pass
+   through. Once a password IS configured (via the Settings UI), mutating
+   routes require the password presented as `Authorization: Bearer
+   <password>`, the `x-xvision-token` header, or the
+   `xvn_dashboard_password` cookie. Read-only GET routes are exempt from
+   the inner layer but still pass through the outer gate.
 ### When auth applies
 
 The dashboard inspects its bind address at startup:
@@ -57,6 +68,34 @@ Failed authentication returns HTTP 401:
 { "code": "unauthorized", "message": "missing or invalid dashboard auth token" }
 ```
 
+### Inner auth layer (operator password)
+
+The inner `require_auth` layer gates mutating routes (create, update, delete,
+settings) behind an operator-chosen password. Configuration:
+
+1. **No password set** (default) — the `dashboard_auth` table has no hash row.
+   All mutating requests pass through. The login endpoint returns
+   `password_set: false` so the frontend skips the auth prompt.
+
+2. **Password configured** — set via the Settings → Auth tab in the dashboard
+   UI, or directly in SQLite:
+   ```sql
+   INSERT OR REPLACE INTO dashboard_auth (key, value)
+   VALUES ('password_hash', '<sha256-hex-of-password>');
+   ```
+   Once set, every mutating request must present the password via one of the
+   four channels (same ones as the outer gate, but using the
+   `xvn_dashboard_password` cookie instead of `xvn_dashboard_token`).
+
+On successful authentication the inner layer sets a 24-hour
+`xvn_dashboard_password` cookie so the browser doesn't re-prompt on every
+request. Failed authentication returns HTTP 401 with
+`{"error": "unauthenticated"}`. Loopback connections bypass the inner layer
+just as they bypass the outer gate.
+
+Read-only GET routes (`/api/agents`, `/api/eval-runs`, `/api/health`, etc.)
+are **exempt** from the inner layer — they only pass through the outer gate.
+
 ### CLI jobs allowlist
 
 `POST /api/cli/jobs` runs `xvn` subcommands on the dashboard host. By default
@@ -88,7 +127,7 @@ The frontend renders each phrase but does not auto-fill the payload.
 
 | Route | Required phrase |
 |---|---|
-| `/api/settings/danger/wipe-db` | `WIPE DATABASE` |
+| `/api/settings/danger/reset-workspace` | `RESET WORKSPACE` |
 | `/api/settings/danger/factory-reset` | `FACTORY RESET` |
 | `/api/settings/danger/regen-identity` | `REGEN IDENTITY` |
 
@@ -113,15 +152,13 @@ xvn dashboard serve --bind 0.0.0.0:8788 &
 curl -sS http://<host>:8788/api/health                            # → 401
 curl -sS -H "Authorization: Bearer $XVN_DASHBOARD_TOKEN" http://<host>:8788/api/health
 curl -i "http://<host>:8788/?token=$XVN_DASHBOARD_TOKEN"          # → Set-Cookie: xvn_dashboard_token=...
-```
-
 ### Out of scope
 
 - TLS termination: run the dashboard behind a reverse proxy (nginx, caddy,
   traefik) that terminates TLS and forwards to the plain HTTP port.
-- Per-user identities, RBAC, OAuth, SSO: the shared secret authenticates the
-  caller but does not identify them. The bootstrap cookie carries the shared
-  secret for browser ergonomics only.
+- Per-user identities, RBAC, OAuth, SSO: the outer gate authenticates the
+  caller via a shared secret; the inner layer adds an operator password on
+  mutating routes. Neither identifies individual users.
 
 ---
 
@@ -230,6 +267,160 @@ is not stamping ids on `SpanStarted` events. Confirm the producer calls
 `crates/xvision-observability/Cargo.toml`: `opentelemetry = 0.21`,
 `opentelemetry-otlp = 0.14`, `tracing-opentelemetry = 0.22`. Version mismatches
 are the most common cause of breakage.
+
+## Filter timeline
+
+The filter timeline is a per-bar visual strip rendered on the eval run detail
+page for **FilterGated** strategies. It shows every bar where the filter
+runtime was evaluated, color-coded by outcome. For EveryBar strategies the
+timeline self-hides (no filter = no events).
+
+### States
+
+| Color | State | Meaning |
+|---|---|---|
+| Gold | Triggered | Filter fired — the LLM was woken up on this bar. |
+| Amber | In-position suppressed | Filter would have fired but the strategy was already in a position. |
+| Blue | Cooldown suppressed | Filter fired recently and the cooldown window hasn't elapsed. |
+| Red | Daily-cap suppressed | Filter would have fired but the daily call cap has been reached. |
+| Neutral | Not triggered | Filter evaluated, no conditions met. |
+
+### Interacting with the timeline
+
+The `FilterEventTimeline` component in the Run Detail page renders each bar as
+a clickable color-coded tick.
+
+- **Hover** a tick to see a preview strip: bar timestamp, trigger state, and
+  conditions-passed / conditions-failed counts.
+- **Click** a tick to open the detail panel showing the full indicator
+  snapshot (each indicator's value at that bar) and the suppression reason if
+  applicable.
+- A **legend** below the timeline strip decodes the five color states.
+
+The `FilterSummaryPanel` below the timeline shows per-filter aggregate
+rollups: bars scanned, wakeups, suppression breakdown by reason
+(in-position / cooldown / daily-cap), and estimated LLM calls + tokens saved.
+
+### Interpreting delayed decisions
+
+In Live (forward-test) runs the engine tracks three counters on the
+`eval_decisions` table, surfaced in `RunSummary`:
+
+| Counter | Meaning |
+|---|---|
+| `skipped_dispatches` | Bars where the live executor skipped dispatch entirely (e.g. bar arrived too late to act). |
+| `delayed_decisions` | Decisions that fired but on stale data — the bar age exceeded the configured cadence. |
+| `forced_cancels` | Decisions that were in-flight when a stop-policy limit triggered, forcibly cancelled. |
+
+In the **DecisionsTable** on the Run Detail page, delayed decisions are marked
+with a `· delayed` badge. The CLI verbose output (`xvn eval run --verbose`)
+flags delayed rows with a `(delayed)` marker in the decision log.
+
+High `delayed_decisions` or `skipped_dispatches` counts indicate the live
+data feed is lagging behind the strategy cadence. Check network latency to the
+broker, bar aggregation delay, and the `--stale-data-max-age-ms` CLI flag (if
+set below the bar interval, every bar may appear stale).
+
+---
+
+## Live / forward-test
+
+Live mode is a **bounded paper-trading dress rehearsal** that streams live
+market data through a strategy without real money. It terminates under a
+configurable `StopPolicy` and leaves a backtestable artifact behind.
+Internally the code refers to this as "Live" mode; "forward-test" and
+"paper-trading" are synonyms.
+
+### How to launch
+
+Via CLI:
+
+```bash
+xvn eval run --mode live \
+  --live-asset BTC/USD \
+  --live-capital 10000 \
+  --live-bar-limit 500 \
+  --live-broker-creds-ref alpaca
+```
+
+Via dashboard: the Launch wizard accepts a `"mode": "live"` schema with the
+same fields. The wizard validates the `LiveConfig` before submitting.
+
+Alpaca credentials must be stored in the credential store (`xvn provider
+add alpaca …` or the Provider settings tab). The `--live-broker-creds-ref`
+flag selects which stored credential set to use. The engine probes
+`GET /v2/account` at launch time to confirm reachability.
+
+### Stop policy
+
+The run terminates when the **first** limit is reached:
+
+| Limit | Flag | Description |
+|---|---|---|
+| Bar limit | `--live-bar-limit` | Total bars consumed from the live stream. |
+| Decision limit | `--live-decision-limit` | LLM dispatch count. |
+| Time limit | `--live-time-limit-secs` | Wall-clock seconds since run start (capped at 30 days). |
+| Trade limit | *(future)* | Completed filled-trade count. |
+
+At least one limit must be set. All set limits must be > 0.
+
+### Validation rules
+
+`LiveConfig::validate()` enforces these rules at launch time (engine-side):
+
+| # | Rule | Error variant |
+|---|---|---|
+| 1 | At least one asset specified. | `NoAssets` |
+| 2 | Each asset is on the Alpaca crypto whitelist. | `AssetNotWhitelisted` |
+| 3 | At least one stop-policy limit set. | `NoStopLimit` |
+| 4 | `venue_label` is NOT `Live` (v1 rejects real money). | `VenueLabelMustBePaper` |
+| 5 | Initial capital > 0. | `CapitalNotPositive` |
+| 6 | Broker creds ref non-empty. | `BrokerCredsRefEmpty` |
+| 7 | Display name non-empty. | `DisplayNameEmpty` |
+| 8 | Time limit ≤ 30 days when set. | `TimeLimitExceedsMax` |
+| 9 | Each stop-policy limit > 0 when set. | `StopLimitNotPositive` |
+
+The broker-creds reachability check (`GET /v2/account`) is a **runtime** probe
+at launch, not a `validate()` rule — it requires HTTP I/O. If it fails the
+error is `BrokerCredsUnreachable`.
+
+### Troubleshooting
+
+**"BrokerCredsUnreachable" at launch.** The Alpaca endpoint
+(`https://paper-api.alpaca.markets`) is unreachable from the dashboard host.
+Check:
+1. Network egress from the host — can it reach `api.alpaca.markets`?
+2. API key / secret stored correctly? Run `xvn provider list` and verify the
+   `alpaca` entry.
+3. Alpaca paper account still active? Log into the Alpaca dashboard and
+   confirm the paper account hasn't been closed or rate-limited.
+
+**"AssetNotWhitelisted" for a supported asset.** The whitelist is in
+`crates/xvision-engine/src/eval/live_config.rs`. Add the symbol and rebuild.
+Alpaca crypto pairs use the `XXX/USD` format (e.g. `BTC/USD`, `ETH/USD`).
+
+**Run starts but no bars consumed.** The live bar stream may be waiting for
+the next bar boundary. Check the `--live-warmup-bars` flag — if set too high
+the executor waits to accumulate warmup bars before dispatching. Also verify
+the bar granularity (default: 1-minute) matches what Alpaca is streaming.
+
+**Run terminates immediately.** The stop policy fired on the first bar. Check
+that at least one limit is set to a reasonable value (> 1 bar, > 0 seconds).
+A `--live-bar-limit 0` or `--live-time-limit-secs 0` terminates instantly.
+
+**High delayed/skipped counts.** See [Interpreting delayed
+decisions](#interpreting-delayed-decisions) in the Filter timeline section
+above. The same counters apply — high values suggest the data feed is lagging.
+
+**Live run left orphaned after disconnect.** Live runs started from the
+dashboard persist across page reloads. Check the Eval Runs list for any run
+stuck in `Running` status. Use `xvn eval cancel <run-id>` to terminate an
+orphaned run, or let its stop policy fire naturally.
+
+**VenueLabelMustBeLive** — you're trying to use real-money credentials with
+the v1 live executor, which only supports Alpaca paper. This is a safety
+lock. Real-money live execution is a future plan track.
+---
 
 ## See also
 

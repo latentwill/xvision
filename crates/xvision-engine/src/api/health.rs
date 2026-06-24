@@ -179,12 +179,10 @@ async fn probe_agent_sidecar() -> Probe {
 /// Degraded when no providers have keys — eval runs will fail.
 async fn probe_provider_active(ctx: &ApiContext) -> Probe {
     let config_path = xvision_core::config::runtime_config_path(&ctx.xvn_home);
-    let providers = crate::api::settings::providers::effective_providers_with_paths(
-        &ctx.xvn_home,
-        &config_path,
-    )
-    .await
-    .unwrap_or_default();
+    let providers =
+        crate::api::settings::providers::effective_providers_with_paths(&ctx.xvn_home, &config_path)
+            .await
+            .unwrap_or_default();
 
     let active_count = providers.iter().filter(|p| p.has_key).count();
     if active_count > 0 {

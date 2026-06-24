@@ -311,7 +311,9 @@ pub async fn start_cycle(
     // Extract the trader provider before moving strategy into parent_strategies.
     // The Cline sidecar needs the trader's provider (not the mutator's) because
     // the sidecar dispatches TRADER LLM calls; mutator+judge use separate dispatch.
-    let sidecar_provider = strategy.trader_slot.as_ref()
+    let sidecar_provider = strategy
+        .trader_slot
+        .as_ref()
         .and_then(|s| s.provider.as_deref())
         .unwrap_or(&cfg.mutator.provider)
         .to_string();

@@ -488,15 +488,134 @@ pub async fn build_run_payload_with(
         .collect();
     let drawdown = compute_drawdown(&equity);
 
-    // Live runs / empty scenario: derive the bar window from actual decision
-    // timestamps and load bars from cache.
+    // Live runs / empty scenario: read bars from eval_run_bars (persisted
+    // by the live executor every bar, including warmup) so the chart renders
+    // candles even before the first decision. Falls back to the legacy
+    // decision-timestamp logic when eval_run_bars is empty (pre-migration).
     if run.mode == RunMode::Live || run.scenario_id.is_empty() {
+        // Slim early-return: equity-only, no bars needed.
+        if !include.needs_bars() {
+            return Ok(RunChartPayload {
+                run_id: run_id.into(),
+                scenario_id: run.scenario_id.clone(),
+                asset: String::new(),
+                granularity: String::new(),
+                time_window: TimeWindow {
+                    start: Default::default(),
+                    end: Default::default(),
+                },
+                bars: vec![],
+                indicators: Indicators::default(),
+                equity,
+                drawdown,
+                position: vec![],
+                markers: ChartMarkers {
+                    trades: vec![],
+                    vetoes: vec![],
+                    holds: vec![],
+                },
+                baseline_equity: None,
+            });
+        }
         let decisions = store
             .read_decisions(run_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-        // Try to load bars from decisions' timestamp window.
+        // Primary: eval_run_bars table (073_eval_run_bars).
+        let bars_from_store = if include.bars {
+            match store.read_bars(run_id).await {
+                Ok(bars) => bars,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "xvision_engine::chart",
+                        run_id = %run_id,
+                        error = %e,
+                        "read eval_run_bars failed; falling back to decision-derived bars",
+                    );
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+        if !bars_from_store.is_empty() {
+            let asset_sym = resolve_run_asset_for_chart(ctx, &run, &decisions)
+                .await
+                .unwrap_or(xvision_core::trading::AssetSymbol::Btc);
+            let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id)
+                .await
+                .unwrap_or(xvision_data::alpaca::BarGranularity::Hour1);
+            let bars: Vec<MarketBar> = bars_from_store
+                .iter()
+                .map(|(ts, o, h, l, c, v, _asset)| MarketBar {
+                    timestamp: *ts,
+                    open: *o,
+                    high: *h,
+                    low: *l,
+                    close: *c,
+                    volume: *v,
+                })
+                .collect();
+            if bars.len() > MAX_BARS {
+                return Err(ApiError::Validation(format!(
+                    "payload exceeds 100K bars ({}); downsample granularity or shorten time_window",
+                    bars.len()
+                )));
+            }
+            let time_window = if let (Some(s), Some(e)) = (
+                bars.first().map(|b| b.timestamp),
+                bars.last()
+                    .map(|b| b.timestamp + chrono::Duration::seconds(granularity.seconds() as i64)),
+            ) {
+                TimeWindow { start: s, end: e }
+            } else {
+                TimeWindow {
+                    start: Default::default(),
+                    end: Default::default(),
+                }
+            };
+            let chart_bars: Vec<ChartBar> = if include.bars {
+                bars.iter().map(bar_to_chart_bar).collect()
+            } else {
+                vec![]
+            };
+            let indicators = if include.needs_indicators() {
+                compute_indicators(&bars)
+            } else {
+                Indicators::default()
+            };
+            let position = if include.needs_indicators() {
+                compute_position(&decisions, &bars)
+            } else {
+                vec![]
+            };
+            let markers = if include.markers {
+                split_markers(&decisions, &bars)
+            } else {
+                ChartMarkers {
+                    trades: vec![],
+                    vetoes: vec![],
+                    holds: vec![],
+                }
+            };
+            return Ok(RunChartPayload {
+                run_id: run_id.into(),
+                scenario_id: run.scenario_id.clone(),
+                asset: asset_sym.as_short().to_string(),
+                granularity: granularity.as_alpaca_str().to_string(),
+                time_window,
+                bars: chart_bars,
+                indicators,
+                equity,
+                drawdown,
+                position,
+                markers,
+                baseline_equity: None,
+            });
+        }
+
+        // Fallback: legacy decision-timestamp → cached bars path.
         if !decisions.is_empty() {
             let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id)
                 .await
@@ -510,55 +629,97 @@ pub async fn build_run_payload_with(
             timestamps.sort();
             if let (Some(s), Some(e)) = (
                 timestamps.first().copied(),
-                timestamps.last().map(|ts| *ts + chrono::Duration::seconds(granularity.seconds() as i64)),
+                timestamps
+                    .last()
+                    .map(|ts| *ts + chrono::Duration::seconds(granularity.seconds() as i64)),
             ) {
                 let cache_key = crate::eval::bars::compute_cache_key(
-                    &asset_pair, granularity, s, e, "alpaca-historical-v1",
+                    &asset_pair,
+                    granularity,
+                    s,
+                    e,
+                    "alpaca-historical-v1",
                 );
                 if let Ok(bars) = crate::eval::bars::load_bars(
                     ctx,
                     &crate::eval::bars::BarCacheArgs {
-                        cache_key, asset_pair, granularity, start: s, end: e,
+                        cache_key,
+                        asset_pair,
+                        granularity,
+                        start: s,
+                        end: e,
                         data_source_tag: "alpaca-historical-v1".into(),
                     },
-                ).await
+                )
+                .await
                 {
                     let chart_bars: Vec<ChartBar> = if include.bars {
                         bars.iter().map(bar_to_chart_bar).collect()
-                    } else { vec![] };
+                    } else {
+                        vec![]
+                    };
                     let indicators = if include.needs_indicators() {
                         compute_indicators(&bars)
-                    } else { Indicators::default() };
+                    } else {
+                        Indicators::default()
+                    };
                     let position = if include.needs_indicators() {
                         compute_position(&decisions, &bars)
-                    } else { vec![] };
+                    } else {
+                        vec![]
+                    };
                     let markers = if include.markers {
                         split_markers(&decisions, &bars)
-                    } else { ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] } };
+                    } else {
+                        ChartMarkers {
+                            trades: vec![],
+                            vetoes: vec![],
+                            holds: vec![],
+                        }
+                    };
                     return Ok(RunChartPayload {
                         run_id: run_id.into(),
                         scenario_id: run.scenario_id.clone(),
                         asset: asset_sym.as_short().to_string(),
                         granularity: granularity.as_alpaca_str().to_string(),
                         time_window: TimeWindow { start: s, end: e },
-                        bars: chart_bars, indicators, equity, drawdown, position, markers,
+                        bars: chart_bars,
+                        indicators,
+                        equity,
+                        drawdown,
+                        position,
+                        markers,
                         baseline_equity: None,
                     });
                 }
             }
         }
 
-        // Fallback: metric-only payload.
+        // Metric-only payload when we have neither persisted bars nor decisions.
         let markers = if include.markers {
             split_markers(&decisions, &[])
-        } else { ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] } };
+        } else {
+            ChartMarkers {
+                trades: vec![],
+                vetoes: vec![],
+                holds: vec![],
+            }
+        };
         return Ok(RunChartPayload {
             run_id: run_id.into(),
             scenario_id: run.scenario_id.clone(),
             asset: String::new(),
             granularity: String::new(),
-            time_window: TimeWindow { start: Default::default(), end: Default::default() },
-            bars: vec![], indicators: Indicators::default(), equity, drawdown, position: vec![], markers,
+            time_window: TimeWindow {
+                start: Default::default(),
+                end: Default::default(),
+            },
+            bars: vec![],
+            indicators: Indicators::default(),
+            equity,
+            drawdown,
+            position: vec![],
+            markers,
             baseline_equity: None,
         });
     }
@@ -698,7 +859,7 @@ pub async fn build_run_payload_with(
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-fn bar_to_chart_bar(b: &MarketBar) -> ChartBar {
+pub fn bar_to_chart_bar(b: &MarketBar) -> ChartBar {
     ChartBar {
         time: b.timestamp.timestamp(),
         open: b.open,
@@ -1085,7 +1246,6 @@ pub async fn build_scenario_payload_with_granularity(
         scenario.time_window.end,
         data_source_tag,
     );
-
 
     // Compute expected bar count from the window and granularity.
     let window_secs = (scenario.time_window.end - scenario.time_window.start)

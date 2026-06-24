@@ -1167,7 +1167,10 @@ impl Mutator {
                     let is_response_format_unsupported = e
                         .downcast_ref::<crate::agent::llm::OpenAiCompatError>()
                         .map_or(false, |rfe| {
-                            matches!(rfe, crate::agent::llm::OpenAiCompatError::ResponseFormatUnsupported { .. })
+                            matches!(
+                                rfe,
+                                crate::agent::llm::OpenAiCompatError::ResponseFormatUnsupported { .. }
+                            )
                         });
                     if is_response_format_unsupported {
                         tracing::info!(

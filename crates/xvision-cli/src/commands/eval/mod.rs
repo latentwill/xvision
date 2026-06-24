@@ -1589,7 +1589,11 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         if !decisions.is_empty() {
             println!("\nDecisions");
             for d in &decisions {
-                let delayed_mark = if d.delayed { " (delayed)" } else { "" };
+                let delayed_mark = if d.delayed.unwrap_or(false) {
+                    " (delayed)"
+                } else {
+                    ""
+                };
                 println!(
                     "  #{:<4} {}  {:<6}  {:<12}{}",
                     d.decision_index,
@@ -1611,10 +1615,7 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
                     m.skipped_dispatches
                 );
                 if m.delayed_decisions > 0 {
-                    println!(
-                        "  {} decision(s) accepted after delay",
-                        m.delayed_decisions
-                    );
+                    println!("  {} decision(s) accepted after delay", m.delayed_decisions);
                 }
             }
         }
@@ -1649,7 +1650,10 @@ fn print_run_health_card(
         );
         println!("trades  {}   decisions {}", m.n_trades, m.n_decisions);
         if m.skipped_dispatches > 0 || m.delayed_decisions > 0 {
-            println!("skip    {}   delayed {}", m.skipped_dispatches, m.delayed_decisions);
+            println!(
+                "skip    {}   delayed {}",
+                m.skipped_dispatches, m.delayed_decisions
+            );
         }
         if let Some(cost) = m.inference_cost_quote_total {
             println!("cost    ${:.4}", cost);

@@ -203,8 +203,12 @@ const MIGRATION_069_NANOCHAT: &str = include_str!("../../migrations/069_nanochat
 /// Migration 071: adds `delayed` BOOLEAN column to `eval_decisions`
 /// for graceful LLM delay tracking — `true` when the decision bar's
 /// age exceeds the configured stale-data threshold.
-const MIGRATION_071_DECISIONS_DELAYED: &str =
-    include_str!("../../migrations/071_decisions_delayed.sql");
+const MIGRATION_071_DECISIONS_DELAYED: &str = include_str!("../../migrations/071_decisions_delayed.sql");
+/// Migration 073: `eval_run_bars` table for live-run OHLCV candle storage
+/// so the chart endpoint can serve bars independently of decision state
+/// (warmup, filter-gated, pre-first-decision). Uses `CREATE TABLE IF NOT EXISTS`
+/// / `CREATE INDEX IF NOT EXISTS` — re-applying is safe.
+const MIGRATION_073_EVAL_RUN_BARS: &str = include_str!("../../migrations/073_eval_run_bars.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -531,6 +535,10 @@ impl ApiContext {
                 return Err(ApiError::Internal(format!("migration 071: {e}")));
             }
         }
+        // Migration 073: eval_run_bars for live-run OHLCV chart data.
+        // DDL uses CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS,
+        // so re-applying on an already-migrated DB is a no-op.
+        migrate_eval_run_bars(&pool).await?;
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
         // engine continues without a recorder so existing CLI / dash
@@ -983,7 +991,6 @@ async fn apply_eval_foundation_migration(pool: &SqlitePool) -> ApiResult<()> {
 
     Ok(())
 }
-
 
 /// Seed built-in skills when the `skills` table is empty.  Idempotent —
 /// existing rows are never overwritten.
@@ -2062,6 +2069,18 @@ async fn migrate_autooptimizer_schedules(pool: &SqlitePool) -> ApiResult<()> {
 /// this fn is idempotent and re-opening an already-initialized DB is a no-op.
 async fn migrate_nanochat_tables(pool: &SqlitePool) -> ApiResult<()> {
     for stmt in split_sql_statements(MIGRATION_069_NANOCHAT) {
+        sqlx::query(&stmt).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Migration 073: idempotently ensures the `eval_run_bars` table exists
+/// for live-run OHLCV candle chart data. The migration file contains both
+/// a CREATE TABLE and a CREATE INDEX statement, so we split and run each
+/// on its own via `split_sql_statements`. All DDL uses `IF NOT EXISTS` —
+/// re-opening an already-migrated DB is a no-op.
+async fn migrate_eval_run_bars(pool: &SqlitePool) -> ApiResult<()> {
+    for stmt in split_sql_statements(MIGRATION_073_EVAL_RUN_BARS) {
         sqlx::query(&stmt).execute(pool).await?;
     }
     Ok(())

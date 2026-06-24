@@ -1506,8 +1506,9 @@ impl XvisionTools {
         let pf = preflight_validate(&strategy, Some(&scenario));
         warnings.extend(pf.warnings);
 
-        let granularity =
-            xvision_engine::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
+        let granularity = xvision_engine::strategies::bar_granularity_for_cadence(
+            strategy.manifest.decision_cadence_minutes,
+        );
         let timeframe_display = granularity.canonical();
 
         let window_secs = (scenario.time_window.end - scenario.time_window.start)
@@ -1750,12 +1751,9 @@ impl XvisionTools {
             .unwrap_or(60);
 
         let ctx = self.api_context().await?;
-        let all = api_scenario::list(
-            &ctx,
-            api_scenario::ListScenariosFilter::default(),
-        )
-        .await
-        .map_err(api_err_to_mcp)?;
+        let all = api_scenario::list(&ctx, api_scenario::ListScenariosFilter::default())
+            .await
+            .map_err(api_err_to_mcp)?;
         let count = req.count.unwrap_or(4);
         let rows = select_scenarios_mcp(
             &all,

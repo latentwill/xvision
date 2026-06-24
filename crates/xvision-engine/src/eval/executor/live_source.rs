@@ -56,7 +56,7 @@ use xvision_data::alpaca_live::{BarStreamEvent, BarSubscription};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError};
 
 use crate::api::ApiContext;
-use crate::eval::bars::{load_warmup_window, load_warmup_window_with_fetcher};
+use crate::eval::bars::load_warmup_window;
 use crate::eval::executor::traits::BarSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +118,7 @@ impl LiveStream {
         alpaca_fetcher: Option<&xvision_data::alpaca::AlpacaBarsFetcher>,
     ) -> Result<Self, LiveStreamError> {
         let now = Utc::now();
-        let warmup = load_warmup_window_with_fetcher(ctx, asset, granularity, now, warmup_bars, alpaca_fetcher)
+        let warmup = load_warmup_window(ctx, asset, granularity, now, warmup_bars)
             .await
             .map_err(|e| LiveStreamError::Warmup(format!("{e:?}")))?;
         Ok(Self {
