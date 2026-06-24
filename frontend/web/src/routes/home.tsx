@@ -30,7 +30,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
-import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
 import { CapitalRiskStrip } from "@/components/home/CapitalRiskStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
@@ -50,13 +49,11 @@ import { costKeys, getCostBudget, getCostRollup } from "@/api/cost";
 import { evalKeys, listRuns } from "@/api/eval";
 import { deploymentKeys, listDeployments } from "@/api/live-deployments";
 import { strategyKeys, listStrategies } from "@/api/strategies";
-import { getBrokers, listProviders, settingsKeys, testAlpacaConnection } from "@/api/settings";
+import { getBrokers, settingsKeys } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
-import { getSafetyState, safetyKeys } from "@/api/safety";
 import { listCriticalFindings } from "@/api/eval-review";
 import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
-import { buildDeployReadiness } from "@/features/home/deploy-readiness";
 import { aggregateCapitalRisk } from "@/features/home/capital-risk";
 import {
   computeSinceDelta,
@@ -66,8 +63,6 @@ import {
 import type {
   BrokerEntry,
   BrokersReport,
-  ProviderRow,
-  RunSummary,
 } from "@/api/types.gen";
 
 // One page of recent runs feeds the pulse KPIs, leaderboard, and coverage
@@ -78,10 +73,6 @@ const RUNS_PAGE = { limit: 100 } as const;
 // Same population (and cache entry) as LiveSummaryStrip: liveness is derived
 // from non-terminal agent runs only.
 const LIVENESS_PARAMS = { status: "running,queued", limit: 100 } as const;
-
-// In-flight eval runs for the deploy-readiness "no blocking eval" check —
-// same shape ActiveTasksStrip uses, so the stuck-run story stays consistent.
-const INFLIGHT_PARAMS = { status: "queued,running" } as const;
 
 // n0k/awm (CT5 §9): active live/paper deployments for the ActiveTasksStrip live
 // rows. Capital / P&L / drawdown come from THIS 5s poll (per-tick capital
@@ -114,10 +105,6 @@ export function HomeRoute() {
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
   });
-  const providers = useQuery({
-    queryKey: settingsKeys.providers(),
-    queryFn: listProviders,
-  });
   const brokers = useQuery({
     queryKey: settingsKeys.brokers(),
     queryFn: getBrokers,
@@ -128,30 +115,6 @@ export function HomeRoute() {
     refetchInterval: 10_000,
   });
 
-  // e17: safety state for the deploy-readiness "no blocking eval" check.
-  // Reuses safetyKeys.state so SafetyPauseBanner and the readiness gate share
-  // one cache entry rather than double-fetching.
-  const safety = useQuery({
-    queryKey: safetyKeys.state(),
-    queryFn: getSafetyState,
-  });
-
-  // e17: broker reachability — configured-but-unreachable is a deploy-blocker.
-  // Only probe when Alpaca is actually configured; an unconfigured broker is
-  // not "unreachable", it's just "not set up yet" (handled by the selector).
-  const brokerConfigured = brokers.data?.alpaca.configured ?? false;
-  const brokerTest = useQuery({
-    queryKey: [...settingsKeys.brokers(), "test-connection"],
-    queryFn: testAlpacaConnection,
-    enabled: brokerConfigured,
-  });
-
-  // e17: the in-flight eval list (queued|running) feeds the stuck-run check.
-  const inflightRuns = useQuery({
-    queryKey: evalKeys.runs(INFLIGHT_PARAMS),
-    queryFn: () => listRuns(INFLIGHT_PARAMS),
-    refetchInterval: 10_000,
-  });
 
   // jlm: read-before-write the last-visit boundary. snapshotLastVisit() freezes
   // the PREVIOUS boundary at module scope on the first render this page load —
@@ -272,7 +235,7 @@ export function HomeRoute() {
       <div className="space-y-5">
         <SafetyPauseBanner />
 
-        <DeployReadinessStrip checks={readinessChecks} />
+        {/* Deploy readiness gate (e17) removed — unused queries dropped */}
 
         {/* 8s4: capital-risk safety strip — slim top band in the safety-gate
             area, under SafetyPauseBanner (which keeps its top precedence) and

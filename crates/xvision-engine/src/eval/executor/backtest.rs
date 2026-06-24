@@ -3707,6 +3707,7 @@ impl Executor {
                             &asset.as_alpaca_pair(),
                             bar_count,
                             bar.timestamp,
+                            bar.open,
                             bar.high,
                             bar.low,
                             bar.close,
@@ -3958,7 +3959,7 @@ impl Executor {
                 // bar_limit when one is set, else hold at 0 (indeterminate).
                 scenario_progress_pct: stop_policy
                     .bar_limit
-                    .map(|lim| ((bar_count as f64 / lim as f64) * 100.0).clamp(0.0, 100.0))
+                    .map(|lim| ((live_bar_count as f64 / lim as f64) * 100.0).clamp(0.0, 100.0))
                     .unwrap_or(0.0),
                 current_ts: wall_now,
             });
@@ -4049,7 +4050,7 @@ impl Executor {
                     tracing::warn!(
                         target: "xvision_engine::live",
                         error = %e,
-                        bar_count,
+                        live_bar_count,
                         "live agent dispatch failed; skipping bar, will retry next cycle"
                     );
                     skipped_dispatches += 1;
@@ -4140,7 +4141,7 @@ impl Executor {
                     tracing::info!(
                         target: "xvision_engine::live_executor",
                         run_id = %run.id,
-                        bar_count,
+                        live_bar_count,
                         "live run reached time_limit_secs {secs}; ending stream loop"
                     );
                     break;
@@ -4379,12 +4380,12 @@ impl Executor {
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
             // first terminates the loop cleanly (not an error).
-            if let Some(stop) = live_stop_reason(&stop_policy, bar_count, decision_idx, n_trades, run_started)
+            if let Some(stop) = live_stop_reason(&stop_policy, live_bar_count, decision_idx, n_trades, run_started)
             {
                 tracing::info!(
                     run_id = %run.id,
                     reason = %stop,
-                    bar_count,
+                    live_bar_count,
                     decision_idx,
                     "live run reached stop policy; ending stream loop"
                 );

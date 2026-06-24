@@ -182,6 +182,10 @@ describe("NagStrip", () => {
       paused_at: null,
       flatten_requested: false,
     };
+    unrealized_pnl_usd: null,
+    skipped_dispatches: 0,
+    delayed_decisions: 0,
+    forced_cancels: 0,
 
     // Composition mirrors home.tsx: infra nags FIRST, config nags after.
     const items = [...failedRunNags([failedRun], NOW), PROVIDER_ITEM];

@@ -58,8 +58,6 @@ target/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 .claude/hooks/.clippy-tail.log
-# Agent skill imports (local only, submodule gets its own tracking)
-.claude/skills/
 
 # Superpowers brainstorming session content (ephemeral mockups + state)
 .superpowers/
@@ -109,15 +107,13 @@ target/
 # Local tool workspaces
 .clawpatch/
 .goodtogo/
-# Agent skill imports (local only)
-.agents/
-
 .metaswarm/
 .xvn-dev/
 
 # Generated graph output (graphify tool) — rebuildable, large
+/graphify-out/
 
-graphify-out/
+# 1Password env wrapper — secrets indirection, never commit
 .op_env
 
 # Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
@@ -130,7 +126,6 @@ frontend/web/node_modules/
 frontend/web/dist/
 frontend/web/*.tsbuildinfo
 frontend/web/.vite/
-frontend/web/bun.lock
 
 # agent-conductor scripts
 tools/agent-conductor/scripts/node_modules/
@@ -220,6 +215,3 @@ tools/agent-conductor/dist/
 /contracts/README.md
 /.beads/README.md
 /.github/projects/agent-cicd-board.md
-# Personal dev scripts — local only, not distributed
-/scripts/deploy-image.sh
-/scripts/watch-prs-and-deploy.sh

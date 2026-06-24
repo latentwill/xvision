@@ -524,7 +524,18 @@ pub async fn build_run_payload_with(
 
         // Primary: eval_run_bars table (073_eval_run_bars).
         let bars_from_store = if include.bars {
-            store.read_bars(run_id).await.unwrap_or_default()
+            match store.read_bars(run_id).await {
+                Ok(bars) => bars,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "xvision_engine::chart",
+                        run_id = %run_id,
+                        error = %e,
+                        "read eval_run_bars failed; falling back to decision-derived bars",
+                    );
+                    vec![]
+                }
+            }
         } else {
             vec![]
         };
@@ -1034,6 +1045,23 @@ fn split_markers(decisions: &[crate::eval::store::DecisionRow], bars: &[MarketBa
                         price,
                         conviction: d.conviction,
                         decision_index: d.decision_index,
+                    });
+                }
+            }
+            // SLTP deterministic exits — render as Sell markers (closing a position).
+            // Action strings come from SltpTrigger variants: stop_loss, take_profit,
+            // max_bars_held, partial_tp1.
+            "stop_loss" | "take_profit" | "max_bars_held" | "partial_tp1" => {
+                if let (Some(price), Some(fill_size)) = (d.fill_price, d.fill_size) {
+                    trades.push(TradeMarker {
+                        time: t,
+                        side: TradeSide::Sell,
+                        price,
+                        size: fill_size,
+                        fee: d.fee.unwrap_or(0.0),
+                        pnl_realized: d.pnl_realized,
+                        decision_index: d.decision_index,
+                        justification: d.justification.clone(),
                     });
                 }
             }
