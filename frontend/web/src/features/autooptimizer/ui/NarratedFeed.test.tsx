@@ -190,7 +190,7 @@ describe("NarratedFeed — maxItems prop", () => {
     expect(screen.getByText(/Cycle finished/)).toBeInTheDocument();
   });
 
-  it("defaults maxItems to 100 — renders all when ≤100 events", () => {
+  it("defaults maxItems to 20 — renders all when ≤20 events", () => {
     const events = Array.from({ length: 10 }, (_, i) => ({
       type: "phase_started",
       phase: `p${i}`,

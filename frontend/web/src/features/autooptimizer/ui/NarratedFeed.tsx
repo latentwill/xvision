@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { CycleProgressEvent } from "../api";
 import { narrateEvent, type NarrationTone } from "../selectors/narrateEvent";
 import { ExpandableArtifact } from "./ExpandableArtifact";
@@ -30,11 +31,15 @@ function fmtTime(ts?: string) {
 
 export function NarratedFeed({
   events,
-  maxItems = 100,
+  maxItems = 20,
+  viewAllHref,
 }: {
   events: CycleProgressEvent[];
   maxItems?: number;
+  /** Link to the full run detail page, shown when events are capped. */
+  viewAllHref?: string;
 }) {
+  const capped = maxItems < events.length;
   const rows = events.slice(-maxItems).reverse();
   return (
     <ol className="space-y-0" aria-label="Cycle events">
@@ -68,6 +73,17 @@ export function NarratedFeed({
           </li>
         );
       })}
+      {capped && viewAllHref && (
+        <li className="flex gap-3 pt-2">
+          <span className="flex w-2 flex-none justify-center" aria-hidden />
+          <Link
+            to={viewAllHref}
+            className="text-[12px] text-text-3 hover:text-text transition-colors underline underline-offset-2 decoration-dotted"
+          >
+            View all {events.length} events →
+          </Link>
+        </li>
+      )}
     </ol>
   );
 }

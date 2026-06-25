@@ -254,7 +254,13 @@ export function ConsoleModule({
       />
       {/* No feed when the event log is unavailable — the node-derived board
           alone is the content; never surface an apology line. */}
-      {!eventsUnavailable && <NarratedFeed events={events} maxItems={feedMaxItems} />}
+      {!eventsUnavailable && (
+        <NarratedFeed
+          events={events}
+          maxItems={feedMaxItems}
+          viewAllHref={liveCycleId ?? replayId ? `/optimizer/cycle/${liveCycleId ?? replayId}` : undefined}
+        />
+      )}
     </section>
   );
 }
