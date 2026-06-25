@@ -131,7 +131,8 @@ export function useLiveActivity(): LiveActivity {
     for (let i = stream.events.length - 1; i >= 0; i--) {
       const et = kindOf(stream.events[i]);
       if (et === "cycle_started") {
-        const t = stream.events[i].ts ? new Date(stream.events[i].ts).getTime() : NaN;
+        const ts = stream.events[i].ts;
+        const t = ts ? new Date(ts).getTime() : NaN;
         return Number.isFinite(t) ? t : null;
       }
     }
