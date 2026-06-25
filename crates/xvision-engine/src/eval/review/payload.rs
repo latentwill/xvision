@@ -432,8 +432,16 @@ mod tests {
         assert_eq!(sampled[9], 99, "must keep last");
         // Middle elements should be roughly evenly spaced.
         // With 10 samples from 0..99, indices should be roughly 0,11,22,33,44,55,66,77,88,99.
-        assert!(sampled[1] >= 8 && sampled[1] <= 14, "sample[1] should be ~11, got {}", sampled[1]);
-        assert!(sampled[8] >= 85 && sampled[8] <= 91, "sample[8] should be ~88, got {}", sampled[8]);
+        assert!(
+            sampled[1] >= 8 && sampled[1] <= 14,
+            "sample[1] should be ~11, got {}",
+            sampled[1]
+        );
+        assert!(
+            sampled[8] >= 85 && sampled[8] <= 91,
+            "sample[8] should be ~88, got {}",
+            sampled[8]
+        );
     }
 
     #[test]

@@ -88,11 +88,10 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
     // `reasoning-agent` as the fallback for provider/model settings.
     let (profile, custom_prompt) = resolve_prompt_value(&store, &args.prompt).await?;
 
-    // Idempotency: only short-circuit on a Completed or in-flight
-    // review for this (run, profile) pair. A prior Failed row is
-    // retry-eligible — returning it would make transient dispatch
-    // errors sticky on subsequent calls.
-    let existing = if args.force {
+    // Idempotency: only short-circuit profile-based prompts. A custom
+    // prompt currently persists under the fallback profile id, so a cache
+    // lookup keyed only by profile would skip the caller's prompt.
+    let existing = if args.force || custom_prompt.is_some() {
         None
     } else {
         store
@@ -474,6 +473,7 @@ mod tests {
                     fill_size: Some(0.01),
                     fee: Some(1.0),
                     pnl_realized: Some(0.0),
+                    delayed: Some(false),
                 })
                 .await
                 .unwrap();
@@ -644,6 +644,51 @@ mod tests {
             .into_iter()
             .find(|r| r.agent_profile_id == "reasoning-agent" && !matches!(r.status, ReviewStatus::Failed));
         assert!(existing.is_none(), "Failed rows must not be reused");
+    }
+
+    #[tokio::test]
+    async fn custom_prompt_does_not_reuse_cached_profile_review() {
+        let (_tmp, xvn_home) = fresh_home().await;
+        let ctx = ApiContext::open(&xvn_home, xvision_engine::api::Actor::Cli { user: "test".into() })
+            .await
+            .expect("open ctx");
+        let store = RunStore::new(ctx.db.clone());
+        let run_id = seed_run(&ctx.db).await;
+
+        let prior = xvision_engine::eval::review::EvalReview::new_queued(
+            run_id.clone(),
+            "reasoning-agent".to_string(),
+        );
+        store.create_review(&prior).await.unwrap();
+        store
+            .complete_review(
+                &prior.id,
+                xvision_engine::eval::review::ReviewVerdict::Inconclusive,
+                0.0,
+                0,
+                "prior profile review",
+                "{}",
+            )
+            .await
+            .unwrap();
+
+        run_review_cmd(ReviewArgs {
+            run_id: run_id.clone(),
+            prompt: "Focus only on drawdown outliers.".to_string(),
+            force: false,
+            format: OutputFormat::Human,
+            output: None,
+            xvn_home: Some(xvn_home),
+        })
+        .await
+        .expect("custom prompt should run a fresh review");
+
+        let reviews = store.list_reviews_for_run(&run_id).await.unwrap();
+        assert_eq!(
+            reviews.len(),
+            2,
+            "custom prompt must not reuse an existing review cached for the fallback profile"
+        );
     }
 
     #[tokio::test]

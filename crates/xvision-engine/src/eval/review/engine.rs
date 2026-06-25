@@ -251,8 +251,7 @@ async fn call_model(
             let msg = format!("{e:#}");
             if is_overflow_error(&msg) {
                 // Retry with compact JSON.
-                let compact =
-                    serde_json::to_string(payload).map_err(|e| format!("serialize: {e}"))?;
+                let compact = serde_json::to_string(payload).map_err(|e| format!("serialize: {e}"))?;
                 let user_text = format!("{legend}\n\nReview payload:\n{compact}");
                 let req = LlmRequest {
                     model: profile.model.clone(),

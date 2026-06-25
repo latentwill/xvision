@@ -19,7 +19,7 @@ import { ReviewPanel } from "@/features/eval-runs/review";
 import { RunSummaryError as RunSummaryPanel } from "@/features/eval-runs/RunSummary";
 import { useAdaptivePoll } from "@/features/eval-runs/useAdaptivePoll";
 import { useTraceDock } from "@/stores/trace-dock";
-import { isInflightRunStatus } from "@/lib/run-status";
+import { isInflightRunStatus, isRetryableRunStatus, isTerminalRunStatus } from "@/lib/run-status";
 import { evalRunDisambiguator, evalRunLabels } from "@/lib/run-display";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
 import { getStrategy, listStrategies, strategyKeys } from "@/api/strategies";
@@ -552,9 +552,7 @@ function useLiveRunStream(
   }, [runId, shouldStream, queryClient]);
 }
 
-function isTerminalStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
+const isTerminalStatus = isTerminalRunStatus;
 
 function displayCost(summary: RunSummary, totalCostUsd: number | null): number | null {
   return summary.inference_cost_quote_total ?? totalCostUsd;
@@ -603,10 +601,7 @@ function SummaryCard({
 }) {
   const inflight = isInflightRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
-  const canRetry =
-    summary.status === "failed" ||
-    summary.status === "cancelled" ||
-    summary.status === "completed";
+  const canRetry = isRetryableRunStatus(summary.status) || summary.status === "completed";
   const isRerun = summary.status === "completed";
   const retryLabel = isRerun ? "Rerun" : "Retry";
   const retryInflightLabel = isRerun ? "Rerunning…" : "Retrying...";

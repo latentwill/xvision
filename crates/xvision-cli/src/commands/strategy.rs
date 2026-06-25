@@ -1,5 +1,6 @@
 //! `xvn strategy ...` — strategy authoring subcommands.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -2192,11 +2193,9 @@ async fn set_filter(strategy_id: &str, from_json: Option<&PathBuf>, from_stdin: 
         .map_err(|e| api_to_cli("strategy set-filter (load strategy)", e))?;
     let raw = if from_stdin {
         let mut buf = String::new();
-        std::io::read_to_string(std::io::stdin(), &mut buf).map_err(|e| {
-            CliError::usage(anyhow::anyhow!(
-                "failed to read filter JSON from stdin: {e}"
-            ))
-        })?;
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("failed to read filter JSON from stdin: {e}")))?;
         if buf.trim().is_empty() {
             return Err(CliError::usage(anyhow::anyhow!(
                 "stdin is empty; pipe filter JSON to set-filter --from-stdin"

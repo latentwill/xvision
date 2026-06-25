@@ -27,8 +27,8 @@ use xvision_engine::api::eval::{
 use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::export::{self, EvalRunExport};
 use xvision_engine::eval::reconcile::ReconcileOutcome;
-use xvision_engine::eval::store::RunStore;
 use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::store::RunStore;
 
 use crate::error::DashboardError;
 use crate::state::AppState;

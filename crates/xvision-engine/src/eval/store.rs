@@ -623,6 +623,21 @@ impl RunStore {
         self.fail_active(id, reason, Some(RunStatus::Disconnected)).await
     }
 
+    /// Resume a disconnected live run: transition it back to `Running` and
+    /// clear terminal fields that were stamped when the process disconnected.
+    pub async fn resume_disconnected(&self, id: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET status = 'running', completed_at = NULL, error = NULL \
+             WHERE id = ? AND status = 'disconnected'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("resume disconnected eval_run")?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Overwrite `metrics_json` on a completed run. Called post-finalize when
     /// additional aggregations (e.g. inference cost) are computed after the
     /// executor writes the initial metrics blob. Unlike `finalize`, this does
@@ -1444,7 +1459,7 @@ impl RunStore {
         sqlx::query(
             "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id, bar_index) DO NOTHING",
+             ON CONFLICT(run_id, asset, bar_index) DO NOTHING",
         )
         .bind(run_id)
         .bind(asset)
@@ -1465,8 +1480,8 @@ impl RunStore {
     pub async fn record_bars_batch(
         &self,
         run_id: &str,
-        bars: &[(i64, String, f64, f64, f64, f64, f64)],
-        // (bar_index, timestamp, open, high, low, close, volume)
+        bars: &[(String, i64, String, f64, f64, f64, f64, f64)],
+        // (asset, bar_index, timestamp, open, high, low, close, volume)
     ) -> Result<()> {
         if bars.is_empty() {
             return Ok(());
@@ -1476,13 +1491,14 @@ impl RunStore {
             .begin()
             .await
             .context("begin tx for record_bars_batch")?;
-        for (bar_index, timestamp, open, high, low, close, volume) in bars {
+        for (asset, bar_index, timestamp, open, high, low, close, volume) in bars {
             sqlx::query(
-                "INSERT INTO eval_run_bars (run_id, bar_index, timestamp, open, high, low, close, volume) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(run_id, bar_index) DO NOTHING",
+                "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(run_id, asset, bar_index) DO NOTHING",
             )
             .bind(run_id)
+            .bind(asset)
             .bind(bar_index)
             .bind(timestamp)
             .bind(open)
@@ -1512,6 +1528,37 @@ impl RunStore {
         .fetch_all(&self.pool)
         .await
         .context("read eval_run_bars")?;
+        rows.iter()
+            .map(|r| {
+                let ts: String = r.try_get("timestamp").context("read bar timestamp")?;
+                let parsed = DateTime::parse_from_rfc3339(&ts)
+                    .with_context(|| format!("parse bar timestamp {ts:?}"))?
+                    .with_timezone(&Utc);
+                let open: f64 = r.try_get("open").context("read bar open")?;
+                let high: f64 = r.try_get("high").context("read bar high")?;
+                let low: f64 = r.try_get("low").context("read bar low")?;
+                let close: f64 = r.try_get("close").context("read bar close")?;
+                let volume: f64 = r.try_get("volume").context("read bar volume")?;
+                let asset: String = r.try_get("asset").context("read bar asset")?;
+                Ok((parsed, open, high, low, close, volume, asset))
+            })
+            .collect()
+    }
+    /// Read OHLCV bars for a single asset within a run, ordered by bar_index ascending.
+    pub async fn read_bars_for_asset(
+        &self,
+        run_id: &str,
+        asset: &str,
+    ) -> Result<Vec<(DateTime<Utc>, f64, f64, f64, f64, f64, String)>> {
+        let rows = sqlx::query(
+            "SELECT timestamp, open, high, low, close, volume, asset \
+             FROM eval_run_bars WHERE run_id = ? AND asset = ? ORDER BY bar_index ASC",
+        )
+        .bind(run_id)
+        .bind(asset)
+        .fetch_all(&self.pool)
+        .await
+        .context("read eval_run_bars for asset")?;
         rows.iter()
             .map(|r| {
                 let ts: String = r.try_get("timestamp").context("read bar timestamp")?;
