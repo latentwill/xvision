@@ -29,6 +29,7 @@ use xvision_engine::autooptimizer::{
     metering_dispatch::{CostMeteringDispatch, CycleMeter},
     mutator::Mutator,
     parent_policy::ParentPolicy,
+    preflight::infer_trader_provider,
     preflight::preflight_trader_provider,
     preflight_cycle,
     progress::CycleProgressEvent,
@@ -255,11 +256,13 @@ pub async fn start_cycle(
             Arc::clone(&meter),
         ))
     };
-
-    // The paper-test backtest dispatches every trader decision through the
-    // metered mutator dispatch (the cycle provider), so the strategy's trader
-    // must route to that same provider.
-    let cycle_provider = mutator_provider.clone();
+    // The paper-test backtest dispatches every trader decision. By default it
+    // uses the mutator's provider (the cycle provider). But if the strategy's
+    // trader routes to a different provider (e.g. ollama), we auto-detect that
+    // and build a separate paper-test dispatch for the trader's provider so the
+    // backtest decisions flow through the right API. This matches the CLI's
+    // `--provider X --mutator-provider Y` pattern.
+    let mutator_provider_for_cycle = mutator_provider.clone();
     let (mutator, judge) = build_mutator_and_judge(
         &cfg,
         mutator_provider,
@@ -285,32 +288,60 @@ pub async fn start_cycle(
     // granularity matches the strategy's decision cadence (was hardcoded 1h).
     let (bundle_hash, strategy) =
         load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
+
+    // Determine the trader's effective provider+model so we can route the
+    // paper-test backtest through the right dispatch. Agents-backed strategies
+    // resolve through agent slots; legacy strategies use the trader_slot.
+    let paper_test_info = resolve_paper_test_provider(&pool, &strategy).await;
+    let skip_provider_check = paper_test_info
+        .as_ref()
+        .map_or(false, |(p, _)| !p.eq_ignore_ascii_case(&mutator_provider_for_cycle));
+
+    // When the trader uses a different provider, build a separate dispatch for
+    // the paper-test so backtest decisions flow through the trader's own provider
+    // (matching the CLI's `--provider <trader> --mutator-provider <other>` pattern).
+    let (backtest_dispatch, effective_cycle_provider): (
+        Arc<dyn LlmDispatch + Send + Sync>,
+        String,
+    ) = if let Some((trader_provider, trader_model)) = &paper_test_info {
+        if *trader_provider != mutator_provider_for_cycle {
+            let raw_pt = build_autooptimizer_dispatch(trader_provider, trader_model, &state.xvn_home).await?;
+            let pt_catalogs = load_metering_catalogs(&state.xvn_home, trader_provider).await;
+            let metered_pt: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(
+                CostMeteringDispatch::new(raw_pt, pt_catalogs, Arc::clone(&meter)),
+            );
+            (metered_pt, trader_provider.clone())
+        } else {
+            (Arc::clone(&metered_mutator), mutator_provider_for_cycle.clone())
+        }
+    } else {
+        (Arc::clone(&metered_mutator), mutator_provider_for_cycle.clone())
+    };
+
     let cadence_minutes = strategy.manifest.decision_cadence_minutes;
     let day_scenario = build_day_scenario(&cfg, cadence_minutes)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
-    // B19: synthesize the round-robin scenario_pool (empty unless configured in
-    // autooptimizer.toml). Same builders as the single pair so pool pairs share
-    // venue/fee/fill settings; empty ⇒ single-pair behavior (back-compat).
     let scenario_pool = build_scenario_pool(&cfg, cadence_minutes)?;
-    // F22/F26: fail fast with guidance instead of a confusing cross-provider 400
-    // when the strategy's trader would route to a provider other than the cycle's.
-    // Shared with the CLI via `autooptimizer::preflight` — no parallel guard.
-    preflight_trader_provider(&pool, &strategy, strategy_id, &cycle_provider, false, false)
-        .await
-        .map_err(|e| DashboardError::Validation {
-            field: "strategy_id".into(),
-            msg: e.message,
-        })?;
+
+    // Preflight: shared with the CLI via `autooptimizer::preflight`.
+    // When the trader's provider differs from the mutator's, skip the
+    // provider-consistency check — we've already built a separate dispatch.
+    preflight_trader_provider(
+        &pool, &strategy, strategy_id, &effective_cycle_provider, false, skip_provider_check,
+    )
+    .await
+    .map_err(|e| DashboardError::Validation {
+        field: "strategy_id".into(),
+        msg: e.message,
+    })?;
     preflight_cycle::preflight_cycle(&pool, &strategy, strategy_id, false)
         .await
         .map_err(|e| DashboardError::Validation {
             field: "strategy_id".into(),
             msg: e.message,
         })?;
-    // Extract the trader provider before moving strategy into parent_strategies.
-    // The Cline sidecar needs the trader's provider (not the mutator's) because
-    // the sidecar dispatches TRADER LLM calls; mutator+judge use separate dispatch.
+
     let sidecar_provider = strategy
         .trader_slot
         .as_ref()
@@ -330,15 +361,8 @@ pub async fn start_cycle(
         explicit_parent_hashes,
     );
     let tx = state.autooptimizer_tx.clone();
-    // F13: write candidate strategy blobs to the same `lineage/blobs` root the
-    // `/blob/:hash` endpoint reads, so cycle children are retrievable.
     let cycle_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
-    // F26: build a fully-wired ApiContext (event bus + observability) so the
-    // dashboard's optimizer cycle drives REAL backtests through the same shared
-    // `Executor`/`run_pipeline` path as the CLI, `eval run`, the chat rail, and
-    // live — not the deterministic stub that always tied and rejected everything.
     let api_ctx = state.api_context();
-    let backtest_dispatch = Arc::clone(&metered_mutator);
     // F35: generate the cycle id up-front so a background ticker can persist the
     // running cost/tokens INCREMENTALLY under it. Previously the cost was written
     // once at cycle end, so a killed/crashed UI cycle (the runaway-token case)
@@ -930,6 +954,44 @@ pub(super) async fn load_strategy_parent(
     }
 
     Ok((bundle_hash, strategy))
+}
+
+/// Resolve the strategy's trader to an effective (provider, model) pair for
+/// the paper-test backtest. Returns `None` for mechanistic strategies or when
+/// the trader cannot be resolved (the normal run path will surface that error).
+async fn resolve_paper_test_provider(
+    pool: &sqlx::SqlitePool,
+    strategy: &Strategy,
+) -> Option<(String, String)> {
+    if strategy.decision_mode == xvision_engine::strategies::DecisionMode::Mechanistic {
+        return None;
+    }
+    if !strategy.agents.is_empty() {
+        if let Ok(slots) =
+            xvision_engine::agent::pipeline::resolve_agent_slots_for_strategy(pool, strategy).await
+        {
+            for rs in &slots {
+                let model = rs.slot.effective_model();
+                if let Some(p) = infer_trader_provider(
+                    rs.slot.provider.as_deref().unwrap_or(""),
+                    &model,
+                ) {
+                    return Some((p, model));
+                }
+            }
+        }
+    } else if let Some(slot) = &strategy.trader_slot {
+        if slot.has_model_binding() {
+            let model = slot.effective_model();
+            if let Some(p) = infer_trader_provider(
+                slot.provider.as_deref().unwrap_or(""),
+                &model,
+            ) {
+                return Some((p, model));
+            }
+        }
+    }
+    None
 }
 
 pub(super) fn build_day_scenario(
