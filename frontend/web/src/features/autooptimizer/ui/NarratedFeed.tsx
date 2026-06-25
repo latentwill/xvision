@@ -35,7 +35,7 @@ export function NarratedFeed({
   events: CycleProgressEvent[];
   maxItems?: number;
 }) {
-  const rows = events.slice(-maxItems);
+  const rows = events.slice(-maxItems).reverse();
   return (
     <ol className="space-y-0" aria-label="Cycle events">
       {rows.map((e, i) => {
