@@ -18,9 +18,6 @@ import {
   useCycleRun,
   useLineageNodes,
   useSchedule,
-  usePauseCycle,
-  useResumeCycle,
-  useCancelCycle,
   type LineageNode,
 } from "../api";
 import { useLiveActivity } from "../hooks/useLiveActivity";
@@ -130,9 +127,6 @@ export function OptimizerHome() {
   // singleton, so this is the SAME socket useLiveActivity reads — no second
   // EventSource.
   const { events: cycleEvents, isRunning: streamRunning } = useCycleEventStream();
-  const pauseMutation = usePauseCycle();
-  const resumeMutation = useResumeCycle();
-  const cancelMutation = useCancelCycle();
 
   const launchButton: ReactNode = !isActive ? (
     <button
@@ -150,44 +144,9 @@ export function OptimizerHome() {
     </button>
   ) : null;
 
-  const cancelButton =
-    session != null && activeCycleId != null ? (
-      <button
-        type="button"
-        onClick={() => cancelMutation.mutate(activeCycleId)}
-        disabled={cancelMutation.isPending}
-        className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        Cancel
-      </button>
-    ) : null;
-
   const action: ReactNode =
-    state === "running" && session && activeCycleId ? (
-      <>
-        <button
-          type="button"
-          onClick={() => pauseMutation.mutate(activeCycleId)}
-          disabled={pauseMutation.isPending}
-          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          Pause
-        </button>
-        {cancelButton}
-      </>
-    ) : state === "paused" && session && activeCycleId ? (
-      <>
-        <button
-          type="button"
-          onClick={() => resumeMutation.mutate(activeCycleId)}
-          disabled={resumeMutation.isPending}
-          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          Resume
-        </button>
-        {cancelButton}
-      </>
-    ) : hasHistory ? (
+    isActive ? null :
+    hasHistory ? (
       // Idle with history: show the launch button in the headline.
       // Never-ran: no action here — ConsoleModule's NeverRanExplainer is the
       // single owner of the launch button via the launchAction slot below.

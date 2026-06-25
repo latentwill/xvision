@@ -121,12 +121,32 @@ export function useLiveActivity(): LiveActivity {
     status?.active_cycle_id ??
     (activity !== "idle" ? latestCycleId : null);
 
+  // Also check the SSE stream for a cycle_started timestamp — the stream is
+  // the fastest signal and always carries a ts (client-side when the backend
+  // broadcasts without one). Without this fallback, a new run detected by the
+  // stream would show elapsed from the OLD persisted cycle while useCycleRuns
+  // is still serving stale cached data (up to 30s staleTime), e.g. "91h 26m
+  // elapsed" on a just-started run.
+  const streamStartedAtMs = useMemo(() => {
+    for (let i = stream.events.length - 1; i >= 0; i--) {
+      const et = kindOf(stream.events[i]);
+      if (et === "cycle_started") {
+        const t = stream.events[i].ts ? new Date(stream.events[i].ts).getTime() : NaN;
+        return Number.isFinite(t) ? t : null;
+      }
+    }
+    return null;
+  }, [stream.events]);
+
   return {
     activity,
     source,
     activeCycleId,
     session: status?.active_session ?? null,
     connected: stream.connected,
-    startedAtMs: activity !== "idle" ? startedAtMs : null,
+    // Prefer the stream timestamp when available — it's the most up-to-date
+    // signal. Fall back to persisted events (which are authoritative but may be
+    // from a previous cycle when the SSE stream already detected a new run).
+    startedAtMs: activity !== "idle" ? (streamStartedAtMs ?? startedAtMs) : null,
   };
 }

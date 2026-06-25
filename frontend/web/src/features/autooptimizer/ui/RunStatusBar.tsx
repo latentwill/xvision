@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Pill } from "@/components/primitives/Pill";
-import type { SessionSummary } from "../api";
+import {
+  usePauseCycle,
+  useResumeCycle,
+  useCancelCycle,
+  type SessionSummary,
+} from "../api";
 import type { Activity, ActivitySource } from "../selectors/deriveActivity";
 import { formatElapsed } from "../utils/time";
 
@@ -78,10 +83,14 @@ export function RunStatusBar({
   startedAtMs: number | null;
 }) {
   const elapsed = useElapsed(activity === "running" ? startedAtMs : null);
+  const pauseMutation = usePauseCycle();
+  const resumeMutation = useResumeCycle();
+  const cancelMutation = useCancelCycle();
   if (activity === "idle") return null;
 
   const tone = TONE[activity];
   const cycleNo = session ? session.cycles_completed + 1 : null;
+  const controllable = session != null && cycleId != null;
 
   return (
     <div
@@ -108,6 +117,48 @@ export function RunStatusBar({
         <Metric value={session.suspect_count} label="suspect" tone="text-warn" />
       )}
       {elapsed && <Metric value={elapsed} label="elapsed" />}
+
+      {/* Control buttons — only for controllable status-backed runs */}
+      {controllable && activity === "running" && (
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => pauseMutation.mutate(cycleId!)}
+            disabled={pauseMutation.isPending}
+            className="rounded border border-border px-2.5 py-1 text-[12px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Pause
+          </button>
+          <button
+            type="button"
+            onClick={() => cancelMutation.mutate(cycleId!)}
+            disabled={cancelMutation.isPending}
+            className="rounded border border-danger/40 px-2.5 py-1 text-[12px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+        </span>
+      )}
+      {controllable && activity === "paused" && (
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => resumeMutation.mutate(cycleId!)}
+            disabled={resumeMutation.isPending}
+            className="rounded bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Resume
+          </button>
+          <button
+            type="button"
+            onClick={() => cancelMutation.mutate(cycleId!)}
+            disabled={cancelMutation.isPending}
+            className="rounded border border-danger/40 px-2.5 py-1 text-[12px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+        </span>
+      )}
 
       <span
         className="ml-auto inline-flex items-center gap-1.5 font-mono text-[11px] text-text-3"
