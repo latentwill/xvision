@@ -807,11 +807,17 @@ where
                         }
                     }
                     Ok(None) => {
-                        tracing::warn!(
+                        // Use error! level so this ALWAYS appears in container
+                        // logs regardless of log level filter — this is the most
+                        // common failure mode when prompts aren't loaded.
+                        tracing::error!(
                             target: "xvision::autooptimizer::prompt",
                             agent_id = %agent_ref.agent_id,
                             role = %role,
-                            "agent not found in agent_library — prompt resolution failed"
+                            strategy_prompt_override = ?agent_ref.prompt_override,
+                            "agent not found in agent_library — prompt resolution failed. \
+                             The agent must exist in the same SQLite database that the \
+                             optimizer pool connects to. Run `xvn agent get {id}` to verify."
                         );
                     }
                     Err(e) => {
