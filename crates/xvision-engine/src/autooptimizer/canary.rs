@@ -259,3 +259,88 @@ fn apply_sabotage_remove_loss_limit(s: &mut Strategy) {
 fn apply_sabotage_absurd_cadence(s: &mut Strategy) {
     s.manifest.decision_cadence_minutes = 999_999;
 }
+
+/// Minimum acceptable prompt length in characters. Shorter prompts are likely
+/// truncated or empty — the optimizer can't meaningfully improve from them.
+const MIN_PROMPT_LENGTH: usize = 200;
+
+/// Check the semantic structure of an agent prompt for basic integrity.
+///
+/// Returns `Ok(())` when the prompt passes all checks. Returns `Err(reasons)`
+/// when one or more checks fail, with each reason describing the specific
+/// violation. Used by the honesty gate to detect clearly broken mutations
+/// before they waste evaluation cycles.
+///
+/// Checks:
+/// 1. Minimum length (≥ 200 chars — truncated/empty prompts are useless)
+/// 2. Required trading decision fields (stop_loss, take_profit, or action spec)
+/// 3. No zero/negative position sizing language
+/// 4. No obviously reversed signal logic patterns
+pub fn validate_prompt_semantics(prompt: &str) -> Result<(), Vec<String>> {
+    let mut failures: Vec<String> = Vec::new();
+
+    // 1. Minimum length
+    if prompt.trim().len() < MIN_PROMPT_LENGTH {
+        failures.push(format!(
+            "prompt is too short ({} chars, minimum {}) — likely truncated or empty",
+            prompt.trim().len(),
+            MIN_PROMPT_LENGTH
+        ));
+    }
+
+    let lower = prompt.to_ascii_lowercase();
+
+    // 2. Required trading decision fields
+    let required_terms = ["stop_loss", "stop loss", "take_profit", "take profit", "action", "position"];
+    let has_decision_fields = required_terms.iter().any(|term| lower.contains(term));
+    if !has_decision_fields {
+        failures.push(
+            "prompt missing required trading decision fields (no stop_loss, take_profit, or action spec)"
+                .to_string(),
+        );
+    }
+
+    // 3. Zero/negative position sizing
+    let zero_size_patterns = [
+        "position size 0",
+        "position size: 0",
+        "size 0%",
+        "size: 0%",
+        "risk 0%",
+        "risk: 0",
+        "allocate 0",
+        "zero position",
+        "no position",
+        "do not trade",
+    ];
+    for pat in &zero_size_patterns {
+        if lower.contains(pat) {
+            failures.push(format!(
+                "prompt contains zero/negative position sizing language: \"{pat}\""
+            ));
+            break; // one is enough
+        }
+    }
+
+    // 4. Obviously reversed signal direction (mean-reversion context)
+    // "go long when RSI > 70" in a mean-reversion strategy is backwards —
+    // mean-reversion shorts overbought and buys oversold.
+    let reversed_signal_patterns = [
+        ("buy when rsi > 70", "reversed signal: buying overbought is anti-mean-reversion"),
+        ("go long when rsi > 70", "reversed signal: going long at overbought is anti-mean-reversion"),
+        ("sell when rsi < 30", "reversed signal: selling oversold is anti-mean-reversion"),
+        ("short when rsi < 30", "reversed signal: shorting oversold is anti-mean-reversion"),
+    ];
+    for (pat, reason) in &reversed_signal_patterns {
+        if lower.contains(pat) {
+            failures.push(format!("{reason} (\"{pat}\")"));
+            break; // one is enough to flag
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
+}

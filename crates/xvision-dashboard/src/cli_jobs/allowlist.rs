@@ -291,6 +291,10 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         head: "store",
         path: &["migrate"],
     },
+    DeniedNested {
+        head: "optimize",
+        path: &["unlock"],
+    },
 ];
 
 /// Every real command/subcommand path the remote policy *references*
@@ -353,9 +357,10 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
             ));
         }
     } else if head == "optimize" {
-        return AllowlistDecision::Reject(
-            "subcommand `optimize` is only allowed over remote cli as `optimize run`".into(),
-        );
+        // `optimize run` is covered by a strict template above. Other read-only
+        // subcommands (ls, show, diff, export, lineage) are allowed through.
+        // `unlock` is denied via DENIED_NESTED_SUBCOMMANDS below.
+        return AllowlistDecision::Allow;
     }
 
     AllowlistDecision::Allow

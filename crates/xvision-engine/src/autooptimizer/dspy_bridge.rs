@@ -38,23 +38,29 @@ pub trait DspyBridge: Send + Sync {
     /// of observations. Each observation is an `(id, text)` pair where `id` is
     /// the `memory_items.id` used for snapshot lineage. Returns a `CompileResult`
     /// containing the compiled instruction, provenance, and scored demos.
+    ///
+    /// `base_instruction` is the current agent system prompt, used to warm-start
+    /// the optimizer so it improves FROM the real prompt rather than generating
+    /// from scratch. `None` when no base prompt is available.
     async fn compile(
         &self,
         namespace: &str,
         observations: &[(String, String)],
+        base_instruction: Option<&str>,
     ) -> anyhow::Result<CompileResult>;
 }
+
 
 /// No-op bridge used when `dspy_enabled = false` or in tests that don't need
 /// the compile path.
 pub struct NullDspyBridge;
-
 #[async_trait]
 impl DspyBridge for NullDspyBridge {
     async fn compile(
         &self,
         _namespace: &str,
         _observations: &[(String, String)],
+        _base_instruction: Option<&str>,
     ) -> anyhow::Result<CompileResult> {
         Ok(CompileResult::empty("null"))
     }
@@ -76,6 +82,7 @@ impl DspyBridge for LiveDspyBridge {
         &self,
         _namespace: &str,
         observations: &[(String, String)],
+        base_instruction: Option<&str>,
     ) -> anyhow::Result<CompileResult> {
         if observations.is_empty() {
             return Ok(CompileResult::empty("live_summarizer"));
@@ -93,8 +100,12 @@ impl DspyBridge for LiveDspyBridge {
             no markdown headers) that, prepended to the experiment writer's system prompt, would \
             steer it toward the wins and away from the failures. Output ONLY the instruction text."
             .to_string();
+        let base_hint = match base_instruction.filter(|b| !b.is_empty()) {
+            Some(base) => format!("\n\nCurrent agent system prompt (improve FROM this, do not discard):\n{base}\n"),
+            None => String::new(),
+        };
         let user_text = format!(
-            "Observations from recent optimizer cycles:\n{joined}\n\nWrite the improved instruction prefix now."
+            "Observations from recent optimizer cycles:\n{joined}{base_hint}\n\nWrite the improved instruction prefix now."
         );
         let req = LlmRequest {
             model: self.model.clone(),
@@ -144,7 +155,7 @@ mod tests {
             model: "test-model".to_string(),
             provider: "test".to_string(),
         };
-        let result = bridge.compile("ns", &[]).await.unwrap();
+        let result = bridge.compile("ns", &[], None).await.unwrap();
         assert!(
             result.instruction.is_empty(),
             "empty observations must return empty instruction"
@@ -170,7 +181,7 @@ mod tests {
                 "J02: low conviction led to noise trades".to_string(),
             ),
         ];
-        let result = bridge.compile("autooptimizer:dspy", &obs).await.unwrap();
+        let result = bridge.compile("autooptimizer:dspy", &obs, None).await.unwrap();
         assert_eq!(result.instruction, expected);
         assert_eq!(result.demos.len(), 2);
         assert_eq!(result.optimizer_name, "live_summarizer");
@@ -180,7 +191,7 @@ mod tests {
     async fn null_bridge_returns_empty() {
         let bridge = NullDspyBridge;
         let result = bridge
-            .compile("ns", &[("id1".to_string(), "text1".to_string())])
+            .compile("ns", &[("id1".to_string(), "text1".to_string())], None)
             .await
             .unwrap();
         assert!(result.instruction.is_empty());

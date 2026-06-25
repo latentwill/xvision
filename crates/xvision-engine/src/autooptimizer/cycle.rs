@@ -760,6 +760,12 @@ where
     // already set, it's visible in the AgentRef JSON block. Best-effort: a DB
     // miss (agent not found) just leaves that agent un-annotated, which is
     // no worse than the previous behaviour.
+    //
+    // Slot resolution: match by the agent ref's role/capability first, then
+    // fall back to slots named "main", then fall back to slots.first(). This
+    // fixes the case where an agent has multiple slots and the optimizer
+    // previously just took the first one regardless of role (GH #1 slot-name
+    // mismatch).
     let resolved_agent_prompts: HashMap<String, String> = {
         let agent_store = crate::agents::AgentStore::new(pool.clone());
         let mut map = HashMap::new();
@@ -767,7 +773,8 @@ where
             if agent_ref.prompt_override.is_none() {
                 match agent_store.get(&agent_ref.agent_id).await {
                     Ok(Some(agent)) => {
-                        if let Some(slot) = agent.slots.first() {
+                        let slot = resolve_slot_for_role(&agent.slots, agent_ref);
+                        if let Some(slot) = slot {
                             if !slot.system_prompt.is_empty() {
                                 map.insert(agent_ref.agent_id.clone(), slot.system_prompt.clone());
                             }
@@ -786,6 +793,14 @@ where
         }
         map
     };
+
+    // Extract the first resolved prompt as the base instruction for DSPy warm-start.
+    // This ensures the optimizer improves FROM the real agent prompt rather than
+    // generating from scratch (GH #1 prompt-not-loaded).
+    let base_instruction: Option<String> = resolved_agent_prompts
+        .values()
+        .find(|v| !v.is_empty())
+        .cloned();
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
@@ -964,6 +979,28 @@ where
                 reason: "experiment writer produced a no-op (identity) diff".to_string(),
             });
             continue;
+        }
+
+        // Honesty-gate reinforcement: check the candidate's prose prompt for
+        // semantic integrity before spending evaluation cycles. Catches clearly
+        // broken mutations (zero sizing, reversed signals, truncated prompts)
+        // that would otherwise pollute experiment results.
+        if let Some(override_prompt) = candidate.agents.iter().find_map(|a| a.prompt_override.as_deref()) {
+            if let Err(failures) = crate::autooptimizer::canary::validate_prompt_semantics(override_prompt) {
+                let reason = format!(
+                    "semantic prompt check failed: {}",
+                    failures.join("; ")
+                );
+                tracing::debug!(cycle_id, %reason, "rejecting semantically broken mutation");
+                no_candidate_count += 1;
+                progress(CycleProgressEvent::NoCandidate {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: parent_node.bundle_hash.to_hex(),
+                    reason,
+                });
+                continue;
+            }
         }
         // F32 backstop: drop a candidate this parent has already produced (in a
         // prior cycle OR earlier this cycle) before it spends four backtests on a
@@ -1311,7 +1348,7 @@ where
                         }
                     }
                 }
-                if let Some(pattern_id) = handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await? {
+                if let Some(pattern_id) = handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id, base_instruction.as_deref()).await? {
                     // DSPy flywheel compiled findings into a prompt pattern this cycle.
                     progress(CycleProgressEvent::FlywheelCompiled {
                         session_id: String::new(),
@@ -2042,6 +2079,33 @@ pub fn classify_from_regime_outcomes(
     (status, rows)
 }
 
+
+/// Resolve which agent slot to use for a given agent ref's role.
+///
+/// Priority: 1) slot name matching `agent_ref.canonical_role()`,
+/// 2) slot name matching `"main"` (modern convention),
+/// 3) first slot available.
+///
+/// Returns `None` when the agent has no slots at all.
+fn resolve_slot_for_role<'a>(
+    slots: &'a [crate::agents::AgentSlot],
+    agent_ref: &crate::strategies::AgentRef,
+) -> Option<&'a crate::agents::AgentSlot> {
+    if slots.is_empty() {
+        return None;
+    }
+    let role = agent_ref.canonical_role();
+    // Prefer a slot whose name matches the canonical role (e.g. "trader").
+    if let Some(slot) = slots.iter().find(|s| s.name.to_ascii_lowercase() == role) {
+        return Some(slot);
+    }
+    // Fall back to a slot literally named "main" (modern convention).
+    if let Some(slot) = slots.iter().find(|s| s.name == "main") {
+        return Some(slot);
+    }
+    // Last resort: the first slot.
+    slots.first()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -97,6 +97,7 @@ impl DspyBridge for GepaBridge {
         &self,
         _namespace: &str,
         observations: &[(String, String)],
+        base_instruction: Option<&str>,
     ) -> anyhow::Result<CompileResult> {
         if observations.is_empty() {
             return Ok(CompileResult::empty("gepa"));
@@ -114,11 +115,12 @@ impl DspyBridge for GepaBridge {
         let mut best_mean = f64::NEG_INFINITY;
         let mut best_scores: Vec<f64> = vec![];
         let mut best_feedback: Vec<String> = vec![];
-        // Phase 6 warm-start: seed the first reflection with the prior best
-        // instruction if one was persisted. (Full warm-start requires the
-        // memory-store API which isn't directly available here; the flywheel
-        // prepends the prior instruction to the observations list instead.)
-        let _seed_prefix = String::new();
+        // Warm-start: seed with the current agent system prompt so the optimizer
+        // improves FROM the real prompt rather than generating from scratch.
+        let seed_prefix = base_instruction
+            .filter(|b| !b.is_empty())
+            .unwrap_or("")
+            .to_string();
 
         let n_gens = self.generations.max(1);
         let n_candidates = self.candidates.max(1);
@@ -159,10 +161,12 @@ impl DspyBridge for GepaBridge {
             };
 
             // ── Stage 1: REFLECT (uses reflection dispatch if available) ──
-            let reflection_text = format!("{obs_list}{feedback_hint}");
+            let reflection_text = if !seed_prefix.is_empty() {
+                format!("{obs_list}\n\nCurrent agent system prompt (improve FROM this, do not discard):\n{seed_prefix}{feedback_hint}")
+            } else {
+                format!("{obs_list}{feedback_hint}")
+            };
             let reflection = self.reflect(&reflection_text, &mut provenance).await?;
-
-            // ── Stage 2+3: PROPOSE + SCORE with minibatch → full eval ──
             let mb_size = self.reflection_minibatch_size.min(active_indices.len()).max(2);
 
             // Minibatch indices: first `mb_size` active indices (for cheap cull)
@@ -507,7 +511,7 @@ mod tests {
     #[tokio::test]
     async fn empty_observations_returns_empty_result() {
         let gepa = mock_gepa(vec![]);
-        let result = gepa.compile("ns", &[]).await.unwrap();
+        let result = gepa.compile("ns", &[], None).await.unwrap();
         assert!(result.instruction.is_empty());
         assert_eq!(result.demos.len(), 0);
     }
@@ -532,6 +536,7 @@ mod tests {
             .compile(
                 "ns",
                 &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+                None,
             )
             .await
             .unwrap();

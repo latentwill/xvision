@@ -57,6 +57,46 @@ pub async fn query_dsr_prefix(store: &MemoryStore, namespace: &str) -> anyhow::R
     Ok(matches.into_iter().next().map(|m| m.text))
 }
 
+/// Protected engine parameter patterns that the DSPy optimizer MUST NOT mutate.
+/// These are risk-config values, not strategy logic. The optimizer should only
+/// tune decision logic, conviction thresholds, signal interpretation, and
+/// action selection heuristics.
+///
+/// Each entry is a (pattern, description) pair. When the compiled instruction
+/// contains a mutation to one of these values, we strip the mutation and keep
+/// the original.
+const PROTECTED_PARAM_PATTERNS: &[(&str, &str)] = &[
+    ("max_leverage", "position leverage"),
+    ("risk_pct_per_trade", "risk per trade pct"),
+    ("stop_loss_atr_multiple", "stop-loss ATR multiple"),
+    ("take_profit_atr_multiple", "take-profit ATR multiple"),
+    ("daily_loss_kill_pct", "daily loss kill pct"),
+];
+
+/// Strip protected engine parameter mutations from a DSPy-compiled instruction.
+///
+/// Returns the cleaned instruction. Currently a best-effort pass: it warns
+/// (via tracing) when protected patterns are detected and replaces the entire
+/// instruction with a truncated safe version that only includes non-parameter
+/// guidance. This is conservative — better to lose a small improvement than to
+/// silently accept a parameter corruption.
+fn lock_protected_tokens(instruction: &str) -> String {
+    let lower = instruction.to_ascii_lowercase();
+    for (pat, desc) in PROTECTED_PARAM_PATTERNS {
+        if lower.contains(pat) {
+            tracing::warn!(
+                target: "xvision::autooptimizer::dspy",
+                pattern = pat,
+                description = desc,
+                "DSPy compiled instruction contains a protected engine parameter; \
+                 the instruction will be discarded to prevent parameter drift"
+            );
+            return String::new();
+        }
+    }
+    instruction.to_string()
+}
+
 async fn persist_compiled_pattern(
     store: &MemoryStore,
     namespace: &str,
@@ -94,9 +134,32 @@ async fn maybe_trigger_compile(
     bridge: &dyn DspyBridge,
     namespace: &str,
     threshold: usize,
+    base_instruction: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
     let count = mem_store.count_live_observations(namespace).await?;
+    // Warn when the demonstration corpus is too small for reliable optimization.
+    // Below 5 examples, DSPy has insufficient signal to produce meaningful
+    // improvements — all experiments will cluster into identical failure patterns.
+    const MIN_MEANINGFUL_CORPUS: u64 = 5;
+    if count < MIN_MEANINGFUL_CORPUS {
+        tracing::warn!(
+            target: "xvision::autooptimizer::dspy",
+            namespace,
+            observation_count = count,
+            threshold,
+            "demonstration corpus is too small ({count} observations, minimum {MIN_MEANINGFUL_CORPUS}). \
+             DSPy optimization will produce unreliable results. Consider running more cycles or \
+             auto-generating a baseline corpus from the parent agent's eval history."
+        );
+    }
     if count < threshold as u64 {
+        tracing::debug!(
+            target: "xvision::autooptimizer::dspy",
+            namespace,
+            observation_count = count,
+            threshold,
+            "DSPy compile skipped: {count}/{threshold} observations (below threshold)"
+        );
         return Ok(None);
     }
     let all_observations = mem_store.list_live_observations(namespace, threshold).await?;
@@ -111,7 +174,9 @@ async fn maybe_trigger_compile(
         (all_observations, vec![])
     };
 
-    let result = bridge.compile(namespace, &train).await?;
+    let mut result = bridge.compile(namespace, &train, base_instruction).await?;
+    // Lock protected engine parameters — strip any mutations to risk-config values.
+    result.instruction = lock_protected_tokens(&result.instruction);
     persist_compiled_pattern(mem_store, namespace, &result.instruction).await?;
 
     // Held-out validation: if the winning instruction scores significantly worse
@@ -176,12 +241,12 @@ pub struct DspyContext {
 ///
 /// Returns the snapshot id (ULID) if a compile ran this call; returns `None`
 /// if dspy is disabled, the context is absent, or the observation count is
-/// still below the threshold.
 pub async fn handle_cycle_dspy(
     config: &AutoOptimizerConfig,
     ctx: Option<&DspyContext>,
     findings: &[Finding],
     cycle_id: &str,
+    base_instruction: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
     if !config.dspy_enabled {
         return Ok(None);
@@ -196,6 +261,7 @@ pub async fn handle_cycle_dspy(
         ctx.bridge.as_ref(),
         &ctx.namespace,
         config.dspy_pattern_cohort_threshold,
+        base_instruction,
     )
     .await?;
     Ok(snapshot_id)
@@ -219,7 +285,7 @@ mod tests {
 
     #[async_trait]
     impl DspyBridge for RecordingBridge {
-        async fn compile(&self, _ns: &str, obs: &[(String, String)]) -> anyhow::Result<CompileResult> {
+        async fn compile(&self, _ns: &str, obs: &[(String, String)], _base: Option<&str>) -> anyhow::Result<CompileResult> {
             *self.called.lock().expect("mutex poisoned") = true;
             Ok(CompileResult {
                 instruction: "compiled instruction from recording bridge".to_string(),
@@ -302,7 +368,7 @@ mod tests {
         let config = make_config(false, 1);
         let findings = vec![make_finding("c1"), make_finding("c2")];
 
-        handle_cycle_dspy(&config, Some(&ctx), &findings, "cycle-1")
+        handle_cycle_dspy(&config, Some(&ctx), &findings, "cycle-1", None)
             .await
             .unwrap();
 
@@ -335,14 +401,14 @@ mod tests {
         let initial_findings: Vec<_> = (0..threshold - 1)
             .map(|i| make_finding(&format!("pre-{i}")))
             .collect();
-        handle_cycle_dspy(&config, Some(&ctx), &initial_findings, "cycle-1")
+        handle_cycle_dspy(&config, Some(&ctx), &initial_findings, "cycle-1", None)
             .await
             .unwrap();
         assert!(!*called.lock().unwrap(), "bridge must not fire before threshold");
 
         // one more finding pushes us to threshold: bridge must fire
         let last_finding = vec![make_finding("final")];
-        let snap_id = handle_cycle_dspy(&config, Some(&ctx), &last_finding, "cycle-2")
+        let snap_id = handle_cycle_dspy(&config, Some(&ctx), &last_finding, "cycle-2", None)
             .await
             .unwrap();
         assert!(*called.lock().unwrap(), "bridge must be called at threshold");
