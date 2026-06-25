@@ -86,6 +86,7 @@
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
 // 53. POST   /api/autooptimizer/sessions                autooptimizer_route::start_session  (P1-W4)
 // 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
+// 53a2.POST  /api/optimize/run-cycle                    autooptimizer_cycle::start_cycle (alias)
 // 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 53c. POST  /api/autooptimizer/cycles/:id/pause        autooptimizer_cycle::pause_cycle  (P4)
 // 53d. POST  /api/autooptimizer/cycles/:id/resume       autooptimizer_cycle::resume_cycle (P4)
@@ -787,6 +788,14 @@ fn mutating_router(state: AppState) -> Router {
         )
         .route(
             "/api/autooptimizer/run-cycle",
+            post(autooptimizer_cycle::start_cycle),
+        )
+        // API namespace alias: `POST /api/optimize/run-cycle` maps to the same
+        // handler as `/api/autooptimizer/run-cycle`. This bridges the namespace
+        // gap between the CLI (`xvn optimize run`) and the API so agents and
+        // scripts can discover a single unified path.
+        .route(
+            "/api/optimize/run-cycle",
             post(autooptimizer_cycle::start_cycle),
         )
         // F28: cancel an in-flight optimizer cycle.

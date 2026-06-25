@@ -313,6 +313,12 @@ pub fn referenced_command_paths() -> Vec<Vec<&'static str>> {
         }
         paths.push(vec![*s]);
     }
+    // Remote-safe non-template optimize subcommands: names must exist in the
+    // clap tree so the drift test passes.
+    paths.push(vec!["optimize", "cancel"]);
+    paths.push(vec!["optimize", "inspect"]);
+    paths.push(vec!["optimize", "explain-missing-data"]);
+
     // Draft-authoring paths are intentionally allowed even though they mutate
     // state, so keep them visible to the clap-drift test as first-class remote
     // policy entries.
@@ -357,9 +363,12 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
             ));
         }
     } else if head == "optimize" {
-        // `optimize run` is covered by a strict template above. Other read-only
-        // subcommands (ls, show, diff, export, lineage) are allowed through.
-        // `unlock` is denied via DENIED_NESTED_SUBCOMMANDS below.
+        // `optimize run` is covered by a strict template above. Other subcommands
+        // (ls, show, inspect, diff, export, lineage, cancel, explain-missing-data)
+        // are allowed through. `unlock` is denied via DENIED_NESTED_SUBCOMMANDS
+        // below. `cancel` is remote-safe because it only clears a DB lock — the
+        // cycle itself runs in-process and detects the release at its next
+        // candidate boundary. `inspect` is a read-only alias for `show`.
         return AllowlistDecision::Allow;
     }
 

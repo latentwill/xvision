@@ -36,6 +36,9 @@ pub enum SabotageVariant {
     RemoveLossLimit,
     /// `decision_cadence_minutes = 999_999` → the trader never gets to decide.
     AbsurdCadence,
+    /// `risk_pct_per_trade = 0.5` → over-concentrated (50% per trade) — checks
+    /// whether the gate rejects clearly unsafe position sizing.
+    OverfitParam,
 }
 
 impl SabotageVariant {
@@ -45,6 +48,7 @@ impl SabotageVariant {
             Self::KillTrades => "kill-trades",
             Self::RemoveLossLimit => "remove-loss-limit",
             Self::AbsurdCadence => "absurd-cadence",
+            Self::OverfitParam => "overfit-param",
         }
     }
 
@@ -54,14 +58,16 @@ impl SabotageVariant {
             Self::KillTrades => "zeroed position sizing",
             Self::RemoveLossLimit => "removed the daily-loss kill switch",
             Self::AbsurdCadence => "absurd decision cadence (never fires)",
+            Self::OverfitParam => "over-concentrated position sizing (50% per trade)",
         }
     }
 
     fn from_seed(sabotage_seed: u64) -> Self {
-        match sabotage_seed % 3 {
+        match sabotage_seed % 4 {
             0 => Self::KillTrades,
             1 => Self::RemoveLossLimit,
-            _ => Self::AbsurdCadence,
+            2 => Self::AbsurdCadence,
+            _ => Self::OverfitParam,
         }
     }
 }
@@ -85,10 +91,11 @@ pub struct HonestyCheckResult {
 /// Build a deterministically sabotaged copy of `base`, returning the variant
 /// applied so callers can label the run.
 ///
-/// The sabotage variant is selected by `sabotage_seed % 3`:
+/// The sabotage variant is selected by `sabotage_seed % 4`:
 /// - 0 → zero position sizing (kills all trades)
 /// - 1 → disable daily loss kill (removes stop)
 /// - 2 → absurd decision cadence (never fires in a normal backtest)
+/// - 3 → over-concentrated position sizing (50% per trade — checks overfit gate)
 ///
 /// Same seed always produces the same sabotage.
 pub fn build_sabotaged_strategy(base: &Strategy, sabotage_seed: u64) -> (Strategy, SabotageVariant) {
@@ -98,6 +105,7 @@ pub fn build_sabotaged_strategy(base: &Strategy, sabotage_seed: u64) -> (Strateg
         SabotageVariant::KillTrades => apply_sabotage_kill_trades(&mut s),
         SabotageVariant::RemoveLossLimit => apply_sabotage_remove_loss_limit(&mut s),
         SabotageVariant::AbsurdCadence => apply_sabotage_absurd_cadence(&mut s),
+        SabotageVariant::OverfitParam => apply_sabotage_overfit_param(&mut s),
     }
     (s, variant)
 }
@@ -260,6 +268,10 @@ fn apply_sabotage_absurd_cadence(s: &mut Strategy) {
     s.manifest.decision_cadence_minutes = 999_999;
 }
 
+fn apply_sabotage_overfit_param(s: &mut Strategy) {
+    s.risk.risk_pct_per_trade = 0.5;
+}
+
 /// Minimum acceptable prompt length in characters. Shorter prompts are likely
 /// truncated or empty — the optimizer can't meaningfully improve from them.
 const MIN_PROMPT_LENGTH: usize = 200;
@@ -276,6 +288,7 @@ const MIN_PROMPT_LENGTH: usize = 200;
 /// 2. Required trading decision fields (stop_loss, take_profit, or action spec)
 /// 3. No zero/negative position sizing language
 /// 4. No obviously reversed signal logic patterns
+/// 5. No "do nothing" / "never act" patterns that would produce zero trades
 pub fn validate_prompt_semantics(prompt: &str) -> Result<(), Vec<String>> {
     let mut failures: Vec<String> = Vec::new();
 
@@ -336,6 +349,97 @@ pub fn validate_prompt_semantics(prompt: &str) -> Result<(), Vec<String>> {
             failures.push(format!("{reason} (\"{pat}\")"));
             break; // one is enough to flag
         }
+    }
+
+    // 5. "Do nothing" / "never act" patterns that would sabotage performance
+    let do_nothing_patterns = [
+        "do not trade",
+        "never enter",
+        "never act",
+        "ignore all signals",
+        "skip all trades",
+        "do nothing",
+        "don't trade",
+        "never take",
+        "do not enter",
+        "stay out",
+        "never open",
+    ];
+    for pat in &do_nothing_patterns {
+        if lower.contains(pat) {
+            failures.push(format!(
+                "prompt contains do-nothing/never-act language: \"{pat}\""
+            ));
+            break; // one is enough
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
+}
+
+/// Check the full strategy for semantic integrity at the parameter level.
+///
+/// Returns `Ok(())` when the strategy passes all checks. Returns `Err(reasons)`
+/// when one or more checks fail. This catches sabotage and broken mutations
+/// that operate at the strategy/param level rather than the prose prompt level
+/// (e.g. zero position sizing set in risk config, not in the prompt text).
+///
+/// Checks:
+/// 1. `risk_pct_per_trade` must be in (0.0, 0.5] — zero means kill, > 0.5 is overfit
+/// 2. `max_leverage` must be in (0, 100] — zero means no position, > 100 is absurd
+/// 3. `decision_cadence_minutes` must be > 0 and < 1_000_000
+/// 4. `daily_loss_kill_pct` must be in [0.0, 1.0] — 1.0 means switch never fires
+pub fn validate_strategy_semantics(strategy: &Strategy) -> Result<(), Vec<String>> {
+    let mut failures: Vec<String> = Vec::new();
+
+    // 1. risk_pct_per_trade
+    let rpt = strategy.risk.risk_pct_per_trade;
+    if rpt <= 0.0 {
+        failures.push(format!(
+            "strategy has zero/negative risk_pct_per_trade ({}) — all orders would be rejected",
+            rpt
+        ));
+    } else if rpt > 0.5 {
+        failures.push(format!(
+            "strategy has over-concentrated risk_pct_per_trade ({:.2} > 0.5) — overfit risk",
+            rpt
+        ));
+    }
+
+    // 2. max_leverage
+    let lev = strategy.risk.max_leverage;
+    if lev <= 0.0 {
+        failures.push(format!(
+            "strategy has zero/negative max_leverage ({}) — positions would not be opened",
+            lev
+        ));
+    } else if lev > 100.0 {
+        failures.push(format!(
+            "strategy has absurd max_leverage ({}) — exceeds sane limits",
+            lev
+        ));
+    }
+
+    // 3. decision_cadence_minutes
+    let cadence = strategy.manifest.decision_cadence_minutes;
+    if cadence == 0 || cadence >= 1_000_000 {
+        failures.push(format!(
+            "strategy has absurd decision_cadence_minutes ({}) — trader would never fire",
+            cadence
+        ));
+    }
+
+    // 4. daily_loss_kill_pct
+    let dlk = strategy.risk.daily_loss_kill_pct;
+    if dlk >= 1.0 {
+        failures.push(format!(
+            "strategy has daily_loss_kill_pct set to {:.2} — daily-loss kill switch never fires",
+            dlk
+        ));
     }
 
     if failures.is_empty() {

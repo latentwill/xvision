@@ -60,7 +60,7 @@ pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;
-pub use canary::{build_sabotaged_strategy, run_honesty_check, validate_prompt_semantics, HonestyCheckResult, SabotageVariant};
+pub use canary::{build_sabotaged_strategy, run_honesty_check, validate_prompt_semantics, validate_strategy_semantics, HonestyCheckResult, SabotageVariant};
 pub use config::{
     AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
     ScenarioWindowPair, TradeDirection,

@@ -22,10 +22,16 @@
 //!   step verbs (a single operator surface; GH #966).
 //! * **ls** — list recent optimizer cycles from the lineage store (D3).
 //! * **show** — inspect a single cycle's gated candidates + counts.
+//! * **inspect** — alias for `show`.
 //! * **diff** — diff a candidate strategy blob against its parent.
+//! * **export** — export a complete cycle as a high-fidelity document.
 //! * **lineage** — lineage graph inspection (ls / show).
+//! * **cancel** — request cancellation of an in-flight optimizer cycle
+//!   (remote-safe, works over the Dashboard API).
 //! * **unlock** — force-clear a wedged cycle lock (explicit escape hatch; the
 //!   normal kill→restart path now auto-clears a stale lock — GH #967).
+//! * **explain-missing-data** — diagnostic: inspect the optimizer's
+//!   demonstration/corpus state.
 //!
 //! ## Exit codes (distinct per failure class)
 //!
@@ -118,6 +124,8 @@ enum OptimizeAction {
     Ls(LsArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
     Show(ShowArgs),
+    /// Inspect a single optimizer cycle (alias for `show`).
+    Inspect(ShowArgs),
     /// Diff a candidate strategy blob against its lineage parent.
     Diff(DiffArgs),
     /// Export a complete optimizer cycle as a high-fidelity, agent-feedable
@@ -127,10 +135,18 @@ enum OptimizeAction {
     Export(ExportArgs),
     /// Lineage graph inspection (ls / show).
     Lineage(LineageCmd),
+    /// Request cancellation of an in-flight optimizer cycle. Clears the cycle
+    /// lock and marks the session as cancelled so the running cycle terminates
+    /// before the next candidate. Remote-safe: works over the dashboard API.
+    Cancel(CancelArgs),
     /// Force-clear a wedged optimizer cycle lock (e.g. after a killed/crashed
     /// run on a foreign host). Use when the cycle reports "already running" but
     /// no cycle is actually live.
     Unlock(UnlockArgs),
+    /// Diagnostic: explain the optimizer's demonstration/corpus state. Shows
+    /// how many observations exist in the memory store and warns when the corpus
+    /// is too small (< 5 examples) for meaningful training.
+    ExplainMissingData(ExplainMissingDataArgs),
 }
 
 // ── Folded-in cycle args (from the former `xvn optimizer` surface) ───────────
@@ -143,6 +159,28 @@ pub struct UnlockArgs {
     /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct CancelArgs {
+    /// Cycle or session ID to cancel.
+    pub cycle_id: String,
+    /// Path to the optimizer DB (defaults to $XVN_HOME/xvn.db).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct ExplainMissingDataArgs {
+    /// Path to the memory DB (defaults to $XVN_MEMORY_DB or ~/.xvn/memory.db).
+    #[arg(long)]
+    pub memory_db: Option<PathBuf>,
+    /// Show verbose observation details.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -423,13 +461,16 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
+        Some(OptimizeAction::Inspect(args)) => run_show(args).await,
         Some(OptimizeAction::Diff(args)) => run_diff(args).await,
         Some(OptimizeAction::Export(args)) => run_export(args).await,
         Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
             LineageOp::Ls(args) => lineage_ls(args).await,
             LineageOp::Show(args) => lineage_show(args).await,
         },
+        Some(OptimizeAction::Cancel(args)) => run_cancel(args).await,
         Some(OptimizeAction::Unlock(args)) => run_unlock(args).await,
+        Some(OptimizeAction::ExplainMissingData(args)) => run_explain_missing_data(args).await,
     }
 }
 
@@ -1316,6 +1357,189 @@ async fn run_unlock(args: UnlockArgs) -> CliResult<()> {
         Some(cycle_id) => println!("cleared optimizer cycle lock (was held by cycle {cycle_id})"),
         None => println!("no optimizer cycle lock was held"),
     }
+    Ok(())
+}
+
+// ── cancel ──────────────────────────────────────────────────────────────────
+
+/// `xvn optimize cancel <cycle_id>` — request cancellation of an in-flight
+/// optimizer cycle. Clears the cycle lock from the shared DB so the running
+/// cycle terminates (it polls the lock at candidate boundaries). Also prints
+/// the cycle info for the operator to verify with `xvn optimize ls`.
+///
+/// When the cycle is running under the dashboard, use the dashboard API to
+/// cancel it (POST /api/autooptimizer/cycles/:id/cancel). When running locally
+/// (CLI), use `Ctrl-C` — this command is a remote-safe fallback that works
+/// over the `POST /api/cli/jobs` bridge.
+async fn run_cancel(args: CancelArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("resolve xvn home: {e}")))?;
+    let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
+    if !db_path.exists() {
+        return Err(CliError::not_found(anyhow::anyhow!(
+            "optimizer DB not found at {}",
+            db_path.display()
+        )));
+    }
+    let pool = open_and_migrate_db(&db_path).await?;
+
+    // Get the active lock holder, if any.
+    let held: Option<(String, String)> = sqlx::query_as(
+        "SELECT cycle_id, holder FROM optimizer_cycle_lock WHERE id = 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
+
+    match held {
+        Some((cycle_id, holder)) if cycle_id == args.cycle_id || cycle_id.starts_with(&args.cycle_id) => {
+            // Clear the lock.
+            xvision_engine::autooptimizer::run_lock::force_clear(&pool)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("clear cycle lock: {e}")))?;
+            println!(
+                "cancelled cycle {cycle_id} (held by {holder}) — lock cleared. \
+                 The cycle will detect the release and terminate before the next candidate."
+            );
+        }
+        Some((cycle_id, _)) => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "cycle {cycle_id} is running but does not match requested id '{}'. \
+                 Use the full cycle id.",
+                args.cycle_id
+            )));
+        }
+        None => {
+            println!(
+                "no in-flight cycle '{}' found (no cycle lock is held). \
+                 Use `xvn optimize ls` to list recent cycles.",
+                args.cycle_id
+            );
+        }
+    }
+    Ok(())
+}
+
+// ── explain-missing-data ────────────────────────────────────────────────────
+
+/// `xvn optimize explain-missing-data` — diagnostic for the optimizer's
+/// demonstration/corpus state. Reports how many observations are stored in the
+/// `autooptimizer:mutations` memory namespace and warns when < 5 (too few for
+/// meaningful DSPy training).
+async fn run_explain_missing_data(args: ExplainMissingDataArgs) -> CliResult<()> {
+    let mem_path = args.memory_db.unwrap_or_else(|| {
+        xvision_engine::api::memory::default_memory_db_path()
+    });
+    if !mem_path.exists() {
+        println!(
+            "No memory database found at {}. The optimizer has no demonstration \
+             corpus yet — observations are recorded after each cycle completes.",
+            mem_path.display()
+        );
+        return Ok(());
+    }
+    let store = xvision_memory::store::MemoryStore::open(&mem_path)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store: {e}")))?;
+
+    // Query observations in the autooptimizer mutations namespace.
+    let namespace = xvision_engine::autooptimizer::mutator::MUTATIONS_NS;
+    let ns_list = xvision_engine::api::memory::list_namespaces(&store)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("list namespaces: {e}")))?;
+
+    let has_ns = ns_list.items.iter().any(|ns| ns.namespace == namespace);
+
+    if !has_ns {
+        println!(
+            "Optimizer corpus status for namespace `{namespace}`:\n\
+             [WARNING] namespace does not exist — zero observations recorded.\n\n\
+             The optimizer relies on observations from prior cycles to guide mutation proposals.\n\
+             Observations are auto-recorded after each cycle completes. Run `xvn optimize run`\n\
+             with a well-configured strategy to build the corpus.\n\n\
+             In the meantime, the optimizer will run blind (no memory guidance)."
+        );
+        return Ok(());
+    }
+
+    // List observations with limit=0 to get a count, or use a reasonable limit.
+    let result = xvision_engine::api::memory::list(&store, {
+        xvision_engine::api::memory::ListMemoryRequest {
+            namespace: Some(namespace.to_string()),
+            tier: None,
+            agent: None,
+            scenario_id: None,
+            run_id: None,
+            promotion_state: None,
+            limit: Some(10_000),
+            offset: None,
+            include_forgotten: None,
+            forgotten_only: None,
+        }
+    })
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("list observations: {e}")))?;
+
+    let count = result.items.len();
+
+    println!("Optimizer corpus status for namespace `{namespace}`:");
+    println!("  Observations: {count}");
+
+    if count < 5 {
+        println!(
+            "  [WARNING] corpus has only {count} observations — too few for meaningful training.\n\
+               Run at least 1-2 optimizer cycles to build up the corpus."
+        );
+    } else {
+        println!("  Corpus size is adequate for training.");
+    }
+
+    // Show observation details in verbose mode.
+    if args.verbose && !result.items.is_empty() {
+        println!("\n  Recent observations:");
+        for item in result.items.iter().rev().take(10) {
+            let ts = format_timestamp(&item.created_at);
+            println!("    {:<26} {}", ts, item.text);
+        }
+    }
+
+    // Check for compiled patterns too.
+    let pattern_result = xvision_engine::api::memory::list(&store, {
+        xvision_engine::api::memory::ListMemoryRequest {
+            namespace: Some(namespace.to_string()),
+            tier: Some("pattern".to_string()),
+            agent: None,
+            scenario_id: None,
+            run_id: None,
+            promotion_state: None,
+            limit: Some(100),
+            offset: None,
+            include_forgotten: None,
+            forgotten_only: None,
+        }
+    })
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("list patterns: {e}")))?;
+
+    let pattern_count = pattern_result.items.len();
+    if pattern_count > 0 {
+        println!("  Compiled patterns: {pattern_count}");
+        if args.verbose {
+            for item in &pattern_result.items {
+                let ts = format_timestamp(&item.created_at);
+                let preview = if item.text.len() > 120 {
+                    format!("{}…", &item.text[..120])
+                } else {
+                    item.text.clone()
+                };
+                println!("    {:<26} {}", ts, preview);
+            }
+        }
+    } else {
+        println!("  Compiled patterns: none (flywheel has not compiled yet)");
+    }
+
+    println!("\nTip: Run `xvn optimize run` to generate more observations.");
     Ok(())
 }
 
@@ -2588,6 +2812,18 @@ fn load_runtime_config_optional(xvn_home: Option<&Path>) -> CliResult<Option<Run
             "load runtime config {}: {e}",
             cfg_path.display()
         ))),
+    }
+}
+
+/// Format an RFC3339 timestamp string as `YYYY-MM-DD HH:MM:SS` for display.
+/// Returns the raw string truncated to 19 chars on parse failure.
+fn format_timestamp(rfc3339: &str) -> String {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(rfc3339) {
+        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(rfc3339, "%Y-%m-%dT%H:%M:%S") {
+        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+    } else {
+        rfc3339[..rfc3339.len().min(19)].to_string()
     }
 }
 

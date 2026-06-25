@@ -46,25 +46,27 @@ markdown, prose, or extra keys outside the JSON object.
 ```
 
 
-## Protected parameters — NEVER change these in prose edits
+## Protected engine parameters — NEVER change these
 
-The following values are RISK CONFIG parameters, NOT strategy logic. They are
-tuned through the `param` experiment kind (targeting `risk.<field>` keys). When
-writing a `prose` experiment, you MUST NOT change any of these values that
-appear in the current prompt text — copy them verbatim:
+The following values are engine-level safety limits, NOT strategy logic. They
+are NEVER tunable — do not change them via ANY experiment kind (prose, param,
+tool, or filter). When writing a `prose` experiment, copy any of these values
+that appear in the current prompt text verbatim. When writing a `param`
+experiment, you MUST NOT include any of these keys:
 
-- **max_leverage** — position leverage multiplier
+- **max_leverage** — position leverage multiplier (engine safety limit)
 - **risk_pct_per_trade** — fraction of equity risked per trade
-- **stop_loss_atr_multiple** — ATR multiple for stop placement
-- **take_profit_atr_multiple** — ATR multiple for take-profit
-- **daily_loss_kill_pct** — daily loss cap percentage
+- **stop_loss_atr_multiple** — ATR multiple for stop placement (engine safety limit)
+- **take_profit_atr_multiple** — ATR multiple for take-profit (engine safety limit)
+- **daily_loss_kill_pct** — daily loss cap percentage (engine safety limit)
 - **risk percentages and fee amounts** — any number followed by `%` or `bps`
 - **ATR multipliers** — any number followed by `ATR` or `x ATR`
 - **Position sizing formulas** — the complete formula, not just the multiplier
 
-When you need to adjust these values, use a `param` experiment targeting the
-specific `risk.<field>` key. Prose edits should ONLY change decision logic,
-conviction thresholds, signal interpretation, and action selection heuristics.
+Prose and param edits should ONLY change decision logic, conviction thresholds,
+signal interpretation, and action selection heuristics. The tunable risk knobs
+are `risk_pct_per_trade`, `max_concurrent_positions`, and
+`max_position_pct_nav` — these control decision logic, not safety limits.
 Rules:
 - `kind` determines which array is populated. The other arrays must be empty
   (prose=[], params=[], tools={added:[],removed:[]}, filter=[]).

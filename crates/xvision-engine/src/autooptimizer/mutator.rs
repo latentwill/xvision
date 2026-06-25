@@ -325,6 +325,11 @@ fn diff_filter_values(a: &serde_json::Value, b: &serde_json::Value, path: &str, 
 /// mechanistic config, so their only tunable knobs live in `risk` — without
 /// this the optimizer could never produce a valid param experiment for any
 /// real strategy. Keep in sync with `RiskConfig` (xvision-engine strategies::risk).
+///
+/// Engine-level safety limits (`max_leverage`, `stop_loss_atr_multiple`,
+/// `daily_loss_kill_pct`) are listed in [`PROTECTED_ENGINE_PARAMS`] and are
+/// excluded from the tunable set — the mutator must NOT propose changes to
+/// them. See `tunable_param_keys()` for the filtered output.
 pub const RISK_PARAM_FIELDS: &[&str] = &[
     "risk_pct_per_trade",
     "max_concurrent_positions",
@@ -332,6 +337,21 @@ pub const RISK_PARAM_FIELDS: &[&str] = &[
     "stop_loss_atr_multiple",
     "daily_loss_kill_pct",
     "max_position_pct_nav",
+];
+
+/// Engine-level risk parameters that the optimizer MUST NOT mutate. These are
+/// safety limits, not strategy logic — changing them shifts the risk profile
+/// without improving decision quality. The mutator is prevented from proposing
+/// changes to these via `tunable_param_keys()` filtering; the DSPy flywheel's
+/// `lock_protected_tokens()` provides a second layer of defense.
+///
+/// These values are NEVER tunable — they are engine-level safety limits.
+/// The optimizer should only tune decision logic, conviction thresholds,
+/// signal interpretation, and action selection heuristics.
+pub const PROTECTED_ENGINE_PARAMS: &[&str] = &[
+    "max_leverage",
+    "stop_loss_atr_multiple",
+    "daily_loss_kill_pct",
 ];
 
 /// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
@@ -344,13 +364,18 @@ pub fn risk_field_for_key(_base: &Strategy, key: &str) -> Option<String> {
 }
 
 /// The param keys an experiment may target on `base`: `risk.<field>` for each
-/// tunable risk knob, plus `mechanistic.close_policies.<i>.<leaf>` for each
-/// tunable scalar in `mechanistic_config` (WU3a). These are the surfaces the
-/// executor actually reads at decision time. Used to tell the experiment writer
-/// which keys exist (F21) and to render a helpful `unknown_param` error.
+/// tunable risk knob (excluding engine-level safety limits in
+/// [`PROTECTED_ENGINE_PARAMS`]), plus `mechanistic.close_policies.<i>.<leaf>`
+/// for each tunable scalar in `mechanistic_config` (WU3a). These are the
+/// surfaces the executor actually reads at decision time. Used to tell the
+/// experiment writer which keys exist (F21) and to render a helpful
+/// `unknown_param` error.
 pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
     let mut keys = Vec::new();
     for f in RISK_PARAM_FIELDS {
+        if PROTECTED_ENGINE_PARAMS.contains(f) {
+            continue;
+        }
         keys.push(format!("risk.{f}"));
     }
     // WU3a: mechanistic close-policy scalars.
@@ -1730,11 +1755,20 @@ mod tests {
     }
 
     #[test]
-    fn tunable_keys_include_risk_fields() {
+    fn tunable_keys_include_unprotected_risk_fields() {
         let base = fixture_strategy();
         let keys = tunable_param_keys(&base);
-        assert!(keys.contains(&"risk.stop_loss_atr_multiple".to_string()));
+        // Unprotected risk fields that ARE tunable.
         assert!(keys.contains(&"risk.risk_pct_per_trade".to_string()));
+        assert!(keys.contains(&"risk.max_concurrent_positions".to_string()));
+        assert!(keys.contains(&"risk.max_position_pct_nav".to_string()));
+        // Protected engine params must NOT be in the tunable set.
+        for protected in PROTECTED_ENGINE_PARAMS {
+            assert!(
+                !keys.contains(&format!("risk.{protected}")),
+                "protected engine param risk.{protected} must not be tunable"
+            );
+        }
     }
 
     #[test]

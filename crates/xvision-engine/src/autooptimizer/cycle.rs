@@ -1002,6 +1002,26 @@ where
                 continue;
             }
         }
+        // Strategy-level semantic integrity check: validates the candidate's risk
+        // params and config are sane (non-zero position sizing, sensible cadence,
+        // etc.). Catches broken mutations at the param/config level that the
+        // prose-only check above doesn't catch (e.g. zero `risk_pct_per_trade`
+        // set in risk config — the prompt text might still look fine).
+        if let Err(failures) = crate::autooptimizer::canary::validate_strategy_semantics(&candidate) {
+            let reason = format!(
+                "strategy semantic check failed: {}",
+                failures.join("; ")
+            );
+            tracing::debug!(cycle_id, %reason, "rejecting semantically broken candidate strategy");
+            no_candidate_count += 1;
+            progress(CycleProgressEvent::NoCandidate {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: parent_node.bundle_hash.to_hex(),
+                reason,
+            });
+            continue;
+        }
         // F32 backstop: drop a candidate this parent has already produced (in a
         // prior cycle OR earlier this cycle) before it spends four backtests on a
         // known result. The mutator's `already_tried` retry normally prevents this,
