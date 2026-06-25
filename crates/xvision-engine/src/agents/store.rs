@@ -420,6 +420,39 @@ impl AgentStore {
         Ok(row.is_some())
     }
 
+    /// Returns `(agent_id, name)` of the agent that already owns `name`,
+    /// excluding `excluding_id` when provided (so a self-update is not a
+    /// conflict). Returns `None` when the name is free.
+    pub async fn find_name_conflict(
+        &self,
+        name: &str,
+        excluding_id: Option<&str>,
+    ) -> Result<Option<(String, String)>> {
+        let row = match excluding_id {
+            Some(id) => {
+                sqlx::query(
+                    "SELECT agent_id, name FROM agents WHERE name = ? AND agent_id != ? LIMIT 1",
+                )
+                .bind(name)
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query("SELECT agent_id, name FROM agents WHERE name = ? LIMIT 1")
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+        };
+        Ok(row.map(|r| {
+            (
+                r.try_get("agent_id").unwrap(),
+                r.try_get("name").unwrap(),
+            )
+        }))
+    }
+
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
             "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, allowed_tools_json \
