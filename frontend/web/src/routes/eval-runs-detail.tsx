@@ -613,7 +613,7 @@ function SummaryCard({
   const agentRunId = traceRunId(summary);
   const displayedCostUsd = displayCost(summary, totalCostUsd);
   const verdict = summary.status === "completed" ? "PASS" : summary.status.toUpperCase();
-  const totalPnl = totalPnlUsd(equityCurve);
+  const totalPnl = totalPnlUsd(equityCurve) ?? summary.unrealized_pnl_usd ?? null;
   const realizedPnl = realizedPnlUsd(decisions);
   const unrealizedPnl = summary.unrealized_pnl_usd ?? unrealizedPnlUsd(totalPnl, realizedPnl);
   const decisionTape = useMemo(

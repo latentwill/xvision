@@ -192,14 +192,17 @@ impl AlpacaLiveClient {
         let asset = asset.to_string();
         let budget = self.reconnect_budget;
         let granularity_secs = granularity.seconds().max(1) as i64;
-        tokio::spawn(run_apca_subscription_task(
+        let handle = tokio::spawn(run_apca_subscription_task(
             creds,
             asset,
             tx,
             budget,
             granularity_secs,
         ));
-        Ok(BarSubscription { rx })
+        Ok(BarSubscription {
+            rx,
+            _task: handle.abort_handle(),
+        })
     }
 
     /// Test-only: build a subscription from an in-memory stream of
@@ -225,14 +228,17 @@ impl AlpacaLiveClient {
         // instantly. Production callers will use the eventual wired
         // path which keeps the real backoff.
         let backoff_enabled = false;
-        tokio::spawn(run_subscription_task(
+        let handle = tokio::spawn(run_subscription_task(
             Box::pin(stream),
             tx,
             budget,
             granularity_secs,
             backoff_enabled,
         ));
-        BarSubscription { rx }
+        BarSubscription {
+            rx,
+            _task: handle.abort_handle(),
+        }
     }
 }
 
@@ -242,14 +248,14 @@ impl AlpacaLiveClient {
 /// `futures::Stream` so callers can use combinators.
 pub struct BarSubscription {
     rx: mpsc::Receiver<BarStreamEvent>,
+    /// Abort handle for the background WS task. Dropping the
+    /// subscription aborts the task, releasing the Alpaca WS slot.
+    _task: tokio::task::AbortHandle,
 }
 
-impl BarSubscription {
-    /// Await the next event. Returns `None` once the underlying task
-    /// has emitted `BudgetExhausted` (or the stream cleanly
-    /// terminated).
-    pub async fn recv(&mut self) -> Option<BarStreamEvent> {
-        self.rx.recv().await
+impl Drop for BarSubscription {
+    fn drop(&mut self) {
+        self._task.abort();
     }
 }
 
@@ -349,6 +355,15 @@ async fn run_apca_subscription_task(
         }
 
         while let Some(message) = stream.next().await {
+            // Exit immediately when the receiver is gone — don't hold
+            // the Alpaca WS slot while the LiveStream has been dropped.
+            if tx.is_closed() {
+                tracing::info!(
+                    target: "xvision_data::alpaca_live",
+                    "live bar stream: receiver dropped during WS loop, exiting"
+                );
+                return;
+            }
             match message {
                 Ok(Ok(Data::Bar(bar))) => {
                     let bar = match apca_bar_to_market_bar(bar) {

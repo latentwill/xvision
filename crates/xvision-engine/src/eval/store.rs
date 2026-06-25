@@ -637,7 +637,6 @@ impl RunStore {
         .context("resume disconnected eval_run")?;
         Ok(res.rows_affected() > 0)
     }
-
     /// Overwrite `metrics_json` on a completed run. Called post-finalize when
     /// additional aggregations (e.g. inference cost) are computed after the
     /// executor writes the initial metrics blob. Unlike `finalize`, this does
