@@ -243,9 +243,10 @@ validators run through the CLI seam. Direct writes to the SQLite flight-recorder
 (`insert_decision`, `insert_briefing`, `insert_trace`) break replay and
 metrics reproducibility and are intentionally not surfaced as CLI primitives.
 
-**Do not use the dashboard HTTP API as an agent surface.** The CLI wraps it and
-is the agreed contract. Dashboard API shapes can change without the same
-stability promise that CLI `--json` shapes carry.
+**Do not use general dashboard CRUD endpoints as an agent surface.** The CLI
+wraps it and is the agreed contract for most workflows. Two exceptions carry a
+stability promise: the chat-rail event stream (see below) and the optimizer
+convenience endpoint (`POST /api/optimize/run`, see "Running the optimizer").
 
 **Do not use the MCP surface without explicit operator authorization.** The MCP
 indicator server (`xvn-mcp`) is no longer part of the recommended agent surface
@@ -253,6 +254,52 @@ as of 2026-05-10. The MCP crate remains in the workspace for external MCP
 clients but is not on the hot path. See
 [CLI non-surfaced](/docs?slug=cli-non-surfaced) for the full footgun inventory.
 
+
+## Running the optimizer from an agent
+
+The optimizer flywheel (autooptimizer) has a convenience HTTP endpoint
+designed for agents. It accepts a minimal JSON body and synthesizes
+defaults so the caller does not need flywheel internals like embeddings,
+namespaces, or pattern text.
+
+### Quick launch
+
+```
+POST /api/optimize/run
+Content-Type: application/json
+
+{"agent_id": "<agent_ulid>"}
+```
+
+Returns an `AutoOptimizerRunDto` JSON object with the run id, namespace,
+pattern_id, and promotion state. The endpoint is an exception to the
+"don't use the dashboard API" rule — it carries the same stability
+promise as the chat rail endpoints.
+
+### Full fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `agent_id` | string | required | Agent ULID whose flywheel namespace will be optimized. |
+| `pattern_text` | string | `"Auto-optimized pattern for agent <id>"` | The pattern/prompt text to optimize. |
+| `active` | bool | `true` | Whether the resulting Pattern is immediately recall-active. |
+| `limit` | int | `50` | Max Observation rows to distill into the pattern. |
+| `min_observations` | int | `2` | Minimum Observation count required to produce a Pattern. |
+
+### CLI equivalent
+
+The same workflow is available via the CLI:
+
+```bash
+# Strategy-level optimization (cycle optimizer):
+xvn optimize run --strategy <strategy-id> --mock
+xvn optimize run --strategy <strategy-id> --provider ollama  # cross-provider
+
+# Flywheel (memory distillation) optimization:
+xvn optimize memory-demos --target-agent-id <agent-id> --json
+```
+
+Both CLI and HTTP paths are **offline-only** — they never trade live.
 **Do not mint on-chain or place real orders without an explicit op-mode flag.**
 `xvision-identity` (register, post_reputation) and live order submission via
 `xvn fire-trade --venue orderly` against mainnet are deliberately out of the

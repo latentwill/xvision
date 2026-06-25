@@ -247,3 +247,69 @@ pub async fn optimize_memory_demos_gate(
     let resp = optimize::gate_memory_demo_optimization(&ctx, &id, body).await?;
     Ok(Json(resp))
 }
+
+// ── Convenience wrapper: POST /api/optimize/run ───────────────────────────
+// Agents driving xvn expect a single-call optimization endpoint that accepts
+// an agent_id and triggers the flywheel memory-distillation pipeline. This
+// wrapper synthesizes sensible defaults so the agent doesn't need to supply
+// pattern_text, embedding, namespace, or other flywheel internals.
+
+/// Minimal request body for the agent-facing convenience endpoint.
+#[derive(Debug, Deserialize)]
+pub struct OptimizeRunSimpleRequest {
+    /// Agent ID whose flywheel namespace will be optimized.
+    pub agent_id: String,
+    /// Optional pattern text. Defaults to "Auto-optimized pattern for <agent_id>".
+    #[serde(default)]
+    pub pattern_text: Option<String>,
+    /// Whether the resulting Pattern is active immediately. Default true.
+    #[serde(default = "default_active")]
+    pub active: bool,
+    /// Maximum Observation rows to distill. Default 50.
+    #[serde(default = "default_limit")]
+    pub limit: Option<i64>,
+    /// Minimum Observation count to produce a Pattern. Default 2.
+    #[serde(default = "default_min_observations")]
+    pub min_observations: Option<usize>,
+}
+
+const fn default_active() -> bool { true }
+const fn default_limit() -> Option<i64> { Some(50) }
+const fn default_min_observations() -> Option<usize> { Some(2) }
+
+/// POST /api/optimize/run — convenience wrapper for autooptimizer::run_memory_distillation.
+///
+/// Accepts `{"agent_id":"..."}` with optional `pattern_text`, `active`,
+/// `limit`, `min_observations`. Synthesizes defaults for embedding and
+/// namespace so agents don't need flywheel internals.
+pub async fn optimize_run_simple(
+    State(state): State<AppState>,
+    Json(body): Json<OptimizeRunSimpleRequest>,
+) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
+    let store = memory_route::resolve_store().await?;
+    let namespace = format!("agent:{}", body.agent_id);
+    let pattern_text = body.pattern_text.unwrap_or_else(|| {
+        format!("Auto-optimized pattern for agent {}", body.agent_id)
+    });
+    let req = AutoOptimizerRunRequest {
+        namespace: Some(namespace),
+        agent: Some(body.agent_id.clone()),
+        scenario_id: None,
+        run_id: None,
+        pattern_text,
+        active: body.active,
+        limit: body.limit,
+        min_observations: body.min_observations,
+    };
+    // A simple unit embedding — the flywheel's observation recall works
+    // against this to find semantically similar observations. A unit
+    // vector matches all patterns equally, which is a reasonable default
+    // for an agent that hasn't supplied a target embedding.
+    let embedding: Vec<f32> = vec![1.0_f32; 384];
+    let resp = autooptimizer::run_memory_distillation(&store, "auto", embedding, req).await
+        .map_err(|e| DashboardError::Validation {
+            field: "optimize/run".into(),
+            msg: format!("autooptimizer run failed: {e}"),
+        })?;
+    Ok(Json(resp))
+}

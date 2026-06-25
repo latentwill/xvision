@@ -843,6 +843,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/optimize/memory-demos/:id/gate",
             post(flywheel::optimize_memory_demos_gate),
         )
+        // Agent-facing convenience: accepts {"agent_id":"..."} with optional
+        // pattern_text / active / limit / min_observations. Defaults are
+        // synthesized so the caller doesn't need flywheel internals.
+        .route("/api/optimize/run", post(flywheel::optimize_run_simple))
         // ── Cost budget (bead-8wn) ────────────────────────────────────────
         // PUT sets the operator-set daily budget cap (mutation). A
         // non-positive / NaN cap → 400 (autooptimizer_cycle budget validation).
