@@ -365,8 +365,11 @@ enum StrategyAction {
         strategy_id: String,
         /// Path to a JSON object. Accepts either `{...filter fields...}`
         /// or `{ "filter": {...filter fields...} }`.
-        #[arg(long = "from-json")]
-        from_json: PathBuf,
+        #[arg(long = "from-json", conflicts_with = "from_stdin")]
+        from_json: Option<PathBuf>,
+        /// Read filter JSON from stdin instead of a file.
+        #[arg(long = "from-stdin", conflicts_with = "from_json")]
+        from_stdin: bool,
     },
     /// Print the inline deterministic Filter DSL catalog.
     ///
@@ -636,7 +639,8 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::SetFilter {
             strategy_id,
             from_json,
-        } => set_filter(&strategy_id, &from_json).await,
+            from_stdin,
+        } => set_filter(&strategy_id, from_json.as_ref(), from_stdin).await,
         StrategyAction::FilterCatalog { json } => filter_catalog(json),
         StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
@@ -2181,19 +2185,35 @@ async fn add_filter(
     Ok(())
 }
 
-async fn set_filter(strategy_id: &str, from_json: &PathBuf) -> CliResult<()> {
+async fn set_filter(strategy_id: &str, from_json: Option<&PathBuf>, from_stdin: bool) -> CliResult<()> {
     let ctx = open_ctx().await?;
     let current = api_strategy::get(&ctx, strategy_id)
         .await
         .map_err(|e| api_to_cli("strategy set-filter (load strategy)", e))?;
-    let raw = std::fs::read_to_string(from_json).map_err(|e| {
-        CliError::usage(anyhow::anyhow!(
-            "failed to read filter JSON `{}`: {e}",
-            from_json.display()
-        ))
-    })?;
+    let raw = if from_stdin {
+        let mut buf = String::new();
+        std::io::read_to_string(std::io::stdin(), &mut buf).map_err(|e| {
+            CliError::usage(anyhow::anyhow!(
+                "failed to read filter JSON from stdin: {e}"
+            ))
+        })?;
+        if buf.trim().is_empty() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "stdin is empty; pipe filter JSON to set-filter --from-stdin"
+            )));
+        }
+        buf
+    } else {
+        let path = from_json.expect("--from-json required when not using --from-stdin");
+        std::fs::read_to_string(path).map_err(|e| {
+            CliError::usage(anyhow::anyhow!(
+                "failed to read filter JSON `{}`: {e}",
+                path.display()
+            ))
+        })?
+    };
     let raw_value: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("--from-json must contain valid JSON: {e}")))?;
+        .map_err(|e| CliError::usage(anyhow::anyhow!("filter JSON must be valid JSON: {e}")))?;
     let filter = filter_from_strategy_json(raw_value, strategy_id, current.filter.as_ref())?;
 
     let updated =

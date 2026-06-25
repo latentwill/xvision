@@ -336,19 +336,33 @@ pub async fn update(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest) -
 async fn update_inner(ctx: &ApiContext, agent_id: &str, req: UpdateAgentRequest) -> ApiResult<Agent> {
     let store = AgentStore::new(ctx.db.clone());
 
+    // Load the current agent once so we can (a) fail fast on
+    // not-found, (b) short-circuit the uniqueness check when the
+    // name is unchanged (self-collision → no-op 200), and (c) avoid
+    // double-loading inside `store.update()`.
+    let current_agent = store
+        .get(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("agent {}", agent_id)))?;
+
     if let Some(ref name) = req.name {
         if name.trim().is_empty() {
             return Err(ApiError::Validation("name must be non-empty".into()));
         }
-        if store
-            .name_exists(name, Some(agent_id))
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-        {
-            return Err(ApiError::Conflict(format!(
-                "an agent named '{}' already exists",
-                name
-            )));
+        // Self-collision: PUT with the same name is a no-op, not a
+        // conflict.  Let `store.update` proceed and return 200.
+        if current_agent.name != *name {
+            if let Some((conflict_id, conflict_name)) = store
+                .find_name_conflict(name, Some(agent_id))
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+            {
+                return Err(ApiError::Conflict(format!(
+                    "agent name '{}' already in use by agent {} (name: '{}'). Use a distinct name.",
+                    name, conflict_id, conflict_name
+                )));
+            }
         }
     }
 

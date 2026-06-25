@@ -206,13 +206,6 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
 
 /// Mutating, destructive, or host-admin paths below otherwise-supported heads.
 const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
-    // `agent create` is a write path: persists a new agent record in the
-    // workspace library. Read-only agent verbs (get, ls, lint) remain
-    // allowed. Added with the agent dry-run + allowlist gap fix.
-    DeniedNested {
-        head: "agent",
-        path: &["create"],
-    },
     DeniedNested {
         head: "bars",
         path: &["rm"],
@@ -230,22 +223,6 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         path: &["remove"],
     },
     DeniedNested {
-        head: "provider",
-        path: &["refresh-models"],
-    },
-    DeniedNested {
-        head: "scenario",
-        path: &["create"],
-    },
-    DeniedNested {
-        head: "scenario",
-        path: &["clone"],
-    },
-    DeniedNested {
-        head: "scenario",
-        path: &["archive"],
-    },
-    DeniedNested {
         head: "scenario",
         path: &["rm"],
     },
@@ -257,20 +234,10 @@ const DENIED_NESTED_SUBCOMMANDS: &[DeniedNested] = &[
         head: "scenario",
         path: &["set-regime"],
     },
-    // Strategy draft authoring is intentionally allowed over the trusted
-    // Tailscale remote CLI: users need to create new strategies remotely
-    // without bouncing through the dashboard UI. The mutating follow-up paths
-    // below (`add-agent`, `remove-agent`, `set-pipeline`) stay denied because
-    // they alter an existing strategy's shape in ways that are easier to do
-    // with richer local context.
-    DeniedNested {
-        head: "strategy",
-        path: &["add-agent"],
-    },
-    DeniedNested {
-        head: "strategy",
-        path: &["remove-agent"],
-    },
+    // These subcommands (`strategy set-pipeline`, `strategy migrate-agents`) are
+    // denied — the dashboard has no pipeline editor yet. Agent attach/detach
+    // (`add-agent`, `remove-agent`) are now allowed over the trusted Tailscale
+    // remote CLI.
     DeniedNested {
         head: "strategy",
         path: &["set-pipeline"],
