@@ -817,7 +817,7 @@ where
                             strategy_prompt_override = ?agent_ref.prompt_override,
                             "agent not found in agent_library — prompt resolution failed. \
                              The agent must exist in the same SQLite database that the \
-                             optimizer pool connects to. Run `xvn agent get {id}` to verify."
+                             optimizer pool connects to."
                         );
                     }
                     Err(e) => {
