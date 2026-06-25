@@ -757,9 +757,7 @@ where
     // Resolve each agent's real system_prompt so the experiment writer sees
     // the actual trading logic rather than just an agent_id reference. Only
     // agents whose prompt_override is None need resolution — if an override is
-    // already set, it's visible in the AgentRef JSON block. Best-effort: a DB
-    // miss (agent not found) just leaves that agent un-annotated, which is
-    // no worse than the previous behaviour.
+    // already set, it's visible in the AgentRef JSON block.
     //
     // Slot resolution: match by the agent ref's role/capability first, then
     // fall back to slots named "main", then fall back to slots.first(). This
@@ -770,26 +768,84 @@ where
         let agent_store = crate::agents::AgentStore::new(pool.clone());
         let mut map = HashMap::new();
         for agent_ref in &parent_strategy.agents {
+            let role = agent_ref.canonical_role();
             if agent_ref.prompt_override.is_none() {
                 match agent_store.get(&agent_ref.agent_id).await {
                     Ok(Some(agent)) => {
                         let slot = resolve_slot_for_role(&agent.slots, agent_ref);
-                        if let Some(slot) = slot {
-                            if !slot.system_prompt.is_empty() {
+                        match slot {
+                            Some(slot) if !slot.system_prompt.is_empty() => {
+                                let prompt_len = slot.system_prompt.len();
                                 map.insert(agent_ref.agent_id.clone(), slot.system_prompt.clone());
+                                tracing::info!(
+                                    target: "xvision::autooptimizer::prompt",
+                                    agent_id = %agent_ref.agent_id,
+                                    role = %role,
+                                    slot_name = %slot.name,
+                                    prompt_len,
+                                    "resolved agent system_prompt for mutator context"
+                                );
+                            }
+                            Some(slot) => {
+                                tracing::warn!(
+                                    target: "xvision::autooptimizer::prompt",
+                                    agent_id = %agent_ref.agent_id,
+                                    role = %role,
+                                    slot_name = %slot.name,
+                                    "agent slot has empty system_prompt"
+                                );
+                            }
+                            None => {
+                                tracing::warn!(
+                                    target: "xvision::autooptimizer::prompt",
+                                    agent_id = %agent_ref.agent_id,
+                                    role = %role,
+                                    n_slots = agent.slots.len(),
+                                    "resolve_slot_for_role returned None for agent"
+                                );
                             }
                         }
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        tracing::warn!(
+                            target: "xvision::autooptimizer::prompt",
+                            agent_id = %agent_ref.agent_id,
+                            role = %role,
+                            "agent not found in agent_library — prompt resolution failed"
+                        );
+                    }
                     Err(e) => {
                         tracing::warn!(
+                            target: "xvision::autooptimizer::prompt",
                             agent_id = %agent_ref.agent_id,
+                            role = %role,
                             error = %e,
-                            "failed to resolve agent prompt for mutator context (best-effort, ignoring)"
+                            "DB error resolving agent prompt for mutator context (skipping)"
                         );
                     }
                 }
+            } else {
+                tracing::info!(
+                    target: "xvision::autooptimizer::prompt",
+                    agent_id = %agent_ref.agent_id,
+                    role = %role,
+                    "agent has prompt_override set — using override, not library prompt"
+                );
             }
+        }
+        if map.is_empty() && !parent_strategy.agents.is_empty() {
+            tracing::warn!(
+                target: "xvision::autooptimizer::prompt",
+                n_agents = parent_strategy.agents.len(),
+                "NO agent prompts were resolved — mutator will generate prompts from scratch"
+            );
+        } else {
+            tracing::info!(
+                target: "xvision::autooptimizer::prompt",
+                n_resolved = map.len(),
+                n_agents = parent_strategy.agents.len(),
+                "resolved agent prompts for mutator context"
+            );
         }
         map
     };
