@@ -397,6 +397,7 @@ mod tests {
             fill_size: None,
             fee: None,
             pnl_realized: pnl,
+            delayed: None,
         }
     }
 

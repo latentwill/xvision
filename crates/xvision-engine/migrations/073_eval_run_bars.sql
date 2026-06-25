@@ -10,6 +10,6 @@ CREATE TABLE IF NOT EXISTS eval_run_bars (
     low          REAL    NOT NULL,
     close        REAL    NOT NULL,
     volume       REAL    NOT NULL,   -- may be zero for synthetic/derived bars
-    PRIMARY KEY (run_id, bar_index)
+    PRIMARY KEY (run_id, asset, bar_index)
 );
-CREATE INDEX IF NOT EXISTS idx_eval_run_bars_ts ON eval_run_bars(run_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_eval_run_bars_ts ON eval_run_bars(run_id, asset, timestamp);

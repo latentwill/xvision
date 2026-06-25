@@ -123,6 +123,7 @@ fn decision(run_id: &str, idx: u32, asset: &str, action: &str, pnl: Option<f64>)
         fill_size: None,
         fee: None,
         pnl_realized: pnl,
+        delayed: Some(false),
     }
 }
 

@@ -40,6 +40,12 @@ use crate::eval::store::RunStore;
 /// but never more, regardless of operator misconfiguration.
 const HARD_MAX_TOKENS: u32 = 16_000;
 
+/// Maximum input payload size in characters before we switch to compact
+/// JSON (serde_json::to_string vs serde_json::to_string_pretty). Punts
+/// overflow prevention to the serialization layer rather than guessing
+/// token counts.
+const COMPACT_JSON_THRESHOLD_CHARS: usize = 80_000;
+
 /// What `run_review` returns. The persisted review id is always present
 /// (even on `failed` outcomes) so callers can link to the audit row.
 #[derive(Debug, Clone)]
@@ -71,6 +77,10 @@ pub enum ReviewError {
 /// Orchestrate one review. Takes the store + dispatch + scenario summary
 /// (the caller — usually the API layer — resolves scenario metadata).
 ///
+/// When `custom_prompt` is `Some(...)`, it overrides the agent profile's
+/// stored `system_prompt`. This lets callers supply ad-hoc review prompts
+/// from the CLI without modifying persisted profiles.
+///
 /// Errors out only for setup-level problems (run not found, profile
 /// disabled, DB down). Model-side failures (bad JSON, hallucinated
 /// evidence, sparse payload) are persisted as terminal reviews and
@@ -81,6 +91,7 @@ pub async fn run_review(
     run_id: &str,
     agent_profile_id: &str,
     scenario: Option<ReviewScenarioSummary>,
+    custom_prompt: Option<String>,
 ) -> Result<ReviewOutcome, ReviewError> {
     let run = store
         .get(run_id)
@@ -105,6 +116,19 @@ pub async fn run_review(
     if !profile.enabled {
         return Err(ReviewError::ProfileDisabled(agent_profile_id.to_string()));
     }
+
+    // When a custom prompt was supplied, override the profile's stored
+    // system_prompt so call_model uses the caller's text instead of the
+    // operator-configured persona. The profile id / provider / model /
+    // temperature all stay from the DB row.
+    let profile = if let Some(ref custom) = custom_prompt {
+        AgentProfile {
+            system_prompt: custom.clone(),
+            ..profile
+        }
+    } else {
+        profile
+    };
 
     // Persist queued, then advance to running. begin_review_running
     // returns false for a stale callback path; here we're the writer so a
@@ -186,27 +210,80 @@ async fn call_model(
     payload: &ReviewPayload,
 ) -> Result<String, String> {
     let system_prompt = build_system_prompt(profile);
-    let body = serde_json::to_string_pretty(payload).map_err(|e| format!("serialize review payload: {e}"))?;
     let legend = render_evidence_legend(&payload.valid_evidence_refs);
-    let user_text = format!("{legend}\n\nReview payload:\n{body}");
 
+    // Prefer pretty-printed JSON for model readability. If the
+    // serialized payload is large enough to risk context overflow, send
+    // compact JSON instead (saves ~30 % from whitespace alone).
+    let pretty = serde_json::to_string_pretty(payload).map_err(|e| format!("serialize: {e}"))?;
+    let (body_json, is_compact) = if pretty.len() > COMPACT_JSON_THRESHOLD_CHARS {
+        let compact = serde_json::to_string(payload).map_err(|e| format!("serialize: {e}"))?;
+        (compact, true)
+    } else {
+        (pretty, false)
+    };
+
+    let user_text = format!("{legend}\n\nReview payload:\n{body_json}");
     let req = LlmRequest {
         model: profile.model.clone(),
-        system_prompt,
+        system_prompt: system_prompt.clone(),
         messages: vec![Message::user_text(user_text)],
         max_tokens: Some(profile.max_tokens.min(HARD_MAX_TOKENS)),
         tools: vec![],
-        // Profile-driven temperature is the determinism knob: review
-        // personas are seeded at 0.2 and operators may tighten further.
-        // Passing `Some(t)` overrides the provider default; passing
-        // `None` (what other callers do) keeps the provider default.
         temperature: Some(profile.temperature),
         response_schema: None,
         cache_control: None,
         force_json: true,
     };
-    let resp = dispatch.complete(req).await.map_err(|e| format!("{e}"))?;
-    Ok(resp.text())
+    let resp = dispatch.complete(req).await;
+
+    // On context overflow from the pretty-printed version, retry once
+    // with compact JSON before giving up.
+    if is_compact {
+        return match resp {
+            Ok(r) => Ok(r.text()),
+            Err(e) => Err(format!("{e:#}")),
+        };
+    }
+    match resp {
+        Ok(r) => Ok(r.text()),
+        Err(e) => {
+            let msg = format!("{e:#}");
+            if is_overflow_error(&msg) {
+                // Retry with compact JSON.
+                let compact = serde_json::to_string(payload).map_err(|e| format!("serialize: {e}"))?;
+                let user_text = format!("{legend}\n\nReview payload:\n{compact}");
+                let req = LlmRequest {
+                    model: profile.model.clone(),
+                    system_prompt,
+                    messages: vec![Message::user_text(user_text)],
+                    max_tokens: Some(profile.max_tokens.min(HARD_MAX_TOKENS)),
+                    tools: vec![],
+                    temperature: Some(profile.temperature),
+                    response_schema: None,
+                    cache_control: None,
+                    force_json: true,
+                };
+                let retry = dispatch.complete(req).await.map_err(|e| format!("{e:#}"))?;
+                Ok(retry.text())
+            } else {
+                Err(msg)
+            }
+        }
+    }
+}
+
+/// True when the error message indicates the model's context window was
+/// exceeded. Matches the same markers used by
+/// `agent::llm::body_indicates_context_overflow` and
+/// `agent::recovery::FailureClass::ContextOverflow`.
+fn is_overflow_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("context_length_exceeded")
+        || lower.contains("prompt is too long")
+        || lower.contains("context window")
+        || lower.contains("context length exceeded")
+        || lower.contains("max_tokens exceeded")
 }
 
 async fn persist_inconclusive(
@@ -388,6 +465,7 @@ mod tests {
                     fill_size: Some(0.01),
                     fee: Some(1.0),
                     pnl_realized: Some(0.0),
+                    delayed: None,
                 })
                 .await
                 .expect("record decision");
@@ -464,7 +542,7 @@ mod tests {
             .expect("list runs");
         let run_id = runs[0].id.clone();
 
-        let outcome = run_review(&store, dispatch, &run_id, "reasoning-agent", None)
+        let outcome = run_review(&store, dispatch, &run_id, "reasoning-agent", None, None)
             .await
             .expect("review runs");
         assert_eq!(outcome.status, ReviewStatus::Completed);
@@ -494,7 +572,7 @@ mod tests {
             .list(crate::eval::store::ListFilter::default())
             .await
             .unwrap();
-        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None)
+        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None, None)
             .await
             .expect("no panic");
         assert_eq!(outcome.verdict, Some(ReviewVerdict::Inconclusive));
@@ -521,7 +599,7 @@ mod tests {
             .list(crate::eval::store::ListFilter::default())
             .await
             .unwrap();
-        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None)
+        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None, None)
             .await
             .expect("no panic");
         assert_eq!(outcome.verdict, Some(ReviewVerdict::Inconclusive));
@@ -559,7 +637,7 @@ mod tests {
         }
         let dispatch: Arc<dyn LlmDispatch> = Arc::new(ShouldNotCall);
 
-        let outcome = run_review(&store, dispatch, &run.id, "reasoning-agent", None)
+        let outcome = run_review(&store, dispatch, &run.id, "reasoning-agent", None, None)
             .await
             .expect("sparse review succeeds");
         assert_eq!(outcome.verdict, Some(ReviewVerdict::Inconclusive));
@@ -579,7 +657,7 @@ mod tests {
             .list(crate::eval::store::ListFilter::default())
             .await
             .unwrap();
-        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None)
+        let outcome = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None, None)
             .await
             .expect("dispatch failure is recorded, not propagated");
         assert_eq!(outcome.status, ReviewStatus::Failed);
@@ -600,7 +678,7 @@ mod tests {
             .list(crate::eval::store::ListFilter::default())
             .await
             .unwrap();
-        let err = run_review(&store, dispatch, &runs[0].id, "ghost-profile", None)
+        let err = run_review(&store, dispatch, &runs[0].id, "ghost-profile", None, None)
             .await
             .expect_err("missing profile");
         assert!(matches!(err, ReviewError::ProfileNotFound(_)), "got: {err:?}");
@@ -643,7 +721,7 @@ mod tests {
             .list(crate::eval::store::ListFilter::default())
             .await
             .unwrap();
-        let _ = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None)
+        let _ = run_review(&store, dispatch, &runs[0].id, "reasoning-agent", None, None)
             .await
             .expect("review runs");
 

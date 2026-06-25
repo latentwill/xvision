@@ -918,6 +918,9 @@ mod tests {
             live_config: None,
             source: Default::default(),
             unrealized_pnl_usd: None,
+            delayed_decisions: 0,
+            forced_cancels: 0,
+            skipped_dispatches: 0,
         }
     }
 

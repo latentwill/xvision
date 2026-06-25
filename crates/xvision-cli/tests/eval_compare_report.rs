@@ -90,6 +90,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_a.clone(),
@@ -105,6 +106,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_a.clone(),
@@ -120,6 +122,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: Some(5.0),
+            delayed: Some(false),
         },
         // Remaining decisions are flat/hold to push flat_rate high.
         DecisionRow {
@@ -136,6 +139,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_a.clone(),
@@ -151,6 +155,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
     ];
     for d in &decisions_a {
@@ -198,6 +203,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_b.clone(),
@@ -213,6 +219,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: Some(2.0),
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_b.clone(),
@@ -228,6 +235,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         },
         DecisionRow {
             run_id: id_b.clone(),
@@ -243,6 +251,7 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
             fill_size: None,
             fee: None,
             pnl_realized: Some(1.5),
+            delayed: Some(false),
         },
     ];
     for d in &decisions_b {

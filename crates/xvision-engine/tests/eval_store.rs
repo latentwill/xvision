@@ -115,7 +115,7 @@ async fn fail_active_does_not_overwrite_cancelled_run() {
     store.create(&run).await.unwrap();
 
     assert!(store.cancel_active(&id, "stopped by user").await.unwrap());
-    assert!(!store.fail_active(&id, "late parser failure").await.unwrap());
+    assert!(!store.fail_active(&id, "late parser failure", None).await.unwrap());
 
     let back = store.get(&id).await.unwrap();
     assert_eq!(back.status, RunStatus::Cancelled);
@@ -142,6 +142,31 @@ async fn update_status_does_not_revive_terminal_run() {
         "unexpected update_status error: {err:#}",
     );
     assert_eq!(store.get(&id).await.unwrap().status, RunStatus::Failed);
+}
+
+#[tokio::test]
+async fn resume_disconnected_clears_completed_at_and_error() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    store.update_status(&id, RunStatus::Running, None).await.unwrap();
+    store
+        .fail_active(&id, "dashboard stopped", Some(RunStatus::Disconnected))
+        .await
+        .unwrap();
+
+    let disconnected = store.get(&id).await.unwrap();
+    assert_eq!(disconnected.status, RunStatus::Disconnected);
+    assert!(disconnected.completed_at.is_some());
+    assert_eq!(disconnected.error.as_deref(), Some("dashboard stopped"));
+
+    store.resume_disconnected(&id).await.unwrap();
+
+    let resumed = store.get(&id).await.unwrap();
+    assert_eq!(resumed.status, RunStatus::Running);
+    assert!(resumed.completed_at.is_none());
+    assert!(resumed.error.is_none());
 }
 
 #[tokio::test]
@@ -234,6 +259,7 @@ async fn record_decision_and_read_decisions_in_index_order() {
         fill_size: Some(0.05),
         fee: Some(1.25),
         pnl_realized: None,
+        delayed: Some(false),
     };
     store.record_decision(&row(2, "long_open", 30)).await.unwrap();
     store.record_decision(&row(0, "hold", 0)).await.unwrap();
@@ -271,10 +297,33 @@ async fn record_decision_duplicate_index_errors() {
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: Some(false),
     };
     store.record_decision(&row).await.unwrap();
     let err = store.record_decision(&row).await;
     assert!(err.is_err(), "duplicate (run_id, decision_index) must error");
+}
+#[tokio::test]
+async fn read_bars_for_asset_does_not_mix_multi_asset_runs() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    let ts = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+
+    store
+        .record_bar(&id, "BTC", 0, ts, 1.0, 2.0, 0.5, 1.5, 10.0)
+        .await
+        .unwrap();
+    store
+        .record_bar(&id, "ETH", 0, ts, 100.0, 101.0, 99.0, 100.5, 20.0)
+        .await
+        .unwrap();
+
+    let btc = store.read_bars_for_asset(&id, "BTC").await.unwrap();
+    assert_eq!(btc.len(), 1);
+    assert_eq!(btc[0].6, "BTC");
+    assert_eq!(btc[0].4, 1.5);
 }
 
 #[tokio::test]

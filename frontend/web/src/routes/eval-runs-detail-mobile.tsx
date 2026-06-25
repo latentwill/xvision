@@ -12,7 +12,7 @@ import {
   derivePriorSideByDecision,
   type PositionSide,
 } from "@/features/decisions/positions";
-import { isInflightRunStatus } from "@/lib/run-status";
+import { isInflightRunStatus, isRetryableRunStatus, isTerminalRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
 import { formatCostUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
@@ -664,10 +664,7 @@ function RunActions({
   onDelete: () => void;
   deleting: boolean;
 }) {
-  // Cancelled runs are eligible for retry alongside failed runs — see
-  // the desktop SummaryCard comment for the rationale.
-  const canRetry =
-    summary.status === "failed" || summary.status === "cancelled";
+  const canRetry = isRetryableRunStatus(summary.status);
   const terminal = isTerminalStatus(summary.status);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -1093,9 +1090,7 @@ function mapStripState(status: string): StripState {
   return "red";
 }
 
-function isTerminalStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
+const isTerminalStatus = isTerminalRunStatus;
 
 function useLiveDuration(summary: RunSummary): number {
   const isLive = isInflightRunStatus(summary.status);

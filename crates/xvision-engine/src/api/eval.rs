@@ -821,11 +821,17 @@ pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResul
 
     let _resume_from = last_bar_index.map(|i| i + 1).unwrap_or(0);
 
-    // 3. Transition status back to Running
-    store
-        .update_status(run_id, RunStatus::Running, None)
+    // 3. Transition status back to Running and clear terminal fields from the
+    // disconnect marker.
+    let resumed = store
+        .resume_disconnected(run_id)
         .await
         .map_err(|e| ApiError::Internal(format!("resume {run_id}: {e}")))?;
+    if !resumed {
+        return Err(ApiError::Validation(format!(
+            "run '{run_id}' is no longer disconnected"
+        )));
+    }
 
     // 4. Re-read for the detail response
     let detail = get_run(ctx, run_id).await?;

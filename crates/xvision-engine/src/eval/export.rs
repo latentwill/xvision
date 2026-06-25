@@ -741,6 +741,7 @@ mod roundtrip {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: None,
         }
     }
 

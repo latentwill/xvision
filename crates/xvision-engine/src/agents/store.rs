@@ -430,13 +430,11 @@ impl AgentStore {
     ) -> Result<Option<(String, String)>> {
         let row = match excluding_id {
             Some(id) => {
-                sqlx::query(
-                    "SELECT agent_id, name FROM agents WHERE name = ? AND agent_id != ? LIMIT 1",
-                )
-                .bind(name)
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?
+                sqlx::query("SELECT agent_id, name FROM agents WHERE name = ? AND agent_id != ? LIMIT 1")
+                    .bind(name)
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await?
             }
             None => {
                 sqlx::query("SELECT agent_id, name FROM agents WHERE name = ? LIMIT 1")
@@ -445,12 +443,7 @@ impl AgentStore {
                     .await?
             }
         };
-        Ok(row.map(|r| {
-            (
-                r.try_get("agent_id").unwrap(),
-                r.try_get("name").unwrap(),
-            )
-        }))
+        Ok(row.map(|r| (r.try_get("agent_id").unwrap(), r.try_get("name").unwrap())))
     }
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {

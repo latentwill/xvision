@@ -43,10 +43,15 @@ pub enum OutputFormat {
 pub struct ReviewArgs {
     /// Run id to review (from `xvn eval ls`).
     pub run_id: String,
-    /// Agent profile id (`fast-trader-agent`, `reasoning-agent`,
-    /// `risk-agent`, `research-agent`, or any operator-defined profile).
-    #[arg(long = "agent")]
-    pub agent: String,
+    /// Review prompt or agent profile id. If the value matches a known
+    /// agent profile (e.g. `reasoning-agent`), that profile's settings
+    /// and system prompt are used. Otherwise, the value is used directly
+    /// as a custom review prompt, with the default agent profile
+    /// (`reasoning-agent`) providing model/provider settings.
+    ///
+    /// Deprecated: `--agent` is an alias for `--prompt`.
+    #[arg(long = "prompt", alias = "agent")]
+    pub prompt: String,
     /// Re-run even if a review for this (run, agent) pair already exists.
     #[arg(long, default_value_t = false)]
     pub force: bool,
@@ -77,11 +82,16 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
         .exit_with(XvnExit::Upstream)?;
     let store = RunStore::new(ctx.db.clone());
 
-    // Idempotency: only short-circuit on a Completed or in-flight
-    // review for this (run, profile) pair. A prior Failed row is
-    // retry-eligible — returning it would make transient dispatch
-    // errors sticky on subsequent calls.
-    let existing = if args.force {
+    // Resolve the --prompt value to a profile + optional custom prompt.
+    // If the value matches a known agent profile id, use it verbatim.
+    // Otherwise, treat the value as a custom review prompt body and use
+    // `reasoning-agent` as the fallback for provider/model settings.
+    let (profile, custom_prompt) = resolve_prompt_value(&store, &args.prompt).await?;
+
+    // Idempotency: only short-circuit profile-based prompts. A custom
+    // prompt currently persists under the fallback profile id, so a cache
+    // lookup keyed only by profile would skip the caller's prompt.
+    let existing = if args.force || custom_prompt.is_some() {
         None
     } else {
         store
@@ -92,40 +102,28 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
                 source: anyhow::anyhow!("list reviews for {}: {e}", args.run_id),
             })?
             .into_iter()
-            .find(|r| r.agent_profile_id == args.agent && !matches!(r.status, ReviewStatus::Failed))
+            .find(|r| r.agent_profile_id == profile.id && !matches!(r.status, ReviewStatus::Failed))
     };
 
     let outcome_id = if let Some(prior) = existing {
         prior.id
     } else {
-        // Load + validate profile so we surface a typed not-found before
-        // we touch the dispatch builder.
-        let profile = store
-            .get_agent_profile(&args.agent)
-            .await
-            .map_err(|e| CliError {
-                exit: XvnExit::Upstream,
-                source: anyhow::anyhow!("load profile {}: {e}", args.agent),
-            })?
-            .ok_or_else(|| CliError {
-                exit: XvnExit::NotFound,
-                source: anyhow::anyhow!("agent profile `{}` not found", args.agent),
-            })?;
-        if !profile.enabled {
-            return Err(CliError {
-                exit: XvnExit::Usage,
-                source: anyhow::anyhow!("agent profile `{}` is disabled", args.agent),
-            });
-        }
         let dispatch =
             build_dispatch_for_profile(&ctx, &profile.provider).map_err(|e| api_to_cli("eval review", e))?;
         // Resolve scenario metadata so the payload carries asset /
         // granularity / time-window context (the engine docstring asks
         // the caller to provide this when available).
         let scenario_summary = resolve_scenario_summary(&ctx, &args.run_id).await;
-        let outcome = review::run_review(&store, dispatch, &args.run_id, &profile.id, scenario_summary)
-            .await
-            .map_err(map_review_error)?;
+        let outcome = review::run_review(
+            &store,
+            dispatch,
+            &args.run_id,
+            &profile.id,
+            scenario_summary,
+            custom_prompt,
+        )
+        .await
+        .map_err(map_review_error)?;
         outcome.review_id
     };
 
@@ -183,6 +181,63 @@ pub async fn run_review_cmd(args: ReviewArgs) -> CliResult<()> {
         });
     }
     Ok(())
+}
+
+/// Resolve a `--prompt` value to an agent profile and optional custom prompt.
+///
+/// If the value matches a known agent profile id, the profile is returned
+/// as-is with no custom prompt override. Otherwise, the value is treated
+/// as a custom review prompt body and `reasoning-agent` is used as the
+/// fallback for provider/model settings.
+async fn resolve_prompt_value(
+    store: &RunStore,
+    prompt: &str,
+) -> Result<(xvision_engine::eval::review::AgentProfile, Option<String>), CliError> {
+    // Try as a profile id first.
+    // `get_agent_profile` returns `Ok(None)` when the row doesn't exist.
+    match store.get_agent_profile(prompt).await {
+        Ok(Some(profile)) => {
+            if !profile.enabled {
+                return Err(CliError {
+                    exit: XvnExit::Usage,
+                    source: anyhow::anyhow!("agent profile `{prompt}` is disabled"),
+                });
+            }
+            return Ok((profile, None));
+        }
+        Ok(None) => { /* treat as custom prompt */ }
+        Err(e) => {
+            return Err(CliError {
+                exit: XvnExit::Upstream,
+                source: anyhow::anyhow!("look up profile `{prompt}`: {e}"),
+            });
+        }
+    }
+
+    // Not a known profile — treat the value as a custom review prompt.
+    // Use the `reasoning-agent` fallback for provider/model/dispatch settings.
+    let fallback = store
+        .get_agent_profile("reasoning-agent")
+        .await
+        .map_err(|e| CliError {
+            exit: XvnExit::Upstream,
+            source: anyhow::anyhow!("load fallback profile `reasoning-agent`: {e}"),
+        })?
+        .ok_or_else(|| CliError {
+            exit: XvnExit::NotFound,
+            source: anyhow::anyhow!(
+                "`{prompt}` is not a known agent profile and no fallback `reasoning-agent` exists. \
+                 Run `xvn eval agent-profile ls` to list available profiles."
+            ),
+        })?;
+    if !fallback.enabled {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("fallback profile `reasoning-agent` is disabled"),
+        });
+    }
+
+    Ok((fallback, Some(prompt.to_string())))
 }
 
 fn print_human(out: &CliReviewOutput) {
@@ -418,6 +473,7 @@ mod tests {
                     fill_size: Some(0.01),
                     fee: Some(1.0),
                     pnl_realized: Some(0.0),
+                    delayed: Some(false),
                 })
                 .await
                 .unwrap();
@@ -468,7 +524,7 @@ mod tests {
         // Use a stub dispatch that won't be called because the engine
         // bails before model dispatch on missing profile.
         let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo("{}"));
-        let err = review::run_review(&store, dispatch, &run_id, "ghost-profile", None)
+        let err = review::run_review(&store, dispatch, &run_id, "ghost-profile", None, None)
             .await
             .unwrap_err();
         let cli_err = map_review_error(err);
@@ -480,7 +536,7 @@ mod tests {
         let pool = pool_with_migrations().await;
         let store = RunStore::new(pool.clone());
         let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo("{}"));
-        let err = review::run_review(&store, dispatch, "no-such-run", "reasoning-agent", None)
+        let err = review::run_review(&store, dispatch, "no-such-run", "reasoning-agent", None, None)
             .await
             .unwrap_err();
         let cli_err = map_review_error(err);
@@ -591,6 +647,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_prompt_does_not_reuse_cached_profile_review() {
+        let (_tmp, xvn_home) = fresh_home().await;
+        let ctx = ApiContext::open(&xvn_home, xvision_engine::api::Actor::Cli { user: "test".into() })
+            .await
+            .expect("open ctx");
+        let store = RunStore::new(ctx.db.clone());
+        let run_id = seed_run(&ctx.db).await;
+
+        let prior = xvision_engine::eval::review::EvalReview::new_queued(
+            run_id.clone(),
+            "reasoning-agent".to_string(),
+        );
+        store.create_review(&prior).await.unwrap();
+        store
+            .complete_review(
+                &prior.id,
+                xvision_engine::eval::review::ReviewVerdict::Inconclusive,
+                0.0,
+                0,
+                "prior profile review",
+                "{}",
+            )
+            .await
+            .unwrap();
+
+        run_review_cmd(ReviewArgs {
+            run_id: run_id.clone(),
+            prompt: "Focus only on drawdown outliers.".to_string(),
+            force: false,
+            format: OutputFormat::Human,
+            output: None,
+            xvn_home: Some(xvn_home),
+        })
+        .await
+        .expect("custom prompt should run a fresh review");
+
+        let reviews = store.list_reviews_for_run(&run_id).await.unwrap();
+        assert_eq!(
+            reviews.len(),
+            2,
+            "custom prompt must not reuse an existing review cached for the fallback profile"
+        );
+    }
+
+    #[tokio::test]
     async fn end_to_end_review_persists_inconclusive_with_local_candle() {
         let (_tmp, xvn_home) = fresh_home().await;
         // Use a real file-backed ApiContext so the CLI command can
@@ -604,7 +705,7 @@ mod tests {
         let run_id = seed_run(&ctx.db).await;
 
         let dispatch = build_dispatch_for_profile(&ctx, "anthropic").expect("build dispatch");
-        let outcome = review::run_review(&store, dispatch, &run_id, "reasoning-agent", None)
+        let outcome = review::run_review(&store, dispatch, &run_id, "reasoning-agent", None, None)
             .await
             .expect("run_review");
         assert_eq!(outcome.status, ReviewStatus::Completed);

@@ -199,7 +199,10 @@ impl AlpacaLiveClient {
             budget,
             granularity_secs,
         ));
-        Ok(BarSubscription { rx, _task: handle.abort_handle() })
+        Ok(BarSubscription {
+            rx,
+            _task: handle.abort_handle(),
+        })
     }
 
     /// Test-only: build a subscription from an in-memory stream of
@@ -232,7 +235,10 @@ impl AlpacaLiveClient {
             granularity_secs,
             backoff_enabled,
         ));
-        BarSubscription { rx, _task: handle.abort_handle() }
+        BarSubscription {
+            rx,
+            _task: handle.abort_handle(),
+        }
     }
 }
 

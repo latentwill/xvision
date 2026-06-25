@@ -521,10 +521,14 @@ pub async fn build_run_payload_with(
             .read_decisions(run_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let asset_sym = resolve_run_asset_for_chart(ctx, &run, &decisions)
+            .await
+            .unwrap_or(xvision_core::trading::AssetSymbol::Btc);
 
-        // Primary: eval_run_bars table (073_eval_run_bars).
+        // Primary: eval_run_bars table (073_eval_run_bars), scoped to the
+        // chart asset so multi-asset live runs do not interleave candle series.
         let bars_from_store = if include.bars {
-            match store.read_bars(run_id).await {
+            match store.read_bars_for_asset(run_id, asset_sym.as_short()).await {
                 Ok(bars) => bars,
                 Err(e) => {
                     tracing::warn!(
@@ -540,9 +544,6 @@ pub async fn build_run_payload_with(
             vec![]
         };
         if !bars_from_store.is_empty() {
-            let asset_sym = resolve_run_asset_for_chart(ctx, &run, &decisions)
-                .await
-                .unwrap_or(xvision_core::trading::AssetSymbol::Btc);
             let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id)
                 .await
                 .unwrap_or(xvision_data::alpaca::BarGranularity::Hour1);
