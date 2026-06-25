@@ -283,16 +283,17 @@ const fn default_min_observations() -> Option<usize> { Some(2) }
 /// `limit`, `min_observations`. Synthesizes defaults for embedding and
 /// namespace so agents don't need flywheel internals.
 pub async fn optimize_run_simple(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(body): Json<OptimizeRunSimpleRequest>,
 ) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let namespace = format!("agent:{}", body.agent_id);
     let pattern_text = body.pattern_text.unwrap_or_else(|| {
         format!("Auto-optimized pattern for agent {}", body.agent_id)
     });
+    // Use `agent` shorthand — resolve_namespace_pair converts it to
+    // `agent:<id>` internally. Don't set both `namespace` and `agent`.
     let req = AutoOptimizerRunRequest {
-        namespace: Some(namespace),
+        namespace: None,
         agent: Some(body.agent_id.clone()),
         scenario_id: None,
         run_id: None,
