@@ -327,6 +327,7 @@ pub async fn run_batch(ctx: &ApiContext, req: BatchRunRequest) -> Result<BatchRe
                 &run_id,
                 profile_id,
                 scenario_summary,
+                None,
             )
             .await;
             entry.review = Some(match outcome {
@@ -691,6 +692,7 @@ pub(crate) async fn run_batch_via_env_with_assets(
                 &run_id,
                 profile_id,
                 scenario_summary,
+                None,
             )
             .await;
             entry.review = Some(match outcome {

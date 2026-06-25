@@ -369,6 +369,7 @@ mod tests {
                 fill_size: Some(1.0),
                 fee: Some(1.0),
                 pnl_realized: Some(100.0),
+                delayed: None,
             },
             DecisionRow {
                 run_id: "r".into(),
@@ -384,6 +385,7 @@ mod tests {
                 fill_size: None,
                 fee: None,
                 pnl_realized: Some(-25.0),
+                delayed: None,
             },
         ];
         let v = summarise_decisions(&rows);

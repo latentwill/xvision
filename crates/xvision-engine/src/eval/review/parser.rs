@@ -456,6 +456,7 @@ mod tests {
                 fill_size: Some(0.01),
                 fee: Some(1.0),
                 pnl_realized: Some(0.0),
+                delayed: None,
             })
             .collect();
         let equity = vec![(t0, 100_000.0), (t0, 100_500.0), (t0, 99_000.0)];

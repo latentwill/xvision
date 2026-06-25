@@ -117,7 +117,7 @@ pub async fn generate(
     // that omits the scenario block entirely.
     let scenario_summary = resolve_scenario_summary(&ctx, &run_id).await;
 
-    let outcome = review::run_review(&store, dispatch, &run_id, &profile.id, scenario_summary)
+    let outcome = review::run_review(&store, dispatch, &run_id, &profile.id, scenario_summary, None)
         .await
         .map_err(map_review_error)?;
 

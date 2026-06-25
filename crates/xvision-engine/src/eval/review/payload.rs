@@ -19,6 +19,16 @@ use crate::eval::store::DecisionRow;
 
 use super::AgentProfile;
 
+/// Maximum number of decisions included in the review payload. Runs with
+/// thousands of decisions (e.g. high-frequency or multi-year backtests)
+/// can overflow the model's context window; we sample uniformly when
+/// the count exceeds this cap.
+const MAX_DECISIONS: usize = 120;
+
+/// Maximum number of equity curve samples included in the review payload.
+/// Sampled uniformly when the count exceeds this cap.
+const MAX_EQUITY_POINTS: usize = 240;
+
 /// Top-level payload handed to the review agent. Owns the strict
 /// allowlist of legal evidence references; the parser rejects any finding
 /// that references something outside this set.
@@ -106,6 +116,30 @@ pub struct ReviewScenarioSummary {
     pub end: Option<String>,
 }
 
+/// Uniformly sample `items` down to at most `max_count` elements, always
+/// keeping the first and last elements. Returns the items as-is when
+/// `items.len() <= max_count`.
+fn capped_sample<T: Clone>(items: &[T], max_count: usize) -> Vec<T> {
+    let n = items.len();
+    if n <= max_count || max_count == 0 {
+        return items.to_vec();
+    }
+    // We need at least 2 to keep first + last, and the math below
+    // requires max_count >= 2.
+    if max_count < 2 {
+        return vec![items[0].clone()];
+    }
+    let step = (n - 1) as f64 / (max_count - 1) as f64;
+    let mut sampled = Vec::with_capacity(max_count);
+    for i in 0..max_count {
+        let idx = (i as f64 * step).round() as usize;
+        // SAFETY: `step = (n-1)/(max_count-1)`, so the maximum index is
+        // `(max_count-1) * (n-1)/(max_count-1) = n-1`, which is in bounds.
+        sampled.push(items[idx].clone());
+    }
+    sampled
+}
+
 /// Build the review payload. `equity_curve` is `(timestamp, equity_usd)`
 /// as returned by `RunStore::read_equity_curve`. Decisions and scenario
 /// are passed in by the caller so this stays a pure function — the engine
@@ -123,7 +157,7 @@ pub fn build_review_payload(
         .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
         .unwrap_or(serde_json::Value::Null);
 
-    let equity_curve: Vec<EquityPoint> = equity_curve
+    let equity_curve: Vec<EquityPoint> = capped_sample(&equity_curve, MAX_EQUITY_POINTS)
         .into_iter()
         .map(|(ts, equity_usd)| EquityPoint {
             timestamp: ts.to_rfc3339(),
@@ -131,7 +165,7 @@ pub fn build_review_payload(
         })
         .collect();
 
-    let decisions: Vec<DecisionSummary> = decisions
+    let decisions: Vec<DecisionSummary> = capped_sample(&decisions, MAX_DECISIONS)
         .into_iter()
         .map(|d| DecisionSummary {
             decision_index: d.decision_index,
@@ -313,6 +347,7 @@ mod tests {
             fill_size: Some(0.01),
             fee: Some(1.0),
             pnl_realized: Some(0.0),
+            delayed: None,
         }
     }
 
@@ -386,5 +421,33 @@ mod tests {
         assert!(payload.valid_evidence_refs.contains("equity:0"));
         assert!(payload.valid_evidence_refs.contains("equity:2"));
         assert!(payload.valid_evidence_refs.contains("equity_range:0..3"));
+    }
+
+    #[test]
+    fn capped_sample_preserves_first_and_last() {
+        let items: Vec<i32> = (0..100).collect();
+        let sampled = capped_sample(&items, 10);
+        assert_eq!(sampled.len(), 10);
+        assert_eq!(sampled[0], 0, "must keep first");
+        assert_eq!(sampled[9], 99, "must keep last");
+        // Middle elements should be roughly evenly spaced.
+        // With 10 samples from 0..99, indices should be roughly 0,11,22,33,44,55,66,77,88,99.
+        assert!(sampled[1] >= 8 && sampled[1] <= 14, "sample[1] should be ~11, got {}", sampled[1]);
+        assert!(sampled[8] >= 85 && sampled[8] <= 91, "sample[8] should be ~88, got {}", sampled[8]);
+    }
+
+    #[test]
+    fn capped_sample_returns_original_when_under_limit() {
+        let items: Vec<i32> = (0..5).collect();
+        let sampled = capped_sample(&items, 10);
+        assert_eq!(sampled.len(), 5);
+        assert_eq!(sampled, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn capped_sample_empty_input() {
+        let items: Vec<i32> = vec![];
+        let sampled = capped_sample(&items, 10);
+        assert!(sampled.is_empty());
     }
 }
