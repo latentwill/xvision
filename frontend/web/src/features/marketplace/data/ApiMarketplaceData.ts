@@ -593,7 +593,10 @@ export class ApiMarketplaceData implements MarketplaceData {
       `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/price`,
       { method: "POST", body: JSON.stringify({ price_usdc: priceUsdc }) },
     );
-    return { txHash: out.tx_hash, network: "mantle-sepolia" };
+    return {
+      txHash: out.tx_hash,
+      network: (await getActiveNetworkConfigOrDefault()).slug,
+    };
   }
 }
 

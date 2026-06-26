@@ -30,7 +30,8 @@
 # The target host needs nothing besides docker.
 #
 # Environment (marketplace build-time config, baked into the SPA):
-#   VITE_MARKETPLACE_NETWORK=mainnet   # chain for the buy path (default: sepolia)
+#   XVN_CHAIN_ID=5000                  # infers VITE_MARKETPLACE_NETWORK=mainnet
+#   VITE_MARKETPLACE_NETWORK=mainnet   # explicit override (sepolia|mainnet)
 #   VITE_MARKETPLACE_SUBGRAPH_URL=...  # Goldsky subgraph that Browse reads.
 #                                      # Forwarded to the build when set (even to
 #                                      # an empty string). On a mainnet build it
@@ -130,7 +131,40 @@ fi
 # VITE_MARKETPLACE_SUBGRAPH_URL when the operator sets one (honoring an explicit
 # empty value, which routes Browse to the backend indexer), and default it to
 # empty on a mainnet build so the testnet subgraph is never shipped to mainnet.
-MARKETPLACE_NETWORK="${VITE_MARKETPLACE_NETWORK:-sepolia}"
+chain_id_to_marketplace_network() {
+  case "$1" in
+    5000) echo "mainnet" ;;
+    5003) echo "sepolia" ;;
+    *)
+      echo "deploy-image: unsupported XVN_CHAIN_ID=$1 for marketplace build (expected 5000 or 5003)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [[ -n "${VITE_MARKETPLACE_NETWORK+set}" ]]; then
+  if [[ "$VITE_MARKETPLACE_NETWORK" != "mainnet" && "$VITE_MARKETPLACE_NETWORK" != "sepolia" ]]; then
+    echo "deploy-image: VITE_MARKETPLACE_NETWORK must be 'mainnet' or 'sepolia' (got '$VITE_MARKETPLACE_NETWORK')" >&2
+    exit 2
+  fi
+  MARKETPLACE_NETWORK="$VITE_MARKETPLACE_NETWORK"
+  if [[ -n "${XVN_CHAIN_ID+set}" ]]; then
+    EXPECTED_MARKETPLACE_NETWORK="$(chain_id_to_marketplace_network "$XVN_CHAIN_ID")"
+    if [[ "$MARKETPLACE_NETWORK" != "$EXPECTED_MARKETPLACE_NETWORK" ]]; then
+      echo "deploy-image: refusing mismatched marketplace build config:" >&2
+      echo "  VITE_MARKETPLACE_NETWORK=$MARKETPLACE_NETWORK targets $([[ "$MARKETPLACE_NETWORK" == "mainnet" ]] && echo 5000 || echo 5003)" >&2
+      echo "  XVN_CHAIN_ID=$XVN_CHAIN_ID implies VITE_MARKETPLACE_NETWORK=$EXPECTED_MARKETPLACE_NETWORK" >&2
+      echo "Set both to the same chain, or unset VITE_MARKETPLACE_NETWORK and let XVN_CHAIN_ID infer it." >&2
+      exit 2
+    fi
+  fi
+elif [[ -n "${XVN_CHAIN_ID+set}" ]]; then
+  MARKETPLACE_NETWORK="$(chain_id_to_marketplace_network "$XVN_CHAIN_ID")"
+  echo "==> Marketplace network: inferred VITE_MARKETPLACE_NETWORK=$MARKETPLACE_NETWORK from XVN_CHAIN_ID=$XVN_CHAIN_ID"
+else
+  MARKETPLACE_NETWORK="mainnet"
+  echo "==> Marketplace network: defaulting VITE_MARKETPLACE_NETWORK=mainnet for deploy builds (set XVN_CHAIN_ID=5003 or VITE_MARKETPLACE_NETWORK=sepolia for testnet)"
+fi
 MARKETPLACE_BUILD_ARGS=()
 if [[ -z "${VITE_MARKETPLACE_SUBGRAPH_URL+set}" && "$MARKETPLACE_NETWORK" == "mainnet" ]]; then
   VITE_MARKETPLACE_SUBGRAPH_URL=""
