@@ -41,10 +41,19 @@ pub enum ProgressEvent {
         estimated_tokens: u64,
     },
     /// One per scheduler tick. `scenario_progress_pct` is in [0.0, 100.0].
+    /// `eta_secs` is an optional estimated time-to-completion in seconds;
+    /// `None` for backtests (determinate from bar count) or when no bound
+    /// is set. Live/forward-test runs compute this from the active
+    /// `StopPolicy` constraints.
     RunTick {
         run_id: String,
         scenario_progress_pct: f64,
         current_ts: DateTime<Utc>,
+        /// Estimated wall-clock seconds until the run reaches its stop
+        /// condition (the minimum across all active policy limits).
+        /// `None` means indeterminate (no active bound, or backtest).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        eta_secs: Option<f64>,
     },
     /// Emitted once per LLM-slot invocation. Phase 3.D-progress pares
     /// paper-mode-executor-deleted doesn't yet break out per-slot tokens, so this is
