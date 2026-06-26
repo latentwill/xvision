@@ -1456,9 +1456,9 @@ impl RunStore {
         volume: f64,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
+            "INSERT OR IGNORE INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id, asset, bar_index) DO NOTHING",
+             ",
         )
         .bind(run_id)
         .bind(asset)
@@ -1492,9 +1492,9 @@ impl RunStore {
             .context("begin tx for record_bars_batch")?;
         for (asset, bar_index, timestamp, open, high, low, close, volume) in bars {
             sqlx::query(
-                "INSERT INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
+                "INSERT OR IGNORE INTO eval_run_bars (run_id, asset, bar_index, timestamp, open, high, low, close, volume) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(run_id, asset, bar_index) DO NOTHING",
+                 ",
             )
             .bind(run_id)
             .bind(asset)
