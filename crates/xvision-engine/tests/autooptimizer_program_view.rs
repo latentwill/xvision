@@ -31,7 +31,7 @@ fn fixture_strategy() -> Strategy {
             agent_id: "01HZAGENT01".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

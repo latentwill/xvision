@@ -564,7 +564,7 @@ mod tests {
                 agent_id: "x".into(),
                 role: "main".into(),
                 activates: None,
-                prompt_override: None,
+                prompt: String::new(),
                 model_override: None,
                 checkpoint: None,
                 veto: None,

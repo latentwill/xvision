@@ -27,7 +27,7 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
             agent_id: format!("agent-{}-{}", t.id, idx),
             role: slot.name.clone(),
             activates: activates_for_slot_name(&slot.name),
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

@@ -67,7 +67,7 @@ mod tests {
             "agents": [{
                 "agent_id": "01HZAGENT0000000000000000A",
                 "role": "trader",
-                "prompt_override": override_prompt,
+                "prompt": override_prompt,
             }],
             "risk": {
                 "risk_pct_per_trade": 0.01, "max_concurrent_positions": 1,
@@ -114,8 +114,8 @@ mod tests {
             .find(|a| a.canonical_role() == "trader")
             .unwrap();
         assert_eq!(
-            trader.prompt_override.as_deref(),
-            Some("PARENT PROMPT"),
+            trader.prompt.as_str(),
+            "PARENT PROMPT",
             "reverse must restore the parent's actual prompt, not blank it"
         );
     }
@@ -285,7 +285,7 @@ pub(crate) fn normalize_prose_baseline(forward: &mut MutationDiff, parent: &Stra
     for edit in &mut forward.prose {
         let role = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
         if let Some(parent_ref) = parent.agents.iter().find(|a| a.canonical_role() == role) {
-            edit.before = parent_ref.prompt_override.clone().unwrap_or_default();
+            edit.before = parent_ref.prompt.clone();
         }
     }
 }

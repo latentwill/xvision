@@ -100,7 +100,7 @@ fn sample_strategy(id: &str, agent_id: &str) -> Strategy {
             agent_id: agent_id.to_string(),
             role: "trader".to_string(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

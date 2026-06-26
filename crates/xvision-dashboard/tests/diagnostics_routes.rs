@@ -88,7 +88,7 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
                 agent_id: agent_id.into(),
                 role: "trader".into(),
                 activates: None,
-                prompt_override: None,
+                prompt: String::new(),
                 model_override: None,
                 checkpoint: None,
                 veto: None,

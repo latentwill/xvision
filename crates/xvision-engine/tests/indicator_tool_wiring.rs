@@ -188,7 +188,7 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
             agent_id: "test-agent".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

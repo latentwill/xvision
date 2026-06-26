@@ -250,7 +250,7 @@ async fn seed_strategies(
             agent_id,
             role: "trader".into(),
             activates: Some(Capability::Trader),
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

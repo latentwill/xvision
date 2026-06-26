@@ -66,7 +66,7 @@ fn strategy(required_tools: Vec<&str>) -> Strategy {
             agent_id: "agent-1".to_string(),
             role: "trader".to_string(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

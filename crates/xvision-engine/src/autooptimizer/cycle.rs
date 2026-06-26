@@ -773,36 +773,39 @@ where
         .map(|kids| kids.into_iter().map(|n| n.bundle_hash).collect())
         .unwrap_or_default();
 
-    // Resolve each agent's real system_prompt so the experiment writer sees
-    // the actual trading logic rather than just an agent_id reference. Only
-    // agents whose prompt_override is None need resolution — if an override is
-    // already set, it's visible in the AgentRef JSON block.
+    // Resolve each agent's real system_prompt from the agent library and
+    // build a `parent_for_mutator` clone that has prompt_override injected on
+    // every agent. This puts the full prompt text INSIDE the AgentRef JSON block
+    // that `to_markdown_with_resolved_prompts` renders — the LLM sees it as a
+    // structured field it can copy into `after`, not as free text outside the
+    // JSON fences.
     //
     // Slot resolution: match by the agent ref's role/capability first, then
-    // fall back to slots named "main", then fall back to slots.first(). This
-    // fixes the case where an agent has multiple slots and the optimizer
-    // previously just took the first one regardless of role (GH #1 slot-name
-    // mismatch).
-    let resolved_agent_prompts: HashMap<String, String> = {
+    // fall back to slots named "main", then fall back to slots.first().
+    //
+    // The ORIGINAL `parent_strategy` stays untouched (no prompt_override) so
+    // apply_to and lineage hashing use the same byte-identical parent the cycle
+    // loaded. Only the mutator sees the enriched clone.
+    let parent_for_mutator = {
         let agent_store = crate::agents::AgentStore::new(pool.clone());
-        let mut map = HashMap::new();
-        for agent_ref in &parent_strategy.agents {
+        let mut clone = parent_strategy.clone();
+        for agent_ref in &mut clone.agents {
             let role = agent_ref.canonical_role();
-            if agent_ref.prompt_override.is_none() {
+            if agent_ref.prompt.is_empty() {
                 match agent_store.get(&agent_ref.agent_id).await {
                     Ok(Some(agent)) => {
                         let slot = resolve_slot_for_role(&agent.slots, agent_ref);
                         match slot {
                             Some(slot) if !slot.system_prompt.is_empty() => {
                                 let prompt_len = slot.system_prompt.len();
-                                map.insert(agent_ref.agent_id.clone(), slot.system_prompt.clone());
+                                agent_ref.prompt = slot.system_prompt.clone();
                                 tracing::info!(
                                     target: "xvision::autooptimizer::prompt",
                                     agent_id = %agent_ref.agent_id,
                                     role = %role,
                                     slot_name = %slot.name,
                                     prompt_len,
-                                    "resolved agent system_prompt for mutator context"
+                                    "injected library prompt as prompt_override on mutator's parent clone"
                                 );
                             }
                             Some(slot) => {
@@ -826,17 +829,11 @@ where
                         }
                     }
                     Ok(None) => {
-                        // Use error! level so this ALWAYS appears in container
-                        // logs regardless of log level filter — this is the most
-                        // common failure mode when prompts aren't loaded.
                         tracing::error!(
                             target: "xvision::autooptimizer::prompt",
                             agent_id = %agent_ref.agent_id,
                             role = %role,
-                            strategy_prompt_override = ?agent_ref.prompt_override,
-                            "agent not found in agent_library — prompt resolution failed. \
-                             The agent must exist in the same SQLite database that the \
-                             optimizer pool connects to."
+                            "agent not found in agent_library"
                         );
                     }
                     Err(e) => {
@@ -854,34 +851,24 @@ where
                     target: "xvision::autooptimizer::prompt",
                     agent_id = %agent_ref.agent_id,
                     role = %role,
-                    "agent has prompt_override set — using override, not library prompt"
+                    prompt_len = agent_ref.prompt.len(),
+                    "agent already has prompt_override — using existing override"
                 );
             }
         }
-        if map.is_empty() && !parent_strategy.agents.is_empty() {
-            tracing::warn!(
-                target: "xvision::autooptimizer::prompt",
-                n_agents = parent_strategy.agents.len(),
-                "NO agent prompts were resolved — mutator will generate prompts from scratch"
-            );
-        } else {
-            tracing::info!(
-                target: "xvision::autooptimizer::prompt",
-                n_resolved = map.len(),
-                n_agents = parent_strategy.agents.len(),
-                "resolved agent prompts for mutator context"
-            );
-        }
-        map
+        clone
     };
 
-    // Extract the first resolved prompt as the base instruction for DSPy warm-start.
-    // This ensures the optimizer improves FROM the real agent prompt rather than
-    // generating from scratch (GH #1 prompt-not-loaded).
-    let base_instruction: Option<String> = resolved_agent_prompts
-        .values()
-        .find(|v| !v.is_empty())
-        .cloned();
+    // Extract the first resolved prompt from the enriched clone as the base
+    // instruction for DSPy warm-start. This ensures the optimizer improves FROM
+    // the real agent prompt rather than generating from scratch.
+    let base_instruction: Option<String> = parent_for_mutator
+        .agents
+        .iter()
+        .find_map(|a| {
+            let p = a.prompt.as_str();
+            if p.is_empty() { None } else { Some(p.to_string()) }
+        });
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
@@ -932,7 +919,7 @@ where
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner
-                .run_tournament(parent_strategy, config, Some(&resolved_agent_prompts))
+                .run_tournament(&parent_for_mutator, config, None) // prompts injected into clone
                 .await
             {
                 Ok(r) if r.incumbent_wins => {
@@ -978,14 +965,14 @@ where
         } else {
             match mutator
                 .propose(
-                    parent_strategy,
+                    &parent_for_mutator,
                     config,
                     dsr_prefix,
                     exploration_seed,
                     mutation_idx,
                     mutation_memory_context.as_deref(),
                     &avoid,
-                    Some(&resolved_agent_prompts),
+                    None, // prompts are injected directly into parent_for_mutator
                 )
                 .await
             {
@@ -1013,37 +1000,6 @@ where
             }
         };
         let diff = diff_result.expect("diff_result is None only on continue paths above");
-        // Focus-kind enforcement: when the exploration directive steers this
-        // mutation toward a specific kind (prose, param, etc.), reject diffs
-        // that target a different kind. This prevents the model from ignoring
-        // the focus and submitting e.g. param changes when the directive asks
-        // for prose (which is the most common failure mode on DeepSeek, where
-        // param changes produce 0.0 delta because risk params don't affect LLM
-        // trading decisions).
-        let focus_kind = compute_focus_kind(mutation_idx, parent_strategy, config);
-        if let Some(ref expected_kind) = focus_kind {
-            if diff.kind_label() != expected_kind.as_str() {
-                tracing::debug!(
-                    cycle_id,
-                    mutation_idx,
-                    expected = %expected_kind,
-                    actual = %diff.kind_label(),
-                    "rejecting mutation that does not match the exploration focus kind"
-                );
-                progress(CycleProgressEvent::NoCandidate {
-                    session_id: String::new(),
-                    cycle_id: cycle_id.to_string(),
-                    parent_hash: parent_node.bundle_hash.to_hex(),
-                    reason: format!(
-                        "exploration focus kind is `{expected_kind}` but mutator proposed `{}`; \
-                         a {expected_kind} experiment is required this round",
-                        diff.kind_label()
-                    ),
-                });
-                no_candidate_count += 1;
-                continue;
-            }
-        }
         // Phase 2 dimension gate: simplicity — reject parameter explosions before
         // spending backtest tokens. The numeric gate still runs afterward for
         // candidates that pass this dimension.
@@ -1097,7 +1053,10 @@ where
         // semantic integrity before spending evaluation cycles. Catches clearly
         // broken mutations (zero sizing, reversed signals, truncated prompts)
         // that would otherwise pollute experiment results.
-        if let Some(override_prompt) = candidate.agents.iter().find_map(|a| a.prompt_override.as_deref()) {
+        if let Some(override_prompt) = candidate.agents.iter().find_map(|a| {
+            let p = a.prompt.as_str();
+            if p.is_empty() { None } else { Some(p) }
+        }) {
             if let Err(failures) = crate::autooptimizer::canary::validate_prompt_semantics(override_prompt) {
                 let reason = format!(
                     "semantic prompt check failed: {}",

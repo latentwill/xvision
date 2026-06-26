@@ -114,7 +114,7 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 agent_id: trader_id.clone(),
                 role: "trader".into(),
                 activates: Some(Capability::Trader),
-                prompt_override: None,
+                prompt: String::new(),
                 model_override: None,
                 checkpoint: None,
                 veto: None,

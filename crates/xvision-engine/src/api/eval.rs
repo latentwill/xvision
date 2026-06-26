@@ -6353,7 +6353,7 @@ mod tests {
                 agent_id: "01TESTAGENT".into(),
                 role: "trader".into(),
                 activates: None,
-                prompt_override: None,
+                prompt: String::new(),
                 model_override: None,
                 checkpoint: None,
                 veto: None,

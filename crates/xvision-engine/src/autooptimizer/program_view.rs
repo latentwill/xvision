@@ -157,7 +157,7 @@ fn render_agents_section_with_prompts(agents: &[AgentRef], resolved: &HashMap<St
         // When there's no per-strategy override, include the resolved library
         // prompt so the experiment writer can improve it rather than invent
         // wholesale. Text outside the JSON fence is ignored by from_markdown.
-        if agent.prompt_override.is_none() {
+        if agent.prompt.is_empty() {
             if let Some(prompt) = resolved.get(&agent.agent_id) {
                 if !prompt.is_empty() {
                     out.push_str(&format!("\nCurrent system prompt:\n{}\n", prompt.trim()));

@@ -1036,8 +1036,8 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
 /// can never blank a working prompt (the mutator validator also rejects empty
 /// prose edits upstream).
 pub fn apply_agent_ref_overrides(resolved: &mut ResolvedAgentSlot, agent_ref: &crate::strategies::AgentRef) {
-    if let Some(p) = agent_ref.prompt_override.as_deref().filter(|s| !s.is_empty()) {
-        resolved.system_prompt = p.to_string();
+    if !agent_ref.prompt.is_empty() {
+        resolved.system_prompt = agent_ref.prompt.clone();
     }
     if let Some(m) = agent_ref.model_override.as_deref().filter(|s| !s.is_empty()) {
         resolved.slot.model = Some(m.to_string());

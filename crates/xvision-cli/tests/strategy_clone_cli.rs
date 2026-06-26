@@ -150,7 +150,7 @@ fn seed(home: &std::path::Path) -> (String, String) {
                 agent_id: agent_id.clone(),
                 role: "trader".into(),
                 activates: None,
-                prompt_override: None,
+                prompt: String::new(),
                 model_override: None,
                 checkpoint: None,
                 veto: None,

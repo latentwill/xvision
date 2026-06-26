@@ -1270,7 +1270,7 @@ mod tests {
 
         // Inject the per-AgentRef overrides after parsing so the test
         // targets the resolver merge, not the parse path.
-        strategy.agents[0].prompt_override = Some("OVERRIDDEN PROMPT".to_string());
+        strategy.agents[0].prompt = "OVERRIDDEN PROMPT".to_string();
         strategy.agents[0].model_override = Some("overridden-model".to_string());
 
         let slots = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &strategy)
@@ -1321,7 +1321,7 @@ mod tests {
 
         // Now resolve with empty-string overrides — must equal the baseline.
         let mut strategy: crate::strategies::Strategy = serde_json::from_value(raw).unwrap();
-        strategy.agents[0].prompt_override = Some(String::new());
+        strategy.agents[0].prompt = String::new();
         strategy.agents[0].model_override = Some(String::new());
         let slots = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &strategy)
             .await

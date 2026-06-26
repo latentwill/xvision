@@ -179,7 +179,7 @@ async fn save_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
             agent_id: trader_agent_id,
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

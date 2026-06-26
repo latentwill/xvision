@@ -202,7 +202,7 @@ fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id:
         agent_id: agent_id.into(),
         role: "trader".into(),
         activates: Some(Capability::Trader),
-        prompt_override: None,
+        prompt: String::new(),
         model_override: None,
         checkpoint: None,
         veto: None,

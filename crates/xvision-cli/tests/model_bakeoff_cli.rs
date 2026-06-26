@@ -265,7 +265,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
             agent_id: agent.agent_id,
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

@@ -247,10 +247,10 @@ pub fn strategy_diff(a: &Strategy, b: &Strategy) -> StrategyDiff {
             .agents
             .iter()
             .find(|ag| ag.canonical_role() == role_b)
-            .and_then(|ag| ag.prompt_override.as_deref())
+            .map(|ag| ag.prompt.as_str())
             .unwrap_or("")
             .to_string();
-        let after_str = agent_b.prompt_override.as_deref().unwrap_or("").to_string();
+        let after_str = agent_b.prompt.clone();
         if before_str != after_str {
             prose.push(ProseEdit {
                 agent_role: role_b,
@@ -855,7 +855,7 @@ pub fn set_mechanistic_value(
 /// strategy exposes a tunable key (always, since every strategy has a `risk`
 /// config). `tool` stays as allowed. `prose` is applicable when the strategy
 /// has at least one `AgentRef` to carry a `prompt_override` (Phase 0 substrate):
-/// a prose edit sets `AgentRef.prompt_override` and changes the strategy content
+/// a prose edit sets `AgentRef.prompt` and changes the strategy content
 /// hash, so it is a real change — not a no-op — on any agent strategy. For
 /// agentless/pre-refactor strategies there is still no home, so prose is
 /// excluded there. `filter` is always applicable: with an existing filter the
@@ -914,7 +914,7 @@ impl MutationDiff {
     ///   - `params` otherwise: a no-op (the validator rejects unknown keys
     ///     upstream, so apply stays total).
     ///   - `tools`: add/remove against `manifest.required_tools`.
-    ///   - `prose`: each `ProseEdit` sets the matching `AgentRef.prompt_override`
+    ///   - `prose`: each `ProseEdit` sets the matching `AgentRef.prompt`
     ///     on the strategy (matched by `canonical_role`). This lands in the
     ///     `Strategy` content hash — so the override is part of proper lineage —
     ///     without touching the shared `Agent` library record. An edit naming a
@@ -977,7 +977,7 @@ impl MutationDiff {
         for edit in &self.prose {
             let target = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
             if let Some(a) = s.agents.iter_mut().find(|a| a.canonical_role() == target) {
-                a.prompt_override = Some(edit.after.clone());
+                a.prompt = edit.after.clone();
             }
         }
         // xvision-vxn: structural filter CREATION. When the parent has no filter
@@ -2249,8 +2249,8 @@ mod tests {
             .find(|a| a.canonical_role() == "trader")
             .unwrap();
         assert_eq!(
-            trader.prompt_override.as_deref(),
-            Some("Trade only with-trend; size down in chop.")
+            trader.prompt.as_str(),
+            "Trade only with-trend; size down in chop."
         );
         // And it is a REAL change (distinct content hash), not an identity no-op.
         assert!(
@@ -2645,9 +2645,9 @@ mod tests {
     #[test]
     fn strategy_diff_detects_prose_change() {
         let mut a = fixture_strategy();
-        a.agents[0].prompt_override = Some("buy low".to_string());
+        a.agents[0].prompt = "buy low".to_string();
         let mut b = a.clone();
-        b.agents[0].prompt_override = Some("sell high".to_string());
+        b.agents[0].prompt = "sell high".to_string();
         let diff = strategy_diff(&a, &b);
         assert_eq!(diff.prose.len(), 1);
         assert_eq!(diff.prose[0].before, "buy low");

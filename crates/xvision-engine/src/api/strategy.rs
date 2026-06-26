@@ -1693,7 +1693,7 @@ async fn clone_strategy_full_inner(
             agent_id: new_agent.agent_id,
             role: agent_ref.role.clone(),
             activates: agent_ref.activates.clone(),
-            prompt_override: agent_ref.prompt_override.clone(),
+            prompt: agent_ref.prompt.clone(),
             // When cloning with a provider/model override, the new model is
             // baked into the cloned agent's slots above. A carried-over
             // `model_override` would shadow that at resolution and silently

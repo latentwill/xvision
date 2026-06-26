@@ -129,7 +129,7 @@ fn agent_ref_activates_round_trip_and_legacy_default() {
         agent_id: "01HZAGENT".into(),
         role: "trader".into(),
         activates: None,
-        prompt_override: None,
+        prompt: String::new(),
         model_override: None,
         checkpoint: None,
         veto: None,

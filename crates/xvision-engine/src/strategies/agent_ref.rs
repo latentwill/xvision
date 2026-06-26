@@ -8,7 +8,9 @@
 //! This file is the strategy-side half of that refactor. The agent records
 //! themselves live in `crates/xvision-engine/src/agents/`.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    de, Deserialize, Deserializer, Serialize, Serializer,
+};
 
 use crate::agents::capability::Capability;
 
@@ -59,6 +61,19 @@ pub struct CheckpointRef {
     pub model_id: String,
 }
 
+/// Accept both `null` and a string value, mapping both to `String`.
+/// `null` → `""`, `"text"` → `"text"`. Used for the `AgentRef::prompt`
+/// field so old strategies with `"prompt": null` deserialize
+/// without error after the `Option<String>` → `String` migration.
+fn deserialize_nullable_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // serde's `Option<String>` deserializer handles both null and string.
+    // Map None → "", Some(s) → s.
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
 /// One agent's appearance inside a strategy. `agent_id` is an FK to the
 /// `Agent` record in the workspace agent library; `role` is the
 /// user-defined role this agent plays in this particular strategy. The
@@ -85,16 +100,25 @@ pub struct AgentRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<Capability>,
-    /// Optional per-strategy override of the referenced agent's trader-slot
-    /// system prompt. `None` (the default) = use the shared agent library
-    /// prompt verbatim. `Some(p)` makes THIS strategy run with prompt `p`
-    /// without mutating the shared `Agent` record — so the override lands in
-    /// the `Strategy` content hash (proper lineage) and never leaks into other
-    /// strategies that reference the same agent. This is the "home" that makes
-    /// `prose` optimizer mutations reachable (run-7 finding; F25 design pass).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-export", ts(optional))]
-    pub prompt_override: Option<String>,
+    /// The system prompt for this agent slot in this strategy. A per-strategy
+    /// copy of the agent library's `system_prompt` — set at strategy creation
+    /// time and mutated by the optimizer's prose experiments. When empty,
+    /// the slot has no override and resolves from the agent library at
+    /// runtime (legacy strategies). Empty strings are omitted from JSON
+    /// (`skip_serializing_if`) for a compact wire format and backward compat
+    /// with the old `Option<String>` representation.
+    ///
+    /// The optimizer injects the resolved library prompt here before calling the
+    /// mutator so the LLM sees the full prompt text in the AgentRef JSON block
+    /// (`serde_json::to_string_pretty(agent)` renders it inline), making it
+    /// trivially copyable into the `after` field of prose mutations.
+    #[serde(
+        default,
+        rename = "prompt",
+        deserialize_with = "deserialize_nullable_string",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub prompt: String,
     /// Optional per-strategy override of the referenced agent's trader-slot
     /// `(provider/)model`. Same rationale as `prompt_override`. Reserved for the
     /// deferred F25 model-swap mutation axis; honored at resolution today so the
@@ -306,14 +330,14 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(
-            !s.contains("prompt_override"),
+            !s.contains("prompt"),
             "absent override must be omitted: {s}"
         );
         assert!(
@@ -333,7 +357,7 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: Some("You are a disciplined momentum trader...".into()),
+            prompt: "You are a disciplined momentum trader...".into(),
             model_override: Some("openrouter/google/gemini-3.1-flash-lite".into()),
             checkpoint: None,
             veto: None,
@@ -350,7 +374,7 @@ mod tests {
             "agent_id": "01HZAGENT", "role": "trader"
         }))
         .unwrap();
-        assert_eq!(r.prompt_override, None);
+        assert_eq!(r.prompt, String::new());
         assert_eq!(r.model_override, None);
     }
 
@@ -360,7 +384,7 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,
@@ -436,7 +460,7 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: " Trader ".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,
@@ -480,7 +504,7 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: "filter".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,
@@ -499,7 +523,7 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: "filter".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: Some(CheckpointRef {
                 model_id: "01JNANO00000000000000000000".into(),

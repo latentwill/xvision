@@ -46,7 +46,7 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
             agent_id: "01EVALMISSINGAGENT00000000".into(),
             role: "trader".into(),
             activates: Some(xvision_engine::agents::Capability::Trader),
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

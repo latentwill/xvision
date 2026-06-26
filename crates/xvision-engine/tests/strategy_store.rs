@@ -32,7 +32,7 @@ fn sample_strategy(id: &str) -> Strategy {
             agent_id: "01TESTAGENT00000000000000".into(),
             role: "trader".into(),
             activates: None,
-            prompt_override: None,
+            prompt: String::new(),
             model_override: None,
             checkpoint: None,
             veto: None,

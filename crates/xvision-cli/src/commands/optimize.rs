@@ -2003,8 +2003,8 @@ fn collect_agent_changes(
         }
         let prompt_path = format!("{role}.prompt_override");
         collect_leaf_changes(
-            before.and_then(|v| v.get("prompt_override")),
-            after.and_then(|v| v.get("prompt_override")),
+            before.and_then(|v| v.get("prompt")),
+            after.and_then(|v| v.get("prompt")),
             &prompt_path,
             prompt,
         );
@@ -3199,7 +3199,7 @@ sqlite_url = "sqlite://x.db"
             "agents": [{
                 "agent_id": "01HZAGENT0000000000000000A",
                 "role": "trader",
-                "prompt_override": "old prompt",
+                "prompt": "old prompt",
                 "model_override": "provider/old"
             }],
             "risk": {
@@ -3212,7 +3212,7 @@ sqlite_url = "sqlite://x.db"
         });
         let mut child = parent.clone();
         child["risk"]["risk_pct_per_trade"] = serde_json::json!(0.02);
-        child["agents"][0]["prompt_override"] = serde_json::json!("new prompt");
+        child["agents"][0]["prompt"] = serde_json::json!("new prompt");
         child["agents"][0]["model_override"] = serde_json::json!("provider/new");
 
         let diff = summarize_strategy_json_diff(&parent, &child);
