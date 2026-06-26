@@ -859,6 +859,24 @@ where
         clone
     };
 
+    // Clone parent_strategy as a mutable enriched copy with resolved library
+    // prompts injected. This enriched parent is used for apply_to() so child
+    // strategies carry the full prompt forward. Without this, children clone
+    // an empty `prompt` field and produce results identical to baseline.
+    let mut enriched_parent = {
+        let mut clone = parent_strategy.clone();
+        for (i, src) in parent_for_mutator.agents.iter().enumerate() {
+            if !src.prompt.is_empty() {
+                if let Some(dst) = clone.agents.get_mut(i) {
+                    if dst.prompt.is_empty() {
+                        dst.prompt = src.prompt.clone();
+                    }
+                }
+            }
+        }
+        clone
+    };
+
     // Extract the first resolved prompt from the enriched clone as the base
     // instruction for DSPy warm-start. This ensures the optimizer improves FROM
     // the real agent prompt rather than generating from scratch.
@@ -1010,7 +1028,7 @@ where
                     session_id: String::new(),
                     cycle_id: cycle_id.to_string(),
                     parent_hash: parent_node.bundle_hash.to_hex(),
-                    reason: format!("dimension gate (simplicity): {reason}"),
+                    reason: format!("simplicity check failed: {reason}"),
                 });
                 no_candidate_count += 1;
                 continue;
@@ -1028,7 +1046,7 @@ where
         // tournament path does not, and a no-op child's content hash equals the
         // parent's — inserting it would overwrite (corrupt) the parent node and
         // create a self-parent cycle in the lineage graph.
-        let candidate = diff.apply_to(parent_strategy);
+        let candidate = diff.apply_to(&enriched_parent);
         let candidate_hash = serde_json::to_value(&candidate)
             .map(|v| ContentHash::of_json(&v))
             .ok();
@@ -1177,7 +1195,7 @@ where
         }
         let gate_t0 = Instant::now();
         let gate_result = gate_and_classify(
-            parent_strategy,
+            &enriched_parent,
             diff,
             cycle_config,
             paper_tester,
