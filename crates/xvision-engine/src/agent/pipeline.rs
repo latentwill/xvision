@@ -1037,6 +1037,13 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
 /// prose edits upstream).
 pub fn apply_agent_ref_overrides(resolved: &mut ResolvedAgentSlot, agent_ref: &crate::strategies::AgentRef) {
     if !agent_ref.prompt.is_empty() {
+    tracing::info!(
+        target: "xvision::optimizer",
+        role = %agent_ref.role,
+        prompt_len = agent_ref.prompt.len(),
+        prompt_head = %(&agent_ref.prompt[..agent_ref.prompt.len().min(80)]),
+        "apply_agent_ref_overrides: resolved prompt for strategy agent"
+    );
         resolved.system_prompt = agent_ref.prompt.clone();
     }
     if let Some(m) = agent_ref.model_override.as_deref().filter(|s| !s.is_empty()) {
