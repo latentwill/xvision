@@ -163,8 +163,13 @@ pub struct UnlockArgs {
 
 #[derive(Args, Debug)]
 pub struct CancelArgs {
-    /// Cycle or session ID to cancel.
-    pub cycle_id: String,
+    /// Cycle or session ID to cancel. Omit to cancel whatever cycle currently
+    /// holds the optimizer workspace lock (no-arg cancel).
+    pub cycle_id: Option<String>,
+    /// Cancel by session ID (e.g. from `session: 01KW0K...` in run logs).
+    /// Mutually exclusive with the positional cycle_id.
+    #[arg(long = "session", conflicts_with = "cycle_id")]
+    pub session_id: Option<String>,
     /// Path to the optimizer DB (defaults to $XVN_HOME/xvn.db).
     #[arg(long)]
     pub db: Option<PathBuf>,
@@ -1366,11 +1371,11 @@ async fn run_unlock(args: UnlockArgs) -> CliResult<()> {
 /// optimizer cycle. Clears the cycle lock from the shared DB so the running
 /// cycle terminates (it polls the lock at candidate boundaries). Also prints
 /// the cycle info for the operator to verify with `xvn optimize ls`.
-///
-/// When the cycle is running under the dashboard, use the dashboard API to
-/// cancel it (POST /api/autooptimizer/cycles/:id/cancel). When running locally
-/// (CLI), use `Ctrl-C` — this command is a remote-safe fallback that works
-/// over the `POST /api/cli/jobs` bridge.
+/// `xvn optimize cancel [<cycle_id>]` — request cancellation of an in-flight
+/// optimizer cycle. With no argument, cancels whatever cycle holds the lock.
+/// With `--session <id>`, resolves the session's cycle from the events table.
+/// Clears the cycle lock from the shared DB so the running cycle terminates
+/// (it polls the lock at candidate boundaries).
 async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home)
         .map_err(|e| CliError::usage(anyhow::anyhow!("resolve xvn home: {e}")))?;
@@ -1383,6 +1388,9 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     }
     let pool = open_and_migrate_db(&db_path).await?;
 
+    // Resolve the target cycle_id from args or from the lock/session.
+    let target_id = resolve_cancel_target(&pool, args.cycle_id.as_deref(), args.session_id.as_deref()).await?;
+
     // Get the active lock holder, if any.
     let held: Option<(String, String)> = sqlx::query_as(
         "SELECT cycle_id, holder FROM optimizer_cycle_lock WHERE id = 1",
@@ -1391,33 +1399,111 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
 
+    // Find the session_id associated with the target cycle, if any.
+    let session_hint = session_for_cycle(&pool, &target_id).await;
+    let session_note = session_hint.as_deref().map(|s| format!(" (session {s})")).unwrap_or_default();
+
     match held {
-        Some((cycle_id, holder)) if cycle_id == args.cycle_id || cycle_id.starts_with(&args.cycle_id) => {
-            // Clear the lock.
+        Some((lock_cycle_id, holder)) if lock_cycle_id == target_id || lock_cycle_id.starts_with(&target_id) => {
             xvision_engine::autooptimizer::run_lock::force_clear(&pool)
                 .await
                 .map_err(|e| CliError::upstream(anyhow::anyhow!("clear cycle lock: {e}")))?;
             println!(
-                "cancelled cycle {cycle_id} (held by {holder}) — lock cleared. \
+                "cancelled cycle {lock_cycle_id}{session_note} (held by {holder}) — lock cleared. \
                  The cycle will detect the release and terminate before the next candidate."
             );
         }
-        Some((cycle_id, _)) => {
+        Some((lock_cycle_id, _)) => {
+            let lock_session = session_for_cycle(&pool, &lock_cycle_id).await;
+            let lock_session_note = lock_session.as_deref().map(|s| format!(" (session {s})")).unwrap_or_default();
+            let tip = match (&lock_session, &session_hint) {
+                (Some(ls), _) => format!("cancel with: xvn optimize cancel {lock_cycle_id}    # session {ls}"),
+                (_, Some(ts)) => format!("cancel with: xvn optimize cancel {lock_cycle_id}    # requested session {ts}"),
+                _ => format!("cancel with: xvn optimize cancel {lock_cycle_id}"),
+            };
             return Err(CliError::usage(anyhow::anyhow!(
-                "cycle {cycle_id} is running but does not match requested id '{}'. \
-                 Use the full cycle id.",
-                args.cycle_id
+                "cycle {lock_cycle_id}{lock_session_note} is running but does not match requested \
+                 '{target_id}'{session_note}.\n{tip}"
             )));
         }
         None => {
             println!(
-                "no in-flight cycle '{}' found (no cycle lock is held). \
-                 Use `xvn optimize ls` to list recent cycles.",
-                args.cycle_id
+                "no in-flight cycle '{target_id}'{session_note} found (no cycle lock is held). \
+                 Use `xvn optimize ls` to list recent cycles."
             );
         }
     }
     Ok(())
+}
+
+/// If neither a cycle_id nor --session is given, resolve from the active lock.
+/// If --session is given, look up the cycle_id from autooptimizer_events.
+async fn resolve_cancel_target(
+    pool: &sqlx::SqlitePool,
+    cycle_id: Option<&str>,
+    session_id: Option<&str>,
+) -> CliResult<String> {
+    if let Some(id) = cycle_id {
+        return Ok(id.to_string());
+    }
+    if let Some(sid) = session_id {
+        return cycle_for_session(pool, sid).await;
+    }
+    // No-arg: cancel whatever holds the lock.
+    let held: Option<(String,)> = sqlx::query_as(
+        "SELECT cycle_id FROM optimizer_cycle_lock WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
+    match held {
+        Some((cid,)) => {
+            let session_note = session_for_cycle(pool, &cid).await
+                .map(|s| format!(" (session {s})"))
+                .unwrap_or_default();
+            eprintln!("no cycle_id given — cancelling active cycle {cid}{session_note}");
+            Ok(cid)
+        }
+        None => Err(CliError::usage(anyhow::anyhow!(
+            "no cycle_id or --session given, and no active cycle lock is held. \
+             Use `xvn optimize ls` to list recent cycles or pass an explicit cycle_id."
+        ))),
+    }
+}
+
+/// Look up the cycle_id for a session from autooptimizer_events.
+async fn cycle_for_session(pool: &sqlx::SqlitePool, session_id: &str) -> CliResult<String> {
+    let cycle_id: Option<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT cycle_id FROM autooptimizer_events \
+         WHERE session_id = ?1 AND cycle_id IS NOT NULL AND cycle_id != '' \
+         ORDER BY ts DESC LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("look up session cycles: {e}")))?;
+    match cycle_id {
+        Some((cid,)) => Ok(cid),
+        None => Err(CliError::not_found(anyhow::anyhow!(
+            "no cycle found for session '{session_id}'. \
+             The session may not have started any cycles yet, or the session_id may be wrong."
+        ))),
+    }
+}
+
+/// Return the session_id associated with a cycle, if any.
+async fn session_for_cycle(pool: &sqlx::SqlitePool, cycle_id: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT session_id FROM autooptimizer_events \
+         WHERE cycle_id = ?1 AND session_id IS NOT NULL \
+         AND session_id != '' AND session_id NOT LIKE 'cycle:%' \
+         ORDER BY ts ASC LIMIT 1",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
 }
 
 // ── explain-missing-data ────────────────────────────────────────────────────
