@@ -185,6 +185,12 @@ pub struct AutoOptimizerConfig {
     /// affected and remain capped at `MAX_WINDOW_DAYS`. Must be >= 1 when set.
     #[serde(default)]
     pub max_window_days: Option<i64>,
+
+    /// Per-cycle scenario rotation: pre-generate N market windows at session
+    /// start and rotate through them — one per cycle — so each cycle evaluates
+    /// on a different date range. On by default.
+    #[serde(default)]
+    pub scenario_rotation: ScenarioRotationConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,6 +260,79 @@ pub struct ScenarioWindowPair {
     pub baseline: BaselineUntouchedWindow,
 }
 
+// ── Scenario Rotation (per-cycle window diversity) ───────────────────────
+
+/// Controls per-cycle scenario rotation: instead of using the same
+/// `day_window`/`baseline_untouched_window` pair for every cycle in a session,
+/// the optimizer pre-generates N market windows and rotates through them —
+/// one per cycle — so each cycle trains and evaluates on a different date
+/// range (bull, bear, chop, trend). Zero extra evals per cycle; just a
+/// different pair of windows.
+///
+/// The spec lives at the linked design doc (latentwill/6079eee9).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioRotationConfig {
+    /// Master switch. On by default so every session gets regime diversity out
+    /// of the box. Existing configs without this section see the default:
+    /// enabled, 14-day windows, 30-day stride, 10 windows.
+    #[serde(default = "default_scenario_rotation_enabled")]
+    pub enabled: bool,
+    /// Span (days) of each day-window (in-sample training). Default 14.
+    #[serde(default = "default_rotation_window_span")]
+    pub day_window_span_days: i64,
+    /// Span (days) of each untouched holdout window, immediately after the day
+    /// window. Default 14.
+    #[serde(default = "default_rotation_window_span")]
+    pub untouched_window_span_days: i64,
+    /// How many window pairs to pre-generate. Default 10 (one per cycle in a
+    /// 10-cycle session).
+    #[serde(default = "default_rotation_num_windows")]
+    pub num_windows: usize,
+    /// Optional explicit start of the date range to draw windows from. When
+    /// unset, falls back to `AutoOptimizerConfig.day_window.start`. Format
+    /// `"YYYY-MM-DD"`.
+    pub date_range_start: Option<NaiveDate>,
+    /// Optional explicit end of the date range. When unset, falls back to
+    /// `AutoOptimizerConfig.baseline_untouched_window.end`. Format
+    /// `"YYYY-MM-DD"`.
+    pub date_range_end: Option<NaiveDate>,
+    /// Stride (days) between successive window starts. A 30-day stride with
+    /// 14-day spans gives windows that overlap by ~16 days — some overlap or
+    /// gap is intentional for regime diversity. Default 30.
+    #[serde(default = "default_rotation_stride_days")]
+    pub stride_days: i64,
+}
+
+fn default_scenario_rotation_enabled() -> bool {
+    true
+}
+
+fn default_rotation_window_span() -> i64 {
+    14
+}
+
+fn default_rotation_num_windows() -> usize {
+    10
+}
+
+fn default_rotation_stride_days() -> i64 {
+    30
+}
+
+impl Default for ScenarioRotationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_scenario_rotation_enabled(),
+            day_window_span_days: default_rotation_window_span(),
+            untouched_window_span_days: default_rotation_window_span(),
+            num_windows: default_rotation_num_windows(),
+            date_range_start: None,
+            date_range_end: None,
+            stride_days: default_rotation_stride_days(),
+        }
+    }
+}
+
 impl Default for AutoOptimizerConfig {
     fn default() -> Self {
         Self {
@@ -295,6 +374,7 @@ impl Default for AutoOptimizerConfig {
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
             max_window_days: None,
+            scenario_rotation: ScenarioRotationConfig::default(),
         }
     }
 }
@@ -461,6 +541,106 @@ pub fn validate_scenario_pool(pool: &[ScenarioWindowPair]) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Validate the scenario rotation config for structural correctness.
+/// When `enabled = false` (or the config is default/absent), this is a no-op.
+///
+/// Checks:
+/// 1. `day_window_span_days` and `untouched_window_span_days` must be positive
+///    and ≤ `MAX_WINDOW_DAYS`.
+/// 2. `num_windows` must be ≥ 1 when enabled.
+/// 3. `stride_days` must be ≥ 1.
+/// 4. When both `date_range_start` and `date_range_end` are set, they must be
+///    well-ordered (start < end).
+/// 5. When projection is possible (we have the fallback day_window), each
+///    generated window's day span is ≤ `MAX_WINDOW_DAYS` (same OOM guard).
+pub fn validate_scenario_rotation(
+    rotation: &ScenarioRotationConfig,
+    fallback_day: Option<&DayWindow>,
+    _fallback_baseline: Option<&BaselineUntouchedWindow>,
+) -> anyhow::Result<()> {
+    if !rotation.enabled {
+        return Ok(());
+    }
+    if rotation.day_window_span_days <= 0 {
+        anyhow::bail!(
+            "scenario_rotation.day_window_span_days must be > 0 (got {})",
+            rotation.day_window_span_days
+        );
+    }
+    if rotation.untouched_window_span_days <= 0 {
+        anyhow::bail!(
+            "scenario_rotation.untouched_window_span_days must be > 0 (got {})",
+            rotation.untouched_window_span_days
+        );
+    }
+    let max_span = MAX_WINDOW_DAYS;
+    if rotation.day_window_span_days > max_span {
+        anyhow::bail!(
+            "scenario_rotation.day_window_span_days ({}) exceeds the {}-day cap; \
+             shrink it or raise max_window_days",
+            rotation.day_window_span_days,
+            max_span,
+        );
+    }
+    if rotation.untouched_window_span_days > max_span {
+        anyhow::bail!(
+            "scenario_rotation.untouched_window_span_days ({}) exceeds the {}-day cap; \
+             shrink it or raise max_window_days",
+            rotation.untouched_window_span_days,
+            max_span,
+        );
+    }
+    if rotation.num_windows < 1 {
+        anyhow::bail!(
+            "scenario_rotation.num_windows must be >= 1 (got {})",
+            rotation.num_windows
+        );
+    }
+    if rotation.stride_days <= 0 {
+        anyhow::bail!(
+            "scenario_rotation.stride_days must be > 0 (got {})",
+            rotation.stride_days
+        );
+    }
+    // When both explicit dates are set, they must be well-ordered.
+    if let (Some(start), Some(end)) = (rotation.date_range_start, rotation.date_range_end) {
+        if start >= end {
+            anyhow::bail!(
+                "scenario_rotation.date_range_start ({}) must be before date_range_end ({})",
+                start,
+                end,
+            );
+        }
+    }
+    // Project the max day-window span to check it won't exceed the cap.
+    if let Some(day_window) = fallback_day {
+        let range_start = rotation.date_range_start.unwrap_or(day_window.start);
+        let range_end = rotation.date_range_end.unwrap_or(_fallback_baseline.map_or(day_window.end, |b| b.end));
+        if range_start < range_end {
+            // The last window starts at: range_start + (num_windows - 1) * stride_days
+            let last_day_start = range_start
+                + chrono::Duration::days((rotation.num_windows as i64 - 1) * rotation.stride_days);
+            let last_day_end = last_day_start + chrono::Duration::days(rotation.day_window_span_days);
+            // Clamp to range_end — if clamped empty, it's degenerate but won't
+            // OOM (it just produces no scenarios). Only warn about a real overrun.
+            let actual_end = last_day_end.min(range_end);
+            let actual_span = (actual_end - last_day_start).num_days();
+            if actual_span > max_span {
+                anyhow::bail!(
+                    "scenario_rotation: the last projected day-window span ({} days, {} – {}) \
+                     exceeds the {}-day cap; reduce day_window_span_days, num_windows, \
+                     or stride_days",
+                    actual_span,
+                    last_day_start,
+                    actual_end,
+                    max_span,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 impl AutoOptimizerConfig {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
@@ -622,6 +802,8 @@ impl AutoOptimizerConfig {
         validate_regime_set(&self.regime_set)?;
         // B19: same structural validation for the round-robin scenario_pool.
         validate_scenario_pool(&self.scenario_pool)?;
+        // Scenario rotation validation.
+        validate_scenario_rotation(&self.scenario_rotation, Some(&self.day_window), Some(&self.baseline_untouched_window))?;
         Ok(())
     }
 }
@@ -1150,5 +1332,150 @@ max_retries = 2
             cfg.validate().is_err(),
             "cfg.validate() must propagate scenario_pool validation errors"
         );
+    }
+
+    // ── Scenario rotation ────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_rotation_defaults_enabled_with_sensible_defaults() {
+        let r = ScenarioRotationConfig::default();
+        assert!(r.enabled, "scenario_rotation must default to enabled");
+        assert_eq!(r.day_window_span_days, 14);
+        assert_eq!(r.untouched_window_span_days, 14);
+        assert_eq!(r.num_windows, 10);
+        assert_eq!(r.stride_days, 30);
+        assert!(r.date_range_start.is_none());
+        assert!(r.date_range_end.is_none());
+    }
+
+    #[test]
+    fn scenario_rotation_disabled_passes_validation() {
+        let mut r = ScenarioRotationConfig::default();
+        r.enabled = false;
+        r.day_window_span_days = 0; // would be rejected if enabled
+        assert!(validate_scenario_rotation(&r, None, None).is_ok());
+    }
+
+    #[test]
+    fn scenario_rotation_rejects_zero_day_window_span() {
+        let mut r = ScenarioRotationConfig::default();
+        r.day_window_span_days = 0;
+        let err = validate_scenario_rotation(&r, None, None).unwrap_err();
+        assert!(err.to_string().contains("day_window_span_days"), "got: {err}");
+    }
+
+    #[test]
+    fn scenario_rotation_rejects_negative_stride() {
+        let mut r = ScenarioRotationConfig::default();
+        r.stride_days = -1;
+        let err = validate_scenario_rotation(&r, None, None).unwrap_err();
+        assert!(err.to_string().contains("stride_days"), "got: {err}");
+    }
+
+    #[test]
+    fn scenario_rotation_rejects_zero_num_windows() {
+        let mut r = ScenarioRotationConfig::default();
+        r.num_windows = 0;
+        let err = validate_scenario_rotation(&r, None, None).unwrap_err();
+        assert!(err.to_string().contains("num_windows"), "got: {err}");
+    }
+
+    #[test]
+    fn scenario_rotation_rejects_overlong_day_window_span() {
+        let mut r = ScenarioRotationConfig::default();
+        r.day_window_span_days = 200; // > MAX_WINDOW_DAYS
+        let err = validate_scenario_rotation(&r, None, None).unwrap_err();
+        assert!(err.to_string().contains("day_window_span_days"), "got: {err}");
+    }
+
+    #[test]
+    fn scenario_rotation_rejects_bad_date_range() {
+        let mut r = ScenarioRotationConfig::default();
+        r.date_range_start = Some(NaiveDate::from_ymd_opt(2025, 6, 1).unwrap());
+        r.date_range_end = Some(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
+        let err = validate_scenario_rotation(&r, None, None).unwrap_err();
+        assert!(err.to_string().contains("date_range_start"), "got: {err}");
+    }
+
+    #[test]
+    fn scenario_rotation_valid_default_passes() {
+        let r = ScenarioRotationConfig::default();
+        let dw = DayWindow {
+            start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            end: NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(),
+        };
+        let bw = BaselineUntouchedWindow {
+            start: NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(),
+            end: NaiveDate::from_ymd_opt(2025, 5, 1).unwrap(),
+        };
+        assert!(validate_scenario_rotation(&r, Some(&dw), Some(&bw)).is_ok());
+    }
+
+    #[test]
+    fn scenario_rotation_primes_from_toml() {
+        // A config with a custom scenario_rotation section deserializes correctly.
+        let cfg: AutoOptimizerConfig = toml::from_str(
+            r#"
+            min_improvement = 0.05
+
+            [day_window]
+            start = "2025-01-01"
+            end   = "2025-04-01"
+
+            [baseline_untouched_window]
+            start = "2025-04-01"
+            end   = "2025-05-01"
+
+            [mutator]
+            provider   = "test"
+            model      = "test-model"
+            max_retries = 2
+
+            [scenario_rotation]
+            enabled = true
+            day_window_span_days = 21
+            untouched_window_span_days = 7
+            num_windows = 8
+            stride_days = 45
+        "#,
+        )
+        .unwrap();
+        let r = &cfg.scenario_rotation;
+        assert!(r.enabled);
+        assert_eq!(r.day_window_span_days, 21);
+        assert_eq!(r.untouched_window_span_days, 7);
+        assert_eq!(r.num_windows, 8);
+        assert_eq!(r.stride_days, 45);
+        assert!(r.date_range_start.is_none());
+        assert!(r.date_range_end.is_none());
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn scenario_rotation_absent_from_toml_defaults_enabled() {
+        // Back-compat: a config WITHOUT `[scenario_rotation]` must deserialize
+        // with the struct default (enabled=true, spans=14, etc.).
+        let cfg: AutoOptimizerConfig = toml::from_str(
+            r#"
+            min_improvement = 0.05
+
+            [day_window]
+            start = "2025-01-01"
+            end   = "2025-04-01"
+
+            [baseline_untouched_window]
+            start = "2025-04-01"
+            end   = "2025-05-01"
+
+            [mutator]
+            provider   = "test"
+            model      = "test-model"
+            max_retries = 2
+        "#,
+        )
+        .unwrap();
+        assert!(cfg.scenario_rotation.enabled);
+        assert_eq!(cfg.scenario_rotation.day_window_span_days, 14);
+        assert_eq!(cfg.scenario_rotation.num_windows, 10);
     }
 }

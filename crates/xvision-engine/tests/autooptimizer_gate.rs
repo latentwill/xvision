@@ -31,6 +31,7 @@ fn make_input(
         parent_n_trades: 0,
         child_n_trades: 0,
         min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -41,7 +42,7 @@ fn holdout_threshold_is_independent_from_day_threshold() {
     parent_untouched_metrics: metrics(0.8, -8.0),
     child_untouched_metrics: metrics(0.806, -8.0),
     min_improvement: 0.10,
-    holdout_min_improvement: 0.005, objective: Objective::default(), parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5 };
+    holdout_min_improvement: 0.005, objective: Objective::default(), parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5, min_realized_return_ratio: 0.0 };
 
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
 }
@@ -69,7 +70,7 @@ fn holdout_failure_message_uses_holdout_threshold() {
     parent_untouched_metrics: metrics(0.8, -8.0),
     child_untouched_metrics: metrics(0.803, -8.0),
     min_improvement: 0.10,
-    holdout_min_improvement: 0.005, objective: Objective::default(), parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5 };
+    holdout_min_improvement: 0.005, objective: Objective::default(), parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5, min_realized_return_ratio: 0.0 };
 
     let GateVerdict::Fail { reason } = evaluate(&input) else {
         panic!("expected holdout failure");
@@ -100,7 +101,7 @@ fn total_return_objective_gates_on_return_not_sharpe() {
     parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
     child_untouched_metrics: m_full(1.0, 7.0, 0.5, -8.0),
     min_improvement: 1.0,
-    holdout_min_improvement: 1.0, objective: Objective::TotalReturn, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5 };
+    holdout_min_improvement: 1.0, objective: Objective::TotalReturn, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5, min_realized_return_ratio: 0.0 };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
 }
 
@@ -115,7 +116,7 @@ fn max_drawdown_objective_rewards_reducing_drawdown() {
     parent_untouched_metrics: m_full(1.0, 5.0, 0.5, -18.0),
     child_untouched_metrics: m_full(1.0, 5.0, 0.5, -10.0),
     holdout_min_improvement: 1.0,
-    min_improvement: 1.0, objective: Objective::MaxDrawdown, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5 };
+    min_improvement: 1.0, objective: Objective::MaxDrawdown, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5, min_realized_return_ratio: 0.0 };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
 }
 
@@ -128,7 +129,7 @@ fn total_return_objective_requires_both_windows() {
     parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
     holdout_min_improvement: 1.0,
     child_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0), // no untouched improvement
-    min_improvement: 1.0, objective: Objective::TotalReturn, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5 };
+    min_improvement: 1.0, objective: Objective::TotalReturn, parent_n_trades: 0, child_n_trades: 0, min_trade_retention_ratio: 0.5, min_realized_return_ratio: 0.0 };
     assert!(matches!(evaluate(&input), GateVerdict::Fail { .. }));
 }
 
@@ -292,6 +293,7 @@ fn make_input_with_trades(
         parent_n_trades: parent_trades,
         child_n_trades: child_trades,
         min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -347,7 +349,8 @@ fn combined_trade_and_drawdown_failure() {
             max_drawdown_pct: -5.0,
             n_trades: 10,
             ..MetricsSummary::default()
-        },
+            min_realized_return_ratio: 0.0,
+    },
         child_day_metrics: MetricsSummary {
             sharpe: 0.0,
             max_drawdown_pct: -15.0, // 3× parent worst
@@ -372,10 +375,147 @@ fn combined_trade_and_drawdown_failure() {
         parent_n_trades: 10,
         child_n_trades: 0,
         min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     };
     let GateVerdict::Fail { reason } = evaluate(&input) else {
         panic!("expected combined failure");
     };
     assert!(reason.contains("insufficient trades"), "reason: {reason}");
+    assert!(reason.contains("max drawdown deteriorated"), "reason: {reason}");
+}
+
+// ── Realized-return ratio gate ────────────────────────────────────────────
+
+fn rr_input(
+    parent_total: f64,
+    child_total: f64,
+    parent_realized: f64,
+    child_realized: f64,
+    min_ratio: f64,
+) -> GateInput {
+    GateInput {
+        parent_day_metrics: MetricsSummary {
+            sharpe: 1.0,
+            total_return_pct: parent_total,
+            realized_pnl_pct: parent_realized,
+            max_drawdown_pct: -10.0,
+            ..MetricsSummary::default()
+        },
+        child_day_metrics: MetricsSummary {
+            sharpe: 1.2,
+            total_return_pct: child_total,
+            realized_pnl_pct: child_realized,
+            max_drawdown_pct: -10.0,
+            ..MetricsSummary::default()
+        },
+        parent_untouched_metrics: MetricsSummary {
+            sharpe: 0.8,
+            total_return_pct: parent_total,
+            realized_pnl_pct: parent_realized,
+            max_drawdown_pct: -8.0,
+            ..MetricsSummary::default()
+        },
+        child_untouched_metrics: MetricsSummary {
+            sharpe: 1.0,
+            total_return_pct: child_total,
+            realized_pnl_pct: child_realized,
+            max_drawdown_pct: -8.0,
+            ..MetricsSummary::default()
+        },
+        min_improvement: 0.1,
+        holdout_min_improvement: 0.1,
+        objective: Objective::default(),
+        parent_n_trades: 10,
+        child_n_trades: 10,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: min_ratio,
+    }
+}
+
+/// Child with insufficient realized profit must be rejected.
+#[test]
+fn reject_child_below_realized_ratio() {
+    // Total return 10%, only 1% realized → ratio 0.1 < 0.25
+    let input = rr_input(5.0, 10.0, 3.0, 1.0, 0.25);
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected realized-ratio rejection");
+    };
+    assert!(reason.contains("insufficient realized profit"), "reason: {reason}");
+}
+
+/// Child with enough realized profit passes.
+#[test]
+fn accept_child_above_realized_ratio() {
+    let input = rr_input(5.0, 10.0, 3.0, 4.0, 0.25);
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// Negative total return must skip the check.
+#[test]
+fn skip_realized_check_on_negative_return() {
+    let input = rr_input(-5.0, -2.0, -3.0, -1.0, 0.25);
+    // Delta Sharpe 1.2 - 1.0 = 0.2 > 0.1 → passes on Sharpe, realized skipped
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// Zero total return must skip the check.
+#[test]
+fn skip_realized_check_on_zero_return() {
+    let input = rr_input(0.0, 0.0, 0.0, 0.0, 0.25);
+    // Delta Sharpe ok, drawdown ok, realized skipped
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// Ratio 0.0 disables the check.
+#[test]
+fn disabled_realized_check_passes_zero_realized() {
+    let input = rr_input(5.0, 10.0, 3.0, 0.0, 0.0);
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// Combined failure: realized ratio AND drawdown both fail.
+#[test]
+fn combined_realized_and_drawdown_failure() {
+    let input = GateInput {
+        parent_day_metrics: MetricsSummary {
+            sharpe: 1.0,
+            total_return_pct: 5.0,
+            realized_pnl_pct: 3.0,
+            max_drawdown_pct: -5.0,
+            ..MetricsSummary::default()
+        },
+        child_day_metrics: MetricsSummary {
+            sharpe: 1.2,
+            total_return_pct: 10.0,
+            realized_pnl_pct: 1.0,
+            max_drawdown_pct: -15.0,
+            ..MetricsSummary::default()
+        },
+        parent_untouched_metrics: MetricsSummary {
+            sharpe: 0.8,
+            total_return_pct: 5.0,
+            realized_pnl_pct: 3.0,
+            max_drawdown_pct: -4.0,
+            ..MetricsSummary::default()
+        },
+        child_untouched_metrics: MetricsSummary {
+            sharpe: 1.0,
+            total_return_pct: 10.0,
+            realized_pnl_pct: 1.0,
+            max_drawdown_pct: -12.0,
+            ..MetricsSummary::default()
+        },
+        min_improvement: 0.1,
+        holdout_min_improvement: 0.1,
+        objective: Objective::default(),
+        parent_n_trades: 10,
+        child_n_trades: 10,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.25,
+    };
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected combined failure");
+    };
+    assert!(reason.contains("insufficient realized profit"), "reason: {reason}");
     assert!(reason.contains("max drawdown deteriorated"), "reason: {reason}");
 }

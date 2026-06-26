@@ -56,6 +56,7 @@ fn default_autooptimizer_toml() -> String {
 min_improvement = 0.05
 holdout_min_improvement = 0.005
 min_trade_retention_ratio = 0.5
+min_realized_return_ratio = 0.25
 
 
 [baseline_untouched_window]

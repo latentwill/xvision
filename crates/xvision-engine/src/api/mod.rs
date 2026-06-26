@@ -149,6 +149,8 @@ const MIGRATION_061_AUTOOPTIMIZER_RANDOM_BASELINE: &str =
 /// existence so re-opening is a no-op.
 const MIGRATION_075_AUTOOPTIMIZER_GATE_TRADE_COUNTS: &str =
     include_str!("../../migrations/075_autooptimizer_gate_trade_counts.sql");
+const MIGRATION_076_AUTOOPTIMIZER_GATE_REALIZED_RETURN: &str =
+    include_str!("../../migrations/076_autooptimizer_gate_realized_return.sql");
 /// Migration 062: per-run (per-run) pause flag on `eval_runs`.
 /// Adds `paused` (BOOLEAN NOT NULL DEFAULT 0) and `paused_at` (nullable
 /// RFC3339 timestamp). The live executor honors `paused` as an ADDITIVE
@@ -2051,6 +2053,13 @@ async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
         && !table_has_column(pool, "autooptimizer_gate_records", "parent_n_trades").await?
     {
         for stmt in split_sql_statements(MIGRATION_075_AUTOOPTIMIZER_GATE_TRADE_COUNTS) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    if table_exists(pool, "autooptimizer_gate_records").await?
+        && !table_has_column(pool, "autooptimizer_gate_records", "parent_realized_return_ratio").await?
+    {
+        for stmt in split_sql_statements(MIGRATION_076_AUTOOPTIMIZER_GATE_REALIZED_RETURN) {
             sqlx::query(&stmt).execute(pool).await?;
         }
     }
