@@ -53,6 +53,11 @@ sqlx               = { workspace = true }
 sha2     = "0.10"
 tempfile = "3"
 
+# Unix pipe tee for auto-logging optimizer runs.
+# Already in the dependency tree transitively.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio    = { workspace = true, features = ["rt", "macros"] }
 

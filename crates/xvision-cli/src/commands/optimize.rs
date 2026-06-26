@@ -43,9 +43,12 @@
 //! * `15` persistence failure — store write failed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::{BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(unix)]
+use std::os::unix::io::FromRawFd;
 
 use chrono::Utc;
 use clap::{Args, Subcommand};
@@ -564,6 +567,15 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // F34/GH#968: one id ties the workspace lock, the live session-state row,
     // and the persisted events together.
     let session_id = args.session_id.clone().unwrap_or_else(|| Ulid::new().to_string());
+
+    // ── Auto-log setup ────────────────────────────────────────────────────
+    // Every run writes a JSONL and stderr log file to
+    // $XVN_HOME/optimizer/logs/<session_id>.jsonl and .stderr.log.
+    // No flags, no opt-in — always-on.
+    let log_tee = OptimizerLogTee::setup(&session_id, &xvn_home)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("setup optimizer logs: {e}")))?;
+    // Print the session id so the operator can find logs.
+    eprintln!("session: {session_id}");
 
     // GH #965: --max-cycles controls how many cycles this run executes.
     //   unset → one cycle (back-compat); 0 → unlimited (until signal/budget/
@@ -1117,6 +1129,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let event_tx_ref = &event_tx;
     let cancel_ref = &cancel;
     let sustained_ref = &sustained;
+    let log_tee_ref = &log_tee;
 
     // WS-11c: collect each completed cycle's id so `--export <DIR>` can write a
     // feedback document per cycle after the session loop returns.
@@ -1151,9 +1164,13 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 cc.sustained_no_pass_cycles = sustained_now;
 
                 let tx = event_tx_ref.clone();
+                let log_tee = log_tee_ref.clone();
                 let progress = move |event: CycleProgressEvent| {
                     if let Ok(line) = serde_json::to_string(&event) {
                         println!("{line}");
+                        if let Ok(tee) = log_tee.lock() {
+                            tee.write_event(&line);
+                        }
                     }
                     let _ = tx.send(event);
                 };
@@ -3004,6 +3021,163 @@ pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool>
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("ensure lineage schema: {e}")))?;
     Ok(pool)
+}
+
+/// Auto-logging tee for optimizer runs. On construction:
+///   - Opens `<log_dir>/<session_id>.jsonl` for appending (written via
+///     `write_event` from the progress callback).
+///   - Opens `<log_dir>/<session_id>.stderr.log` and tees ALL process stderr
+///     into it using a Unix pipe + background reader thread, so tracing
+///     output, RUST_LOG messages, eprintln!, warnings, and panic messages are
+///     all captured without any changes to the existing logging infrastructure.
+///   - On drop, restores stderr to the original fd and flushes.
+///
+/// Stderr tee is Unix-only. On non-Unix platforms only JSONL is captured.
+pub(crate) struct OptimizerLogTee {
+    /// Handle to the JSONL file for writing cycle events. Uses `Mutex` for
+    /// interior mutability so the tee can be shared across closures via `Arc`.
+    jsonl_writer: Option<std::sync::Mutex<BufWriter<std::fs::File>>>,
+    /// Background thread handle for the stderr reader (Unix only).
+    #[cfg(unix)]
+    _stderr_thread: Option<std::thread::JoinHandle<()>>,
+    /// Original stderr file descriptor saved so we can restore it on Drop
+    /// (Unix only).
+    #[cfg(unix)]
+    saved_stderr: Option<std::os::unix::io::RawFd>,
+}
+
+impl OptimizerLogTee {
+    /// Create the log directory, open both log files, and start the stderr tee.
+    ///
+    /// `session_id` is the ULID printed at the start of the run.
+    /// `xvn_home` is the resolved `$XVN_HOME` path.
+    pub(crate) fn setup(
+        session_id: &str,
+        xvn_home: &Path,
+    ) -> std::io::Result<std::sync::Arc<std::sync::Mutex<Self>>> {
+        let log_dir = xvn_home.join("optimizer").join("logs");
+        std::fs::create_dir_all(&log_dir)?;
+
+        let jsonl_path = log_dir.join(format!("{session_id}.jsonl"));
+        let jsonl_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&jsonl_path)?;
+        let jsonl_writer = Some(std::sync::Mutex::new(BufWriter::new(jsonl_file)));
+
+        #[cfg(unix)]
+        {
+            let stderr_path = log_dir.join(format!("{session_id}.stderr.log"));
+            let stderr_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&stderr_path)?;
+
+            // Save the original stderr fd.
+            let saved_stderr = unsafe { libc::dup(2) };
+            if saved_stderr < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            // Create a pipe: fds[0] = read end, fds[1] = write end.
+            let mut fds: [std::os::raw::c_int; 2] = [0, 0];
+            let ret = unsafe { libc::pipe(fds.as_mut_ptr()) };
+            if ret != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let read_fd = fds[0];
+            let write_fd = fds[1];
+
+            // Replace stderr fd 2 with the pipe's write end.
+            let ret = unsafe { libc::dup2(write_fd, 2) };
+            if ret < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // Close the original write_fd (dup2 duplicated it to fd 2).
+            unsafe { libc::close(write_fd); }
+
+            // Build reader file handles (owned by the reader thread).
+            let reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
+            let orig_stderr = unsafe { std::fs::File::from_raw_fd(saved_stderr) };
+            let teed_stderr = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&stderr_path)?;
+
+            let _stderr_thread = Some(std::thread::spawn(move || {
+                // Read from the pipe and write to both original stderr and the log file.
+                let mut reader = std::io::BufReader::new(reader);
+                let mut orig = orig_stderr;
+                let mut tee = teed_stderr;
+                let mut buf = Vec::new();
+                loop {
+                    buf.clear();
+                    let n = {
+                        let available = reader.fill_buf().unwrap_or(&[]);
+                        if available.is_empty() {
+                            break; // EOF — pipe write end was closed.
+                        }
+                        let n = available.len();
+                        buf.extend_from_slice(available);
+                        reader.consume(n);
+                        n
+                    };
+                    let _ = orig.write_all(&buf[..n]);
+                    let _ = tee.write_all(&buf[..n]);
+                    let _ = orig.flush();
+                    let _ = tee.flush();
+                }
+            }));
+
+            eprintln!("logs: {}/{session_id}", log_dir.display());
+
+            return Ok(std::sync::Arc::new(std::sync::Mutex::new(Self {
+                jsonl_writer,
+                _stderr_thread,
+                saved_stderr: Some(saved_stderr),
+            })));
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = log_dir;
+            let _ = session_id;
+            Ok(std::sync::Arc::new(std::sync::Mutex::new(Self {
+                jsonl_writer,
+            })))
+        }
+    }
+
+    /// Write a JSON event line to the JSONL log file. Flushes immediately so
+    /// no data is lost on crash.
+    pub(crate) fn write_event(&self, json: &str) {
+        if let Some(ref m) = self.jsonl_writer {
+            if let Ok(mut w) = m.lock() {
+                let _ = writeln!(w, "{json}");
+                let _ = w.flush();
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OptimizerLogTee {
+    fn drop(&mut self) {
+        // Restore original stderr before the reader thread notices EOF.
+        if let Some(saved) = self.saved_stderr {
+            unsafe {
+                libc::dup2(saved, 2);
+                libc::close(saved);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl Drop for OptimizerLogTee {
+    fn drop(&mut self) {
+        // Nothing to restore on non-Unix platforms.
+    }
 }
 
 #[cfg(test)]
