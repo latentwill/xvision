@@ -2211,7 +2211,7 @@ impl WizardLoop {
                 };
                 let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("backtest");
                 let mode = match mode {
-                    "live" => RunMode::Live,
+                    "live" => RunMode::Forward,
                     _ => RunMode::Backtest,
                 };
                 let full_strategy = api_strategy::get(&self.api_context, &strategy.agent_id).await?;
@@ -3772,7 +3772,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "properties": {
                     "agent_id": {"type": "string"},
                     "scenario_id": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["backtest", "live"]},
+                    "mode": {"type": "string", "enum": ["backtest", "fwd"]},
                     "acknowledge_no_filter": {
                         "type": "boolean",
                         "description": "If true, allows running a strategy without a filter gate."

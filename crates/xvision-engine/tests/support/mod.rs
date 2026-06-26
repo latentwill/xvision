@@ -164,7 +164,7 @@ pub fn live_run_with_venue(label: VenueLabel) -> Run {
         tags: vec![],
         notes: None,
     };
-    Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live).with_live_config(cfg)
+    Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Forward).with_live_config(cfg)
 }
 
 /// Build a `Queued` backtest `Run` (mode=Backtest, a scenario_id, no
@@ -367,7 +367,7 @@ pub async fn run_short_live(bars: usize, initial: f64) -> LiveTestHandle {
     let store = RunStore::new(pool.clone());
 
     let live_cfg = _support_live_config(initial, bars);
-    let mut run = Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live)
+    let mut run = Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Forward)
         .with_live_config(live_cfg.clone());
     store.create(&run).await.unwrap();
     store

@@ -313,7 +313,7 @@ async fn live_max_concurrent_positions_veto_blocks_second_open() {
     let scenario = live_scenario(100_000.0);
     let cfg = two_asset_live_config();
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Forward);
     run.live_config = Some(cfg.clone());
     store.create(&run).await.unwrap();
     store
@@ -416,7 +416,7 @@ async fn live_daily_loss_kill_veto_blocks_open_after_breach() {
     let scenario = live_scenario(100_000.0);
     let cfg = one_asset_live_config();
 
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Forward);
     run.live_config = Some(cfg.clone());
     store.create(&run).await.unwrap();
     store

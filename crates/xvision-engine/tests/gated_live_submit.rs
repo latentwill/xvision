@@ -197,7 +197,7 @@ async fn fresh_fixtures() -> (RunStore, Strategy, Scenario, Run, tempfile::TempD
     let store = RunStore::new(ctx.db.clone());
     let strategy = build_strategy();
     let scenario = live_scenario(100_000.0);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Forward);
     run.live_config = Some(live_config());
     store.create(&run).await.unwrap();
     store

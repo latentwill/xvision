@@ -250,14 +250,14 @@ async fn open_ctx(override_path: Option<PathBuf>) -> CliResult<ApiContext> {
 
 fn parse_run_mode(s: &str) -> CliResult<RunMode> {
     match s.to_ascii_lowercase().as_str() {
-        "live" => Ok(RunMode::Live),
+        "fwd" | "live" => Ok(RunMode::Forward),
         "backtest" | "back-test" => Ok(RunMode::Backtest),
         // Legacy alias: `--run-mode paper` continues to parse as Backtest so
         // existing scripts/CLI muscle memory keep working post-collapse.
         "paper" => Ok(RunMode::Backtest),
         other => Err(CliError {
             exit: XvnExit::Usage,
-            source: anyhow!("unknown --run-mode {other:?}; expected live | backtest"),
+            source: anyhow!("unknown --run-mode {other:?}; expected fwd | backtest"),
         }),
     }
 }

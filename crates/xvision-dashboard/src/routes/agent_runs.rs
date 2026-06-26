@@ -870,7 +870,7 @@ mod tests {
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
         let run = &v["runs"][0];
-        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_mode"].as_str(), Some("fwd"));
         assert_eq!(run["eval_run_status"].as_str(), Some("running"));
         assert_eq!(run["is_live_money"].as_bool(), Some(true));
         // The parent eval run's strategy agent_id is joined into the summary so
@@ -930,7 +930,7 @@ mod tests {
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
         let run = &v["runs"][0];
-        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_mode"].as_str(), Some("fwd"));
         assert_eq!(run["eval_run_status"].as_str(), Some("running"));
         assert_eq!(run["is_live_money"].as_bool(), Some(false));
     }
@@ -953,7 +953,7 @@ mod tests {
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
         let run = &v["runs"][0];
-        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_mode"].as_str(), Some("fwd"));
         assert_eq!(run["eval_run_status"].as_str(), Some("failed"));
         assert_eq!(run["is_live_money"].as_bool(), Some(false));
     }
@@ -1007,9 +1007,9 @@ mod tests {
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
         let runs = v["runs"].as_array().unwrap();
         // newest-first: ar-fwd-tn (testnet) then ar-fwd (paper)
-        assert_eq!(runs[0]["eval_mode"].as_str(), Some("live"));
+        assert_eq!(runs[0]["eval_mode"].as_str(), Some("fwd"));
         assert_eq!(runs[0]["is_live_money"].as_bool(), Some(false));
-        assert_eq!(runs[1]["eval_mode"].as_str(), Some("live"));
+        assert_eq!(runs[1]["eval_mode"].as_str(), Some("fwd"));
         assert_eq!(runs[1]["is_live_money"].as_bool(), Some(false));
     }
 

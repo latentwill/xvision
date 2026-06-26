@@ -492,7 +492,7 @@ pub async fn build_run_payload_with(
     // by the live executor every bar, including warmup) so the chart renders
     // candles even before the first decision. Falls back to the legacy
     // decision-timestamp logic when eval_run_bars is empty (pre-migration).
-    if run.mode == RunMode::Live || run.scenario_id.is_empty() {
+    if run.mode == RunMode::Forward || run.scenario_id.is_empty() {
         // Slim early-return: equity-only, no bars needed.
         if !include.needs_bars() {
             return Ok(RunChartPayload {

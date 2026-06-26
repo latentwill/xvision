@@ -165,5 +165,5 @@ async fn optimizer_dispatch_reaches_cline_sidecar() {
 
 #[tokio::test]
 async fn live_trading_dispatch_reaches_cline_sidecar() {
-    assert_surface_reaches_sidecar("live", RunMode::Live).await;
+    assert_surface_reaches_sidecar("live", RunMode::Forward).await;
 }

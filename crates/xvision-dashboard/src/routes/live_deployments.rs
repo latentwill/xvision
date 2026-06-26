@@ -325,7 +325,7 @@ pub async fn stream(
     // Unknown runs / non-live runs are handled by `get_live_deployment` below
     // (it returns None → 404). Only an existing, LIVE, terminal run short-circuits.
     let terminal = match store.get(&id).await {
-        Ok(run) => run.mode == xvision_engine::eval::run::RunMode::Live && run.status.is_terminal(),
+        Ok(run) => run.mode == xvision_engine::eval::run::RunMode::Forward && run.status.is_terminal(),
         Err(_) => false,
     };
 

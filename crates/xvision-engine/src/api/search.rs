@@ -370,7 +370,7 @@ fn run_entry(run: &Run) -> IndexEntry {
 
 fn mode_label(m: RunMode) -> &'static str {
     match m {
-        RunMode::Live => "live",
+        RunMode::Forward => "live",
         RunMode::Backtest => "backtest",
     }
 }

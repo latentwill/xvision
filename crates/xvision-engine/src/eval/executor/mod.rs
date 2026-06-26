@@ -3,15 +3,13 @@
 //! executor-live-shell sub-tracks of the Alpaca-Live executor refactor).
 //!
 //! A single concrete [`Executor`] struct covers both [`RunMode::Backtest`]
-//! and [`RunMode::Live`] by composing the [`BarSource`] + [`Clock`] +
-//! [`FillSink`] trio at construction:
+//! and [`RunMode::Forward`] by composing the [`BarSource`] + [`Clock`] +
 //!
 //! - **Backtest** — `InjectedBars` + `InstantClock` + `SimulatedFills`.
 //!   Built via [`Executor::backtest`]. Replays a parquet fixture in
 //!   chronological order, simulates fills with slippage + fees. No
 //!   broker required.
-//! - **Live** — `MultiLiveStream` + `WallClock` + `RealBrokerFills`.
-//!   Built via [`Executor::live`]. Alpaca paper live is wired end-to-end
+//! - **Forward-test** — `MultiLiveStream` + `WallClock` + `RealBrokerFills`.
 //!   for one or more assets: each active asset is fanned out into its own
 //!   `LiveStream` and merged by `MultiLiveStream` (§4 L2 multi-asset
 //!   fanout). A single active asset is a 1-element `MultiLiveStream`,

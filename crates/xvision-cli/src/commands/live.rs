@@ -190,7 +190,7 @@ pub async fn run(args: LiveArgs) -> CliResult<()> {
     let req = EvalRunRequest {
         agent_id: args.strategy.clone(),
         scenario_id: String::new(),
-        mode: RunMode::Live,
+        mode: RunMode::Forward,
         params_override: None,
         live_config: Some(live_config),
         limits: None,

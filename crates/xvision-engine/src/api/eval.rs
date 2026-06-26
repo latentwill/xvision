@@ -804,7 +804,7 @@ pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResul
         )));
     }
 
-    if run.mode != RunMode::Live {
+    if run.mode != RunMode::Forward {
         return Err(ApiError::Validation(format!(
             "run '{run_id}' is a backtest — only live (forward-test) runs can be reconnected"
         )));
@@ -1558,12 +1558,12 @@ fn validate_provider_override_shape(override_value: Option<&ProviderOverride>) -
 
 fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
     match (&req.mode, req.live_config.as_ref()) {
-        (RunMode::Live, Some(cfg)) => cfg
+        (RunMode::Forward, Some(cfg)) => cfg
             .validate()
             // Surface `Display` (human-readable, actionable), not the `{e:?}`
             // Debug variant — operators (CLI + dashboard) see this string.
             .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e}", e.field_path()))),
-        (RunMode::Live, None) => Err(ApiError::Validation(
+        (RunMode::Forward, None) => Err(ApiError::Validation(
             "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
                 .into(),
         )),
@@ -2587,7 +2587,7 @@ impl ToolDispatch for ToolRegistryDispatch {
         // already strips mode-forbidden tools, but a hand-crafted call must also fail).
         if let Some(p) = policy {
             let allowed = match self.run_mode {
-                crate::eval::run::RunMode::Live => p.live,
+                crate::eval::run::RunMode::Forward => p.live,
                 crate::eval::run::RunMode::Backtest => p.backtest,
             };
             if !allowed {
@@ -3500,7 +3500,7 @@ async fn run_inner(
             )
             .await
         }
-        RunMode::Live => {
+        RunMode::Forward => {
             build_live_executor(
                 ctx,
                 live_config
@@ -5075,7 +5075,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
             )
             .await?
         }
-        RunMode::Live => {
+        RunMode::Forward => {
             build_live_executor(
                 ctx,
                 live_config
@@ -5453,7 +5453,7 @@ pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
     let mut count: u64 = 0;
     for run in &active {
         let ok = match run.mode {
-            RunMode::Live => store.mark_disconnected(&run.id, reason).await,
+            RunMode::Forward => store.mark_disconnected(&run.id, reason).await,
             RunMode::Backtest => store.fail_active(&run.id, reason, None).await,
         };
         match ok {
@@ -5666,7 +5666,7 @@ fn summarise(run: Run) -> RunSummary {
         scenario: None,
         mode: match run.mode {
             RunMode::Backtest => "backtest".into(),
-            RunMode::Live => "live".into(),
+            RunMode::Forward => "live".into(),
         },
         status: run.status.as_str().into(),
         started_at: run.started_at,
@@ -6898,7 +6898,7 @@ mod tool_registry_dispatch_tests {
 
     #[tokio::test]
     async fn nansen_live_does_not_inject_as_of() {
-        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let d = test_dispatch(crate::eval::run::RunMode::Forward, None);
         let out = d
             .inject_backtest_as_of_async("nansen_smart_money_flow", serde_json::json!({"asset": "BTC"}))
             .await
@@ -6914,7 +6914,7 @@ mod tool_registry_dispatch_tests {
     // endpoint otherwise).
     #[tokio::test]
     async fn nansen_live_strips_model_supplied_as_of_date() {
-        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let d = test_dispatch(crate::eval::run::RunMode::Forward, None);
         let out = d
             .inject_backtest_as_of_async(
                 "nansen_smart_money_flow",
@@ -6934,7 +6934,7 @@ mod tool_registry_dispatch_tests {
     // and the field passes through unchanged (no stripping for non-Nansen).
     #[tokio::test]
     async fn non_nansen_live_preserves_as_of_date() {
-        let d = test_dispatch(crate::eval::run::RunMode::Live, None);
+        let d = test_dispatch(crate::eval::run::RunMode::Forward, None);
         let out = d
             .inject_backtest_as_of_async(
                 "elfa_smart_mentions",
@@ -6965,7 +6965,7 @@ mod tool_registry_dispatch_tests {
 
     #[tokio::test]
     async fn zero_budget_short_circuits_signal_tool_with_degrade() {
-        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Forward, Some(0));
         let out = d
             .invoke("nansen_token_screener", serde_json::json!({"asset":"BTC"}))
             .await
@@ -6980,7 +6980,7 @@ mod tool_registry_dispatch_tests {
         // With an empty registry the dispatch errors (tool not found) — that's
         // proof the budget gate did NOT intercept (it would have returned a
         // degrade Ok-value instead of an Err).
-        let d = test_dispatch_budget(crate::eval::run::RunMode::Live, Some(0));
+        let d = test_dispatch_budget(crate::eval::run::RunMode::Forward, Some(0));
         let res = d.invoke("ohlcv", serde_json::json!({"asset":"BTC"})).await;
         assert!(
             res.is_err(),
@@ -7002,7 +7002,7 @@ mod tool_registry_dispatch_tests {
         let d = ToolRegistryDispatch {
             tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
             current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-            run_mode: crate::eval::run::RunMode::Live,
+            run_mode: crate::eval::run::RunMode::Forward,
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             nansen_lag_days: 1,
             tool_cache: None,
@@ -7036,7 +7036,7 @@ mod tool_registry_dispatch_tests {
         let d = ToolRegistryDispatch {
             tools: std::sync::Arc::new(crate::tools::ToolRegistry::empty()),
             current_asset: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-            run_mode: crate::eval::run::RunMode::Live,
+            run_mode: crate::eval::run::RunMode::Forward,
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             nansen_lag_days: 1,
             tool_cache: None,
@@ -7191,7 +7191,7 @@ mod tool_registry_dispatch_tests {
             // so the forward-only gate passes.  The key claim under test is
             // that the cached value is served without touching the empty
             // registry (which would panic on a real dispatch attempt).
-            run_mode: crate::eval::run::RunMode::Live,
+            run_mode: crate::eval::run::RunMode::Forward,
             as_of: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             nansen_lag_days: 1,
             tool_cache: Some(ToolHttpCacheHandle {

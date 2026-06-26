@@ -322,7 +322,7 @@ pub async fn build_annotated_live(store: &RunStore, symbol: &str) -> ApiResult<A
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    for run in runs.into_iter().filter(|run| run.mode.as_str() == "live") {
+    for run in runs.into_iter().filter(|run| run.mode.as_str() == "fwd") {
         let reviews = store
             .list_reviews_for_run(&run.id)
             .await
