@@ -116,6 +116,16 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
         // An empty `after` would erase the agent's prompt entirely, which is
         // never a coherent experiment.
         if edit.after.trim().is_empty() {
+            tracing::error!(
+                target: "xvision::autooptimizer::prompt",
+                agent_role = %edit.agent_role,
+                before_len = edit.before.len(),
+                after_len = edit.after.len(),
+                prose_idx = i,
+                "mutator proposed prose edit with EMPTY after — prompt context \
+                 was not carried through to the LLM response. The model likely \
+                 dropped or truncated the full prompt text in its structured output."
+            );
             errors.push(ValidationError::with_path(
                 "empty_prose",
                 "Prose experiment 'after' must not be empty or whitespace; \
