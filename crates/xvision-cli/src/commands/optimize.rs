@@ -2018,10 +2018,10 @@ fn collect_agent_changes(
                 agents,
             );
         }
-        let prompt_path = format!("{role}.prompt_override");
+        let prompt_path = format!("{role}.prompt");
         collect_leaf_changes(
-            before.and_then(|v| v.get("prompt_override")),
-            after.and_then(|v| v.get("prompt_override")),
+            before.and_then(|v| v.get("prompt")),
+            after.and_then(|v| v.get("prompt")),
             &prompt_path,
             prompt,
         );
@@ -3397,7 +3397,7 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(diff.agents.len(), 1);
         assert_eq!(diff.agents[0].path, "trader.model_override");
         assert_eq!(diff.prompt.len(), 1);
-        assert_eq!(diff.prompt[0].path, "trader.prompt_override");
+        assert_eq!(diff.prompt[0].path, "trader.prompt");
     }
 
     #[test]
