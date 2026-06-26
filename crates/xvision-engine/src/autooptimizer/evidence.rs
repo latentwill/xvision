@@ -81,6 +81,12 @@ pub struct GateRecord<'a> {
     pub parent_edge: Option<f64>,
     /// `edge_delta = edge_over_random - parent_edge`.
     pub edge_delta: Option<f64>,
+    /// Parent fill-leg count (from the gate's trade-count dimension).
+    pub parent_n_trades: Option<u32>,
+    /// Child fill-leg count (from the gate's trade-count dimension).
+    pub child_n_trades: Option<u32>,
+    /// Minimum trade retention ratio applied during this gate evaluation.
+    pub min_trade_retention_ratio: Option<f64>,
 }
 
 /// Insert or replace a gate record in `autooptimizer_gate_records`.
@@ -92,8 +98,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
           parent_holdout_score, child_holdout_score, \
           gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
           verdict, reason, rationale, \
-          edge_over_random, parent_edge, edge_delta, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          edge_over_random, parent_edge, edge_delta, \
+          parent_n_trades, child_n_trades, min_trade_retention_ratio, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(rec.bundle_hash)
     .bind(rec.parent_day_score)
@@ -111,6 +118,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
     .bind(rec.edge_over_random)
     .bind(rec.parent_edge)
     .bind(rec.edge_delta)
+    .bind(rec.parent_n_trades)
+    .bind(rec.child_n_trades)
+    .bind(rec.min_trade_retention_ratio)
     .bind(created_at)
     .execute(pool)
     .await?;
@@ -154,6 +164,9 @@ pub struct GateRecordRow {
     pub edge_over_random: Option<f64>,
     pub parent_edge: Option<f64>,
     pub edge_delta: Option<f64>,
+    pub parent_n_trades: Option<u32>,
+    pub child_n_trades: Option<u32>,
+    pub min_trade_retention_ratio: Option<f64>,
     pub created_at: String,
 }
 
@@ -183,15 +196,15 @@ pub async fn load_findings(pool: &SqlitePool, bundle_hash: &str) -> Result<Vec<F
         })
         .collect()
 }
-
 /// Load the gate record for a bundle_hash (None if not yet persisted).
 pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Option<GateRecordRow>> {
     let row = sqlx::query(
         "SELECT bundle_hash, parent_day_score, child_day_score, \
+         parent_holdout_score, child_holdout_score, \
+         gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
+         verdict, reason, rationale, \
          edge_over_random, parent_edge, edge_delta, \
-                parent_holdout_score, child_holdout_score, \
-                gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
-                verdict, reason, rationale, created_at \
+         parent_n_trades, child_n_trades, min_trade_retention_ratio, created_at \
          FROM autooptimizer_gate_records WHERE bundle_hash = ?",
     )
     .bind(bundle_hash)
@@ -217,6 +230,9 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
         reason: row.try_get("reason")?,
         rationale: row.try_get("rationale")?,
         edge_over_random: row.try_get("edge_over_random")?,
+        parent_n_trades: row.try_get("parent_n_trades").ok(),
+        child_n_trades: row.try_get("child_n_trades").ok(),
+        min_trade_retention_ratio: row.try_get("min_trade_retention_ratio").ok(),
         parent_edge: row.try_get("parent_edge")?,
         edge_delta: row.try_get("edge_delta")?,
         created_at: row.try_get("created_at")?,

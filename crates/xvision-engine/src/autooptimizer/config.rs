@@ -39,6 +39,13 @@ fn default_holdout_min_improvement() -> f64 {
     0.005
 }
 
+/// Default minimum parent-trade retention ratio: 0.5 (50%).
+/// The child must execute at least `floor(parent.n_trades * 0.5)` fill legs,
+/// with a hard floor of 1. Prevents 0-trade strategies from gaming Sharpe.
+fn default_min_trade_retention_ratio() -> f64 {
+    0.5
+}
+
 /// Default candidate experiments per parent per cycle. Was a hard-coded `1`
 /// (one experiment/cycle, nothing to compare); 5 gives the optimizer a real
 /// candidate pool by default.
@@ -84,6 +91,12 @@ pub struct AutoOptimizerConfig {
     /// for out-of-sample generalization than for in-sample training improvement.
     #[serde(default = "default_holdout_min_improvement")]
     pub holdout_min_improvement: f64,
+    /// Minimum fraction of parent trades a candidate must retain to pass the
+    /// gate. 0.5 means the child must execute at least 50% of the parent's fill
+    /// legs, with a hard floor of 1. Prevents 0-trade degenerate strategies
+    /// from gaming the Sharpe metric. Range: (0.0, 1.0].
+    #[serde(default = "default_min_trade_retention_ratio")]
+    pub min_trade_retention_ratio: f64,
     pub baseline_untouched_window: BaselineUntouchedWindow,
     pub day_window: DayWindow,
     #[serde(default)]
@@ -246,6 +259,7 @@ impl Default for AutoOptimizerConfig {
         Self {
             min_improvement: 0.05,
             holdout_min_improvement: default_holdout_min_improvement(),
+            min_trade_retention_ratio: default_min_trade_retention_ratio(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
             // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,
             // so a no-config `run-cycle` silently fetched ~16k bars per
@@ -501,6 +515,12 @@ impl AutoOptimizerConfig {
             bail!(
                 "holdout_min_improvement must be greater than 0 (got {})",
                 self.holdout_min_improvement
+            );
+        }
+        if self.min_trade_retention_ratio <= 0.0 || self.min_trade_retention_ratio > 1.0 {
+            bail!(
+                "min_trade_retention_ratio must be in (0.0, 1.0] (got {})",
+                self.min_trade_retention_ratio
             );
         }
         if let Some(cap) = self.max_window_days {

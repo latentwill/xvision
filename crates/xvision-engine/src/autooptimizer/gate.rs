@@ -70,6 +70,10 @@ impl Objective {
 ///
 /// `min_improvement` applies to the day (in-sample) window;
 /// `holdout_min_improvement` applies to the baseline-untouched (out-of-sample) window.
+
+fn default_min_trade_retention_ratio_gate() -> f64 {
+    0.5
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct GateInput {
     pub parent_day_metrics: MetricsSummary,
@@ -85,6 +89,18 @@ pub struct GateInput {
     /// existing call sites/fixtures that omit it keep the prior behavior.
     #[serde(default)]
     pub objective: Objective,
+    /// Parent fill-leg count — used by the min-trades gate. When both this
+    /// and `child_n_trades` are 0, the trade-count check is skipped (sentinel
+    /// for backward compatibility and parent-baseline evaluations).
+    #[serde(default)]
+    pub parent_n_trades: u32,
+    /// Child fill-leg count — used by the min-trades gate.
+    #[serde(default)]
+    pub child_n_trades: u32,
+    /// Minimum fraction of parent trades the child must retain. Defaults to
+    /// 0.5. Used by evaluate() to compute the required trade count.
+    #[serde(default = "default_min_trade_retention_ratio_gate")]
+    pub min_trade_retention_ratio: f64,
 }
 
 impl<'de> Deserialize<'de> for GateInput {
@@ -103,6 +119,12 @@ impl<'de> Deserialize<'de> for GateInput {
             holdout_min_improvement: Option<f64>,
             #[serde(default)]
             objective: Objective,
+            #[serde(default)]
+            parent_n_trades: u32,
+            #[serde(default)]
+            child_n_trades: u32,
+            #[serde(default = "default_min_trade_retention_ratio_gate")]
+            min_trade_retention_ratio: f64,
         }
 
         let wire = GateInputWire::deserialize(deserializer)?;
@@ -114,6 +136,9 @@ impl<'de> Deserialize<'de> for GateInput {
             min_improvement: wire.min_improvement,
             holdout_min_improvement: wire.holdout_min_improvement.unwrap_or(wire.min_improvement),
             objective: wire.objective,
+            parent_n_trades: wire.parent_n_trades,
+            child_n_trades: wire.child_n_trades,
+            min_trade_retention_ratio: wire.min_trade_retention_ratio,
         })
     }
 }
@@ -150,10 +175,11 @@ impl GateVerdict {
     }
 }
 
-/// Passes only when all three hold:
-/// 1. Δ score (day window)       ≥ `min_improvement`
-/// 2. Δ score (untouched window) ≥ `holdout_min_improvement`
-/// 3. Child worst drawdown       ≤ parent worst drawdown × 1.5
+/// Passes only when all four hold:
+/// 1. Child retains enough trades (≥ max(1, floor(parent × ratio))) — sentinel-skipped when both counts are 0
+/// 2. Δ score (day window)       ≥ `min_improvement`
+/// 3. Δ score (untouched window) ≥ `holdout_min_improvement`
+/// 4. Child worst drawdown       ≤ parent worst drawdown × 1.5
 ///
 pub fn evaluate(input: &GateInput) -> GateVerdict {
     debug_assert!(
@@ -171,12 +197,35 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
     let delta_untouched = obj.oriented_value(&input.child_untouched_metrics)
         - obj.oriented_value(&input.parent_untouched_metrics);
 
+    // Min-trades gate: prevent 0-trade degenerate strategies from gaming
+    // Sharpe. A child with 0 trades gets Sharpe 0.0, which beats any
+    // negative-Sharpe parent. Skip when both parent and child counts are 0
+    // (sentinel for backward compatibility and parent-baseline evaluations).
+    // Check runs first; all three checks (trades, delta, drawdown) run
+    // regardless of earlier failures per the B16 pattern.
+    let mut failures: Vec<String> = Vec::new();
+
+    if input.parent_n_trades != 0 || input.child_n_trades != 0 {
+        let required = (input.parent_n_trades as f64 * input.min_trade_retention_ratio).floor()
+            as u32;
+        let required = required.max(1);
+        if input.child_n_trades < required {
+            failures.push(format!(
+                "insufficient trades: child executed {child} fill legs, \
+                 required {required} ({:.0}% of parent's {parent})",
+                input.min_trade_retention_ratio * 100.0,
+                child = input.child_n_trades,
+                parent = input.parent_n_trades,
+            ));
+        }
+    }
+
     // B16: evaluate EVERY condition before returning so the rejection reason
     // surfaces all failing checks, not just the first. A near-miss on the
     // untouched (holdout) window must stay visible even when the day window is
-    // the one that tripped the gate. Order is deterministic: day, untouched,
-    // drawdown — so the reason string is byte-stable for identical inputs.
-    let mut failures: Vec<String> = Vec::new();
+    // the one that tripped the gate. Order is deterministic: trades, day,
+    // untouched, drawdown — so the reason string is byte-stable for identical
+    // inputs.
 
     let day_failed = delta_day < input.min_improvement - CMP_EPS;
     if day_failed {

@@ -142,6 +142,13 @@ const MIGRATION_059_AUTOOPTIMIZER_SCHEDULES: &str =
 /// a no-op.
 const MIGRATION_061_AUTOOPTIMIZER_RANDOM_BASELINE: &str =
     include_str!("../../migrations/061_autooptimizer_random_baseline.sql");
+/// Migration 075: additive trade-count columns on `autooptimizer_gate_records`
+/// (`parent_n_trades`, `child_n_trades`, `min_trade_retention_ratio`) for the
+/// min-trade-retention gate dimension. Applied inside
+/// `migrate_autooptimizer_evidence`, guarded on `parent_n_trades` column
+/// existence so re-opening is a no-op.
+const MIGRATION_075_AUTOOPTIMIZER_GATE_TRADE_COUNTS: &str =
+    include_str!("../../migrations/075_autooptimizer_gate_trade_counts.sql");
 /// Migration 062: per-run (per-run) pause flag on `eval_runs`.
 /// Adds `paused` (BOOLEAN NOT NULL DEFAULT 0) and `paused_at` (nullable
 /// RFC3339 timestamp). The live executor honors `paused` as an ADDITIVE
@@ -2038,6 +2045,15 @@ async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
     }
     // Migration 061: additive edge-metric columns. Guarded so re-opening an
     // already-migrated DB is a no-op (SQLite has no ADD COLUMN IF NOT EXISTS).
+    // Migration 075: additive trade-count columns for the min-trade-retention
+    // gate. Guarded so re-opening an already-migrated DB is a no-op.
+    if table_exists(pool, "autooptimizer_gate_records").await?
+        && !table_has_column(pool, "autooptimizer_gate_records", "parent_n_trades").await?
+    {
+        for stmt in split_sql_statements(MIGRATION_075_AUTOOPTIMIZER_GATE_TRADE_COUNTS) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
     if table_exists(pool, "autooptimizer_gate_records").await?
         && !table_has_column(pool, "autooptimizer_gate_records", "edge_over_random").await?
     {

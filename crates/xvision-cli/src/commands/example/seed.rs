@@ -55,6 +55,7 @@ fn default_autooptimizer_toml() -> String {
 # be present in $XVN_HOME/config/default.toml for this to dispatch.
 min_improvement = 0.05
 holdout_min_improvement = 0.005
+min_trade_retention_ratio = 0.5
 
 
 [baseline_untouched_window]
