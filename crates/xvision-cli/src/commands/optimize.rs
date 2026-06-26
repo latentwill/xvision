@@ -2003,8 +2003,8 @@ fn collect_agent_changes(
         }
         let prompt_path = format!("{role}.prompt_override");
         collect_leaf_changes(
-            before.and_then(|v| v.get("prompt")),
-            after.and_then(|v| v.get("prompt")),
+            before.and_then(|v| v.get("prompt_override")),
+            after.and_then(|v| v.get("prompt_override")),
             &prompt_path,
             prompt,
         );
