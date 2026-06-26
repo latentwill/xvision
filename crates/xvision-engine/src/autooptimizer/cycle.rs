@@ -863,7 +863,7 @@ where
     // prompts injected. This enriched parent is used for apply_to() so child
     // strategies carry the full prompt forward. Without this, children clone
     // an empty `prompt` field and produce results identical to baseline.
-    let mut enriched_parent = {
+    let enriched_parent = {
         let mut clone = parent_strategy.clone();
         for (i, src) in parent_for_mutator.agents.iter().enumerate() {
             if !src.prompt.is_empty() {
