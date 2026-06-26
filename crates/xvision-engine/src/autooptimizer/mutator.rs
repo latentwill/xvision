@@ -123,6 +123,24 @@ pub enum MutationKind {
     Filter,
 }
 
+impl MutationKind {
+    /// Stable string label matching the serde serialization.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Prose => "prose",
+            Self::Param => "param",
+            Self::Tool => "tool",
+            Self::Filter => "filter",
+        }
+    }
+}
+
+impl std::fmt::Display for MutationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One incremental change to a numeric threshold inside the strategy's typed
 /// `Filter` AST, addressed by a stable dotted path (see `filter_tunable_paths`).
 /// Examples:
@@ -866,6 +884,11 @@ pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<Str
 }
 
 impl MutationDiff {
+    /// Return `self.kind.as_str()` for convenience.
+    pub fn kind_label(&self) -> &'static str {
+        self.kind.as_str()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.prose.is_empty()
             && self.params.is_empty()
@@ -1485,10 +1508,13 @@ pub(crate) fn kind_focus_directive(
             "prose" => format!(
                 "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
                  `{target}` agent's system prompt — propose a `prose` experiment that rewrites its \
-                 trading logic, reasoning steps, or entry/exit criteria (NOT merely a number). This \
-                 focus rotates the optimizer across its levers so successive runs explore the prompt, \
-                 the filter, and the numeric parameters rather than re-proposing one fixed tweak. If \
-                 the prompt genuinely cannot be improved, you may target another listed lever instead."
+                 trading logic, reasoning steps, or entry/exit criteria. The `after` field MUST \
+                 contain the COMPLETE replacement prompt (copy the full current prompt from the \
+                 'Current system prompt:' section above and modify it). Do NOT leave `after` empty or \
+                 abbreviated — the full prompt text is required. A `param` or `tool` experiment will \
+                 be REJECTED — you MUST submit a `prose` experiment this round. This focus rotates \
+                 the optimizer across its levers so successive runs explore the prompt, the filter, \
+                 and the numeric parameters rather than re-proposing one fixed tweak."
             ),
             "filter" => format!(
                 "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on filter \

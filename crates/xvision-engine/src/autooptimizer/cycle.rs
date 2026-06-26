@@ -561,6 +561,25 @@ pub fn exploration_seed_for(cycle_id: &str, mutation_idx: usize) -> u64 {
     h.wrapping_mul(0x0000_0100_0000_01b3)
 }
 
+/// Compute the expected experiment kind for `mutation_idx` based on the
+/// exploration focus directive rotation. Returns `None` when there are no
+/// applicable kinds (the focus check should be skipped).
+fn compute_focus_kind(
+    mutation_idx: usize,
+    strategy: &Strategy,
+    config: &AutoOptimizerConfig,
+) -> Option<String> {
+    let allowed = crate::autooptimizer::mutator::applicable_mutation_kinds(strategy, &config.allowed_mutation_kinds);
+    if allowed.is_empty() {
+        return None;
+    }
+    // The first entry in the allowed kinds list, rotated by mutation_idx.
+    // This mirrors the kind_focus_directive logic (slot = mutation_idx,
+    // attempt = 0 for the first attempt).
+    let idx = mutation_idx % allowed.len();
+    Some(allowed[idx].clone())
+}
+
 /// B19: round-robin selection of the `(day_scenario, baseline_scenario)` pair a
 /// given candidate is evaluated on.
 ///
@@ -994,6 +1013,37 @@ where
             }
         };
         let diff = diff_result.expect("diff_result is None only on continue paths above");
+        // Focus-kind enforcement: when the exploration directive steers this
+        // mutation toward a specific kind (prose, param, etc.), reject diffs
+        // that target a different kind. This prevents the model from ignoring
+        // the focus and submitting e.g. param changes when the directive asks
+        // for prose (which is the most common failure mode on DeepSeek, where
+        // param changes produce 0.0 delta because risk params don't affect LLM
+        // trading decisions).
+        let focus_kind = compute_focus_kind(mutation_idx, parent_strategy, config);
+        if let Some(ref expected_kind) = focus_kind {
+            if diff.kind_label() != expected_kind.as_str() {
+                tracing::debug!(
+                    cycle_id,
+                    mutation_idx,
+                    expected = %expected_kind,
+                    actual = %diff.kind_label(),
+                    "rejecting mutation that does not match the exploration focus kind"
+                );
+                progress(CycleProgressEvent::NoCandidate {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: parent_node.bundle_hash.to_hex(),
+                    reason: format!(
+                        "exploration focus kind is `{expected_kind}` but mutator proposed `{}`; \
+                         a {expected_kind} experiment is required this round",
+                        diff.kind_label()
+                    ),
+                });
+                no_candidate_count += 1;
+                continue;
+            }
+        }
         // Phase 2 dimension gate: simplicity — reject parameter explosions before
         // spending backtest tokens. The numeric gate still runs afterward for
         // candidates that pass this dimension.
