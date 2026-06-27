@@ -14,7 +14,7 @@ import type { TraceScope } from "@/stores/trace-dock";
  * this.
  */
 export function scopeForPath(pathname: string): TraceScope {
-  if (pathname.startsWith("/live")) return "live";
+  if (pathname.startsWith("/fwd") || pathname.startsWith("/live")) return "live";
   if (pathname.startsWith("/optimizer")) return "opti";
   return "eval";
 }

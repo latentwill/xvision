@@ -32,7 +32,7 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
 function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   return mkRun({
     is_live_money: true,
-    eval_mode: "live",
+    eval_mode: "fwd",
     eval_run_status: "running",
     ...over,
   });
@@ -91,7 +91,7 @@ describe("StrategyStrip", () => {
       .toBeVisible();
     expect(screen.getByRole("link", { name: /trace 5/i })).toHaveAttribute(
       "href",
-      "/live/runs/live_1",
+      "/fwd/runs/live_1",
     );
 
     fireEvent.click(screen.getByTestId("strip-filter-all"));

@@ -98,10 +98,10 @@ describe("LiveCapsule", () => {
     expect(within(cap).getByText("mr·sol")).toBeInTheDocument();
   });
 
-  test("short-tag links to /live/runs/<id>", () => {
+  test("short-tag links to /fwd/runs/<id>", () => {
     renderLive({ run: focused({ id: "run_live_xyz" }) });
     const link = screen.getByRole("link", { name: /open eval run mr·sol/i });
-    expect(link).toHaveAttribute("href", "/live/runs/run_live_xyz");
+    expect(link).toHaveAttribute("href", "/fwd/runs/run_live_xyz");
   });
 
   test("renders one order row per broker.call span (side/symbol/qty/price/outcome)", () => {

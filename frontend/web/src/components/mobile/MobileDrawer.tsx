@@ -24,7 +24,7 @@ const NAV: NavItem[] = [
   { to: "/strategies", label: "Strategies", icon: "chart" },
   { to: "/agents", label: "Agents", icon: "user" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
-  { to: "/live", label: "Live", icon: "play", disabled: true },
+  { to: "/fwd", label: "Forward Test", icon: "play", disabled: true },
   { to: "/journal", label: "Journal", icon: "book", disabled: true },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];

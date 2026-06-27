@@ -120,11 +120,11 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
 
   const onSelect = (id: string) => {
     setUserPicked(id);
-    // Only deep-linked `/live/:id` mounts keep the URL in sync with the
-    // selection (re-navigating to the new id). On the bare `/live` route the
+    // Only deep-linked `/fwd/:id` mounts keep the URL in sync with the
+    // selection (re-navigating to the new id). On the bare `/fwd` route the
     // selection is tracked in component state (`userPicked`) and the URL is
     // intentionally left untouched.
-    if (runId) navigate(`/live/${id}`);
+    if (runId) navigate(`/fwd/${id}`);
   };
 
   const selectedRun = selectedId
@@ -132,12 +132,12 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
     : undefined;
   const topbarSub = selectedRun
     ? displayStrategyName(selectedRun.agent_id ?? "", strategies)
-    : "Live trading · active deployments";
+    : "Forward test · active paper deployments";
 
   return (
     <>
       <Topbar
-        title="Live Trading"
+        title="Forward Test"
         sub={topbarSub}
       />
 
@@ -177,11 +177,11 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
       ) : (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <p className="text-[15px] font-medium text-text-2">
-            No active live deployments
+            No active forward-test deployments
           </p>
           <p className="text-[13px] text-text-3">
-            Configure a broker in Settings and launch an eval to start live
-            trading.
+            Configure paper-trading credentials in Settings and launch an eval
+            to start a forward test.
           </p>
         </div>
       )}

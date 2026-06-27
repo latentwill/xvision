@@ -77,7 +77,7 @@ export function LiveSummaryStrip() {
     >
       {/* Label */}
       <span className="text-[12px] font-medium text-text">
-        Live trading
+        Forward Test
       </span>
 
       {/* Body: counts or empty state */}
@@ -96,8 +96,8 @@ export function LiveSummaryStrip() {
               <span className="font-mono font-semibold tabular-nums text-info">
                 {activeCount}
               </span>{" "}
-              live
-              <span className="text-text-4 font-normal"> · simulated</span>
+              forward-test
+              <span className="text-text-4 font-normal"> · paper</span>
             </span>
           )}
           {pausedCount > 0 && (
@@ -126,16 +126,16 @@ export function LiveSummaryStrip() {
           )}
         </span>
       ) : (
-        <span className="text-[12px] text-text-3">No live strategies running.</span>
+        <span className="text-[12px] text-text-3">No forward-test strategies running.</span>
       )}
 
       {/* CTA — always present. Routes to the live page when there's activity
           to monitor, or to the eval launcher to deploy one when nothing's running. */}
       <Link
-        to={hasAny ? "/live" : "/eval-runs?start=1"}
+        to={hasAny ? "/fwd" : "/eval-runs?start=1"}
         className="ml-auto shrink-0 text-[12px] text-text-3 hover:text-text underline-offset-2 hover:underline"
       >
-        {hasLive ? "Go to Live Trading →" : hasAny ? "View runs →" : "Launch eval →"}
+        {hasLive ? "Go to Forward Test →" : hasAny ? "View runs →" : "Launch eval →"}
       </Link>
     </section>
   );

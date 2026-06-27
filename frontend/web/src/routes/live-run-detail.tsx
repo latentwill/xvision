@@ -1,15 +1,16 @@
 // frontend/web/src/routes/live-run-detail.tsx
 //
-// Live Strategy Inspector (`/live/runs/:runId`) — the live-money variant of
-// the agent-run detail page. Composes the SAME pieces (indented timeline,
-// span inspector, filter bar, decisions) but with a live header strip:
+// Forward Test Strategy Inspector (`/fwd/runs/:runId`) — the paper-trading
+// variant of the agent-run detail page. Composes the SAME pieces (indented
+// timeline, span inspector, filter bar, decisions) but with a forward-test
+// header strip:
 //
-//   * LIVE badge (gold) instead of the bare status pill, + paused /
+//   * Forward Test + Paper badges instead of a "Live" badge, + paused /
 //     flatten-pending chips from the run summary.
-//   * Deployment name + PnL from the linked eval run (for live runs the
+//   * Deployment name + PnL from the linked eval run (for forward-test runs the
 //     eval scenario is synthesized from `live_config`, so its display
 //     name IS the deployment's `live_config.display_name`).
-//   * Back-link to /live (not the eval-runs list).
+//   * Back-link to /fwd (not the eval-runs list).
 //   * No backtest affordances: SpanInspector is mounted with
 //     `isLive={true}` so "Rerun from here" stays locked on a live run.
 //
@@ -119,9 +120,9 @@ export function LiveRunDetailRoute() {
     return (
       <>
         <Topbar
-          title="Live run"
+          title="Forward Test run"
           sub={runId || "Loading…"}
-          back={{ to: "/live", label: "Back to live trading" }}
+          back={{ to: "/fwd", label: "Back to forward test" }}
         />
         <Card className="p-6 animate-pulse">
           <div className="h-5 w-72 bg-surface-elev rounded mb-3" />
@@ -133,14 +134,14 @@ export function LiveRunDetailRoute() {
   if (q.isError || !q.data) {
     const message =
       q.error instanceof ApiError && q.error.code === "not_found"
-        ? `live run ${runId} not found`
+        ? `forward-test run ${runId} not found`
         : String(q.error);
     return (
       <>
         <Topbar
-          title="Live run"
+          title="Forward Test run"
           sub={runId}
-          back={{ to: "/live", label: "Back to live trading" }}
+          back={{ to: "/fwd", label: "Back to forward test" }}
         />
         <Card className="p-6 text-text-2">{message}</Card>
       </>
@@ -158,21 +159,20 @@ export function LiveRunDetailRoute() {
   const liveConfig = evalSummary?.live_config ?? null;
   const stopPolicy = liveConfig ? formatStopPolicy(liveConfig.stop_policy) : null;
   const isRunning = summary.status === "running";
-  // Defensive: a deep link can land on a non-live agent run; say so
-  // instead of dressing a backtest up as live money.
-  const isLiveMoney =
-    summary.is_live_money === true || summary.eval_mode === "live";
+  // Defensive: a deep link can land on a real-money agent run; say so
+  // instead of dressing it up as paper forward-test.
+  const isLiveMoney = summary.is_live_money === true;
 
   return (
     <>
       <Topbar
-        title="Live run"
-        back={{ to: "/live", label: "Back to live trading" }}
+        title="Forward Test run"
+        back={{ to: "/fwd", label: "Back to forward test" }}
         sub={
           <>
             <span
               className="font-mono text-[12px] text-text-3 break-all select-all"
-              aria-label={`Live run id ${summary.run_id}`}
+              aria-label={`Forward-test run id ${summary.run_id}`}
             >
               {summary.run_id}
             </span>
@@ -182,30 +182,35 @@ export function LiveRunDetailRoute() {
         }
       />
 
-      {/* Live header strip — full-width inline row, no side boxes. */}
+      {/* Forward-test header strip — full-width inline row, no side boxes. */}
       <Card
         className="p-5 mb-4 flex flex-wrap items-center gap-4"
-        data-testid="live-run-header"
+        data-testid="forward-test-run-header"
       >
         {isLiveMoney ? (
-          <Pill tone="gold" animated={isRunning} data-testid="live-badge">
-            LIVE
+          <Pill tone="gold" animated={isRunning} data-testid="live-money-badge">
+            LIVE MONEY
           </Pill>
         ) : (
-          <Pill tone="default" data-testid="not-live-badge">
-            NOT LIVE
-          </Pill>
+          <>
+            <Pill tone="gold" animated={isRunning} data-testid="forward-test-badge">
+              Forward Test
+            </Pill>
+            <Pill tone="default" data-testid="paper-badge">
+              Paper
+            </Pill>
+          </>
         )}
         <Pill tone={summary.error_count > 0 ? "danger" : "default"}>
           {summary.status}
         </Pill>
         {summary.paused === true ? (
-          <Pill tone="warn" data-testid="live-paused-pill">
+          <Pill tone="warn" data-testid="forward-test-paused-pill">
             paused
           </Pill>
         ) : null}
         {summary.flatten_requested === true ? (
-          <Pill tone="warn" data-testid="live-flatten-pill">
+          <Pill tone="warn" data-testid="forward-test-flatten-pill">
             flattening positions…
           </Pill>
         ) : null}
@@ -213,7 +218,7 @@ export function LiveRunDetailRoute() {
           <span
             className="font-mono text-[12px] tabular-nums"
             style={{ color: pnl.startsWith("-") ? "var(--danger)" : "var(--gold)" }}
-            data-testid="live-pnl"
+            data-testid="forward-test-pnl"
           >
             pnl {pnl}
           </span>
@@ -221,7 +226,7 @@ export function LiveRunDetailRoute() {
         {liveConfig ? (
           <span
             className="flex flex-wrap items-center gap-x-3 font-mono text-[12px] text-text-2"
-            data-testid="live-config-chips"
+            data-testid="forward-test-config-chips"
           >
             <span className="uppercase tracking-[0.1em]">
               {liveConfig.venue_label}

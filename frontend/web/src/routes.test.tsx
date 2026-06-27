@@ -75,6 +75,13 @@ describe("router route topology", () => {
     expect(serialized).toContain("optimizer");
     expect(serialized).toContain("autooptimizer");
   });
+  it("exposes /fwd forward-test routes and keeps /live as redirects only", () => {
+    const serialized = JSON.stringify(router.routes);
+    expect(serialized).toContain("fwd");
+    expect(serialized).toContain("fwd/runs/:runId");
+    expect(serialized).toContain("live");
+    expect(serialized).toContain("live/runs/:runId");
+  });
 });
 
 describe("RouteLoaded clears reload-attempted flag only after Suspense resolves", () => {

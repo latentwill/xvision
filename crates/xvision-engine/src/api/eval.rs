@@ -300,9 +300,9 @@ pub struct RunSummary {
     /// state. Defaults to `false` for pre-062 runs.
     #[serde(default)]
     pub flatten_requested: bool,
-    /// Live launch envelope (`mode = live` runs only): venue label, stop
+    /// Forward-test launch envelope (`mode = fwd` runs only): venue label, stop
     /// policy, capital, display name. `None` for backtests. Surfaced so the
-    /// live inspector can render deployment config without a second fetch.
+    /// forward-test inspector can render deployment config without a second fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub live_config: Option<LiveConfig>,
@@ -1408,7 +1408,7 @@ pub struct EvalRunRequest {
     /// fingerprint and read by the watchdog (e.g. `max_run_duration_secs`).
     #[cfg_attr(feature = "ts-export", ts(type = "Record<string, unknown> | null"))]
     pub params_override: Option<serde_json::Value>,
-    /// Required for `mode = live`. Backtest runs must leave this unset.
+    /// Required for `mode = fwd`. Backtest runs must leave this unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_config: Option<LiveConfig>,
     /// Optional per-run hard caps (decisions / token totals / wall-clock).
@@ -1565,7 +1565,7 @@ fn validate_live_request_shape(req: &EvalRunRequest) -> ApiResult<()> {
             // Debug variant — operators (CLI + dashboard) see this string.
             .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e}", e.field_path()))),
         (RunMode::Forward, None) => Err(ApiError::Validation(
-            "mode=live requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
+            "mode=fwd requires live_config (strategy_id, assets, capital, broker_creds_ref, stop_policy)"
                 .into(),
         )),
         (RunMode::Backtest, Some(_)) => Err(ApiError::Validation(
@@ -5682,10 +5682,7 @@ fn summarise(run: Run) -> RunSummary {
         scenario_id: run.scenario_id,
         strategy: None,
         scenario: None,
-        mode: match run.mode {
-            RunMode::Backtest => "backtest".into(),
-            RunMode::Forward => "live".into(),
-        },
+        mode: run.mode.as_str().into(),
         status: run.status.as_str().into(),
         started_at: run.started_at,
         completed_at: run.completed_at,
@@ -5963,6 +5960,19 @@ mod tests {
         manifest::PublicManifest, risk::RiskPreset, slot::LLMSlot, AgentRef, PipelineDef, Strategy,
     };
 
+
+    #[test]
+    fn run_summary_normalizes_forward_mode_to_fwd() {
+        let run = crate::eval::run::Run::new_queued(
+            "agent-forward".into(),
+            "scenario-forward".into(),
+            crate::eval::run::RunMode::Forward,
+        );
+
+        let summary = summarise_run(run);
+
+        assert_eq!(summary.mode, "fwd");
+    }
     // --- resolve_live_venue (Orderly testnet live venue, 2026-06-11) --------
 
     #[test]

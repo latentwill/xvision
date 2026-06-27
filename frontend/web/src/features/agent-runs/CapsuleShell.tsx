@@ -100,8 +100,8 @@ export type EvalCapsuleRow = {
   id: string;
   /**
    * Capsule prefix label. `"live"` ⇒ the row is a live-money run: prefix
-   * reads LIVE in the gold tint and the short tag routes to the live
-   * inspector (`/live/runs/:id`). `"opti"` ⇒ an autooptimizer cycle row
+   * reads LIVE in the gold tint and the short tag routes to the forward-test
+   * inspector (`/fwd/runs/:id`). `"opti"` ⇒ an autooptimizer cycle row
    * (WS-11a): prefix reads OPTI and the short tag links to the cycle detail
    * route. Defaults to `"eval"` (prefix EVAL, routes to `/eval-runs/:id`) so
    * existing call sites are unchanged.
@@ -191,7 +191,7 @@ export function CapsuleRow({
   const linkTo = isOpti
     ? `/optimizer/cycle/${encodeURIComponent(run.id)}`
     : isLiveMoney
-      ? `/live/runs/${encodeURIComponent(run.id)}`
+      ? `/fwd/runs/${encodeURIComponent(run.id)}`
       : `/eval-runs/${encodeURIComponent(run.id)}`;
   const prefixEmphasised = isLiveMoney || isOpti;
   return (

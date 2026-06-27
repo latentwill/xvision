@@ -90,9 +90,9 @@ export const MOCK_RUN_LIVE: AgentRunDetail = {
     status: "running",
     finished_at: null,
     duration_ms: null,
-    // Live-money discriminator (xvision-9pi): parent eval run is mode=live
+    // Live-money discriminator (xvision-9pi): parent eval run is mode=fwd
     // and non-terminal, so this fixture counts as genuinely live.
-    eval_mode: "live",
+    eval_mode: "fwd",
     eval_run_status: "running",
     is_live_money: true,
     span_count: 3,

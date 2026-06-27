@@ -55,7 +55,7 @@ const paper = (over: Partial<AgentRunSummary> = {}): AgentRunSummary => ({
 const stale = (over: Partial<AgentRunSummary> = {}): AgentRunSummary => ({
   ...MOCK_RUN_LIVE.summary,
   status: "running",
-  eval_mode: "live",
+  eval_mode: "fwd",
   eval_run_status: "failed",
   is_live_money: false,
   ...over,
@@ -67,17 +67,17 @@ afterEach(() => {
 });
 
 describe("LiveSummaryStrip", () => {
-  it("shows the empty state + 'Launch eval' CTA when there are no live runs", async () => {
+  it("shows the empty state + 'Launch eval' CTA when there are no forward-test runs", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([]);
 
     renderStrip();
 
-    await screen.findByText(/no live strategies running/i);
+    await screen.findByText(/no forward-test strategies running/i);
     const cta = screen.getByRole("link", { name: /launch eval/i });
     expect(cta).toHaveAttribute("href", "/eval-runs?start=1");
   });
 
-  it("counts ACTIVE live-money strategies and links to /live", async () => {
+  it("counts ACTIVE forward-test strategies and links to /fwd", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([
       live({ run_id: "a" }),
       live({ run_id: "b" }),
@@ -87,10 +87,10 @@ describe("LiveSummaryStrip", () => {
 
     const liveCount = await screen.findByTestId("live-count");
     expect(liveCount).toHaveTextContent("2");
-    expect(liveCount).toHaveTextContent(/live/i);
+    expect(liveCount).toHaveTextContent(/forward-test/i);
 
-    const cta = screen.getByRole("link", { name: /go to live trading/i });
-    expect(cta).toHaveAttribute("href", "/live");
+    const cta = screen.getByRole("link", { name: /go to forward test/i });
+    expect(cta).toHaveAttribute("href", "/fwd");
   });
 
   it("separates ACTIVE from PAUSED counts", async () => {
@@ -124,10 +124,10 @@ describe("LiveSummaryStrip", () => {
 
     renderStrip();
 
-    // Only one live run → "1 live", and the strip is in live (not empty) mode.
+    // Only one forward-test run → "1 forward-test", and the strip is not empty.
     const liveCount = await screen.findByTestId("live-count");
     expect(liveCount).toHaveTextContent("1");
-    expect(screen.queryByText(/no live strategies running/i)).toBeNull();
+    expect(screen.queryByText(/no forward-test strategies running/i)).toBeNull();
   });
 
   it("counts non-live running rows separately — they are NOT live", async () => {
@@ -189,7 +189,7 @@ describe("LiveSummaryStrip", () => {
 
     renderStrip();
 
-    await screen.findByText(/no live strategies running/i);
+    await screen.findByText(/no forward-test strategies running/i);
     // Counting over the newest-20-of-any-status window undercounts when
     // many runs are terminal; the strip must scope the query to the
     // non-terminal population (which is all live/paper/stale ever are).
@@ -208,21 +208,21 @@ describe("LiveSummaryStrip", () => {
     expect(screen.getByTestId("live-summary-loading")).toBeInTheDocument();
   });
 
-  it("ALWAYS renders the strip + 'Live trading' label, even when empty", async () => {
+  it("ALWAYS renders the strip + 'Forward Test' label, even when empty", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([]);
 
     renderStrip();
 
-    await screen.findByText(/no live strategies running/i);
+    await screen.findByText(/no forward-test strategies running/i);
     expect(screen.getByTestId("live-summary-strip")).toBeInTheDocument();
-    expect(screen.getByText(/live trading/i)).toBeInTheDocument();
+    expect(screen.getByText(/forward test/i)).toBeInTheDocument();
     expect(screen.queryByText(/real money/i)).toBeNull();
     expect(screen.queryByTestId("paper-count")).toBeNull();
   });
 
-  // n0k honesty annotation: the live count must carry "· simulated" so the label
-  // does not suggest real money when all runs are paper/testnet.
-  it("qualifies the live count as simulated (honesty annotation)", async () => {
+  // n0k honesty annotation: the forward-test count must carry "· paper" so the
+  // label does not suggest real money when all runs are paper/testnet.
+  it("qualifies the forward-test count as paper (honesty annotation)", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([
       live({ run_id: "a" }),
       live({ run_id: "b" }),
@@ -231,7 +231,7 @@ describe("LiveSummaryStrip", () => {
     renderStrip();
 
     const liveCount = await screen.findByTestId("live-count");
-    // The live-count span must include the simulated qualifier
-    expect(liveCount.textContent).toMatch(/simulated/i);
+    // The live-count span must include the paper qualifier.
+    expect(liveCount.textContent).toMatch(/paper/i);
   });
 });

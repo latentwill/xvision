@@ -77,10 +77,10 @@ export function isLiveRun(run: AgentRunSummary): boolean {
  * the eval-runs page, not here.
  *
  * `eval_mode` is populated by the agent-runs list endpoint from the parent
- * eval run's mode ("live" | "backtest"); absent ⇒ not a live deployment.
+ * eval run's mode ("fwd" | "backtest"); absent ⇒ not a forward-test deployment.
  */
 export function isLiveLineage(run: AgentRunSummary): boolean {
-  return run.eval_mode === "live";
+  return run.eval_mode === "fwd";
 }
 
 /**

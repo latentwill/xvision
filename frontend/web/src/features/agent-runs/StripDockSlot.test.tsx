@@ -190,7 +190,7 @@ describe("StripDockSlot", () => {
 
   test("live-money run renders the LIVE capsule prefix; default renders EVAL", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
-      makeDetail({ is_live_money: true, eval_mode: "live" }),
+      makeDetail({ is_live_money: true, eval_mode: "fwd" }),
     );
     setEvalScope({ activeRunId: "run_abc1234", mode: "live" });
     useTraceDock.setState({ height: "collapsed" });

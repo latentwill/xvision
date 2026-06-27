@@ -49,7 +49,7 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
 function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   return mkRun({
     is_live_money: true,
-    eval_mode: "live",
+    eval_mode: "fwd",
     eval_run_status: "running",
     ...over,
   });
@@ -87,7 +87,7 @@ describe("deriveStripStatus", () => {
           mkRun({
             status: "running",
             is_live_money: false,
-            eval_mode: "live",
+            eval_mode: "fwd",
             eval_run_status: parent,
           }),
         ),
@@ -163,7 +163,7 @@ describe("classifyRunLiveness", () => {
   test("orphaned running child of a terminal eval run -> stale", () => {
     expect(
       classifyRunLiveness(
-        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+        mkRun({ status: "running", eval_mode: "fwd", eval_run_status: "failed" }),
       ),
     ).toBe("stale");
   });
@@ -181,7 +181,7 @@ describe("livenessCounts", () => {
       mkRun({
         run_id: "stale",
         status: "running",
-        eval_mode: "live",
+        eval_mode: "fwd",
         eval_run_status: "failed",
       }),
       mkLiveRun({ run_id: "done", status: "completed" }),
@@ -205,12 +205,12 @@ describe("livenessCounts", () => {
 });
 
 describe("isLiveLineage", () => {
-  test("live-deployment run (eval_mode=live) qualifies in any state", () => {
+  test("forward-test deployment run (eval_mode=fwd) qualifies in any state", () => {
     expect(isLiveLineage(mkLiveRun({ status: "running" }))).toBe(true);
     expect(isLiveLineage(mkLiveRun({ status: "completed" }))).toBe(true);
     expect(
       isLiveLineage(
-        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+        mkRun({ status: "running", eval_mode: "fwd", eval_run_status: "failed" }),
       ),
     ).toBe(true); // stale orphan of a live run still belongs on the live page
   });

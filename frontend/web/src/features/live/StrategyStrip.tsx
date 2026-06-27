@@ -130,7 +130,7 @@ export function StrategyStrip({
             >
               {filter === "LIVE" ? (
                 <>
-                  No live strategies —{" "}
+                  No forward-test strategies —{" "}
                   <Link
                     to="/eval-runs?start=1"
                     className="text-text-2 underline-offset-2 hover:text-text hover:underline"
@@ -267,7 +267,7 @@ function LiveRunRow({
       <MetricCell label="Sharpe" value={sharpe.text} tone={sharpe.tone} />
       {run.span_count > 0 ? (
         <Link
-          to={`/live/runs/${encodeURIComponent(run.run_id)}`}
+          to={`/fwd/runs/${encodeURIComponent(run.run_id)}`}
           onClick={(e) => e.stopPropagation()}
           className="w-fit font-mono text-[12px] text-text-2 hover:text-text"
         >
