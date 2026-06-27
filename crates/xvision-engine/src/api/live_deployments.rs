@@ -5,10 +5,9 @@
 //!
 //! ## What a "deployment" is (no new entity)
 //!
-//! A deployment is an `eval_runs` row with `mode = RunMode::Live`. There is no
-//! separate deployment table: [`list_live_deployments`] is a **filtered,
-//! honesty-constrained projection** over `eval_runs WHERE mode='live'`, joined
-//! with execution-layer truth. The DTO + endpoint names deliberately differ
+//! A deployment is an `eval_runs` row with `mode = RunMode::Forward` (forward-test).
+//! There is no separate deployment table: [`list_live_deployments`] is a **filtered,
+//! honesty-constrained projection** over `eval_runs WHERE mode='fwd'`, joined
 //! from `agent_runs`/`RunSummary` so the dashboard never *infers* live status
 //! from a trace record (§8.9 acceptance c).
 //!
@@ -359,7 +358,7 @@ pub async fn list_live_deployments(
         .await?;
 
     let mut out = Vec::new();
-    for run in runs.into_iter().filter(|r| r.mode == RunMode::Live) {
+    for run in runs.into_iter().filter(|r| r.mode == RunMode::Forward) {
         let last_decision_at = store.max_decision_timestamp(&run.id).await.unwrap_or(None);
         let realized_pnl_usd = store.sum_realized_pnl(&run.id).await.unwrap_or(None);
         // bead s78.2: only count risk vetoes when a last-visit boundary is
@@ -408,7 +407,7 @@ pub async fn get_live_deployment(
         // Unknown run id ⇒ no deployment (the handler maps this to 404).
         Err(_) => return Ok(None),
     };
-    if run.mode != RunMode::Live {
+    if run.mode != RunMode::Forward {
         return Ok(None);
     }
     let last_decision_at = store.max_decision_timestamp(run_id).await.unwrap_or(None);
@@ -477,7 +476,7 @@ mod tests {
     }
 
     fn live_run(id: &str) -> Run {
-        let mut run = Run::new_queued("agent-bundle-hash".into(), "scn".into(), RunMode::Live);
+        let mut run = Run::new_queued("agent-bundle-hash".into(), "scn".into(), RunMode::Forward);
         run.id = id.into();
         run.status = RunStatus::Running;
         run.live_config = Some(live_config(

@@ -75,7 +75,7 @@ async fn run_started_records_trajectory_mode_live() {
         .await
         .expect("agent_runs row must exist");
     assert_eq!(
-        mode, "live",
+        mode, "fwd",
         "Stage 1 live runs must record trajectory_mode = 'live'"
     );
 }

@@ -10,6 +10,12 @@ min_improvement = 0.05
 # Separate from min_improvement so the out-of-sample bar can be lower than
 # the in-sample bar. Defaults to 0.005 (0.5%) when not set.
 holdout_min_improvement = 0.005
+# Minimum fraction of parent trades a candidate must retain to pass the gate.
+# 0.5 means the child must execute at least 50% of the parent's fill legs,
+# with a hard floor of 1. Range: (0.0, 1.0]. Prevents 0-trade strategies
+# from gaming the Sharpe metric. Default 0.5.
+#min_trade_retention_ratio = 0.5
+
 
 
 # Dates held out for final performance checks — never used during evening runs.

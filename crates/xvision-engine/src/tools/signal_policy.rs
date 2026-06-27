@@ -148,7 +148,7 @@ pub fn filter_tools_for_mode(tools: &[String], mode: RunMode) -> Vec<String> {
         .iter()
         .filter(|name| match signal_tool_policy(name) {
             Some(p) => match mode {
-                RunMode::Live => p.live,
+                RunMode::Forward => p.live,
                 RunMode::Backtest => p.backtest,
             },
             None => true,
@@ -263,6 +263,6 @@ mod tests {
     #[test]
     fn live_keeps_everything() {
         let tools = vec!["elfa_smart_mentions".to_string(), "nansen_flow_intel".to_string()];
-        assert_eq!(filter_tools_for_mode(&tools, RunMode::Live), tools);
+        assert_eq!(filter_tools_for_mode(&tools, RunMode::Forward), tools);
     }
 }

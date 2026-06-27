@@ -497,7 +497,7 @@ async fn run_rejects_live_mode_without_live_config() {
 
     let dispatch = hold_dispatch();
 
-    let r = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Live), None, dispatch).await;
+    let r = run_with_mock_deps(&ctx, eval_request(agent_id, RunMode::Forward), None, dispatch).await;
     match r {
         Err(ApiError::Validation(msg)) => {
             assert!(

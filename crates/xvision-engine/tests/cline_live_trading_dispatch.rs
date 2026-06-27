@@ -57,7 +57,7 @@ async fn live_trading_cline_context_is_some() {
         recording_slot_role: None,
         tool_asset_guard: None,
         as_of_guard: None,
-        run_mode: xvision_engine::eval::run::RunMode::Live,
+        run_mode: xvision_engine::eval::run::RunMode::Forward,
     };
 }
 

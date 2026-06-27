@@ -57,7 +57,10 @@ impl RunAbort {
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
     Backtest,
-    Live,
+    /// Forward-test mode (Alpaca paper trading — real market data, simulated money).
+    /// Formerly called "live" mode; renamed to avoid confusion with real-money live trading.
+    #[serde(rename = "fwd", alias = "live")]
+    Forward,
 }
 
 /// Who queued a run — the deployment-source discriminator backing CT5's
@@ -185,21 +188,21 @@ impl RunStatus {
 }
 
 impl RunMode {
+    /// On-disk string form for the `eval_runs.mode` column. New writes use `"fwd"`.
     pub fn as_str(&self) -> &'static str {
         match self {
             RunMode::Backtest => "backtest",
-            RunMode::Live => "live",
+            RunMode::Forward => "fwd",
         }
     }
 
+    /// Parse from an on-disk or CLI string. Accepts `"fwd"` and the deprecated
+    /// `"live"` alias for backward compatibility with pre-rename DB rows.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "backtest" => Some(RunMode::Backtest),
-            "live" => Some(RunMode::Live),
+            "fwd" | "live" => Some(RunMode::Forward),
             // Legacy DB read-only alias: pre-collapse runs persisted `mode = 'paper'`.
-            // The intake's "retire paper mode with prejudice" decision relabels them
-            // as Backtest on read. New writes never emit "paper". See
-            // team/archive/2026-05-22-conductor-pass/contracts/executor-refactor.md.
             "paper" => Some(RunMode::Backtest),
             _ => None,
         }
@@ -519,8 +522,8 @@ mod tests {
     }
 
     #[test]
-    fn run_mode_as_str_live_returns_live() {
-        assert_eq!(RunMode::Live.as_str(), "live");
+    fn run_mode_as_str_forward_returns_fwd() {
+        assert_eq!(RunMode::Forward.as_str(), "fwd");
     }
 
     #[test]
@@ -537,8 +540,8 @@ mod tests {
     }
 
     #[test]
-    fn run_mode_parse_live_returns_live() {
-        assert_eq!(RunMode::parse("live"), Some(RunMode::Live));
+    fn run_mode_parse_fwd_returns_forward() {
+        assert_eq!(RunMode::parse("fwd"), Some(RunMode::Forward));
     }
 
     #[test]

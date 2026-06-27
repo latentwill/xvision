@@ -122,7 +122,7 @@ impl RunStore {
     /// INSERT INTO eval_runs.
     pub async fn create(&self, run: &Run) -> Result<()> {
         match run.mode {
-            RunMode::Live if run.live_config.is_none() => {
+            RunMode::Forward if run.live_config.is_none() => {
                 return Err(StoreInvariantError::LiveModeMissingConfig {
                     run_id: run.id.clone(),
                 }
@@ -169,7 +169,7 @@ impl RunStore {
             .transpose()
             .context("serialize live_config")?;
         let scenario_id = match run.mode {
-            RunMode::Live => None,
+            RunMode::Forward => None,
             RunMode::Backtest => Some(run.scenario_id.as_str()),
         };
 

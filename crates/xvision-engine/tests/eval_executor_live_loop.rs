@@ -377,7 +377,7 @@ async fn live_fixtures(initial: f64) -> (RunStore, Strategy, Scenario, Run, temp
     let (store, dir) = fresh_store().await;
     let strategy = build_strategy("01TESTLIVELOOP");
     let scenario = live_scenario(initial);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Forward);
     // Live runs must carry their LiveConfig (store invariant).
     run.live_config = Some(live_config());
     store.create(&run).await.unwrap();
@@ -1497,7 +1497,7 @@ async fn multi_asset_live_fixtures(initial: f64) -> (RunStore, Strategy, Scenari
     let (store, dir) = fresh_store().await;
     let strategy = build_multi_asset_strategy("01TESTLIVEMULTI");
     let scenario = live_scenario(initial);
-    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Forward);
     run.live_config = Some(multi_asset_live_config());
     store.create(&run).await.unwrap();
     store

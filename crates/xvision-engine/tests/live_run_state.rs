@@ -135,13 +135,13 @@ async fn list_filter_mode_selects_only_live_runs() {
         .unwrap();
     let live = store
         .list(ListFilter {
-            mode: Some(RunMode::Live),
+            mode: Some(RunMode::Forward),
             ..Default::default()
         })
         .await
         .unwrap();
     assert_eq!(live.len(), 1);
-    assert_eq!(live[0].mode, RunMode::Live);
+    assert_eq!(live[0].mode, RunMode::Forward);
 }
 
 #[tokio::test]

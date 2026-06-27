@@ -160,6 +160,9 @@ struct GateScores {
     pub edge_over_random: Option<f64>,
     pub parent_edge: Option<f64>,
     pub edge_delta: Option<f64>,
+    pub parent_n_trades: Option<u32>,
+    pub child_n_trades: Option<u32>,
+    pub min_trade_retention_ratio: Option<f64>,
 }
 
 /// Circuit-breaker tracking consecutive candidate eval failures.
@@ -529,6 +532,9 @@ where
             min_improvement: mi,
             holdout_min_improvement: hmi,
             objective: obj,
+            parent_n_trades: pd.n_trades,
+            child_n_trades: cd.n_trades,
+            min_trade_retention_ratio: config.min_trade_retention_ratio,
         },
         &cycle_config.day_scenario,
         &cycle_config.baseline_scenario,
@@ -859,6 +865,24 @@ where
         clone
     };
 
+    // Clone parent_strategy as a mutable enriched copy with resolved library
+    // prompts injected. This enriched parent is used for apply_to() so child
+    // strategies carry the full prompt forward. Without this, children clone
+    // an empty `prompt` field and produce results identical to baseline.
+    let enriched_parent = {
+        let mut clone = parent_strategy.clone();
+        for (i, src) in parent_for_mutator.agents.iter().enumerate() {
+            if !src.prompt.is_empty() {
+                if let Some(dst) = clone.agents.get_mut(i) {
+                    if dst.prompt.is_empty() {
+                        dst.prompt = src.prompt.clone();
+                    }
+                }
+            }
+        }
+        clone
+    };
+
     // Extract the first resolved prompt from the enriched clone as the base
     // instruction for DSPy warm-start. This ensures the optimizer improves FROM
     // the real agent prompt rather than generating from scratch.
@@ -1010,7 +1034,7 @@ where
                     session_id: String::new(),
                     cycle_id: cycle_id.to_string(),
                     parent_hash: parent_node.bundle_hash.to_hex(),
-                    reason: format!("dimension gate (simplicity): {reason}"),
+                    reason: format!("simplicity check failed: {reason}"),
                 });
                 no_candidate_count += 1;
                 continue;
@@ -1028,7 +1052,7 @@ where
         // tournament path does not, and a no-op child's content hash equals the
         // parent's — inserting it would overwrite (corrupt) the parent node and
         // create a self-parent cycle in the lineage graph.
-        let candidate = diff.apply_to(parent_strategy);
+        let candidate = diff.apply_to(&enriched_parent);
         let candidate_hash = serde_json::to_value(&candidate)
             .map(|v| ContentHash::of_json(&v))
             .ok();
@@ -1177,7 +1201,7 @@ where
         }
         let gate_t0 = Instant::now();
         let gate_result = gate_and_classify(
-            parent_strategy,
+            &enriched_parent,
             diff,
             cycle_config,
             paper_tester,
@@ -1187,6 +1211,7 @@ where
             &gate_parent_untouched,
             min_improvement,
             holdout_min_improvement,
+            config.min_trade_retention_ratio,
             &parent_regime_metrics,
             sampled_day,
             sampled_baseline,
@@ -1283,6 +1308,9 @@ where
                     edge_over_random: gs.edge_over_random,
                     parent_edge: gs.parent_edge,
                     edge_delta: gs.edge_delta,
+                    parent_n_trades: gs.parent_n_trades,
+                    child_n_trades: gs.child_n_trades,
+                    min_trade_retention_ratio: gs.min_trade_retention_ratio,
                 },
             )
             .await
@@ -1483,6 +1511,7 @@ async fn gate_and_classify<F>(
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
     holdout_min_improvement: f64,
+    min_trade_retention_ratio: f64,
     // Per-regime parent metrics (label → (day, untouched)), pre-computed by
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
@@ -1579,6 +1608,7 @@ where
             min_improvement,
             holdout_min_improvement,
             cycle_config.objective,
+            min_trade_retention_ratio,
         );
 
         // For regime path: use the first regime's day metrics as the primary
@@ -1730,6 +1760,9 @@ where
         min_improvement,
         holdout_min_improvement,
         cycle_config.objective,
+        parent_day.n_trades,
+        child_day.n_trades,
+        min_trade_retention_ratio,
     );
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
@@ -1828,6 +1861,9 @@ where
         edge_over_random,
         parent_edge,
         edge_delta,
+        parent_n_trades: Some(parent_day.n_trades),
+        child_n_trades: Some(child_day.n_trades),
+        min_trade_retention_ratio: Some(min_trade_retention_ratio),
     });
 
     Ok(MutationOutcome {
@@ -2099,6 +2135,9 @@ fn gate_check(
     min_improvement: f64,
     holdout_min_improvement: f64,
     objective: Objective,
+    parent_n_trades: u32,
+    child_n_trades: u32,
+    min_trade_retention_ratio: f64,
 ) -> GateVerdict {
     evaluate(&GateInput {
         parent_day_metrics: parent_day.clone(),
@@ -2108,6 +2147,9 @@ fn gate_check(
         min_improvement,
         holdout_min_improvement,
         objective,
+        parent_n_trades,
+        child_n_trades,
+        min_trade_retention_ratio,
     })
 }
 
@@ -2140,6 +2182,7 @@ pub fn classify_from_regime_outcomes(
     min_improvement: f64,
     holdout_min_improvement: f64,
     objective: Objective,
+    min_trade_retention_ratio: f64,
 ) -> (LineageStatus, Vec<RegimeResultRow>) {
     let mut side_verdict_pairs: Vec<(RegimeSide, GateVerdict)> = Vec::with_capacity(regimes.len());
     let mut rows: Vec<RegimeResultRow> = Vec::with_capacity(regimes.len());
@@ -2153,6 +2196,9 @@ pub fn classify_from_regime_outcomes(
             min_improvement,
             holdout_min_improvement,
             objective,
+            parent_n_trades: r.parent_day.n_trades,
+            child_n_trades: r.child_day.n_trades,
+            min_trade_retention_ratio,
         });
         let delta_sharpe = r.child_day.sharpe - r.parent_day.sharpe;
         rows.push(RegimeResultRow {
@@ -2293,7 +2339,7 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, 0.1, Objective::Sharpe);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, 0.1, Objective::Sharpe, 0.5);
 
         assert_eq!(
             status,
@@ -2359,7 +2405,7 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5);
 
         assert_eq!(status, LineageStatus::Active);
         assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);

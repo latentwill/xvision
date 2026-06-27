@@ -53,7 +53,7 @@ async fn set_replay_metrics_marks_run_replay() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(mode.0, "live");
+    assert_eq!(mode.0, "fwd");
     assert!(mode.1.is_none());
 
     let affected = rec

@@ -594,7 +594,7 @@ fn inspect_reconciles_live_eval_accounting_when_sidecar_is_stale() {
     assert_eq!(json["totals"]["input_tokens"], 46473);
     assert_eq!(json["totals"]["output_tokens"], 991);
     assert_eq!(json["accounting"]["source"], "eval_actuals");
-    assert_eq!(json["accounting"]["eval_mode"], "live");
+    assert_eq!(json["accounting"]["eval_mode"], "fwd");
     assert_eq!(json["accounting"]["eval_status"], "completed");
 }
 
@@ -686,7 +686,7 @@ fn inspect_direct_eval_run_id_without_sidecar_uses_eval_projection() {
     assert_eq!(json["totals"]["input_tokens"], 777);
     assert_eq!(json["totals"]["output_tokens"], 55);
     assert_eq!(json["accounting"]["source"], "eval_actuals");
-    assert_eq!(json["accounting"]["eval_mode"], "live");
+    assert_eq!(json["accounting"]["eval_mode"], "fwd");
 }
 
 #[test]

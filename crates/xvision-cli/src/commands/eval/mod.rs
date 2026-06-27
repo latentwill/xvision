@@ -168,17 +168,18 @@ pub struct RunArgs {
     /// Scenario id from `xvn scenario ls`.
     #[arg(long)]
     pub scenario: Option<String>,
-    /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
-    /// Live mode connects to Alpaca paper trading (real market data, simulated
-    /// money via https://paper-api.alpaca.markets). Real-money venues are
-    /// outside the current scope — only paper (simulated) execution is wired.
+    /// Run mode: `backtest` (default) or `fwd` (forward-test on Alpaca paper —
+    /// real market data, simulated money). `live` is a deprecated alias for `fwd`
+    /// (kept for backward compat). `paper` is a legacy alias for `backtest`.
+    /// Real-money venues are outside the current scope — only paper (simulated)
+    /// execution is wired.
     #[arg(long, default_value = "backtest")]
     pub mode: String,
-    /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
+    /// Forward-test Alpaca asset, e.g. BTC/USD. Required for --mode fwd.
     #[arg(long)]
     pub live_asset: Option<String>,
-    /// Initial live paper capital in USD. Required for --mode live. This is
-    /// paper/simulated capital — no real money is at risk in the current live scope.
+    /// Initial forward-test paper capital in USD. Required for --mode fwd. This is
+    /// paper/simulated capital — no real money is at risk.
     #[arg(long)]
     pub live_capital: Option<f64>,
     /// Broker credential set to use for this live run. Selects WHICH set of
@@ -750,7 +751,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
         (None, None) => None,
     };
-    if mode == RunMode::Live && args.scenario.is_some() {
+    if mode == RunMode::Forward && args.scenario.is_some() {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
@@ -759,7 +760,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         });
     }
 
-    let live_config = if mode == RunMode::Live {
+    let live_config = if mode == RunMode::Forward {
         let asset = args.live_asset.clone().ok_or_else(|| CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!("--mode live requires --live-asset"),
@@ -825,7 +826,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     } else {
         None
     };
-    let scenario_id = if mode == RunMode::Live {
+    let scenario_id = if mode == RunMode::Forward {
         String::new()
     } else {
         args.scenario.clone().ok_or_else(|| CliError {
@@ -2782,7 +2783,7 @@ mod tests {
             panic!("expected Run subcommand");
         };
         assert_eq!(args.scenario.as_deref(), Some("some-scenario"));
-        assert_eq!(args.mode, "live");
+        assert_eq!(args.mode, "fwd");
         // The runtime rejection happens in run_run; the parse still succeeds.
     }
 
