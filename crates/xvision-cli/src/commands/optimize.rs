@@ -991,7 +991,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         .await
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
         parent_strategies.insert(bundle_hash.to_hex(), strategy);
-        explicit_parent_hashes.push(bundle_hash);
+        // F34: do NOT push to explicit_parent_hashes — let select_parents
+        // discover active leaves from lineage so kept children from prior
+        // cycles auto-advance as the new parent.
     }
 
     let cycle_config = CycleConfig {
