@@ -96,7 +96,7 @@ pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, T
 pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, MutatorScore};
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
-pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
+pub use scenario_synthesis::{generate_scenario_rotation_pool, synthesize_baseline_untouched_scenario};
 pub use session::{
     create_session, create_session_with_id, ensure_session_schema, get_active_session,
     increment_cycle_completed, loosening_floor_reached, mark_interrupted_sessions, run_session,

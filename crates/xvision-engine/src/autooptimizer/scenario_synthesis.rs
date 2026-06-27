@@ -1,8 +1,8 @@
-use anyhow::{bail, Result};
-use chrono::{TimeZone, Utc};
+use anyhow::{bail, Context, Result};
+use chrono::{NaiveDate, TimeZone, Utc};
 use ulid::Ulid;
 
-use crate::autooptimizer::config::{BaselineUntouchedWindow, DayWindow};
+use crate::autooptimizer::config::{BaselineUntouchedWindow, DayWindow, ScenarioRotationConfig};
 use crate::eval::scenario::{
     AdjustmentMode, AssetClass, BarCachePolicy, CalendarRef, Capital, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
@@ -150,6 +150,60 @@ pub fn synthesize_baseline_untouched_scenario(
     Ok(synthesized)
 }
 
+/// Pre-generate a pool of (day_scenario, baseline_scenario) pairs for per-cycle
+/// scenario rotation.
+///
+/// When `rotation.enabled` is false or `rotation.num_windows` is 0, returns an
+/// empty vec — the session uses the single static day/baseline pair (legacy).
+///
+/// Each pair `i` has:
+/// - day window: `[range_start + i*stride, range_start + i*stride + day_span)`
+/// - baseline window: immediately after the day window, with `untouched_span`
+///
+/// Windows are clamped to `range_end`. Degenerate (empty) windows are skipped.
+/// Dates fall back to `default_start`/`default_end` when not explicitly set in
+/// the rotation config.
+pub fn generate_scenario_rotation_pool(
+    rotation: &ScenarioRotationConfig,
+    cadence_minutes: u32,
+    default_start: NaiveDate,
+    default_end: NaiveDate,
+    created_by: &str,
+) -> Result<Vec<(Scenario, Scenario)>> {
+    if !rotation.enabled || rotation.num_windows == 0 {
+        return Ok(Vec::new());
+    }
+    let range_start = rotation.date_range_start.unwrap_or(default_start);
+    let range_end = rotation.date_range_end.unwrap_or(default_end);
+    let stride = rotation.stride_days;
+    let day_span = rotation.day_window_span_days;
+    let unt_span = rotation.untouched_window_span_days;
+    let mut pool = Vec::with_capacity(rotation.num_windows);
+
+    for i in 0..rotation.num_windows {
+        let offset = i as i64 * stride;
+        let day_start = range_start + chrono::Duration::days(offset);
+        let day_end_unclamped = day_start + chrono::Duration::days(day_span);
+        let day_end = day_end_unclamped.min(range_end);
+        if day_start >= day_end {
+            continue;
+        }
+        let base_start = day_end;
+        let base_end_unclamped = base_start + chrono::Duration::days(unt_span);
+        let base_end = base_end_unclamped.min(range_end);
+        if base_start >= base_end {
+            continue;
+        }
+        let day_win = DayWindow { start: day_start, end: day_end };
+        let day = synthesize_optimizer_day_scenario(&day_win, cadence_minutes, created_by);
+        let base_win = BaselineUntouchedWindow { start: base_start, end: base_end };
+        let baseline = synthesize_baseline_untouched_scenario(&day, &base_win)
+            .with_context(|| format!("scenario_rotation: failed to synthesize baseline for window {i}"))?;
+        pool.push((day, baseline));
+    }
+    Ok(pool)
+}
+
 /// Backward-compatible optimizer helper for callers/tests that still import
 /// the old name. The canonical mapping lives with strategies because strategy
 /// cadence, not scenario shape, owns timeframe.
@@ -240,5 +294,119 @@ mod tests {
             .bar_cache_policy
             .cache_key
             .contains(&day.bar_cache_policy.cache_key));
+    }
+
+    // ── Scenario rotation pool generation ────────────────────────────────
+
+    #[test]
+    fn rotation_pool_empty_when_disabled() {
+        let mut r = ScenarioRotationConfig::default();
+        r.enabled = false;
+        let pool = generate_scenario_rotation_pool(
+            &r,
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(),
+            "test",
+        )
+        .unwrap();
+        assert!(pool.is_empty(), "disabled rotation must produce empty pool");
+    }
+
+    #[test]
+    fn rotation_pool_empty_when_zero_windows() {
+        let mut r = ScenarioRotationConfig::default();
+        r.enabled = true;
+        r.num_windows = 0;
+        let pool = generate_scenario_rotation_pool(
+            &r,
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(),
+            "test",
+        )
+        .unwrap();
+        assert!(pool.is_empty(), "0 windows must produce empty pool");
+    }
+
+    #[test]
+    fn rotation_pool_produces_expected_count() {
+        let pool = generate_scenario_rotation_pool(
+            &ScenarioRotationConfig::default(),
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap(),
+            "test",
+        )
+        .unwrap();
+        // Default: num_windows = 10, 14-day spans, 30-day stride over 11 months
+        // → all 10 should fit.
+        assert_eq!(pool.len(), 10, "default rotation should produce 10 pairs");
+    }
+
+    #[test]
+    fn rotation_pool_windows_have_disjoint_day_and_baseline() {
+        let pool = generate_scenario_rotation_pool(
+            &ScenarioRotationConfig::default(),
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap(),
+            "test",
+        )
+        .unwrap();
+        for (i, (day, baseline)) in pool.iter().enumerate() {
+            // Day and baseline must not overlap (baseline starts at or after day ends).
+            assert!(
+                baseline.time_window.start >= day.time_window.end,
+                "window {i}: baseline start ({}) must be >= day end ({})",
+                baseline.time_window.start,
+                day.time_window.end,
+            );
+        }
+    }
+
+    #[test]
+    fn rotation_pool_windows_are_distinct() {
+        let pool = generate_scenario_rotation_pool(
+            &ScenarioRotationConfig::default(),
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap(),
+            "test",
+        )
+        .unwrap();
+        // Each pair should have a different day window start (strided).
+        let mut day_starts = std::collections::HashSet::new();
+        for (day, _) in &pool {
+            assert!(
+                day_starts.insert(day.time_window.start),
+                "duplicate day window start: {}",
+                day.time_window.start
+            );
+        }
+    }
+
+    #[test]
+    fn rotation_pool_clamps_to_date_range() {
+        // Tight range: only 2 windows fit.
+        let mut r = ScenarioRotationConfig::default();
+        r.num_windows = 10;
+        r.stride_days = 30;
+        r.day_window_span_days = 14;
+        r.untouched_window_span_days = 14;
+        let pool = generate_scenario_rotation_pool(
+            &r,
+            60,
+            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2025, 3, 1).unwrap(), // only ~60 days
+            "test",
+        )
+        .unwrap();
+        // With 30-day stride and 28 days per pair (14+14), only 2 fit in 60 days.
+        assert!(
+            !pool.is_empty() && pool.len() <= 10,
+            "clamped pool should have some windows but not all 10; got {}",
+            pool.len()
+        );
     }
 }

@@ -42,6 +42,23 @@ end   = "2025-04-01"
 # [loosening_schedule]
 # day_n_thresholds = [0.04, 0.03, 0.02]
 
+# ── Scenario rotation (per-cycle window diversity) ────────────────────────
+# When enabled (default: true), the optimizer pre-generates N market-window
+# pairs from a date range and rotates through them — one per cycle — so each
+# cycle evaluates on a different date range. Same 4 evals per cycle, just a
+# different pair of windows.
+#
+# Set enabled = false to disable and use the fixed [day_window] / 
+# [baseline_untouched_window] for every cycle (legacy behavior).
+[scenario_rotation]
+# enabled = true
+# day_window_span_days = 14
+# untouched_window_span_days = 14
+# num_windows = 10
+# date_range_start = "2024-01-01"
+# date_range_end = "2025-06-01"
+# stride_days = 30
+
 # The model that writes experiment proposals each evening.
 [mutator]
 provider    = "anthropic"

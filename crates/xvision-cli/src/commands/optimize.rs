@@ -83,7 +83,8 @@ use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 use xvision_engine::autooptimizer::scenario_synthesis::{
-    synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario,
+    generate_scenario_rotation_pool, synthesize_baseline_untouched_scenario,
+    synthesize_optimizer_day_scenario,
 };
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
@@ -746,6 +747,33 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Pre-generate the per-cycle scenario rotation pool from the date range.
+    // When enabled, each cycle in the session gets a different day/baseline
+    // window pair (regime diversity). Empty pool = legacy single-pair behavior.
+    let rotation_pool: Vec<(
+        xvision_engine::eval::scenario::Scenario,
+        xvision_engine::eval::scenario::Scenario,
+    )> = {
+        let default_start = cfg.day_window.start;
+        let default_end = cfg.baseline_untouched_window.end;
+        generate_scenario_rotation_pool(
+            &cfg.scenario_rotation,
+            cadence_minutes,
+            default_start,
+            default_end,
+            "xvn-cli",
+        )
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("generate scenario rotation pool: {e}")))?
+    };
+    if !rotation_pool.is_empty() {
+        eprintln!(
+            "scenario rotation enabled: {} pre-generated windows, ~{}d stride, {}d day span",
+            rotation_pool.len(),
+            cfg.scenario_rotation.stride_days,
+            cfg.scenario_rotation.day_window_span_days,
+        );
+    }
+
     // ── Resolve effective provider/model per role ─────────────────────────
     // Precedence: role-specific CLI flag > --provider/--model > config.
     let effective_mutator_provider = args
@@ -1113,6 +1141,10 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // `session_mode` / `--budget` / a shutdown signal (GH #965). All the
     // expensive setup above is built once and shared across cycles.
     let sustained = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    // Tracks which rotation-pool window the NEXT cycle gets. Incremented after
+    // each cycle completes so the next iteration picks pool[cycle_index % N].
+    // Zero-indexed; starts at 0 for the first cycle.
+    let cycle_index = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let pause = Arc::new(std::sync::atomic::AtomicBool::new(false)); // no CLI pause surface
     let provider_label = effective_mutator_provider.to_string();
     let pool_ref = &pool;
@@ -1129,6 +1161,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let event_tx_ref = &event_tx;
     let cancel_ref = &cancel;
     let sustained_ref = &sustained;
+    let cycle_index_ref = &cycle_index;
+    let rotation_pool_ref = &rotation_pool;
     let log_tee_ref = &log_tee;
 
     // WS-11c: collect each completed cycle's id so `--export <DIR>` can write a
@@ -1158,10 +1192,18 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             let cycle_id = Ulid::new().to_string();
             async move {
                 let sustained_now = sustained_ref.load(std::sync::atomic::Ordering::Relaxed);
-                // Vary only the no-pass streak per cycle so the in-cycle gate
-                // loosening schedule advances across a long run.
+                // Apply scenario rotation: pick the day/baseline pair for this
+                // cycle index. Falls back to the base cycle config pair when
+                // the rotation pool is empty (rotation disabled or no windows).
                 let mut cc = base_cc.clone();
                 cc.sustained_no_pass_cycles = sustained_now;
+                let rot_idx = cycle_index_ref.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if !rotation_pool_ref.is_empty() {
+                    let idx = (rot_idx as usize) % rotation_pool_ref.len();
+                    let (day, baseline) = &rotation_pool_ref[idx];
+                    cc.day_scenario = day.clone();
+                    cc.baseline_scenario = baseline.clone();
+                }
 
                 let tx = event_tx_ref.clone();
                 let log_tee = log_tee_ref.clone();

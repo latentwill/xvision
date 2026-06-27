@@ -1065,6 +1065,7 @@ impl Executor {
                     decision_idx,
                     total_input_tokens,
                     total_output_tokens,
+                    book.realized(),
                 )
                 .await;
                 anyhow::bail!("eval run stopped");
@@ -1083,6 +1084,7 @@ impl Executor {
                     decision_idx,
                     total_input_tokens,
                     total_output_tokens,
+                    book.realized(),
                 )
                 .await;
                 last_partial_persist = Instant::now();
@@ -1853,6 +1855,7 @@ impl Executor {
                             decision_idx,
                             total_input_tokens,
                             total_output_tokens,
+                            book.realized(),
                         )
                         .await;
                         finish_decision_span_error!("eval run stopped");
@@ -2005,6 +2008,7 @@ impl Executor {
                             decision_idx,
                             total_input_tokens,
                             total_output_tokens,
+                            book.realized(),
                         )
                         .await;
                         finish_decision_span_error!("eval run stopped");
@@ -2124,6 +2128,7 @@ impl Executor {
                         decision_idx,
                         total_input_tokens,
                         total_output_tokens,
+                        book.realized(),
                     )
                     .await;
                     finish_decision_span_error!("eval run stopped");
@@ -3280,6 +3285,7 @@ impl Executor {
                 n_trades,
                 decision_idx,
                 None,
+                book.realized(),
             );
             let _ = store
                 .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
@@ -3321,6 +3327,7 @@ impl Executor {
             n_trades,
             decision_idx,
             Some(baselines),
+            book.realized(),
         );
 
         run.actual_input_tokens = Some(total_input_tokens);
@@ -3793,6 +3800,7 @@ impl Executor {
                     n_trades,
                     decision_idx,
                     None,
+                    book.realized(),
                 );
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
@@ -3864,6 +3872,7 @@ impl Executor {
                     n_trades,
                     decision_idx,
                     None,
+                    book.realized(),
                 );
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
@@ -4426,6 +4435,7 @@ impl Executor {
                 n_trades,
                 decision_idx,
                 None,
+                book.realized(),
             );
             let _ = store
                 .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
@@ -4445,6 +4455,7 @@ impl Executor {
             n_trades,
             decision_idx,
             None,
+            book.realized(),
         );
         // Set live-only counters on the metrics summary.
         metrics.skipped_dispatches = skipped_dispatches;
@@ -6934,6 +6945,7 @@ async fn persist_partial_snapshot(
     decision_idx: u32,
     input_tokens: u64,
     output_tokens: u64,
+    realized_pnl: f64,
 ) {
     let metrics = compute_run_metrics(
         equity_curve,
@@ -6945,6 +6957,7 @@ async fn persist_partial_snapshot(
         n_trades,
         decision_idx,
         None,
+        realized_pnl,
     );
     let _ = store
         .persist_partial(run_id, &metrics, input_tokens, output_tokens)

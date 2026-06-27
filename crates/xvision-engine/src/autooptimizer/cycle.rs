@@ -538,6 +538,7 @@ where
             parent_n_trades: pd.n_trades,
             child_n_trades: cd.n_trades,
             min_trade_retention_ratio: config.min_trade_retention_ratio,
+            min_realized_return_ratio: config.min_realized_return_ratio,
         },
         &cycle_config.day_scenario,
         &cycle_config.baseline_scenario,
@@ -1215,6 +1216,7 @@ where
             min_improvement,
             holdout_min_improvement,
             config.min_trade_retention_ratio,
+            config.min_realized_return_ratio,
             &parent_regime_metrics,
             sampled_day,
             sampled_baseline,
@@ -1515,6 +1517,7 @@ async fn gate_and_classify<F>(
     min_improvement: f64,
     holdout_min_improvement: f64,
     min_trade_retention_ratio: f64,
+    min_realized_return_ratio: f64,
     // Per-regime parent metrics (label → (day, untouched)), pre-computed by
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
@@ -1612,6 +1615,7 @@ where
             holdout_min_improvement,
             cycle_config.objective,
             min_trade_retention_ratio,
+            min_realized_return_ratio,
         );
 
         // For regime path: use the first regime's day metrics as the primary
@@ -1766,6 +1770,7 @@ where
         parent_day.n_trades,
         child_day.n_trades,
         min_trade_retention_ratio,
+        min_realized_return_ratio,
     );
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
@@ -2154,6 +2159,7 @@ fn gate_check(
     parent_n_trades: u32,
     child_n_trades: u32,
     min_trade_retention_ratio: f64,
+    min_realized_return_ratio: f64,
 ) -> GateVerdict {
     evaluate(&GateInput {
         parent_day_metrics: parent_day.clone(),
@@ -2166,6 +2172,7 @@ fn gate_check(
         parent_n_trades,
         child_n_trades,
         min_trade_retention_ratio,
+        min_realized_return_ratio,
     })
 }
 
@@ -2199,6 +2206,7 @@ pub fn classify_from_regime_outcomes(
     holdout_min_improvement: f64,
     objective: Objective,
     min_trade_retention_ratio: f64,
+    min_realized_return_ratio: f64,
 ) -> (LineageStatus, Vec<RegimeResultRow>) {
     let mut side_verdict_pairs: Vec<(RegimeSide, GateVerdict)> = Vec::with_capacity(regimes.len());
     let mut rows: Vec<RegimeResultRow> = Vec::with_capacity(regimes.len());
@@ -2215,6 +2223,7 @@ pub fn classify_from_regime_outcomes(
             parent_n_trades: r.parent_day.n_trades,
             child_n_trades: r.child_day.n_trades,
             min_trade_retention_ratio,
+            min_realized_return_ratio,
         });
         let delta_sharpe = r.child_day.sharpe - r.parent_day.sharpe;
         rows.push(RegimeResultRow {
@@ -2355,7 +2364,7 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, 0.1, Objective::Sharpe, 0.5);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, 0.1, Objective::Sharpe, 0.5, 0.25);
 
         assert_eq!(
             status,
@@ -2421,7 +2430,7 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5, 0.25);
 
         assert_eq!(status, LineageStatus::Active);
         assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);

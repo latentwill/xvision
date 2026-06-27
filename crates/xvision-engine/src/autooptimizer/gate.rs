@@ -101,6 +101,11 @@ pub struct GateInput {
     /// 0.5. Used by evaluate() to compute the required trade count.
     #[serde(default = "default_min_trade_retention_ratio_gate")]
     pub min_trade_retention_ratio: f64,
+    /// Minimum ratio of realized (booked) PnL to total (mark-to-market) return
+    /// the child must achieve on the day window. Prevents strategies with strong
+    /// paper gains but negligible actual fills. 0.0 = disabled (default).
+    #[serde(default)]
+    pub min_realized_return_ratio: f64,
 }
 
 impl<'de> Deserialize<'de> for GateInput {
@@ -125,6 +130,8 @@ impl<'de> Deserialize<'de> for GateInput {
             child_n_trades: u32,
             #[serde(default = "default_min_trade_retention_ratio_gate")]
             min_trade_retention_ratio: f64,
+            #[serde(default)]
+            min_realized_return_ratio: f64,
         }
 
         let wire = GateInputWire::deserialize(deserializer)?;
@@ -139,6 +146,7 @@ impl<'de> Deserialize<'de> for GateInput {
             parent_n_trades: wire.parent_n_trades,
             child_n_trades: wire.child_n_trades,
             min_trade_retention_ratio: wire.min_trade_retention_ratio,
+            min_realized_return_ratio: wire.min_realized_return_ratio,
         })
     }
 }
@@ -175,11 +183,12 @@ impl GateVerdict {
     }
 }
 
-/// Passes only when all four hold:
+/// Passes only when all five hold:
 /// 1. Child retains enough trades (≥ max(1, floor(parent × ratio))) — sentinel-skipped when both counts are 0
 /// 2. Δ score (day window)       ≥ `min_improvement`
 /// 3. Δ score (untouched window) ≥ `holdout_min_improvement`
 /// 4. Child worst drawdown       ≤ parent worst drawdown × 1.5
+/// 5. Realized return ratio      ≥ `min_realized_return_ratio` — skipped when total return ≤ 0 or ratio is 0.0 (disabled)
 ///
 pub fn evaluate(input: &GateInput) -> GateVerdict {
     debug_assert!(
@@ -276,6 +285,25 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
                 "max drawdown deteriorated: candidate worst {child_worst:.4}% exceeds \
                  {DRAWDOWN_DETERIORATION_FACTOR}× parent worst {parent_worst:.4}%"
             ));
+        }
+    }
+
+    // Realized-return ratio guard: prevent strategies with strong mark-to-market
+    // but negligible booked profit. Uses day-window metrics (in-sample). Skips
+    // when total return ≤ 0 (ratio is mathematically meaningless) or when
+    // min_realized_return_ratio is 0.0 (disabled).
+    if input.min_realized_return_ratio > 0.0 {
+        let child_rr = input.child_day_metrics.realized_pnl_pct;
+        let child_tr = input.child_day_metrics.total_return_pct;
+        if child_tr > CMP_EPS {
+            let ratio = child_rr / child_tr;
+            if ratio < input.min_realized_return_ratio - CMP_EPS {
+                failures.push(format!(
+                    "insufficient realized profit: child booked {child_rr:.2}% of {child_tr:.2}% \
+                     total return (ratio {ratio:.4} < required {:.4})",
+                    input.min_realized_return_ratio,
+                ));
+            }
         }
     }
 

@@ -39,6 +39,11 @@ fn default_holdout_min_improvement() -> f64 {
     0.005
 }
 
+/// Default minimum realized-return ratio: 0.25 (25%).
+fn default_min_realized_return_ratio() -> f64 {
+    0.25
+}
+
 /// Default minimum parent-trade retention ratio: 0.5 (50%).
 /// The child must execute at least `floor(parent.n_trades * 0.5)` fill legs,
 /// with a hard floor of 1. Prevents 0-trade strategies from gaming Sharpe.
@@ -91,6 +96,11 @@ pub struct AutoOptimizerConfig {
     /// for out-of-sample generalization than for in-sample training improvement.
     #[serde(default = "default_holdout_min_improvement")]
     pub holdout_min_improvement: f64,
+    /// Minimum fraction of total return that must be realized (booked) profit.
+    /// 0.25 means at least 25% of the strategy's gross return must come from
+    /// closed positions. Set to 0.0 to disable.
+    #[serde(default = "default_min_realized_return_ratio")]
+    pub min_realized_return_ratio: f64,
     /// Minimum fraction of parent trades a candidate must retain to pass the
     /// gate. 0.5 means the child must execute at least 50% of the parent's fill
     /// legs, with a hard floor of 1. Prevents 0-trade degenerate strategies
@@ -339,6 +349,7 @@ impl Default for AutoOptimizerConfig {
             min_improvement: 0.05,
             holdout_min_improvement: default_holdout_min_improvement(),
             min_trade_retention_ratio: default_min_trade_retention_ratio(),
+            min_realized_return_ratio: default_min_realized_return_ratio(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
             // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,
             // so a no-config `run-cycle` silently fetched ~16k bars per
@@ -701,6 +712,12 @@ impl AutoOptimizerConfig {
             bail!(
                 "min_trade_retention_ratio must be in (0.0, 1.0] (got {})",
                 self.min_trade_retention_ratio
+            );
+        }
+        if self.min_realized_return_ratio < 0.0 || self.min_realized_return_ratio > 1.0 {
+            bail!(
+                "min_realized_return_ratio must be in [0.0, 1.0] (got {})",
+                self.min_realized_return_ratio
             );
         }
         if let Some(cap) = self.max_window_days {

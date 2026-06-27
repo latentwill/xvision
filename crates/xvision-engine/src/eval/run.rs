@@ -461,6 +461,11 @@ pub struct MetricsSummary {
     /// cycle, closed by the trader (`flat`/flip) or a deterministic SL/TP
     /// exit. `0.0` when no round-trip closed.
     pub win_rate: f64,
+    /// Cumulative realized PnL as a percentage of starting capital
+    /// (`book.realized() / initial * 100`). Used by the optimizer's
+    /// realized-return ratio gate. `0.0` when no trades have closed.
+    #[serde(default)]
+    pub realized_pnl_pct: f64,
     /// Count of FILL LEGS that crossed the book — opens, closes, SL/TP forced
     /// exits, and partial-TP1 slices each count one. An open+close round-trip
     /// is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
