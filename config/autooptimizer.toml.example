@@ -15,6 +15,10 @@ holdout_min_improvement = 0.005
 # with a hard floor of 1. Range: (0.0, 1.0]. Prevents 0-trade strategies
 # from gaming the Sharpe metric. Default 0.5.
 #min_trade_retention_ratio = 0.5
+# Minimum fraction of total return that must be realized (booked) profit.
+# 0.25 means at least 25% of returns must come from closed positions.
+# Set to 0.0 to disable. Range: [0.0, 1.0]. Default 0.25.
+#min_realized_return_ratio = 0.25
 
 
 

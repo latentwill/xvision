@@ -163,6 +163,9 @@ struct GateScores {
     pub parent_n_trades: Option<u32>,
     pub child_n_trades: Option<u32>,
     pub min_trade_retention_ratio: Option<f64>,
+    pub parent_realized_return_ratio: Option<f64>,
+    pub child_realized_return_ratio: Option<f64>,
+    pub gate_min_realized_return_ratio: Option<f64>,
 }
 
 /// Circuit-breaker tracking consecutive candidate eval failures.
@@ -1848,6 +1851,16 @@ where
     } else {
         (None, None, None)
     };
+    let parent_realized_return_ratio = if parent_day.total_return_pct > 0.0 {
+        Some(parent_day.realized_pnl_pct / parent_day.total_return_pct)
+    } else {
+        None
+    };
+    let child_realized_return_ratio = if child_day.total_return_pct > 0.0 {
+        Some(child_day.realized_pnl_pct / child_day.total_return_pct)
+    } else {
+        None
+    };
     let gate_scores = Some(GateScores {
         parent_day_score,
         child_day_score,
@@ -1864,6 +1877,9 @@ where
         parent_n_trades: Some(parent_day.n_trades),
         child_n_trades: Some(child_day.n_trades),
         min_trade_retention_ratio: Some(min_trade_retention_ratio),
+        parent_realized_return_ratio: parent_realized_return_ratio,
+        child_realized_return_ratio: child_realized_return_ratio,
+        gate_min_realized_return_ratio: Some(min_realized_return_ratio),
     });
 
     Ok(MutationOutcome {

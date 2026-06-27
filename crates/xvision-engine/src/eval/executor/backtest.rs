@@ -1110,6 +1110,7 @@ impl Executor {
                 run_id: run.id.clone(),
                 scenario_progress_pct,
                 current_ts: ts,
+                eta_secs: None,
             });
 
             // track-plan-touches: per-bar filter evaluation. `None` means
@@ -3950,16 +3951,25 @@ impl Executor {
             // assets sharing a timestamp collapse to one pooled row rather
             // than colliding on the PK (§4 item 3).
             let decision_ts = bar.timestamp;
-
+            // Live runs are open-ended; surface bar progress against the
+            // bar_limit when one is set, else hold at 0 (indeterminate).
+            let progress_pct = stop_policy
+                .bar_limit
+                .map(|lim| ((live_bar_count as f64 / lim as f64) * 100.0).clamp(0.0, 100.0))
+                .unwrap_or(0.0);
+            let eta_secs = compute_live_eta(
+                &stop_policy,
+                live_bar_count,
+                decision_idx,
+                n_trades,
+                run_started,
+                strategy.manifest.decision_cadence_minutes as u64,
+            );
             self.emit(ProgressEvent::RunTick {
                 run_id: run.id.clone(),
-                // Live runs are open-ended; surface bar progress against the
-                // bar_limit when one is set, else hold at 0 (indeterminate).
-                scenario_progress_pct: stop_policy
-                    .bar_limit
-                    .map(|lim| ((live_bar_count as f64 / lim as f64) * 100.0).clamp(0.0, 100.0))
-                    .unwrap_or(0.0),
+                scenario_progress_pct: progress_pct,
                 current_ts: wall_now,
+                eta_secs,
             });
 
             // Run one decision cycle for THIS (asset, bar). The pooled book
@@ -5812,6 +5822,64 @@ fn live_stop_reason(
     None
 }
 
+/// Compute the estimated wall-clock seconds until the live run reaches its
+/// stop condition. Returns the minimum ETA across all active policy limits,
+/// or `None` when no bound is set (indeterminate).
+///
+/// - `bar_limit`: remaining bars × cadence seconds (deterministic upper bound).
+/// - `time_limit_secs`: remaining wall-clock seconds.
+/// - `decision_limit` / `trade_limit`: extrapolated from current rate.
+fn compute_live_eta(
+    policy: &crate::eval::live_config::StopPolicy,
+    bar_count: u32,
+    decision_count: u32,
+    trade_count: u32,
+    started: std::time::Instant,
+    cadence_minutes: u64,
+) -> Option<f64> {
+    let elapsed = started.elapsed().as_secs_f64();
+    if elapsed <= 0.0 {
+        return None;
+    }
+    let mut candidates: Vec<f64> = Vec::new();
+
+    // Bar limit: remaining bars × cadence in seconds.
+    if let Some(lim) = policy.bar_limit {
+        if bar_count > 0 && lim > bar_count {
+            let cadence_secs = (cadence_minutes.max(1) * 60) as f64;
+            candidates.push((lim - bar_count) as f64 * cadence_secs);
+        }
+    }
+    // Time limit: remaining wall-clock seconds.
+    if let Some(secs) = policy.time_limit_secs {
+        let remaining = (secs as f64) - elapsed;
+        if remaining > 0.0 {
+            candidates.push(remaining);
+        }
+    }
+    // Decision limit: extrapolate from current rate.
+    if let Some(lim) = policy.decision_limit {
+        if decision_count > 0 && lim > decision_count {
+            let rate = decision_count as f64 / elapsed;
+            if rate > 0.0 {
+                candidates.push((lim - decision_count) as f64 / rate);
+            }
+        }
+    }
+    // Trade limit: extrapolate from current rate.
+    if let Some(lim) = policy.trade_limit {
+        if trade_count > 0 && lim > trade_count {
+            let rate = trade_count as f64 / elapsed;
+            if rate > 0.0 {
+                candidates.push((lim - trade_count) as f64 / rate);
+            }
+        }
+    }
+
+    // Return the minimum (soonest) bound, rounded up.
+    candidates.into_iter().min_by(|a, b| a.total_cmp(b))
+}
+
 /// Inputs to one live per-(asset, bar) decision cycle. Bundled into a
 /// struct because the body needs a wide-but-borrowed context and Clippy
 /// (rightly) rejects a ~20-argument async fn.
@@ -6901,9 +6969,15 @@ fn compute_run_metrics(
     n_trades: u32,
     decision_idx: u32,
     baselines: Option<BaselinesReport>,
+    realized_pnl: f64,
 ) -> MetricsSummary {
     let returns = equity_to_returns(equity_curve);
     let periods_per_year = annualization_periods_per_year(cadence_minutes);
+    let realized_pnl_pct = if initial > 0.0 {
+        (realized_pnl / initial) * 100.0
+    } else {
+        0.0
+    };
     MetricsSummary {
         total_return_pct: total_return_pct(initial, equity),
         sharpe: sharpe_from_returns(&returns, periods_per_year),
@@ -6913,6 +6987,7 @@ fn compute_run_metrics(
         } else {
             0.0
         },
+        realized_pnl_pct,
         n_trades,
         n_decisions: decision_idx,
         baselines,

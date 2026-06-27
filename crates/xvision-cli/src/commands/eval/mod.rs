@@ -1754,6 +1754,76 @@ fn render_tokens_segment(tokens: &RunTokenTotals) -> String {
     format!("\ttokens_in={in_s}\ttokens_out={out_s}\tcost={cost_s}")
 }
 
+/// Render the ETA segment for a live/forward-test run, or `None` when
+/// no stop condition is bound or the run is not forward-test.
+fn render_live_eta_segment(run: &xvision_engine::eval::run::Run) -> Option<String> {
+    let policy = run.live_config.as_ref()?.stop_policy.clone();
+    if policy.is_empty() {
+        return None;
+    }
+    let now = chrono::Utc::now();
+    let elapsed = (now - run.started_at).num_seconds().max(0) as f64;
+    if elapsed <= 0.0 {
+        return None;
+    }
+
+    let mut candidates: Vec<f64> = Vec::new();
+
+    // Time limit: remaining wall-clock seconds.
+    if let Some(secs) = policy.time_limit_secs {
+        let remaining = (secs as f64) - elapsed;
+        if remaining > 0.0 {
+            candidates.push(remaining);
+        }
+    }
+
+    // Decision limit: extrapolate from current rate.
+    if let (Some(lim), Some(metrics)) = (policy.decision_limit, run.metrics.as_ref()) {
+        if metrics.n_decisions > 0 && lim > metrics.n_decisions {
+            let rate = metrics.n_decisions as f64 / elapsed;
+            if rate > 0.0 {
+                candidates.push((lim - metrics.n_decisions) as f64 / rate);
+            }
+        }
+    }
+
+    // Trade limit: extrapolate from current rate.
+    if let (Some(lim), Some(metrics)) = (policy.trade_limit, run.metrics.as_ref()) {
+        if metrics.n_trades > 0 && lim > metrics.n_trades {
+            let rate = metrics.n_trades as f64 / elapsed;
+            if rate > 0.0 {
+                candidates.push((lim - metrics.n_trades) as f64 / rate);
+            }
+        }
+    }
+
+    // Use the minimum (soonest) bound.
+    let eta_secs = candidates.into_iter().min_by(|a, b| a.total_cmp(b))?;
+    Some(format!("\teta={}", fmt_duration_compact(eta_secs)))
+}
+
+/// Compact human-readable duration: "1h23m", "45s", "2m30s".
+fn fmt_duration_compact(total_secs: f64) -> String {
+    let secs = total_secs as u64;
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let mins = secs / 60;
+    let remainder_secs = secs % 60;
+    if mins < 60 {
+        if remainder_secs == 0 {
+            return format!("{mins}m");
+        }
+        return format!("{mins}m{remainder_secs}s");
+    }
+    let hrs = mins / 60;
+    let remainder_mins = mins % 60;
+    if remainder_mins == 0 {
+        return format!("{hrs}h");
+    }
+    format!("{hrs}h{remainder_mins}m")
+}
+
 /// Build the watch status line (tab-delimited `key=value`) for a run, with the
 /// live token/cost totals appended. Pure — no I/O — so it is unit-testable.
 fn render_run_status_line(run: &xvision_engine::eval::run::Run, tokens: &RunTokenTotals) -> String {
@@ -1776,6 +1846,12 @@ fn render_run_status_line(run: &xvision_engine::eval::run::Run, tokens: &RunToke
         ));
     }
     line.push_str(&render_tokens_segment(tokens));
+    // ETA for live/forward-test runs.
+    if run.mode == RunMode::Forward && !run.status.is_terminal() {
+        if let Some(eta_s) = render_live_eta_segment(run) {
+            line.push_str(&eta_s);
+        }
+    }
     if let Some(error) = run.error.as_deref() {
         line.push_str(&format!("\terror={error}"));
     }

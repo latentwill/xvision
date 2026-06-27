@@ -87,6 +87,9 @@ pub struct GateRecord<'a> {
     pub child_n_trades: Option<u32>,
     /// Minimum trade retention ratio applied during this gate evaluation.
     pub min_trade_retention_ratio: Option<f64>,
+    pub parent_realized_return_ratio: Option<f64>,
+    pub child_realized_return_ratio: Option<f64>,
+    pub gate_min_realized_return_ratio: Option<f64>,
 }
 
 /// Insert or replace a gate record in `autooptimizer_gate_records`.
@@ -99,8 +102,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
           gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
           verdict, reason, rationale, \
           edge_over_random, parent_edge, edge_delta, \
-          parent_n_trades, child_n_trades, min_trade_retention_ratio, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          parent_n_trades, child_n_trades, min_trade_retention_ratio, \
+          parent_realized_return_ratio, child_realized_return_ratio, gate_min_realized_return_ratio, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(rec.bundle_hash)
     .bind(rec.parent_day_score)
@@ -121,6 +125,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
     .bind(rec.parent_n_trades)
     .bind(rec.child_n_trades)
     .bind(rec.min_trade_retention_ratio)
+    .bind(rec.parent_realized_return_ratio)
+    .bind(rec.child_realized_return_ratio)
+    .bind(rec.gate_min_realized_return_ratio)
     .bind(created_at)
     .execute(pool)
     .await?;
@@ -167,6 +174,9 @@ pub struct GateRecordRow {
     pub parent_n_trades: Option<u32>,
     pub child_n_trades: Option<u32>,
     pub min_trade_retention_ratio: Option<f64>,
+    pub parent_realized_return_ratio: Option<f64>,
+    pub child_realized_return_ratio: Option<f64>,
+    pub gate_min_realized_return_ratio: Option<f64>,
     pub created_at: String,
 }
 
@@ -204,7 +214,8 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
          gate_epsilon, holdout_epsilon, delta_day, delta_holdout, drawdown_ratio, \
          verdict, reason, rationale, \
          edge_over_random, parent_edge, edge_delta, \
-         parent_n_trades, child_n_trades, min_trade_retention_ratio, created_at \
+         parent_n_trades, child_n_trades, min_trade_retention_ratio, \
+         parent_realized_return_ratio, child_realized_return_ratio, gate_min_realized_return_ratio, created_at \
          FROM autooptimizer_gate_records WHERE bundle_hash = ?",
     )
     .bind(bundle_hash)
