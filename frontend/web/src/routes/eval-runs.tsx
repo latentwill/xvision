@@ -11,7 +11,7 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
 import { StrategyPicker } from "@/components/primitives/StrategyPicker";
-import { SignalSearchableSelectMenu } from "@/components/primitives/SignalMenu";
+import { SignalSearchableSelectMenu, SignalSelectMenu, type SelectOption } from "@/components/primitives/SignalMenu";
 import {
   ServerPagerStrip,
   useServerPagination,
@@ -1049,21 +1049,16 @@ function StartEvalPanel({
                 value={liveCapital}
                 onChange={setLiveCapital}
               />
-              <label className="min-w-0">
+              <div className="min-w-0">
                 <span className="mb-1 block text-[11px] text-text-3">Timeframe</span>
-                <select
-                  aria-label="Forward-test timeframe"
+                <SignalSelectMenu
+                  ariaLabel="Forward-test timeframe"
                   value={liveGranularity}
-                  onChange={(e) => setLiveGranularity(e.target.value)}
-                  className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3"
-                >
-                  {FORWARD_TEST_TIMEFRAMES.map((tf) => (
-                    <option key={tf.value} value={tf.value}>
-                      {tf.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={FORWARD_TEST_TIMEFRAMES as unknown as SelectOption[]}
+                  onChange={(v) => setLiveGranularity(v)}
+                  className="w-full bg-surface-elev border border-border rounded text-text text-[13px] font-mono"
+                />
+              </div>
               <LabeledInput
                 label="Warmup bars"
                 help="Historical context loaded before the first live bar"
@@ -1099,14 +1094,17 @@ function StartEvalPanel({
                   value={liveDecisionLimit}
                   onChange={setLiveDecisionLimit}
                 />
-                <LabeledInput
-                  label="Date & Time"
-                  help="Optional local end time"
-                  ariaLabel="Forward-test end date and time"
-                  type="datetime-local"
-                  value={liveDeadline}
-                  onChange={setLiveDeadline}
-                />
+                <label className="min-w-0">
+                  <span className="mb-1 block text-[11px] text-text-3">Date &amp; Time</span>
+                  <span className="text-[10px] text-text-3">Optional local end time</span>
+                  <input
+                    aria-label="Forward-test end date and time"
+                    type="datetime-local"
+                    value={liveDeadline}
+                    onChange={(e) => setLiveDeadline(e.target.value)}
+                    className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] font-mono focus:outline-none focus:border-text-3 [&::-webkit-calendar-picker-indicator]:bg-text-3 [&::-webkit-calendar-picker-indicator]:rounded [&::-webkit-calendar-picker-indicator]:p-0.5 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:hover:bg-text-2"
+                  />
+                </label>
                 <LabeledInput
                   label="Number of trades"
                   help="Optional completed-trade cap"
