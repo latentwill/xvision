@@ -2,7 +2,13 @@
 //!
 //! `xvn optimize` (no subcommand) runs the full **strategy-experiment optimizer cycle** (parent selection → candidate experiment → gate → judge). This is the
 //! one and only CLI home for the AutoOptimizer cycle; the previously-separate
-//! `xvn optimizer` verb has been folded in here.
+//!
+//! ## Gate dimensions
+//!
+//! The optimizer gate (see [Optimizer Config](/docs?slug=autooptimizer-config))
+//! evaluates each candidate against the parent across five dimensions: min-trade
+//! retention, delta score (day + holdout), drawdown guard, and realized-return
+//! ratio. Configure trade and realized-return thresholds in `autooptimizer.toml`.
 //!
 //! The cycle now subsumes the prompt-optimization (DSPy) flywheel internally
 //! (it runs during the cycle and emits `CycleProgressEvent::FlywheelCompiled`),

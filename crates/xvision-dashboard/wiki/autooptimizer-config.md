@@ -88,6 +88,55 @@ sub-hourly granularity (15m, 5m), bar counts multiply quickly — test with a
 single short cycle (`xvn optimize run --max-cycles 1`) and monitor container
 RSS before committing to a wide window in production.
 
+
+## Gate quality thresholds
+
+Beyond the evaluation window settings, two additional gate dimensions prevent
+the optimizer from selecting degenerate strategies:
+
+### `min_trade_retention_ratio`
+
+Prevents **0-trade degenerate strategies** — candidates that delete all
+trade-triggering logic and "improve" Sharpe from negative to 0.0 by simply
+refusing to enter any position.
+
+| Property | Value |
+|---|---|
+| **Key** | `min_trade_retention_ratio` |
+| **Default** | `0.5` (50%) |
+| **Range** | `(0.0, 1.0]` |
+| **Semantics** | Child must execute at least `floor(parent.n_trades × ratio)` fill legs, with a hard floor of 1. |
+| **Disable** | Set to `0.0` (not recommended — disables the guard entirely). |
+
+```toml
+# autooptimizer.toml
+min_trade_retention_ratio = 0.5   # child must retain ≥50% of parent's trade count
+```
+
+### `min_realized_return_ratio`
+
+Prevents **"open and hope" strategies** — candidates with strong
+mark-to-market (unrealized) equity but negligible booked (realized) profit.
+A strategy that opens 100 positions and closes only the 3 winners shows a
+healthy Sharpe from the winners' MTM but sits on 97 unrealized losers.
+
+| Property | Value |
+|---|---|
+| **Key** | `min_realized_return_ratio` |
+| **Default** | `0.25` (25%) |
+| **Range** | `[0.0, 1.0]` |
+| **Semantics** | Child's realized PnL (as % of capital) divided by total return must be ≥ `min_realized_return_ratio`. Skipped when total return ≤ 0 (ratio is mathematically meaningless) or when the ratio is `0.0` (disabled). |
+| **Disable** | Set to `0.0`. |
+
+```toml
+# autooptimizer.toml
+min_realized_return_ratio = 0.25  # at least 25% of returns must be booked profit
+```
+
+Both checks are **non-objective risk guards** — they run regardless of which
+optimization objective is selected, alongside the built-in drawdown guard
+(child drawdown ≤ 1.5× parent). All checks run to completion so the rejection
+reason surfaces every failing dimension.
 ---
 
 ## Migration — existing configs with >120-day windows

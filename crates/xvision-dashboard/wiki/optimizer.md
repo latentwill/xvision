@@ -159,6 +159,24 @@ This is the optimizer-side analogue of the anti-overfit holdout discipline on
 eval metrics: a measured improvement only counts if it survives data the search
 never saw. The `holdout_min_improvement` setting in `autooptimizer.toml`
 enforces the minimum delta required for acceptance.
+
+## Gate dimensions
+
+The optimizer gate evaluates each candidate against the parent across five
+dimensions. All five must pass for a candidate to be accepted:
+
+| # | Dimension | Config key | What it guards against |
+|---|---|---|---|
+| 1 | **Min-trade retention** | `min_trade_retention_ratio` | 0-trade degenerate strategies that game Sharpe by refusing to enter. Child must retain at least the configured fraction of the parent's fill legs, with a hard floor of 1. Default 0.5 (50%). |
+| 2 | **Delta score (day)** | `min_improvement` | In-sample improvement must exceed threshold. Default 0.05 (5%). |
+| 3 | **Delta score (holdout)** | `holdout_min_improvement` | Out-of-sample improvement must exceed threshold. Default 0.005 (0.5%). |
+| 4 | **Drawdown guard** | _(hardcoded)_ | Child worst drawdown must not exceed 1.5× parent worst drawdown. |
+| 5 | **Realized-return ratio** | `min_realized_return_ratio` | "Open and hope" strategies with strong mark-to-market but negligible booked profit. At least the configured fraction of total return must come from closed positions. Skipped when total return ≤ 0. Default 0.25 (25%); set to 0.0 to disable. |
+
+The trade-retention and realized-return checks are non-objective risk guards —
+they run regardless of which optimization objective (`sharpe`, `total_return`,
+`max_drawdown`, `win_rate`) is selected. All five checks run to completion so
+the rejection reason surfaces every failing dimension.
 ---
 
 ## Surfaces
