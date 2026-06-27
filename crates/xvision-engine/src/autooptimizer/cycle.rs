@@ -1275,6 +1275,10 @@ where
             LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "dropped",
         };
+        let gate_reason = match &outcome.verdict {
+            GateVerdict::Fail { reason } => Some(reason.clone()),
+            GateVerdict::Pass => None,
+        };
         progress(CycleProgressEvent::MutationGated {
             session_id: String::new(),
             cycle_id: cycle_id.to_string(),
@@ -1282,9 +1286,8 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
             delta_day: outcome.gate_scores.as_ref().map(|gs| gs.delta_day),
-            // WS-11b: the candidate's primary day-window eval run id, so the
-            // dashboard can nest a navigable eval-run node under the experiment.
             eval_run_id: outcome.eval_run_id.clone(),
+            gate_reason,
         });
         // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
         // a DB error must never abort the cycle.

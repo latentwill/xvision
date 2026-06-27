@@ -146,6 +146,12 @@ pub enum CycleProgressEvent {
         /// eval-run trace.
         #[serde(default)]
         eval_run_id: Option<String>,
+        /// Human-readable gate rejection reason. `None` when the candidate
+        /// passed (`passed = true`). Carries the semicolon-joined failure
+        /// reasons from the gate (e.g. "insufficient trades: …, max drawdown
+        /// deteriorated: …"). Makes rejection opaque events legible.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gate_reason: Option<String>,
     },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
     /// F9: carries the sabotage variant + a human-readable message so the CLI
