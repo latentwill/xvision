@@ -247,6 +247,9 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
         parent_edge: row.try_get("parent_edge")?,
         edge_delta: row.try_get("edge_delta")?,
         created_at: row.try_get("created_at")?,
+        parent_realized_return_ratio: row.try_get("parent_realized_return_ratio").ok(),
+        child_realized_return_ratio: row.try_get("child_realized_return_ratio").ok(),
+        gate_min_realized_return_ratio: row.try_get("gate_min_realized_return_ratio").ok(),
     }))
 }
 

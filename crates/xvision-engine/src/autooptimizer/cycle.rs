@@ -1316,6 +1316,9 @@ where
                     parent_n_trades: gs.parent_n_trades,
                     child_n_trades: gs.child_n_trades,
                     min_trade_retention_ratio: gs.min_trade_retention_ratio,
+                    parent_realized_return_ratio: None,
+                    child_realized_return_ratio: None,
+                    gate_min_realized_return_ratio: None,
                 },
             )
             .await
