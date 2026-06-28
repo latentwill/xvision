@@ -326,6 +326,7 @@ mod tests {
             outcome: "kept".into(),
             delta_day: Some(0.042),
             eval_run_id: None,
+            gate_reason: None,
         };
         let v = serde_json::to_value(&event).unwrap();
         assert_eq!(v["type"], "mutation_gated");
@@ -357,6 +358,7 @@ mod tests {
             outcome: "kept".into(),
             delta_day: Some(0.042),
             eval_run_id: Some("01EVALRUNULID".into()),
+            gate_reason: None,
         };
         let v = serde_json::to_value(&event).unwrap();
         assert_eq!(v["type"], "mutation_gated");
@@ -383,6 +385,7 @@ mod tests {
             outcome: "dropped".into(),
             delta_day: None,
             eval_run_id: None,
+            gate_reason: None,
         };
         let nv = serde_json::to_value(&no_run).unwrap();
         assert!(nv["eval_run_id"].is_null());

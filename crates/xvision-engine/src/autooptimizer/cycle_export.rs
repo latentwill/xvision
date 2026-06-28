@@ -704,6 +704,7 @@ mod tests {
                 outcome: "kept".into(),
                 delta_day: Some(0.0420),
                 eval_run_id: Some("01EVALRUN".into()),
+                gate_reason: None,
             },
             CycleProgressEvent::HonestyCheckRun {
                 session_id: "sess-1".into(),
@@ -807,6 +808,7 @@ mod tests {
                 outcome: "suspect".into(),
                 delta_day: Some(-0.01),
                 eval_run_id: None,
+                gate_reason: None,
             },
             CycleProgressEvent::MutationProposed {
                 session_id: "s".into(),
@@ -823,6 +825,7 @@ mod tests {
                 outcome: "dropped".into(),
                 delta_day: None,
                 eval_run_id: None,
+                gate_reason: None,
             },
         ];
         let md = render_cycle_report_markdown("c", &events);
@@ -1024,6 +1027,7 @@ mod tests {
             outcome: "kept".into(),
             delta_day: None,
             eval_run_id: None,
+            gate_reason: None,
         };
         assert_eq!(operator_label(&kept), "Experiment kept");
         let suspect = CycleProgressEvent::MutationGated {
@@ -1034,6 +1038,7 @@ mod tests {
             outcome: "suspect".into(),
             delta_day: None,
             eval_run_id: None,
+            gate_reason: None,
         };
         assert_eq!(operator_label(&suspect), "Experiment suspect");
     }
