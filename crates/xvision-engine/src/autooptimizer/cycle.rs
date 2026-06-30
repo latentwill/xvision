@@ -579,7 +579,8 @@ fn compute_focus_kind(
     strategy: &Strategy,
     config: &AutoOptimizerConfig,
 ) -> Option<String> {
-    let allowed = crate::autooptimizer::mutator::applicable_mutation_kinds(strategy, &config.allowed_mutation_kinds);
+    let allowed =
+        crate::autooptimizer::mutator::applicable_mutation_kinds(strategy, &config.allowed_mutation_kinds);
     if allowed.is_empty() {
         return None;
     }
@@ -613,6 +614,74 @@ pub fn select_scenario_pair<'a>(
     }
     let (day, baseline) = &pool[mutation_idx % pool.len()];
     (day, baseline)
+}
+
+const LOW_TRADE_PARENT_FILL_LEG_FLOOR: u32 = 5;
+
+fn low_trade_parent_context(
+    parent_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    parent: &Strategy,
+    config: &AutoOptimizerConfig,
+    objective: Objective,
+) -> Option<String> {
+    if parent_day.n_trades >= LOW_TRADE_PARENT_FILL_LEG_FLOOR {
+        return None;
+    }
+
+    let filter_allowed = config.allowed_mutation_kinds.iter().any(|k| k == "filter");
+    let filter_guidance = match (filter_allowed, parent.filter.is_some()) {
+        (true, true) => {
+            "Priority 1: propose ONE filter-loosening variant for this writer slot. \
+             Use only listed tunable filter paths and move thresholds in the pass-more-bars direction \
+             (for example: lower lower-bound thresholds, raise upper-bound thresholds, reduce cooldown). \
+             Do not guess unlisted paths."
+        }
+        (true, false) => {
+            "Priority 1: because no filter exists, use the offered filter creation path only if it can \
+             admit more qualified bars without removing risk controls."
+        }
+        (false, _) => {
+            "Filter edits are not allowed for this run; do not pretend to widen the gate. \
+             Prefer allowed parameter/prose changes that can improve fills, exits, or sizing."
+        }
+    };
+
+    Some(format!(
+        "Current parent sample-size warning:\n\
+         - Parent day-window fill legs: {day_trades} (below the {floor}-leg scoring floor).\n\
+         - Parent day-window {objective}: {day_score:.4}.\n\
+         - Parent holdout-window {objective}: {holdout_score:.4}.\n\
+         At this sample size, a 0.0 objective delta can mean 'not enough fills to measure', not \
+         'no behavioral change'.\n\
+         {filter_guidance}\n\
+         Priority 2: if this writer slot is focused on params/prose instead of filter, tune conviction, \
+         sizing, or exit management only in ways that can create measurable fill-leg differences. \
+         Return exactly ONE experiment; sibling writer calls handle other variants.",
+        day_trades = parent_day.n_trades,
+        floor = LOW_TRADE_PARENT_FILL_LEG_FLOOR,
+        objective = objective.label(),
+        day_score = objective.oriented_value(parent_day),
+        holdout_score = objective.oriented_value(parent_untouched),
+    ))
+}
+
+fn combine_writer_advisory_context(
+    memory_context: Option<&str>,
+    low_trade_context: Option<&str>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if let Some(ctx) = memory_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(format!("Prior optimizer outcomes on similar strategies:\n{ctx}"));
+    }
+    if let Some(ctx) = low_trade_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(ctx.to_string());
+    }
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
 }
 
 async fn process_parent_mutations<F>(
@@ -771,6 +840,7 @@ where
             }
         }
     };
+
     // F32: every candidate this parent has ALREADY produced (across all prior
     // cycles), so the mutator can be steered away from re-deriving them and any
     // duplicate is dropped before it spends a backtest. Best-effort: a lineage
@@ -890,13 +960,14 @@ where
     // Extract the first resolved prompt from the enriched clone as the base
     // instruction for DSPy warm-start. This ensures the optimizer improves FROM
     // the real agent prompt rather than generating from scratch.
-    let base_instruction: Option<String> = parent_for_mutator
-        .agents
-        .iter()
-        .find_map(|a| {
-            let p = a.prompt.as_str();
-            if p.is_empty() { None } else { Some(p.to_string()) }
-        });
+    let base_instruction: Option<String> = parent_for_mutator.agents.iter().find_map(|a| {
+        let p = a.prompt.as_str();
+        if p.is_empty() {
+            None
+        } else {
+            Some(p.to_string())
+        }
+    });
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
@@ -920,6 +991,43 @@ where
         // explored). The cycle_id is unique per cycle (ULID), so hashing it varies
         // the seed every run; mixing the mutation index varies it within a cycle.
         let exploration_seed = exploration_seed_for(cycle_id, mutation_idx);
+        // B19 + low-trade guidance: choose this candidate's scoring pair before
+        // writer proposal so the mutator sees the parent sample size for the SAME
+        // window the numeric gate will later compare against. Legacy/regime-empty
+        // runs reuse the eager parent metrics; scenario-pool runs compute/cache
+        // the sampled pair's parent metrics here instead of after proposal.
+        let (sampled_day, sampled_baseline) = select_scenario_pair(
+            &cycle_config.scenario_pool,
+            (&cycle_config.day_scenario, &cycle_config.baseline_scenario),
+            mutation_idx,
+        );
+        let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
+            let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
+            if !parent_pool_metrics.contains_key(&pair_key) {
+                let pd = paper_tester.run(parent_strategy, sampled_day).await?;
+                let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
+                parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
+            }
+            let (pd, pu) = parent_pool_metrics
+                .get(&pair_key)
+                .expect("parent pool metrics just inserted");
+            (pd.clone(), pu.clone())
+        } else {
+            (parent_day.clone(), parent_untouched.clone())
+        };
+        let low_trade_context = if cycle_config.regime_set.is_empty() {
+            low_trade_parent_context(
+                &gate_parent_day,
+                &gate_parent_untouched,
+                parent_strategy,
+                config,
+                cycle_config.objective,
+            )
+        } else {
+            None
+        };
+        let writer_advisory_context =
+            combine_writer_advisory_context(mutation_memory_context.as_deref(), low_trade_context.as_deref());
         // When tournament_enabled, run the 3-candidate Borda-count tournament
         // instead of a direct propose call. Incumbent win means no candidate
         // beat the parent this iteration.
@@ -947,7 +1055,12 @@ where
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner
-                .run_tournament(&parent_for_mutator, config, None) // prompts injected into clone
+                .run_tournament(
+                    &parent_for_mutator,
+                    config,
+                    None,
+                    writer_advisory_context.as_deref(),
+                ) // prompts injected into clone
                 .await
             {
                 Ok(r) if r.incumbent_wins => {
@@ -998,7 +1111,7 @@ where
                     dsr_prefix,
                     exploration_seed,
                     mutation_idx,
-                    mutation_memory_context.as_deref(),
+                    writer_advisory_context.as_deref(),
                     &avoid,
                     None, // prompts are injected directly into parent_for_mutator
                 )
@@ -1083,13 +1196,14 @@ where
         // that would otherwise pollute experiment results.
         if let Some(override_prompt) = candidate.agents.iter().find_map(|a| {
             let p = a.prompt.as_str();
-            if p.is_empty() { None } else { Some(p) }
+            if p.is_empty() {
+                None
+            } else {
+                Some(p)
+            }
         }) {
             if let Err(failures) = crate::autooptimizer::canary::validate_prompt_semantics(override_prompt) {
-                let reason = format!(
-                    "semantic prompt check failed: {}",
-                    failures.join("; ")
-                );
+                let reason = format!("semantic prompt check failed: {}", failures.join("; "));
                 tracing::debug!(cycle_id, %reason, "rejecting semantically broken mutation");
                 no_candidate_count += 1;
                 progress(CycleProgressEvent::NoCandidate {
@@ -1107,10 +1221,7 @@ where
         // prose-only check above doesn't catch (e.g. zero `risk_pct_per_trade`
         // set in risk config — the prompt text might still look fine).
         if let Err(failures) = crate::autooptimizer::canary::validate_strategy_semantics(&candidate) {
-            let reason = format!(
-                "strategy semantic check failed: {}",
-                failures.join("; ")
-            );
+            let reason = format!("strategy semantic check failed: {}", failures.join("; "));
             tracing::debug!(cycle_id, %reason, "rejecting semantically broken candidate strategy");
             no_candidate_count += 1;
             progress(CycleProgressEvent::NoCandidate {
@@ -1160,35 +1271,6 @@ where
             phase: Phase::GateEvaluating,
             detail: "Running backtests and numeric gate".to_string(),
         });
-        // B19: round-robin select THIS candidate's (day, baseline) pair from the
-        // pool. On the legacy / regime paths the pool is empty, so the fallback
-        // (the single cycle day/baseline pair) is returned for every candidate —
-        // behavior identical to before. The selected pair is then used for BOTH
-        // the child eval AND the parent baseline it is compared against, so the
-        // gate comparison stays valid (comparability rule).
-        let (sampled_day, sampled_baseline) = select_scenario_pair(
-            &cycle_config.scenario_pool,
-            (&cycle_config.day_scenario, &cycle_config.baseline_scenario),
-            mutation_idx,
-        );
-        // B19 comparability: parent metrics MUST come from the SAME sampled pair.
-        // For the pool path, compute (and cache by sampled pair) the parent's
-        // day+baseline metrics on this pair; for the legacy/regime paths reuse
-        // the pre-computed `parent_day`/`parent_untouched` exactly as before.
-        let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
-            let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
-            if !parent_pool_metrics.contains_key(&pair_key) {
-                let pd = paper_tester.run(parent_strategy, sampled_day).await?;
-                let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
-                parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
-            }
-            let (pd, pu) = parent_pool_metrics
-                .get(&pair_key)
-                .expect("parent pool metrics just inserted");
-            (pd.clone(), pu.clone())
-        } else {
-            (parent_day.clone(), parent_untouched.clone())
-        };
         if scenario_pool_active {
             // B19 observability: the proposal currently gives operators no way to
             // tell which regime a candidate was scored on. Emit the sampled pair's
@@ -1478,7 +1560,10 @@ where
                         }
                     }
                 }
-                if let Some(pattern_id) = handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id, base_instruction.as_deref()).await? {
+                if let Some(pattern_id) =
+                    handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id, base_instruction.as_deref())
+                        .await?
+                {
                     // DSPy flywheel compiled findings into a prompt pattern this cycle.
                     progress(CycleProgressEvent::FlywheelCompiled {
                         session_id: String::new(),
@@ -1888,8 +1973,8 @@ where
         parent_n_trades: Some(parent_day.n_trades),
         child_n_trades: Some(child_day.n_trades),
         min_trade_retention_ratio: Some(min_trade_retention_ratio),
-        parent_realized_return_ratio: parent_realized_return_ratio,
-        child_realized_return_ratio: child_realized_return_ratio,
+        parent_realized_return_ratio,
+        child_realized_return_ratio,
         gate_min_realized_return_ratio: Some(min_realized_return_ratio),
     });
 
@@ -2247,7 +2332,6 @@ pub fn classify_from_regime_outcomes(
     (status, rows)
 }
 
-
 /// Resolve which agent slot to use for a given agent ref's role.
 ///
 /// Priority: 1) slot name matching `agent_ref.canonical_role()`,
@@ -2289,6 +2373,116 @@ mod tests {
             created_at: Utc::now(),
             diversity_score: None,
         }
+    }
+
+    fn filter_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Test Strategy",
+                "plain_summary": "Strategy with a filter for mutation tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000A",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("filter strategy fixture must deserialize")
+    }
+
+    fn metrics_with_trades(n_trades: u32, sharpe: f64) -> MetricsSummary {
+        MetricsSummary {
+            sharpe,
+            total_return_pct: 0.0,
+            max_drawdown_pct: 0.0,
+            win_rate: 0.0,
+            n_trades,
+            n_decisions: 0,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
+            baselines: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn low_trade_parent_context_warns_and_preserves_one_experiment_contract() {
+        let strategy = filter_strategy();
+        let config = AutoOptimizerConfig::default();
+        let context = low_trade_parent_context(
+            &metrics_with_trades(2, -1.136),
+            &metrics_with_trades(3, -3.926),
+            &strategy,
+            &config,
+            Objective::Sharpe,
+        )
+        .expect("two fill legs should trigger context");
+
+        assert!(context.contains("Parent day-window fill legs: 2"), "{context}");
+        assert!(context.contains("below the 5-leg scoring floor"), "{context}");
+        assert!(context.contains("filter-loosening variant"), "{context}");
+        assert!(context.contains("Return exactly ONE experiment"), "{context}");
+        assert!(
+            !context.contains("propose 3-4"),
+            "context must not ask the one-experiment writer for multiple variants: {context}"
+        );
+    }
+
+    #[test]
+    fn low_trade_parent_context_is_absent_when_parent_has_enough_fills() {
+        let strategy = filter_strategy();
+        let config = AutoOptimizerConfig::default();
+        let context = low_trade_parent_context(
+            &metrics_with_trades(5, 0.25),
+            &metrics_with_trades(8, 0.20),
+            &strategy,
+            &config,
+            Objective::Sharpe,
+        );
+        assert!(context.is_none());
+    }
+
+    #[test]
+    fn combine_writer_advisory_context_keeps_memory_and_low_trade_sections() {
+        let combined = combine_writer_advisory_context(
+            Some("param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)"),
+            Some("Current parent sample-size warning:\n- Parent day-window fill legs: 2"),
+        )
+        .expect("non-empty sections combine");
+
+        assert!(
+            combined.contains("Prior optimizer outcomes on similar strategies"),
+            "{combined}"
+        );
+        assert!(
+            combined.contains("Current parent sample-size warning"),
+            "{combined}"
+        );
     }
 
     #[test]
@@ -2436,7 +2630,8 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5, 0.25);
+        let (status, rows) =
+            classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5, 0.25);
 
         assert_eq!(status, LineageStatus::Active);
         assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);

@@ -111,6 +111,7 @@ impl TournamentRunner {
         parent: &Strategy,
         config: &AutoOptimizerConfig,
         resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
+        advisory_context: Option<&str>,
     ) -> Result<Vec<TournamentCandidate>> {
         let incumbent = TournamentCandidate {
             kind: CandidateKind::Incumbent,
@@ -123,8 +124,22 @@ impl TournamentRunner {
         // B6 kind-rotation focuses different levers across the two writers, the
         // same way `mutation_idx` does on the single-shot path.
         let (adv_diff, syn_diff) = tokio::try_join!(
-            self.propose_diff(parent, config, &adversarial_sys, resolved_agent_prompts, 0),
-            self.propose_diff(parent, config, &synthesis_sys, resolved_agent_prompts, 1),
+            self.propose_diff(
+                parent,
+                config,
+                &adversarial_sys,
+                resolved_agent_prompts,
+                0,
+                advisory_context
+            ),
+            self.propose_diff(
+                parent,
+                config,
+                &synthesis_sys,
+                resolved_agent_prompts,
+                1,
+                advisory_context
+            ),
         )?;
         let adv_strategy = apply_params(parent, &adv_diff);
         let syn_strategy = apply_params(parent, &syn_diff);
@@ -150,6 +165,7 @@ impl TournamentRunner {
         system_prompt: &str,
         resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
         candidate_slot: usize,
+        advisory_context: Option<&str>,
     ) -> Result<MutationDiff> {
         let empty_map = std::collections::HashMap::new();
         let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
@@ -201,6 +217,7 @@ impl TournamentRunner {
                 exploration_seed,
                 parent.filter.is_some(),
                 last_err.as_deref(),
+                advisory_context,
             );
             let req = LlmRequest {
                 model: self.model.clone(),
@@ -208,7 +225,7 @@ impl TournamentRunner {
                 messages: vec![Message::user_text(user_text)],
                 max_tokens: None,
                 tools: vec![],
-                temperature: None,
+                temperature: Some(tournament_proposal_temperature(exploration_seed)),
                 // B3: constrain to the `mutation_diff` schema so OpenAI-compat
                 // dispatchers (Ollama) grammar-constrain the JSON output, matching
                 // the single-shot mutator path.
@@ -304,9 +321,10 @@ impl TournamentRunner {
         parent: &Strategy,
         config: &AutoOptimizerConfig,
         resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
+        advisory_context: Option<&str>,
     ) -> Result<TournamentResult> {
         let candidates = self
-            .generate_candidates(parent, config, resolved_agent_prompts)
+            .generate_candidates(parent, config, resolved_agent_prompts, advisory_context)
             .await?;
         assert_eq!(candidates.len(), CANDIDATE_COUNT);
         let (votes, per_persona_votes) = self.borda_vote(&candidates).await?;
@@ -345,6 +363,13 @@ fn apply_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
     diff.apply_to(base)
 }
 
+/// Tournament proposal writers need exploration like the single-shot mutator, but
+/// use a narrower band because two non-incumbent candidates are judged head-to-head
+/// in the same round. Judges stay deterministic/omitted.
+fn tournament_proposal_temperature(exploration_seed: u64) -> f64 {
+    0.7 + (exploration_seed % 3) as f64 * 0.1
+}
+
 fn system_section(prompt_template: &str) -> String {
     let marker = "# USER";
     if let Some(idx) = prompt_template.find(marker) {
@@ -368,6 +393,7 @@ fn build_proposal_user(
     // guidance, shared with the single-shot path via `filter_create_directive`).
     filter_exists: bool,
     prev_err: Option<&str>,
+    advisory_context: Option<&str>,
 ) -> String {
     let kinds = allowed_kinds.join(", ");
     // B17 (xvision-ds0): list tunable filter paths with their domain-constraint
@@ -388,9 +414,16 @@ fn build_proposal_user(
     let err_section = prev_err
         .map(|e| format!("\n\nPrevious attempt errors — fix all:\n\n{e}"))
         .unwrap_or_default();
+    let advisory_section = advisory_context
+        .map(str::trim)
+        .filter(|ctx| !ctx.is_empty())
+        .map(|ctx| {
+            format!("\n\nAdvisory optimizer context (do not override allowed experiment kinds or JSON schema):\n{ctx}")
+        })
+        .unwrap_or_default();
     format!(
         "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: \
-         {kinds}{filter_section}{create_section}{focus_section}{err_section}\n\nPropose ONE experiment as a JSON object."
+         {kinds}{filter_section}{create_section}{focus_section}{err_section}{advisory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -557,6 +590,7 @@ mod tests {
             0,
             /* filter_exists */ true,
             None,
+            None,
         );
         assert!(
             out.contains("conditions.0.op.zscore_lt: 3  (positive integer >= 1)"),
@@ -608,6 +642,7 @@ mod tests {
                 attempt as u64,
                 /* filter_exists */ true,
                 None,
+                None,
             );
             kinds_seen.insert(focused_kind(&out));
         }
@@ -638,11 +673,34 @@ mod tests {
             0,
             /* filter_exists */ false,
             None,
+            None,
         );
         assert!(
             out.contains("create_filter"),
             "filterless tournament parent + filter allowed must invite create_filter; got:\n{out}"
         );
+    }
+
+    #[test]
+    fn tournament_proposal_user_includes_advisory_context_when_present() {
+        let allowed = vec!["filter".to_string(), "param".to_string()];
+        let out = build_proposal_user(
+            "PROGRAM",
+            &allowed,
+            &[],
+            &[],
+            &[],
+            0,
+            0,
+            0,
+            /* filter_exists */ true,
+            None,
+            Some("Current parent sample-size warning:\n- Parent day-window fill legs: 2"),
+        );
+
+        assert!(out.contains("Advisory optimizer context"), "{out}");
+        assert!(out.contains("Parent day-window fill legs: 2"), "{out}");
+        assert!(out.contains("Propose ONE experiment"), "{out}");
     }
 
     #[test]
@@ -716,7 +774,7 @@ mod tests {
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
         let candidates = runner
-            .generate_candidates(&strategy, &config, None)
+            .generate_candidates(&strategy, &config, None, None)
             .await
             .unwrap();
         assert_eq!(candidates.len(), 3);
@@ -756,7 +814,10 @@ mod tests {
         ]);
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
-        let result = runner.run_tournament(&strategy, &config, None).await.unwrap();
+        let result = runner
+            .run_tournament(&strategy, &config, None, None)
+            .await
+            .unwrap();
         assert!(
             result.incumbent_wins,
             "incumbent should win when ranked first by all judges"
@@ -803,7 +864,7 @@ mod tests {
         let strategy = stub_strategy();
         let config = AutoOptimizerConfig::default();
         let _ = runner
-            .propose_diff(&strategy, &config, "sys", None, 0)
+            .propose_diff(&strategy, &config, "sys", None, 0, None)
             .await
             .expect("propose_diff should succeed on a valid diff");
 
@@ -816,6 +877,34 @@ mod tests {
         assert!(
             schema.schema.pointer("/properties/kind").is_some(),
             "mutation_diff schema must enumerate `kind`"
+        );
+    }
+
+    #[tokio::test]
+    async fn tournament_proposal_request_uses_exploratory_temperature() {
+        let dispatch = Arc::new(CapturingDispatch {
+            canned: valid_diff_json(),
+            captured: std::sync::Mutex::new(Vec::new()),
+        });
+        let runner = TournamentRunner {
+            dispatch: dispatch.clone() as Arc<dyn LlmDispatch + Send + Sync>,
+            model: "test-model".into(),
+            provider: "test".into(),
+            max_retries: 0,
+        };
+        let strategy = stub_strategy();
+        let config = AutoOptimizerConfig::default();
+
+        let _ = runner
+            .propose_diff(&strategy, &config, "sys", None, 0, None)
+            .await
+            .expect("propose_diff should succeed on a valid diff");
+
+        let captured = dispatch.captured.lock().unwrap();
+        assert_eq!(
+            captured[0].temperature,
+            Some(0.7),
+            "tournament proposer should sample explicitly instead of falling back to provider default"
         );
     }
 }

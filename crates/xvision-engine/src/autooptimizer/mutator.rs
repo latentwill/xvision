@@ -366,11 +366,8 @@ pub const RISK_PARAM_FIELDS: &[&str] = &[
 /// These values are NEVER tunable — they are engine-level safety limits.
 /// The optimizer should only tune decision logic, conviction thresholds,
 /// signal interpretation, and action selection heuristics.
-pub const PROTECTED_ENGINE_PARAMS: &[&str] = &[
-    "max_leverage",
-    "stop_loss_atr_multiple",
-    "daily_loss_kill_pct",
-];
+pub const PROTECTED_ENGINE_PARAMS: &[&str] =
+    &["max_leverage", "stop_loss_atr_multiple", "daily_loss_kill_pct"];
 
 /// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
 /// `<field>` naming a known risk knob — return the field name; otherwise `None`.
@@ -1649,14 +1646,13 @@ fn build_user_payload(
         )
     };
 
-    // P3: advisory cross-run/cross-framework memory. When recall surfaced prior
-    // optimizer outcomes on similar strategies, prepend them before the final
-    // instruction so the writer can build on wins and avoid repeating failures.
-    // This is advisory ONLY — it does not relax the F32 exploration directive
-    // above or the hard avoid-set (exact-repeat dedup) the orchestrator enforces.
+    // P3 + low-trade cycle context: advisory context may include recalled prior
+    // outcomes and current-window sample-size warnings. It is advisory ONLY — it
+    // does not relax the F32 exploration directive above or the hard avoid-set
+    // (exact-repeat dedup) the orchestrator enforces.
     let memory_section = match memory_context {
         Some(ctx) if !ctx.trim().is_empty() => format!(
-            "\n\nPrior optimizer outcomes on similar strategies (advisory — avoid repeating failures, build on wins):\n{ctx}"
+            "\n\nAdvisory optimizer context (do not override allowed experiment kinds or JSON schema):\n{ctx}"
         ),
         _ => String::new(),
     };
@@ -1908,10 +1904,10 @@ mod tests {
             true,
         );
         assert!(
-            with.contains("Prior optimizer outcomes on similar strategies"),
-            "memory section header missing: {with}"
+            with.contains("Advisory optimizer context"),
+            "advisory section header missing: {with}"
         );
-        assert!(with.contains(ctx), "memory context text missing: {with}");
+        assert!(with.contains(ctx), "advisory context text missing: {with}");
         // F32 exploration directive must still be present alongside memory.
         assert!(
             with.contains("Exploration directive"),
@@ -1934,8 +1930,8 @@ mod tests {
             true,
         );
         assert!(
-            !without.contains("Prior optimizer outcomes on similar strategies"),
-            "memory section must be absent when None: {without}"
+            !without.contains("Advisory optimizer context"),
+            "advisory section must be absent when None: {without}"
         );
         assert!(
             without.contains("Exploration directive"),
@@ -1957,11 +1953,10 @@ mod tests {
             true,
         );
         assert!(
-            !empty.contains("Prior optimizer outcomes on similar strategies"),
-            "blank memory context must be treated as absent: {empty}"
+            !empty.contains("Advisory optimizer context"),
+            "blank advisory context must be treated as absent: {empty}"
         );
     }
-
     #[test]
     fn build_user_payload_includes_filter_paths_when_filter_kind_allowed() {
         let kinds = vec!["filter".to_string(), "param".to_string()];
