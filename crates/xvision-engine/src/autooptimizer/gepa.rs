@@ -3,7 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
+use crate::autooptimizer::config::GepaBenchmarkWindow;
 use crate::autooptimizer::dspy_bridge::{CompileResult, DspyBridge};
+use crate::autooptimizer::gepa_eval::{real_eval_cache_key, RealEvalCache};
 use crate::autooptimizer::pattern_snapshot::{Provenance, SnapshotDemo};
 
 const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated trading-strategy \
@@ -23,6 +25,40 @@ const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated t
 ///
 /// Pareto frontier selection picks the candidate that dominates the most local
 /// optima (per-observation best scores), avoiding greedy collapse to a single mode.
+#[derive(Clone)]
+pub struct RealEvalOptions {
+    pub enabled: bool,
+    pub min_fast_score: f64,
+    pub benchmark_pool: Vec<GepaBenchmarkWindow>,
+    pub cache: RealEvalCache,
+    #[cfg(test)]
+    test_scores: Option<Arc<std::sync::Mutex<Vec<f64>>>>,
+}
+
+impl RealEvalOptions {
+    pub fn new(min_fast_score: f64, benchmark_pool: Vec<GepaBenchmarkWindow>) -> Self {
+        Self {
+            enabled: true,
+            min_fast_score,
+            benchmark_pool,
+            cache: RealEvalCache::default(),
+            #[cfg(test)]
+            test_scores: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn test_with_scores(min_fast_score: f64, scores: Vec<f64>) -> Self {
+        Self {
+            enabled: true,
+            min_fast_score,
+            benchmark_pool: vec![],
+            cache: RealEvalCache::default(),
+            test_scores: Some(Arc::new(std::sync::Mutex::new(scores))),
+        }
+    }
+}
+
 pub struct GepaBridge {
     pub dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     pub model: String,
@@ -46,6 +82,9 @@ pub struct GepaBridge {
     /// Enable merge/crossover: every N generations, combine two best candidates.
     pub use_merge: bool,
     pub merge_frequency: usize,
+    /// Optional real benchmark evaluator. When present, LLM scores act as the
+    /// cheap first-pass cull and surviving candidates receive real scores.
+    pub real_eval: Option<RealEvalOptions>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +106,7 @@ impl Default for GepaSelectionStrategy {
 struct ScoreWithFeedback {
     scores: Vec<f64>,
     feedback: Vec<String>,
+    real_eval_skipped: bool,
 }
 
 // ── ScoreWithFeedback helpers ──────────────────────────────────────────
@@ -89,13 +129,27 @@ impl ScoreWithFeedback {
             .sum();
         sum / indices.len() as f64
     }
+
+    fn constant(total_len: usize, indices: &[usize], score: f64, feedback: String) -> Self {
+        let mut scores = vec![0.0; total_len];
+        let mut feedbacks = vec![String::new(); total_len];
+        for &idx in indices {
+            scores[idx] = score;
+            feedbacks[idx] = feedback.clone();
+        }
+        Self {
+            scores,
+            feedback: feedbacks,
+            real_eval_skipped: false,
+        }
+    }
 }
 
 #[async_trait]
 impl DspyBridge for GepaBridge {
     async fn compile(
         &self,
-        _namespace: &str,
+        namespace: &str,
         observations: &[(String, String)],
         base_instruction: Option<&str>,
     ) -> anyhow::Result<CompileResult> {
@@ -188,16 +242,19 @@ impl DspyBridge for GepaBridge {
 
                 // Tier 1: minibatch scoring (cheap)
                 let mb_scores = self
-                    .score_on_indices(&instruction, observations, &mb_indices, &mut provenance)
+                    .score_candidate(namespace, &instruction, observations, &mb_indices, &mut provenance)
                     .await?;
                 let mb_mean = mb_scores.mean_on_indices(&(0..mb_indices.len()).collect::<Vec<_>>());
+                if mb_scores.real_eval_skipped {
+                    continue;
+                }
                 if mb_mean <= best_mean && gen > 0 {
                     continue; // early cull: minibatch doesn't beat current best
                 }
 
                 // Tier 2: full scoring on active indices
                 let full = self
-                    .score_on_indices(&instruction, observations, &active_indices, &mut provenance)
+                    .score_candidate(namespace, &instruction, observations, &active_indices, &mut provenance)
                     .await?;
                 let mean = full.mean();
 
@@ -371,6 +428,80 @@ impl GepaBridge {
         Ok(resp.text().trim().to_string())
     }
 
+    async fn score_candidate(
+        &self,
+        namespace: &str,
+        instruction: &str,
+        observations: &[(String, String)],
+        indices: &[usize],
+        provenance: &mut Provenance,
+    ) -> anyhow::Result<ScoreWithFeedback> {
+        let fast = self
+            .score_on_indices(instruction, observations, indices, provenance)
+            .await?;
+        let Some(real_eval) = &self.real_eval else {
+            return Ok(fast);
+        };
+        if !real_eval.enabled {
+            return Ok(fast);
+        }
+
+        let fast_mean = fast.mean_on_indices(indices);
+        if fast_mean < real_eval.min_fast_score {
+            let mut skipped = fast.clone();
+            skipped.real_eval_skipped = true;
+            for &idx in indices {
+                if let Some(feedback) = skipped.feedback.get_mut(idx) {
+                    *feedback = format!(
+                        "Skipped real eval: fast LLM score {:.2} below {:.2} threshold.",
+                        fast_mean, real_eval.min_fast_score
+                    );
+                }
+            }
+            return Ok(skipped);
+        }
+
+        let cache_key = real_eval_cache_key(namespace, instruction, &real_eval.benchmark_pool);
+        if let Some(hit) = real_eval.cache.get(&cache_key) {
+            return Ok(ScoreWithFeedback::constant(
+                observations.len(),
+                indices,
+                hit.score,
+                hit.feedback,
+            ));
+        }
+
+        let (score, feedback) = self
+            .real_eval_score_candidate(namespace, instruction, real_eval)
+            .await?;
+        real_eval.cache.insert(cache_key, score, feedback.clone());
+        Ok(ScoreWithFeedback::constant(
+            observations.len(),
+            indices,
+            score,
+            feedback,
+        ))
+    }
+
+    async fn real_eval_score_candidate(
+        &self,
+        _namespace: &str,
+        _instruction: &str,
+        _real_eval: &RealEvalOptions,
+    ) -> anyhow::Result<(f64, String)> {
+        #[cfg(test)]
+        if let Some(scores) = &_real_eval.test_scores {
+            let score = scores
+                .lock()
+                .expect("test scores poisoned")
+                .remove(0)
+                .clamp(0.0, 1.0);
+            return Ok((score, format!("Test real eval score {score:.2} for {_instruction}")));
+        }
+
+        anyhow::bail!("gepa_real_eval scorer is not wired")
+    }
+
     /// Score an instruction against specific observation indices. Returns scores
     /// AND text feedback ("why" strings) per observation (Phase 4d).
     async fn score_on_indices(
@@ -384,6 +515,7 @@ impl GepaBridge {
             return Ok(ScoreWithFeedback {
                 scores: vec![],
                 feedback: vec![],
+                real_eval_skipped: false,
             });
         }
 
@@ -439,6 +571,7 @@ impl GepaBridge {
         Ok(ScoreWithFeedback {
             scores: full_scores,
             feedback: full_feedback,
+            real_eval_skipped: false,
         })
     }
 
@@ -505,6 +638,7 @@ mod tests {
             skip_perfect: false,
             use_merge: false,
             merge_frequency: 3,
+            real_eval: None,
         }
     }
 
@@ -543,5 +677,58 @@ mod tests {
         assert!(!result.instruction.is_empty());
         // Best should be candidate 0 (mean 0.6 > 0.15).
         assert!(result.instruction.contains("ATR"));
+    }
+
+    #[tokio::test]
+    async fn real_eval_skips_candidate_below_fast_threshold() {
+        let responses = vec![
+            "reflection".to_string(),
+            "low fast candidate".to_string(),
+            r#"{"results":[{"score":0.10,"why":"weak"},{"score":0.10,"why":"weak"}]}"#.to_string(),
+        ];
+        let mut gepa = mock_gepa(responses);
+        gepa.candidates = 1;
+        gepa.real_eval = Some(RealEvalOptions::test_with_scores(0.30, vec![0.99]));
+
+        let result = gepa
+            .compile(
+                "ns",
+                &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            result.instruction.is_empty(),
+            "low fast score should not win from real eval"
+        );
+        assert!(result.demos.iter().all(|d| d.score.unwrap_or(0.0) < 0.30));
+    }
+
+    #[tokio::test]
+    async fn real_eval_score_can_change_candidate_selection() {
+        let responses = vec![
+            "reflection".to_string(),
+            "candidate with high llm but poor real result".to_string(),
+            r#"{"results":[{"score":0.90,"why":"sounds good"},{"score":0.90,"why":"sounds good"}]}"#.to_string(),
+            "candidate with lower llm but better real result".to_string(),
+            r#"{"results":[{"score":0.80,"why":"still plausible"},{"score":0.80,"why":"still plausible"}]}"#.to_string(),
+        ];
+        let mut gepa = mock_gepa(responses);
+        gepa.real_eval = Some(RealEvalOptions::test_with_scores(0.30, vec![0.20, 0.95]));
+
+        let result = gepa
+            .compile(
+                "ns",
+                &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.instruction.contains("better real result"));
+        assert_eq!(result.demos[0].score, Some(0.95));
+        assert_eq!(result.demos[1].score, Some(0.95));
     }
 }
