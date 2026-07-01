@@ -215,8 +215,7 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
     let mut failures: Vec<String> = Vec::new();
 
     if input.parent_n_trades != 0 || input.child_n_trades != 0 {
-        let required = (input.parent_n_trades as f64 * input.min_trade_retention_ratio).floor()
-            as u32;
+        let required = (input.parent_n_trades as f64 * input.min_trade_retention_ratio).floor() as u32;
         let required = required.max(1);
         if input.child_n_trades < required {
             failures.push(format!(

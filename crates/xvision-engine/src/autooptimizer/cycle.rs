@@ -579,7 +579,8 @@ fn compute_focus_kind(
     strategy: &Strategy,
     config: &AutoOptimizerConfig,
 ) -> Option<String> {
-    let allowed = crate::autooptimizer::mutator::applicable_mutation_kinds(strategy, &config.allowed_mutation_kinds);
+    let allowed =
+        crate::autooptimizer::mutator::applicable_mutation_kinds(strategy, &config.allowed_mutation_kinds);
     if allowed.is_empty() {
         return None;
     }
@@ -890,13 +891,14 @@ where
     // Extract the first resolved prompt from the enriched clone as the base
     // instruction for DSPy warm-start. This ensures the optimizer improves FROM
     // the real agent prompt rather than generating from scratch.
-    let base_instruction: Option<String> = parent_for_mutator
-        .agents
-        .iter()
-        .find_map(|a| {
-            let p = a.prompt.as_str();
-            if p.is_empty() { None } else { Some(p.to_string()) }
-        });
+    let base_instruction: Option<String> = parent_for_mutator.agents.iter().find_map(|a| {
+        let p = a.prompt.as_str();
+        if p.is_empty() {
+            None
+        } else {
+            Some(p.to_string())
+        }
+    });
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
@@ -1083,13 +1085,14 @@ where
         // that would otherwise pollute experiment results.
         if let Some(override_prompt) = candidate.agents.iter().find_map(|a| {
             let p = a.prompt.as_str();
-            if p.is_empty() { None } else { Some(p) }
+            if p.is_empty() {
+                None
+            } else {
+                Some(p)
+            }
         }) {
             if let Err(failures) = crate::autooptimizer::canary::validate_prompt_semantics(override_prompt) {
-                let reason = format!(
-                    "semantic prompt check failed: {}",
-                    failures.join("; ")
-                );
+                let reason = format!("semantic prompt check failed: {}", failures.join("; "));
                 tracing::debug!(cycle_id, %reason, "rejecting semantically broken mutation");
                 no_candidate_count += 1;
                 progress(CycleProgressEvent::NoCandidate {
@@ -1107,10 +1110,7 @@ where
         // prose-only check above doesn't catch (e.g. zero `risk_pct_per_trade`
         // set in risk config — the prompt text might still look fine).
         if let Err(failures) = crate::autooptimizer::canary::validate_strategy_semantics(&candidate) {
-            let reason = format!(
-                "strategy semantic check failed: {}",
-                failures.join("; ")
-            );
+            let reason = format!("strategy semantic check failed: {}", failures.join("; "));
             tracing::debug!(cycle_id, %reason, "rejecting semantically broken candidate strategy");
             no_candidate_count += 1;
             progress(CycleProgressEvent::NoCandidate {
@@ -1478,7 +1478,10 @@ where
                         }
                     }
                 }
-                if let Some(pattern_id) = handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id, base_instruction.as_deref()).await? {
+                if let Some(pattern_id) =
+                    handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id, base_instruction.as_deref())
+                        .await?
+                {
                     // DSPy flywheel compiled findings into a prompt pattern this cycle.
                     progress(CycleProgressEvent::FlywheelCompiled {
                         session_id: String::new(),
@@ -1888,8 +1891,8 @@ where
         parent_n_trades: Some(parent_day.n_trades),
         child_n_trades: Some(child_day.n_trades),
         min_trade_retention_ratio: Some(min_trade_retention_ratio),
-        parent_realized_return_ratio: parent_realized_return_ratio,
-        child_realized_return_ratio: child_realized_return_ratio,
+        parent_realized_return_ratio,
+        child_realized_return_ratio,
         gate_min_realized_return_ratio: Some(min_realized_return_ratio),
     });
 
@@ -2247,7 +2250,6 @@ pub fn classify_from_regime_outcomes(
     (status, rows)
 }
 
-
 /// Resolve which agent slot to use for a given agent ref's role.
 ///
 /// Priority: 1) slot name matching `agent_ref.canonical_role()`,
@@ -2436,7 +2438,8 @@ mod tests {
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5, 0.25);
+        let (status, rows) =
+            classify_from_regime_outcomes(&regimes, 0.10, 0.005, Objective::Sharpe, 0.5, 0.25);
 
         assert_eq!(status, LineageStatus::Active);
         assert_eq!(rows.iter().filter(|row| row.verdict == "passed").count(), 2);

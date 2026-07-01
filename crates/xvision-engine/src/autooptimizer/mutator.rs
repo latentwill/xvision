@@ -366,11 +366,8 @@ pub const RISK_PARAM_FIELDS: &[&str] = &[
 /// These values are NEVER tunable — they are engine-level safety limits.
 /// The optimizer should only tune decision logic, conviction thresholds,
 /// signal interpretation, and action selection heuristics.
-pub const PROTECTED_ENGINE_PARAMS: &[&str] = &[
-    "max_leverage",
-    "stop_loss_atr_multiple",
-    "daily_loss_kill_pct",
-];
+pub const PROTECTED_ENGINE_PARAMS: &[&str] =
+    &["max_leverage", "stop_loss_atr_multiple", "daily_loss_kill_pct"];
 
 /// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
 /// `<field>` naming a known risk knob — return the field name; otherwise `None`.

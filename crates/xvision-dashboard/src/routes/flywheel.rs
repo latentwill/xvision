@@ -273,9 +273,15 @@ pub struct OptimizeRunSimpleRequest {
     pub min_observations: Option<usize>,
 }
 
-const fn default_active() -> bool { true }
-const fn default_limit() -> Option<i64> { Some(50) }
-const fn default_min_observations() -> Option<usize> { Some(2) }
+const fn default_active() -> bool {
+    true
+}
+const fn default_limit() -> Option<i64> {
+    Some(50)
+}
+const fn default_min_observations() -> Option<usize> {
+    Some(2)
+}
 
 /// POST /api/optimize/run — convenience wrapper for autooptimizer::run_memory_distillation.
 ///
@@ -287,9 +293,9 @@ pub async fn optimize_run_simple(
     Json(body): Json<OptimizeRunSimpleRequest>,
 ) -> Result<Json<AutoOptimizerRunDto>, DashboardError> {
     let store = memory_route::resolve_store().await?;
-    let pattern_text = body.pattern_text.unwrap_or_else(|| {
-        format!("Auto-optimized pattern for agent {}", body.agent_id)
-    });
+    let pattern_text = body
+        .pattern_text
+        .unwrap_or_else(|| format!("Auto-optimized pattern for agent {}", body.agent_id));
     // Use `agent` shorthand — resolve_namespace_pair converts it to
     // `agent:<id>` internally. Don't set both `namespace` and `agent`.
     let req = AutoOptimizerRunRequest {
@@ -307,7 +313,8 @@ pub async fn optimize_run_simple(
     // vector matches all patterns equally, which is a reasonable default
     // for an agent that hasn't supplied a target embedding.
     let embedding: Vec<f32> = vec![1.0_f32; 384];
-    let resp = autooptimizer::run_memory_distillation(&store, "auto", embedding, req).await
+    let resp = autooptimizer::run_memory_distillation(&store, "auto", embedding, req)
+        .await
         .map_err(|e| DashboardError::Validation {
             field: "optimize/run".into(),
             msg: format!("autooptimizer run failed: {e}"),

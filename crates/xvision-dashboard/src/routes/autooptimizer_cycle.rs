@@ -293,30 +293,28 @@ pub async fn start_cycle(
     // paper-test backtest through the right dispatch. Agents-backed strategies
     // resolve through agent slots; legacy strategies use the trader_slot.
     let paper_test_info = resolve_paper_test_provider(&pool, &strategy).await;
-    let skip_provider_check = paper_test_info
-        .as_ref()
-        .map_or(false, |(p, _)| !p.eq_ignore_ascii_case(&mutator_provider_for_cycle));
+    let skip_provider_check = paper_test_info.as_ref().map_or(false, |(p, _)| {
+        !p.eq_ignore_ascii_case(&mutator_provider_for_cycle)
+    });
 
     // When the trader uses a different provider, build a separate dispatch for
     // the paper-test so backtest decisions flow through the trader's own provider
     // (matching the CLI's `--provider <trader> --mutator-provider <other>` pattern).
-    let (backtest_dispatch, effective_cycle_provider): (
-        Arc<dyn LlmDispatch + Send + Sync>,
-        String,
-    ) = if let Some((trader_provider, trader_model)) = &paper_test_info {
-        if *trader_provider != mutator_provider_for_cycle {
-            let raw_pt = build_autooptimizer_dispatch(trader_provider, trader_model, &state.xvn_home).await?;
-            let pt_catalogs = load_metering_catalogs(&state.xvn_home, trader_provider).await;
-            let metered_pt: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(
-                CostMeteringDispatch::new(raw_pt, pt_catalogs, Arc::clone(&meter)),
-            );
-            (metered_pt, trader_provider.clone())
+    let (backtest_dispatch, effective_cycle_provider): (Arc<dyn LlmDispatch + Send + Sync>, String) =
+        if let Some((trader_provider, trader_model)) = &paper_test_info {
+            if *trader_provider != mutator_provider_for_cycle {
+                let raw_pt =
+                    build_autooptimizer_dispatch(trader_provider, trader_model, &state.xvn_home).await?;
+                let pt_catalogs = load_metering_catalogs(&state.xvn_home, trader_provider).await;
+                let metered_pt: Arc<dyn LlmDispatch + Send + Sync> =
+                    Arc::new(CostMeteringDispatch::new(raw_pt, pt_catalogs, Arc::clone(&meter)));
+                (metered_pt, trader_provider.clone())
+            } else {
+                (Arc::clone(&metered_mutator), mutator_provider_for_cycle.clone())
+            }
         } else {
             (Arc::clone(&metered_mutator), mutator_provider_for_cycle.clone())
-        }
-    } else {
-        (Arc::clone(&metered_mutator), mutator_provider_for_cycle.clone())
-    };
+        };
 
     let cadence_minutes = strategy.manifest.decision_cadence_minutes;
     let day_scenario = build_day_scenario(&cfg, cadence_minutes)?;
@@ -328,7 +326,12 @@ pub async fn start_cycle(
     // When the trader's provider differs from the mutator's, skip the
     // provider-consistency check — we've already built a separate dispatch.
     preflight_trader_provider(
-        &pool, &strategy, strategy_id, &effective_cycle_provider, false, skip_provider_check,
+        &pool,
+        &strategy,
+        strategy_id,
+        &effective_cycle_provider,
+        false,
+        skip_provider_check,
     )
     .await
     .map_err(|e| DashboardError::Validation {
@@ -453,6 +456,8 @@ pub async fn start_cycle(
                     skip_perfect: true,
                     use_merge: true,
                     merge_frequency: 3,
+                    real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config(&cfg)
+                        .map_err(DashboardError::Internal)?,
                 }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
@@ -972,10 +977,7 @@ async fn resolve_paper_test_provider(
         {
             for rs in &slots {
                 let model = rs.slot.effective_model();
-                if let Some(p) = infer_trader_provider(
-                    rs.slot.provider.as_deref().unwrap_or(""),
-                    &model,
-                ) {
+                if let Some(p) = infer_trader_provider(rs.slot.provider.as_deref().unwrap_or(""), &model) {
                     return Some((p, model));
                 }
             }
@@ -983,10 +985,7 @@ async fn resolve_paper_test_provider(
     } else if let Some(slot) = &strategy.trader_slot {
         if slot.has_model_binding() {
             let model = slot.effective_model();
-            if let Some(p) = infer_trader_provider(
-                slot.provider.as_deref().unwrap_or(""),
-                &model,
-            ) {
+            if let Some(p) = infer_trader_provider(slot.provider.as_deref().unwrap_or(""), &model) {
                 return Some((p, model));
             }
         }
