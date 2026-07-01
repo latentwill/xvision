@@ -32,6 +32,10 @@ fn default_gepa_generations() -> usize {
     2
 }
 
+fn default_gepa_real_eval_min_llm_score() -> f64 {
+    0.30
+}
+
 /// Default holdout min-improvement threshold: 0.005 (0.5%).
 /// Small but strictly positive — a candidate must genuinely improve on
 /// out-of-sample data, but the bar is lower than the in-sample `min_improvement`.
@@ -185,6 +189,23 @@ pub struct AutoOptimizerConfig {
     #[serde(default = "default_gepa_generations")]
     pub gepa_generations: usize,
 
+    /// Opt-in GEPA scorer that uses benchmark backtests after the cheap LLM
+    /// cull. Defaults off so existing DSPy compiles keep their current cost and
+    /// behavior.
+    #[serde(default)]
+    pub gepa_real_eval: bool,
+
+    /// Minimum fast LLM score a candidate must achieve before the optimizer pays
+    /// for real benchmark evaluation. Range: 0.0..=1.0.
+    #[serde(default = "default_gepa_real_eval_min_llm_score")]
+    pub gepa_real_eval_min_llm_score: f64,
+
+    /// Fixed benchmark windows used only to score GEPA instruction candidates.
+    /// Empty is valid when `gepa_real_eval=false`; at least one entry is required
+    /// when real eval is enabled.
+    #[serde(default)]
+    pub gepa_benchmark_pool: Vec<GepaBenchmarkWindow>,
+
     /// B22 follow-up (xvision-71k): opt-in override of the [`MAX_WINDOW_DAYS`]
     /// evaluation-window cap for the primary `day_window` and
     /// `baseline_untouched_window`. Unset (the default) keeps the safe
@@ -266,6 +287,14 @@ pub struct RegimeWindow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioWindowPair {
     pub label: String,
+    pub day: DayWindow,
+    pub baseline: BaselineUntouchedWindow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GepaBenchmarkWindow {
+    pub label: String,
+    pub parent_strategy_id: String,
     pub day: DayWindow,
     pub baseline: BaselineUntouchedWindow,
 }
@@ -384,6 +413,9 @@ impl Default for AutoOptimizerConfig {
             baseline_direction: TradeDirection::Both,
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
+            gepa_real_eval: false,
+            gepa_real_eval_min_llm_score: default_gepa_real_eval_min_llm_score(),
+            gepa_benchmark_pool: vec![],
             max_window_days: None,
             scenario_rotation: ScenarioRotationConfig::default(),
         }
@@ -464,6 +496,52 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_gepa_benchmark_pool(
+    pool: &[GepaBenchmarkWindow],
+    max_window_days: i64,
+) -> anyhow::Result<()> {
+    let mut labels = std::collections::HashSet::new();
+    for item in pool {
+        if item.label.trim().is_empty() {
+            bail!("gepa_benchmark_pool contains an entry with an empty label");
+        }
+        if !labels.insert(item.label.as_str()) {
+            bail!(
+                "duplicate gepa_benchmark_pool label '{}' — labels must be unique",
+                item.label
+            );
+        }
+        if item.parent_strategy_id.trim().is_empty() {
+            bail!("gepa_benchmark_pool '{}' must set parent_strategy_id", item.label);
+        }
+        let day_span = (item.day.end - item.day.start).num_days();
+        if day_span > max_window_days {
+            bail!(
+                "gepa_benchmark_pool '{}' day window spans {} days, exceeding the {} day cap",
+                item.label,
+                day_span,
+                max_window_days
+            );
+        }
+        let base_span = (item.baseline.end - item.baseline.start).num_days();
+        if base_span > max_window_days {
+            bail!(
+                "gepa_benchmark_pool '{}' baseline window spans {} days, exceeding the {} day cap",
+                item.label,
+                base_span,
+                max_window_days
+            );
+        }
+        if item.day.end > item.baseline.start {
+            bail!(
+                "gepa_benchmark_pool '{}' day window overlaps baseline window",
+                item.label
+            );
+        }
+    }
     Ok(())
 }
 
@@ -798,6 +876,21 @@ impl AutoOptimizerConfig {
                 self.experiments_per_cycle,
             );
         }
+        if !(0.0..=1.0).contains(&self.gepa_real_eval_min_llm_score) {
+            bail!(
+                "gepa_real_eval_min_llm_score must be between 0.0 and 1.0 inclusive; got {}",
+                self.gepa_real_eval_min_llm_score
+            );
+        }
+        if self.gepa_real_eval && self.gepa_benchmark_pool.is_empty() {
+            bail!(
+                "gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true"
+            );
+        }
+        validate_gepa_benchmark_pool(
+            &self.gepa_benchmark_pool,
+            self.effective_max_window_days(),
+        )?;
         if self.mutator.model.is_empty() {
             bail!("mutator model must not be empty");
         }
@@ -855,6 +948,68 @@ mod tests {
         // The old hard-coded behavior was 1 experiment/cycle; the default is now 5.
         assert_eq!(AutoOptimizerConfig::default().experiments_per_cycle, 5);
         assert_eq!(default_experiments_per_cycle(), 5);
+    }
+
+    #[test]
+    fn gepa_real_eval_defaults_to_disabled_with_empty_pool() {
+        let cfg = AutoOptimizerConfig::default();
+        assert!(!cfg.gepa_real_eval);
+        assert_eq!(cfg.gepa_real_eval_min_llm_score, 0.30);
+        assert!(cfg.gepa_benchmark_pool.is_empty());
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn gepa_real_eval_requires_benchmark_pool_when_enabled() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_real_eval = true;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("gepa_benchmark_pool"),
+            "real eval without benchmarks must name gepa_benchmark_pool; got: {err}"
+        );
+    }
+
+    #[test]
+    fn gepa_real_eval_rejects_fast_score_threshold_outside_unit_interval() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_real_eval_min_llm_score = 1.1;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("gepa_real_eval_min_llm_score"),
+            "threshold >1 must be rejected by name; got: {err}"
+        );
+
+        cfg.gepa_real_eval_min_llm_score = -0.01;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("gepa_real_eval_min_llm_score"),
+            "threshold <0 must be rejected by name; got: {err}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_overlong_day_window() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_real_eval = true;
+        cfg.gepa_benchmark_pool = vec![GepaBenchmarkWindow {
+            label: "too-wide".into(),
+            parent_strategy_id: "parent-a".into(),
+            day: DayWindow {
+                start: NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            },
+            baseline: BaselineUntouchedWindow {
+                start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
+            },
+        }];
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gepa_benchmark_pool") && msg.contains("too-wide") && msg.contains("120"),
+            "message must name benchmark pool, label, and day cap; got: {msg}"
+        );
     }
 
     #[test]
