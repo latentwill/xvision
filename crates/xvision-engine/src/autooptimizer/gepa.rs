@@ -29,55 +29,37 @@ const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated t
 /// optima (per-observation best scores), avoiding greedy collapse to a single mode.
 #[derive(Clone)]
 pub struct RealEvalOptions {
-    pub enabled: bool,
     pub min_fast_score: f64,
     pub benchmark_pool: Vec<GepaBenchmarkWindow>,
     pub cache: RealEvalCache,
-    pub evaluator: Option<Arc<dyn BenchmarkEvaluator>>,
-    #[cfg(test)]
-    test_scores: Option<Arc<std::sync::Mutex<Vec<f64>>>>,
+    pub evaluator: Arc<dyn BenchmarkEvaluator>,
 }
 
 impl RealEvalOptions {
     pub fn new(
         min_fast_score: f64,
         benchmark_pool: Vec<GepaBenchmarkWindow>,
-        evaluator: Option<Arc<dyn BenchmarkEvaluator>>,
+        evaluator: Arc<dyn BenchmarkEvaluator>,
     ) -> Self {
         Self {
-            enabled: true,
             min_fast_score,
             benchmark_pool,
             cache: RealEvalCache::default(),
             evaluator,
-            #[cfg(test)]
-            test_scores: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn test_with_scores(min_fast_score: f64, scores: Vec<f64>) -> Self {
-        Self {
-            enabled: true,
-            min_fast_score,
-            benchmark_pool: vec![],
-            cache: RealEvalCache::default(),
-            evaluator: None,
-            test_scores: Some(Arc::new(std::sync::Mutex::new(scores))),
         }
     }
 }
 
 pub fn real_eval_options_from_config(
     cfg: &crate::autooptimizer::config::AutoOptimizerConfig,
-) -> Option<RealEvalOptions> {
-    cfg.gepa_real_eval.then(|| {
-        RealEvalOptions::new(
-            cfg.gepa_real_eval_min_llm_score,
-            cfg.gepa_benchmark_pool.clone(),
-            None,
-        )
-    })
+) -> anyhow::Result<Option<RealEvalOptions>> {
+    if cfg.gepa_real_eval {
+        anyhow::bail!(
+            "gepa_real_eval=true is not available until a production benchmark evaluator is wired; \
+             set gepa_real_eval=false to use the LLM scorer"
+        );
+    }
+    Ok(None)
 }
 
 pub struct GepaBridge {
@@ -132,14 +114,6 @@ struct ScoreWithFeedback {
 
 // ── ScoreWithFeedback helpers ──────────────────────────────────────────
 impl ScoreWithFeedback {
-    fn mean(&self) -> f64 {
-        if self.scores.is_empty() {
-            0.0
-        } else {
-            self.scores.iter().sum::<f64>() / self.scores.len() as f64
-        }
-    }
-
     fn mean_on_indices(&self, indices: &[usize]) -> f64 {
         if indices.is_empty() {
             return 0.0;
@@ -164,6 +138,52 @@ impl ScoreWithFeedback {
             real_eval_skipped: false,
         }
     }
+
+    fn merge_inactive_from(
+        mut self,
+        active_indices: &[usize],
+        prior_scores: &[f64],
+        prior_feedback: &[String],
+    ) -> Self {
+        if prior_scores.is_empty() {
+            return self;
+        }
+
+        let mut active = vec![false; self.scores.len()];
+        for &idx in active_indices {
+            if let Some(slot) = active.get_mut(idx) {
+                *slot = true;
+            }
+        }
+
+        for idx in 0..self.scores.len() {
+            if active[idx] {
+                continue;
+            }
+            if let Some(score) = prior_scores.get(idx) {
+                self.scores[idx] = *score;
+            }
+            if let Some(feedback) = prior_feedback.get(idx) {
+                self.feedback[idx] = feedback.clone();
+            }
+        }
+
+        self
+    }
+}
+
+fn best_scores_mean_on_indices(scores: &[f64], indices: &[usize]) -> f64 {
+    if scores.is_empty() {
+        f64::NEG_INFINITY
+    } else if indices.is_empty() {
+        0.0
+    } else {
+        indices
+            .iter()
+            .map(|&i| scores.get(i).copied().unwrap_or(0.0))
+            .sum::<f64>()
+            / indices.len() as f64
+    }
 }
 
 #[async_trait]
@@ -187,7 +207,6 @@ impl DspyBridge for GepaBridge {
 
         let mut provenance = Provenance::new(&self.provider, &self.model);
         let mut best_instruction = String::new();
-        let mut best_mean = f64::NEG_INFINITY;
         let mut best_scores: Vec<f64> = vec![];
         let mut best_feedback: Vec<String> = vec![];
         // Warm-start: seed with the current agent system prompt so the optimizer
@@ -271,11 +290,11 @@ impl DspyBridge for GepaBridge {
                         &mut provenance,
                     )
                     .await?;
-                let mb_mean = mb_scores.mean_on_indices(&(0..mb_indices.len()).collect::<Vec<_>>());
+                let mb_mean = mb_scores.mean_on_indices(&mb_indices);
                 if mb_scores.real_eval_skipped {
                     continue;
                 }
-                if mb_mean <= best_mean && gen > 0 {
+                if mb_mean <= best_scores_mean_on_indices(&best_scores, &active_indices) && gen > 0 {
                     continue; // early cull: minibatch doesn't beat current best
                 }
 
@@ -297,7 +316,8 @@ impl DspyBridge for GepaBridge {
                 if full.real_eval_skipped {
                     continue;
                 }
-                let mean = full.mean();
+                let full = full.merge_inactive_from(&active_indices, &best_scores, &best_feedback);
+                let mean = full.mean_on_indices(&active_indices);
 
                 // Track per-observation best for Pareto frontier.
                 for &orig_i in &active_indices {
@@ -338,18 +358,22 @@ impl DspyBridge for GepaBridge {
             // Falls back to max-mean if frontier counts are all equal.
             let winner = match self.selection_strategy {
                 GepaSelectionStrategy::Pareto => frontier_candidates.iter().max_by(|a, b| {
-                    a.2.cmp(&b.2)
-                        .then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap())
+                    a.2.cmp(&b.2).then_with(|| {
+                        a.1.mean_on_indices(&active_indices)
+                            .partial_cmp(&b.1.mean_on_indices(&active_indices))
+                            .unwrap()
+                    })
                 }),
-                GepaSelectionStrategy::CurrentBest => frontier_candidates
-                    .iter()
-                    .max_by(|a, b| a.1.mean().partial_cmp(&b.1.mean()).unwrap()),
+                GepaSelectionStrategy::CurrentBest => frontier_candidates.iter().max_by(|a, b| {
+                    a.1.mean_on_indices(&active_indices)
+                        .partial_cmp(&b.1.mean_on_indices(&active_indices))
+                        .unwrap()
+                }),
             };
 
             if let Some((instr, scores, _fc)) = winner {
-                let mean = scores.mean();
-                if mean > best_mean {
-                    best_mean = mean;
+                let mean = scores.mean_on_indices(&active_indices);
+                if mean > best_scores_mean_on_indices(&best_scores, &active_indices) {
                     best_instruction = instr.clone();
                     best_scores = scores.scores.clone();
                     best_feedback = scores.feedback.clone();
@@ -364,23 +388,40 @@ impl DspyBridge for GepaBridge {
             {
                 // Pick two best candidates by frontier count.
                 frontier_candidates.sort_by(|a, b| {
-                    b.2.cmp(&a.2)
-                        .then_with(|| a.1.mean().partial_cmp(&b.1.mean()).unwrap())
+                    b.2.cmp(&a.2).then_with(|| {
+                        a.1.mean_on_indices(&active_indices)
+                            .partial_cmp(&b.1.mean_on_indices(&active_indices))
+                            .unwrap()
+                    })
                 });
                 let parent_a = &frontier_candidates[0].0;
                 let parent_b = &frontier_candidates[1].0;
                 if let Ok(merged) = self.merge(parent_a, parent_b, &mut provenance).await {
                     let mb_scores = self
-                        .score_on_indices(&merged, observations, &mb_indices, &mut provenance)
+                        .score_candidate(namespace, &merged, observations, &mb_indices, &mut provenance)
                         .await?;
-                    let mb_mean = mb_scores.mean_on_indices(&(0..mb_indices.len()).collect::<Vec<_>>());
-                    if mb_mean > best_mean {
-                        let full = self
-                            .score_on_indices(&merged, observations, &active_indices, &mut provenance)
-                            .await?;
-                        let mean = full.mean();
-                        if mean > best_mean {
-                            best_mean = mean;
+                    let mb_mean = mb_scores.mean_on_indices(&mb_indices);
+                    if !mb_scores.real_eval_skipped
+                        && mb_mean > best_scores_mean_on_indices(&best_scores, &active_indices)
+                    {
+                        let full = if mb_indices == active_indices {
+                            mb_scores
+                        } else {
+                            self.score_candidate(
+                                namespace,
+                                &merged,
+                                observations,
+                                &active_indices,
+                                &mut provenance,
+                            )
+                            .await?
+                        };
+                        if full.real_eval_skipped {
+                            continue;
+                        }
+                        let full = full.merge_inactive_from(&active_indices, &best_scores, &best_feedback);
+                        let mean = full.mean_on_indices(&active_indices);
+                        if mean > best_scores_mean_on_indices(&best_scores, &active_indices) {
                             best_instruction = merged;
                             best_scores = full.scores;
                             best_feedback = full.feedback;
@@ -483,9 +524,6 @@ impl GepaBridge {
         let Some(real_eval) = &self.real_eval else {
             return Ok(fast);
         };
-        if !real_eval.enabled {
-            return Ok(fast);
-        }
 
         let fast_mean = fast.mean_on_indices(indices);
         if fast_mean < real_eval.min_fast_score {
@@ -530,26 +568,13 @@ impl GepaBridge {
         instruction: &str,
         real_eval: &RealEvalOptions,
     ) -> anyhow::Result<(f64, String)> {
-        #[cfg(test)]
-        if let Some(scores) = &real_eval.test_scores {
-            let score = scores
-                .lock()
-                .expect("test scores poisoned")
-                .remove(0)
-                .clamp(0.0, 1.0);
-            return Ok((
-                score,
-                format!("Test real eval score {score:.2} for {instruction}"),
-            ));
-        }
-
-        if let Some(evaluator) = &real_eval.evaluator {
-            let scored =
-                score_real_eval_candidate(evaluator.as_ref(), instruction, &real_eval.benchmark_pool).await?;
-            return Ok((scored.score, scored.feedback));
-        }
-
-        anyhow::bail!("gepa_real_eval=true but no benchmark evaluator is configured")
+        let scored = score_real_eval_candidate(
+            real_eval.evaluator.as_ref(),
+            instruction,
+            &real_eval.benchmark_pool,
+        )
+        .await?;
+        Ok((scored.score, scored.feedback))
     }
 
     /// Score an instruction against specific observation indices. Returns scores
@@ -660,9 +685,16 @@ impl GepaBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+
+    use chrono::NaiveDate;
 
     use crate::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
+    use crate::autooptimizer::config::{BaselineUntouchedWindow, DayWindow, GepaBenchmarkWindow};
+    use crate::autooptimizer::gepa_eval::RealEvalOutcome;
 
     fn to_response(text: impl Into<String>) -> LlmResponse {
         LlmResponse {
@@ -692,24 +724,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn real_eval_options_from_config_respects_disabled_default() {
-        let cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
-        assert!(real_eval_options_from_config(&cfg).is_none());
-    }
-
-    #[test]
-    fn real_eval_options_from_config_carries_threshold_and_pool() {
-        use crate::autooptimizer::config::{
-            AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, GepaBenchmarkWindow,
-        };
-        use chrono::NaiveDate;
-
-        let mut cfg = AutoOptimizerConfig::default();
-        cfg.gepa_real_eval = true;
-        cfg.gepa_real_eval_min_llm_score = 0.42;
-        cfg.gepa_benchmark_pool = vec![GepaBenchmarkWindow {
-            label: "bench-a".into(),
+    fn benchmark(label: &str) -> GepaBenchmarkWindow {
+        GepaBenchmarkWindow {
+            label: label.into(),
             parent_strategy_id: "parent-a".into(),
             day: DayWindow {
                 start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
@@ -719,14 +736,71 @@ mod tests {
                 start: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
                 end: NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
             },
-        }];
+        }
+    }
 
-        let options = real_eval_options_from_config(&cfg).expect("enabled real eval options");
-        assert_eq!(options.min_fast_score, 0.42);
-        assert_eq!(options.benchmark_pool.len(), 1);
+    #[derive(Clone)]
+    struct SequenceBenchmarkEvaluator {
+        scores: Arc<Mutex<Vec<f64>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl SequenceBenchmarkEvaluator {
+        fn new(scores: Vec<f64>) -> Self {
+            Self {
+                scores: Arc::new(Mutex::new(scores)),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn call_count(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BenchmarkEvaluator for SequenceBenchmarkEvaluator {
+        async fn evaluate(
+            &self,
+            _instruction: &str,
+            benchmark: &GepaBenchmarkWindow,
+        ) -> anyhow::Result<RealEvalOutcome> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let score = self
+                .scores
+                .lock()
+                .expect("benchmark scores poisoned")
+                .remove(0)
+                .clamp(0.0, 1.0);
+            Ok(RealEvalOutcome {
+                label: benchmark.label.clone(),
+                parent_sharpe: 1.0,
+                child_sharpe: 2.0 * score,
+            })
+        }
+    }
+
+    #[test]
+    fn real_eval_options_from_config_respects_disabled_default() {
+        let cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
+        assert!(real_eval_options_from_config(&cfg).unwrap().is_none());
+    }
+
+    #[test]
+    fn real_eval_options_from_config_rejects_enabled_without_production_evaluator() {
+        let mut cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
+        cfg.gepa_real_eval = true;
+
+        let err = match real_eval_options_from_config(&cfg) {
+            Ok(_) => panic!("enabled config must not produce real eval options without an evaluator"),
+            Err(err) => err,
+        };
+        let msg = err.to_string();
         assert!(
-            options.evaluator.is_none(),
-            "production evaluator is wired in a later task"
+            msg.contains("gepa_real_eval=true")
+                && msg.contains("production benchmark evaluator")
+                && msg.contains("gepa_real_eval=false"),
+            "enabled config must fail before constructing unusable real eval options; got: {msg}"
         );
     }
 
@@ -777,7 +851,12 @@ mod tests {
         ];
         let mut gepa = mock_gepa(responses);
         gepa.candidates = 1;
-        gepa.real_eval = Some(RealEvalOptions::test_with_scores(0.30, vec![0.99]));
+        let evaluator = SequenceBenchmarkEvaluator::new(vec![0.99]);
+        gepa.real_eval = Some(RealEvalOptions::new(
+            0.30,
+            vec![benchmark("bench-a")],
+            Arc::new(evaluator),
+        ));
 
         let result = gepa
             .compile(
@@ -811,7 +890,12 @@ mod tests {
                 .to_string(),
         ];
         let mut gepa = mock_gepa(responses);
-        gepa.real_eval = Some(RealEvalOptions::test_with_scores(0.30, vec![0.20, 0.95]));
+        let evaluator = SequenceBenchmarkEvaluator::new(vec![0.20, 0.95]);
+        gepa.real_eval = Some(RealEvalOptions::new(
+            0.30,
+            vec![benchmark("bench-a")],
+            Arc::new(evaluator),
+        ));
 
         let result = gepa
             .compile(
@@ -825,5 +909,124 @@ mod tests {
         assert!(result.instruction.contains("better real result"));
         assert_eq!(result.demos[0].score, Some(0.95));
         assert_eq!(result.demos[1].score, Some(0.95));
+    }
+
+    #[tokio::test]
+    async fn real_eval_reuses_cached_score_for_full_active_pass() {
+        let responses = vec![
+            "reflection".to_string(),
+            "candidate cached real eval".to_string(),
+            r#"{"results":[{"score":0.80,"why":"strong minibatch"},{"score":0.80,"why":"strong minibatch"}]}"#.to_string(),
+            r#"{"results":[{"score":0.80,"why":"strong full"},{"score":0.80,"why":"strong full"},{"score":0.80,"why":"strong full"}]}"#.to_string(),
+        ];
+        let evaluator = SequenceBenchmarkEvaluator::new(vec![0.77]);
+        let mut gepa = mock_gepa(responses);
+        gepa.candidates = 1;
+        gepa.real_eval = Some(RealEvalOptions::new(
+            0.30,
+            vec![benchmark("bench-a")],
+            Arc::new(evaluator.clone()),
+        ));
+
+        let result = gepa
+            .compile(
+                "ns",
+                &[
+                    ("a".into(), "obs a".into()),
+                    ("b".into(), "obs b".into()),
+                    ("c".into(), "obs c".into()),
+                ],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.instruction.contains("cached real eval"));
+        assert_eq!(
+            evaluator.call_count(),
+            1,
+            "full active pass must hit real-eval cache"
+        );
+        assert!(result
+            .demos
+            .iter()
+            .all(|demo| (demo.score.unwrap() - 0.77).abs() < 1e-9));
+    }
+
+    #[tokio::test]
+    async fn real_eval_merge_candidate_must_pass_real_scorer_before_winning() {
+        let responses = vec![
+            "reflection".to_string(),
+            "candidate with best real score".to_string(),
+            r#"{"results":[{"score":0.70,"why":"ok"},{"score":0.70,"why":"ok"}]}"#.to_string(),
+            "candidate with second real score".to_string(),
+            r#"{"results":[{"score":0.60,"why":"ok"},{"score":0.60,"why":"ok"}]}"#.to_string(),
+            "merged high fast score low real score".to_string(),
+            r#"{"results":[{"score":0.99,"why":"sounds merged"},{"score":0.99,"why":"sounds merged"}]}"#
+                .to_string(),
+        ];
+        let evaluator = SequenceBenchmarkEvaluator::new(vec![0.70, 0.60, 0.20]);
+        let mut gepa = mock_gepa(responses);
+        gepa.use_merge = true;
+        gepa.merge_frequency = 1;
+        gepa.real_eval = Some(RealEvalOptions::new(
+            0.30,
+            vec![benchmark("bench-a")],
+            Arc::new(evaluator.clone()),
+        ));
+
+        let result = gepa
+            .compile(
+                "ns",
+                &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.instruction.contains("best real score"));
+        assert!(!result.instruction.contains("merged high fast"));
+        assert_eq!(evaluator.call_count(), 3, "merge path must invoke real evaluator");
+        assert_eq!(result.demos[0].score, Some(0.70));
+        assert_eq!(result.demos[1].score, Some(0.70));
+    }
+
+    #[tokio::test]
+    async fn skip_perfect_compares_active_scores_and_preserves_inactive_best_scores() {
+        let responses = vec![
+            "reflection one".to_string(),
+            "first generation instruction".to_string(),
+            r#"{"results":[{"score":1.0,"why":"perfect a"},{"score":1.0,"why":"perfect b"},{"score":0.4,"why":"weak c"},{"score":0.4,"why":"weak d"}]}"#.to_string(),
+            "reflection two".to_string(),
+            "second generation improves remaining observations".to_string(),
+            r#"{"results":[{"score":0.95,"why":"better c"},{"score":0.95,"why":"better d"}]}"#.to_string(),
+        ];
+        let mut gepa = mock_gepa(responses);
+        gepa.candidates = 1;
+        gepa.generations = 2;
+        gepa.reflection_minibatch_size = 4;
+        gepa.skip_perfect = true;
+
+        let result = gepa
+            .compile(
+                "ns",
+                &[
+                    ("a".into(), "obs a".into()),
+                    ("b".into(), "obs b".into()),
+                    ("c".into(), "obs c".into()),
+                    ("d".into(), "obs d".into()),
+                ],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result
+            .instruction
+            .contains("second generation improves remaining observations"));
+        assert_eq!(result.demos[0].score, Some(1.0));
+        assert_eq!(result.demos[1].score, Some(1.0));
+        assert_eq!(result.demos[2].score, Some(0.95));
+        assert_eq!(result.demos[3].score, Some(0.95));
     }
 }

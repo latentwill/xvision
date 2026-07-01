@@ -14,6 +14,11 @@ use serde::{Deserialize, Serialize};
 /// span at config-validation time — before the lock and before any bars load —
 /// keeps the cycle from ever entering that trap.
 pub const MAX_WINDOW_DAYS: i64 = 120;
+/// Maximum number of benchmark windows GEPA real-eval will accept in one
+/// config. Each window can trigger a full benchmark per surviving candidate, so
+/// this is intentionally conservative until production evaluator budgeting is
+/// wired end-to-end.
+pub const MAX_GEPA_BENCHMARK_POOL_SIZE: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LooseningSchedule {
@@ -189,9 +194,9 @@ pub struct AutoOptimizerConfig {
     #[serde(default = "default_gepa_generations")]
     pub gepa_generations: usize,
 
-    /// Opt-in GEPA scorer that uses benchmark backtests after the cheap LLM
-    /// cull. Defaults off so existing DSPy compiles keep their current cost and
-    /// behavior.
+    /// Reserved opt-in for a GEPA scorer that uses benchmark backtests after the
+    /// cheap LLM cull. Validation rejects `true` until a production benchmark
+    /// evaluator is wired, so enabling this flag cannot fail mid-cycle.
     #[serde(default)]
     pub gepa_real_eval: bool,
 
@@ -200,9 +205,9 @@ pub struct AutoOptimizerConfig {
     #[serde(default = "default_gepa_real_eval_min_llm_score")]
     pub gepa_real_eval_min_llm_score: f64,
 
-    /// Fixed benchmark windows used only to score GEPA instruction candidates.
-    /// Empty is valid when `gepa_real_eval=false`; at least one entry is required
-    /// when real eval is enabled.
+    /// Fixed benchmark windows for the reserved GEPA real-eval scorer. The pool
+    /// is structurally validated even while `gepa_real_eval=false` so invalid
+    /// benchmark definitions fail during config preflight, not during scoring.
     #[serde(default)]
     pub gepa_benchmark_pool: Vec<GepaBenchmarkWindow>,
 
@@ -500,12 +505,22 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
 }
 
 fn validate_gepa_benchmark_pool(pool: &[GepaBenchmarkWindow], max_window_days: i64) -> anyhow::Result<()> {
+    if pool.len() > MAX_GEPA_BENCHMARK_POOL_SIZE {
+        bail!(
+            "gepa_benchmark_pool contains {} benchmarks, exceeding the {} benchmark cap",
+            pool.len(),
+            MAX_GEPA_BENCHMARK_POOL_SIZE
+        );
+    }
+
     let mut labels = std::collections::HashSet::new();
+    let mut semantic_keys = std::collections::HashSet::new();
     for item in pool {
-        if item.label.trim().is_empty() {
+        let label = item.label.trim();
+        if label.is_empty() {
             bail!("gepa_benchmark_pool contains an entry with an empty label");
         }
-        if !labels.insert(item.label.as_str()) {
+        if !labels.insert(label.to_owned()) {
             bail!(
                 "duplicate gepa_benchmark_pool label '{}' — labels must be unique",
                 item.label
@@ -514,6 +529,37 @@ fn validate_gepa_benchmark_pool(pool: &[GepaBenchmarkWindow], max_window_days: i
         if item.parent_strategy_id.trim().is_empty() {
             bail!("gepa_benchmark_pool '{}' must set parent_strategy_id", item.label);
         }
+        if item.day.start >= item.day.end {
+            bail!(
+                "gepa_benchmark_pool '{}' day window start {} must be before end {}",
+                item.label,
+                item.day.start,
+                item.day.end
+            );
+        }
+        if item.baseline.start >= item.baseline.end {
+            bail!(
+                "gepa_benchmark_pool '{}' baseline window start {} must be before end {}",
+                item.label,
+                item.baseline.start,
+                item.baseline.end
+            );
+        }
+
+        let semantic_key = (
+            item.parent_strategy_id.trim().to_owned(),
+            item.day.start,
+            item.day.end,
+            item.baseline.start,
+            item.baseline.end,
+        );
+        if !semantic_keys.insert(semantic_key) {
+            bail!(
+                "duplicate gepa_benchmark_pool benchmark '{}' — parent_strategy_id/day/baseline windows must be unique",
+                item.label
+            );
+        }
+
         let day_span = (item.day.end - item.day.start).num_days();
         if day_span > max_window_days {
             bail!(
@@ -532,7 +578,8 @@ fn validate_gepa_benchmark_pool(pool: &[GepaBenchmarkWindow], max_window_days: i
                 max_window_days
             );
         }
-        if item.day.end > item.baseline.start {
+        let overlaps = item.day.start < item.baseline.end && item.baseline.start < item.day.end;
+        if overlaps {
             bail!(
                 "gepa_benchmark_pool '{}' day window overlaps baseline window",
                 item.label
@@ -881,8 +928,11 @@ impl AutoOptimizerConfig {
                 self.gepa_real_eval_min_llm_score
             );
         }
-        if self.gepa_real_eval && self.gepa_benchmark_pool.is_empty() {
-            bail!("gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true");
+        if self.gepa_real_eval {
+            bail!(
+                "gepa_real_eval=true is not available until a production benchmark evaluator is wired; \
+                 set gepa_real_eval=false to use the LLM scorer"
+            );
         }
         validate_gepa_benchmark_pool(&self.gepa_benchmark_pool, self.effective_max_window_days())?;
         if self.mutator.model.is_empty() {
@@ -941,6 +991,27 @@ mod tests {
         }
     }
 
+    fn gepa_benchmark(label: &str) -> GepaBenchmarkWindow {
+        GepaBenchmarkWindow {
+            label: label.into(),
+            parent_strategy_id: "parent-a".into(),
+            day: DayWindow {
+                start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            },
+            baseline: BaselineUntouchedWindow {
+                start: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
+            },
+        }
+    }
+
+    fn validate_gepa_benchmark_message(benchmark: GepaBenchmarkWindow) -> String {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_benchmark_pool = vec![benchmark];
+        cfg.validate().unwrap_err().to_string()
+    }
+
     #[test]
     fn experiments_per_cycle_defaults_to_five() {
         // The old hard-coded behavior was 1 experiment/cycle; the default is now 5.
@@ -958,13 +1029,16 @@ mod tests {
     }
 
     #[test]
-    fn gepa_real_eval_requires_benchmark_pool_when_enabled() {
+    fn gepa_real_eval_is_rejected_until_production_evaluator_exists() {
         let mut cfg = AutoOptimizerConfig::default();
         cfg.gepa_real_eval = true;
         let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("gepa_benchmark_pool"),
-            "real eval without benchmarks must name gepa_benchmark_pool; got: {err}"
+            msg.contains("gepa_real_eval=true")
+                && msg.contains("production benchmark evaluator")
+                && msg.contains("gepa_real_eval=false"),
+            "real eval must fail validation before constructing an unusable scorer; got: {msg}"
         );
     }
 
@@ -989,7 +1063,6 @@ mod tests {
     #[test]
     fn gepa_benchmark_pool_rejects_overlong_day_window() {
         let mut cfg = AutoOptimizerConfig::default();
-        cfg.gepa_real_eval = true;
         cfg.gepa_benchmark_pool = vec![GepaBenchmarkWindow {
             label: "too-wide".into(),
             parent_strategy_id: "parent-a".into(),
@@ -1007,6 +1080,152 @@ mod tests {
         assert!(
             msg.contains("gepa_benchmark_pool") && msg.contains("too-wide") && msg.contains("120"),
             "message must name benchmark pool, label, and day cap; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_empty_or_duplicate_labels() {
+        let mut blank = gepa_benchmark("blank");
+        blank.label = "  ".into();
+        let msg = validate_gepa_benchmark_message(blank);
+        assert!(
+            msg.contains("gepa_benchmark_pool") && msg.contains("empty label"),
+            "empty label message should name field; got: {msg}"
+        );
+
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_benchmark_pool = vec![gepa_benchmark("dup"), gepa_benchmark("dup")];
+        let msg = cfg.validate().unwrap_err().to_string();
+        assert!(
+            msg.contains("gepa_benchmark_pool") && msg.contains("dup") && msg.contains("unique"),
+            "duplicate label message should name field and label; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_blank_parent_strategy_id() {
+        let mut item = gepa_benchmark("missing-parent");
+        item.parent_strategy_id = "  ".into();
+        let msg = validate_gepa_benchmark_message(item);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("missing-parent")
+                && msg.contains("parent_strategy_id"),
+            "missing parent message should name field and label; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_reversed_or_zero_length_windows() {
+        let mut reversed_day = gepa_benchmark("reversed-day");
+        reversed_day.day.start = NaiveDate::from_ymd_opt(2025, 2, 1).unwrap();
+        reversed_day.day.end = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        let msg = validate_gepa_benchmark_message(reversed_day);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("reversed-day")
+                && msg.contains("day window start"),
+            "reversed day message should name field and label; got: {msg}"
+        );
+
+        let mut zero_day = gepa_benchmark("zero-day");
+        zero_day.day.end = zero_day.day.start;
+        let msg = validate_gepa_benchmark_message(zero_day);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("zero-day")
+                && msg.contains("day window start"),
+            "zero-length day message should name field and label; got: {msg}"
+        );
+
+        let mut reversed_baseline = gepa_benchmark("reversed-baseline");
+        reversed_baseline.baseline.start = NaiveDate::from_ymd_opt(2025, 2, 1).unwrap();
+        reversed_baseline.baseline.end = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let msg = validate_gepa_benchmark_message(reversed_baseline);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("reversed-baseline")
+                && msg.contains("baseline window start"),
+            "reversed baseline message should name field and label; got: {msg}"
+        );
+
+        let mut zero_baseline = gepa_benchmark("zero-baseline");
+        zero_baseline.baseline.end = zero_baseline.baseline.start;
+        let msg = validate_gepa_benchmark_message(zero_baseline);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("zero-baseline")
+                && msg.contains("baseline window start"),
+            "zero-length baseline message should name field and label; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_overlong_baseline_window_and_any_overlap_direction() {
+        let mut overlong_baseline = gepa_benchmark("wide-baseline");
+        overlong_baseline.day.start = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        overlong_baseline.day.end = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        overlong_baseline.baseline.start = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        overlong_baseline.baseline.end = NaiveDate::from_ymd_opt(2024, 7, 1).unwrap();
+        let msg = validate_gepa_benchmark_message(overlong_baseline);
+        assert!(
+            msg.contains("gepa_benchmark_pool") && msg.contains("wide-baseline") && msg.contains("120"),
+            "overlong baseline message should name field, label, and cap; got: {msg}"
+        );
+
+        let mut day_overlaps_baseline = gepa_benchmark("day-overlaps");
+        day_overlaps_baseline.day.start = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        day_overlaps_baseline.day.end = NaiveDate::from_ymd_opt(2025, 1, 20).unwrap();
+        day_overlaps_baseline.baseline.start = NaiveDate::from_ymd_opt(2025, 1, 10).unwrap();
+        day_overlaps_baseline.baseline.end = NaiveDate::from_ymd_opt(2025, 2, 1).unwrap();
+        let msg = validate_gepa_benchmark_message(day_overlaps_baseline);
+        assert!(
+            msg.contains("gepa_benchmark_pool") && msg.contains("day-overlaps") && msg.contains("overlaps"),
+            "overlap message should name field and label; got: {msg}"
+        );
+
+        let mut baseline_contains_day = gepa_benchmark("baseline-overlaps");
+        baseline_contains_day.day.start = NaiveDate::from_ymd_opt(2025, 1, 10).unwrap();
+        baseline_contains_day.day.end = NaiveDate::from_ymd_opt(2025, 1, 20).unwrap();
+        baseline_contains_day.baseline.start = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        baseline_contains_day.baseline.end = NaiveDate::from_ymd_opt(2025, 2, 1).unwrap();
+        let msg = validate_gepa_benchmark_message(baseline_contains_day);
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("baseline-overlaps")
+                && msg.contains("overlaps"),
+            "reverse overlap message should name field and label; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn gepa_benchmark_pool_rejects_semantic_duplicates_and_excessive_count() {
+        let mut duplicate = gepa_benchmark("duplicate-shape");
+        duplicate.label = "same-window-different-label".into();
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_benchmark_pool = vec![gepa_benchmark("original"), duplicate];
+        let msg = cfg.validate().unwrap_err().to_string();
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains("same-window-different-label")
+                && msg.contains("parent_strategy_id/day/baseline"),
+            "semantic duplicate message should name field and duplicate label; got: {msg}"
+        );
+
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_benchmark_pool = (0..=MAX_GEPA_BENCHMARK_POOL_SIZE)
+            .map(|i| {
+                let mut item = gepa_benchmark(&format!("bench-{i}"));
+                item.parent_strategy_id = format!("parent-{i}");
+                item
+            })
+            .collect();
+        let msg = cfg.validate().unwrap_err().to_string();
+        assert!(
+            msg.contains("gepa_benchmark_pool")
+                && msg.contains(&(MAX_GEPA_BENCHMARK_POOL_SIZE + 1).to_string())
+                && msg.contains(&MAX_GEPA_BENCHMARK_POOL_SIZE.to_string()),
+            "pool count message should name field and cap; got: {msg}"
         );
     }
 

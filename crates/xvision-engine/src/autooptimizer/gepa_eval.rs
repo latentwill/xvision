@@ -149,22 +149,34 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
     struct FakeBenchmarkEvaluator {
         outcomes: Arc<Mutex<Vec<anyhow::Result<RealEvalOutcome>>>>,
+        expected_instruction: String,
+        seen_instructions: Arc<Mutex<Vec<String>>>,
     }
 
     impl FakeBenchmarkEvaluator {
         fn new(outcomes: Vec<RealEvalOutcome>) -> Self {
             Self {
                 outcomes: Arc::new(Mutex::new(outcomes.into_iter().map(Ok).collect())),
+                expected_instruction: "candidate instruction".into(),
+                seen_instructions: Arc::new(Mutex::new(vec![])),
             }
         }
 
         fn failing(message: &str) -> Self {
             Self {
                 outcomes: Arc::new(Mutex::new(vec![Err(anyhow::anyhow!(message.to_owned()))])),
+                expected_instruction: "candidate instruction".into(),
+                seen_instructions: Arc::new(Mutex::new(vec![])),
             }
+        }
+
+        fn seen_instructions(&self) -> Vec<String> {
+            self.seen_instructions
+                .lock()
+                .expect("fake benchmark seen instructions poisoned")
+                .clone()
         }
     }
 
@@ -172,9 +184,19 @@ mod tests {
     impl BenchmarkEvaluator for FakeBenchmarkEvaluator {
         async fn evaluate(
             &self,
-            _instruction: &str,
+            instruction: &str,
             benchmark: &GepaBenchmarkWindow,
         ) -> anyhow::Result<RealEvalOutcome> {
+            self.seen_instructions
+                .lock()
+                .expect("fake benchmark seen instructions poisoned")
+                .push(instruction.to_owned());
+            anyhow::ensure!(
+                instruction == self.expected_instruction,
+                "expected instruction '{}', got '{}'",
+                self.expected_instruction,
+                instruction
+            );
             let outcome = self
                 .outcomes
                 .lock()
@@ -211,6 +233,14 @@ mod tests {
         );
         assert!(scored.feedback.contains("bull"));
         assert!(scored.feedback.contains("bear"));
+        assert_eq!(
+            evaluator.seen_instructions(),
+            vec![
+                "candidate instruction".to_string(),
+                "candidate instruction".to_string()
+            ],
+            "candidate instruction must be passed to each benchmark evaluation"
+        );
     }
 
     #[tokio::test]
@@ -237,6 +267,30 @@ mod tests {
         let a = benchmark_pool_fingerprint(&[bench("a")]);
         let b = benchmark_pool_fingerprint(&[bench("b")]);
         assert_ne!(a, b);
+
+        let mut different_parent = bench("a");
+        different_parent.parent_strategy_id = "parent-b".into();
+        assert_ne!(a, benchmark_pool_fingerprint(&[different_parent.clone()]));
+        assert_ne!(
+            real_eval_cache_key("ns", "instruction", &[bench("a")]),
+            real_eval_cache_key("ns", "instruction", &[different_parent])
+        );
+
+        let mut different_day = bench("a");
+        different_day.day.start = NaiveDate::from_ymd_opt(2025, 1, 2).unwrap();
+        assert_ne!(a, benchmark_pool_fingerprint(&[different_day.clone()]));
+        assert_ne!(
+            real_eval_cache_key("ns", "instruction", &[bench("a")]),
+            real_eval_cache_key("ns", "instruction", &[different_day])
+        );
+
+        let mut different_baseline = bench("a");
+        different_baseline.baseline.end = NaiveDate::from_ymd_opt(2025, 2, 2).unwrap();
+        assert_ne!(a, benchmark_pool_fingerprint(&[different_baseline.clone()]));
+        assert_ne!(
+            real_eval_cache_key("ns", "instruction", &[bench("a")]),
+            real_eval_cache_key("ns", "instruction", &[different_baseline])
+        );
     }
 
     #[test]
