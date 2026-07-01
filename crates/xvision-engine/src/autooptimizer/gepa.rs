@@ -266,9 +266,7 @@ impl DspyBridge for GepaBridge {
             // Minibatch indices: first `mb_size` active indices (for cheap cull)
             let mb_indices: Vec<usize> = active_indices.iter().copied().take(mb_size).collect();
 
-            let mut generation_best_score = f64::NEG_INFINITY;
-            let mut generation_best_instruction = String::new();
-            let mut generation_best = None;
+            let mut scored_candidates: Vec<(String, ScoreWithFeedback)> = Vec::with_capacity(n_candidates);
 
             // Track per-observation best scores for Pareto frontier (4a).
             let mut per_obs_best: Vec<f64> = vec![f64::NEG_INFINITY; observations.len()];
@@ -317,7 +315,6 @@ impl DspyBridge for GepaBridge {
                     continue;
                 }
                 let full = full.merge_inactive_from(&active_indices, &best_scores, &best_feedback);
-                let mean = full.mean_on_indices(&active_indices);
 
                 // Track per-observation best for Pareto frontier.
                 for &orig_i in &active_indices {
@@ -327,19 +324,15 @@ impl DspyBridge for GepaBridge {
                     }
                 }
 
-                if mean > generation_best_score {
-                    generation_best_score = mean;
-                    generation_best_instruction = instruction.clone();
-                    generation_best = Some((instruction, full));
-                }
+                scored_candidates.push((instruction, full));
             }
 
             // ── 4a: Pareto frontier selection ──
-            // Count how many observations each candidate is best on.
-            // Re-score the best candidate for frontier tracking.
-            if let Some((_instr, ref scores)) = generation_best {
-                // Build frontier: for each observation, count which candidates
-                // are tied for best. The generation winner gets frontier priority.
+            // Count how many observations each successfully full-scored candidate
+            // is tied for best on after the generation's per-observation bests are
+            // finalized. Merge/crossover needs the full frontier, not just the
+            // single generation winner.
+            for (instruction, scores) in scored_candidates {
                 let mut frontier_count = 0usize;
                 for &orig_i in &active_indices {
                     let s = scores.scores.get(orig_i).copied().unwrap_or(0.0);
@@ -347,11 +340,7 @@ impl DspyBridge for GepaBridge {
                         frontier_count += 1;
                     }
                 }
-                frontier_candidates.push((
-                    generation_best_instruction.clone(),
-                    scores.clone(),
-                    frontier_count,
-                ));
+                frontier_candidates.push((instruction, scores, frontier_count));
             }
 
             // Pareto-weighted selection: candidate with highest frontier count wins.
@@ -694,7 +683,7 @@ mod tests {
 
     use crate::agent::llm::{ContentBlock, LlmResponse, MockDispatch, StopReason};
     use crate::autooptimizer::config::{BaselineUntouchedWindow, DayWindow, GepaBenchmarkWindow};
-    use crate::autooptimizer::gepa_eval::RealEvalOutcome;
+    use crate::autooptimizer::gepa_eval::{real_eval_cache_key, RealEvalOutcome};
 
     fn to_response(text: impl Into<String>) -> LlmResponse {
         LlmResponse {
@@ -966,14 +955,13 @@ mod tests {
                 .to_string(),
         ];
         let evaluator = SequenceBenchmarkEvaluator::new(vec![0.70, 0.60, 0.20]);
+        let benchmark_pool = vec![benchmark("bench-a")];
+        let real_eval = RealEvalOptions::new(0.30, benchmark_pool.clone(), Arc::new(evaluator.clone()));
+        let real_eval_cache = real_eval.cache.clone();
         let mut gepa = mock_gepa(responses);
         gepa.use_merge = true;
         gepa.merge_frequency = 1;
-        gepa.real_eval = Some(RealEvalOptions::new(
-            0.30,
-            vec![benchmark("bench-a")],
-            Arc::new(evaluator.clone()),
-        ));
+        gepa.real_eval = Some(real_eval);
 
         let result = gepa
             .compile(
@@ -989,6 +977,12 @@ mod tests {
         assert_eq!(evaluator.call_count(), 3, "merge path must invoke real evaluator");
         assert_eq!(result.demos[0].score, Some(0.70));
         assert_eq!(result.demos[1].score, Some(0.70));
+        let merged_cache_key =
+            real_eval_cache_key("ns", "merged high fast score low real score", &benchmark_pool);
+        let merged_cached_score = real_eval_cache
+            .get(&merged_cache_key)
+            .expect("merged candidate must be scored through real-eval cache path");
+        assert!((merged_cached_score.score - 0.20).abs() < 1e-9);
     }
 
     #[tokio::test]
