@@ -252,10 +252,24 @@ impl DspyBridge for GepaBridge {
                     continue; // early cull: minibatch doesn't beat current best
                 }
 
-                // Tier 2: full scoring on active indices
-                let full = self
-                    .score_candidate(namespace, &instruction, observations, &active_indices, &mut provenance)
-                    .await?;
+                // Tier 2: full scoring on active indices. If the minibatch already
+                // covers the full active set, reuse it so real-eval tests and runs
+                // don't issue a duplicate fast-score call for the same candidate.
+                let full = if mb_indices == active_indices {
+                    mb_scores
+                } else {
+                    self.score_candidate(
+                        namespace,
+                        &instruction,
+                        observations,
+                        &active_indices,
+                        &mut provenance,
+                    )
+                    .await?
+                };
+                if full.real_eval_skipped {
+                    continue;
+                }
                 let mean = full.mean();
 
                 // Track per-observation best for Pareto frontier.
@@ -680,11 +694,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_eval_skips_candidate_below_fast_threshold() {
+    async fn real_eval_skips_candidate_below_full_fast_threshold() {
         let responses = vec![
             "reflection".to_string(),
-            "low fast candidate".to_string(),
-            r#"{"results":[{"score":0.10,"why":"weak"},{"score":0.10,"why":"weak"}]}"#.to_string(),
+            "full skip candidate".to_string(),
+            r#"{"results":[{"score":0.80,"why":"strong minibatch"},{"score":0.80,"why":"strong minibatch"}]}"#.to_string(),
+            r#"{"results":[{"score":0.10,"why":"weak full"},{"score":0.10,"why":"weak full"},{"score":0.10,"why":"weak full"}]}"#.to_string(),
         ];
         let mut gepa = mock_gepa(responses);
         gepa.candidates = 1;
@@ -693,7 +708,11 @@ mod tests {
         let result = gepa
             .compile(
                 "ns",
-                &[("a".into(), "obs a".into()), ("b".into(), "obs b".into())],
+                &[
+                    ("a".into(), "obs a".into()),
+                    ("b".into(), "obs b".into()),
+                    ("c".into(), "obs c".into()),
+                ],
                 None,
             )
             .await
@@ -701,7 +720,7 @@ mod tests {
 
         assert!(
             result.instruction.is_empty(),
-            "low fast score should not win from real eval"
+            "candidate skipped by full active-set fast score should not win from fast LLM scores"
         );
         assert!(result.demos.iter().all(|d| d.score.unwrap_or(0.0) < 0.30));
     }
