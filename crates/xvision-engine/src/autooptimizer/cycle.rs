@@ -666,13 +666,70 @@ fn low_trade_parent_context(
     ))
 }
 
+fn gate_target_context(
+    parent_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    config: &AutoOptimizerConfig,
+    objective: Objective,
+) -> String {
+    let parent_day_score = objective.oriented_value(parent_day);
+    let parent_holdout_score = objective.oriented_value(parent_untouched);
+    let required_day_score = parent_day_score + config.min_improvement;
+    let required_holdout_score = parent_holdout_score + config.holdout_min_improvement;
+    let parent_worst_drawdown = parent_day
+        .max_drawdown_pct
+        .abs()
+        .max(parent_untouched.max_drawdown_pct.abs());
+    let drawdown_ceiling = parent_worst_drawdown * 1.5;
+    let min_child_trades = if parent_day.n_trades == 0 {
+        None
+    } else {
+        Some(((parent_day.n_trades as f64) * config.min_trade_retention_ratio).floor() as u32)
+    }
+    .map(|n| n.max(1));
+
+    let trade_line = match min_child_trades {
+        Some(n) => format!(
+            "- Trade-retention guard: child must execute at least {n} fill legs ({:.0}% of parent's {}).",
+            config.min_trade_retention_ratio * 100.0,
+            parent_day.n_trades
+        ),
+        None => "- Trade-retention guard: parent has 0 fill legs on this window; do not optimize toward a no-trade child.".to_string(),
+    };
+    let realized_line = if config.min_realized_return_ratio > 0.0 {
+        format!(
+            "- Realized-return guard: if total return is positive, child must book at least {:.0}% of that return.",
+            config.min_realized_return_ratio * 100.0
+        )
+    } else {
+        "- Realized-return guard: disabled for this run.".to_string()
+    };
+
+    format!(
+        "Gate target contract for this writer slot (advisory; the deterministic gate remains authoritative):\n\
+         - Objective: {objective}; parent day {parent_day_score:.4}, required child day ≥ {required_day_score:.4} (Δ ≥ {day_eps:.4}).\n\
+         - Parent holdout {parent_holdout_score:.4}, required child holdout ≥ {required_holdout_score:.4} (Δ ≥ {holdout_eps:.4}).\n\
+         - Drawdown guard: child worst drawdown must stay ≤ {drawdown_ceiling:.4}% (1.5× parent worst {parent_worst_drawdown:.4}%) unless objective is max_drawdown.\n\
+         {trade_line}\n\
+         {realized_line}\n\
+         Prefer experiments with a plausible reason to improve BOTH day and holdout objective without expanding drawdown.",
+        objective = objective.label(),
+        day_eps = config.min_improvement,
+        holdout_eps = config.holdout_min_improvement,
+    )
+}
+
 fn combine_writer_advisory_context(
     memory_context: Option<&str>,
+    gate_context: Option<&str>,
     low_trade_context: Option<&str>,
 ) -> Option<String> {
     let mut sections = Vec::new();
     if let Some(ctx) = memory_context.map(str::trim).filter(|s| !s.is_empty()) {
         sections.push(format!("Prior optimizer outcomes on similar strategies:\n{ctx}"));
+    }
+    if let Some(ctx) = gate_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(ctx.to_string());
     }
     if let Some(ctx) = low_trade_context.map(str::trim).filter(|s| !s.is_empty()) {
         sections.push(ctx.to_string());
@@ -1026,8 +1083,21 @@ where
         } else {
             None
         };
-        let writer_advisory_context =
-            combine_writer_advisory_context(mutation_memory_context.as_deref(), low_trade_context.as_deref());
+        let gate_context = if cycle_config.regime_set.is_empty() {
+            Some(gate_target_context(
+                &gate_parent_day,
+                &gate_parent_untouched,
+                config,
+                cycle_config.objective,
+            ))
+        } else {
+            None
+        };
+        let writer_advisory_context = combine_writer_advisory_context(
+            mutation_memory_context.as_deref(),
+            gate_context.as_deref(),
+            low_trade_context.as_deref(),
+        );
         // When tournament_enabled, run the 3-candidate Borda-count tournament
         // instead of a direct propose call. Incumbent win means no candidate
         // beat the parent this iteration.
@@ -1401,9 +1471,9 @@ where
                     parent_n_trades: gs.parent_n_trades,
                     child_n_trades: gs.child_n_trades,
                     min_trade_retention_ratio: gs.min_trade_retention_ratio,
-                    parent_realized_return_ratio: None,
-                    child_realized_return_ratio: None,
-                    gate_min_realized_return_ratio: None,
+                    parent_realized_return_ratio: gs.parent_realized_return_ratio,
+                    child_realized_return_ratio: gs.child_realized_return_ratio,
+                    gate_min_realized_return_ratio: gs.gate_min_realized_return_ratio,
                 },
             )
             .await
@@ -1426,10 +1496,32 @@ where
                 LineageStatus::Quarantined => "suspect",
                 LineageStatus::Rejected => "rejected",
             };
+            let reason_str = match &outcome.verdict {
+                GateVerdict::Fail { reason } => Some(reason.as_str()),
+                GateVerdict::Pass => None,
+            };
+            let gate_context =
+                outcome
+                    .gate_scores
+                    .as_ref()
+                    .map(|gs| crate::autooptimizer::mutator::MutationGateContext {
+                        objective_label: cycle_config.objective.label(),
+                        delta_day: Some(gs.delta_day),
+                        delta_holdout: Some(gs.delta_holdout),
+                        drawdown_ratio: gs.drawdown_ratio,
+                        parent_n_trades: gs.parent_n_trades,
+                        child_n_trades: gs.child_n_trades,
+                        min_trade_retention_ratio: gs.min_trade_retention_ratio,
+                        parent_realized_return_ratio: gs.parent_realized_return_ratio,
+                        child_realized_return_ratio: gs.child_realized_return_ratio,
+                        min_realized_return_ratio: gs.gate_min_realized_return_ratio,
+                        reason: reason_str,
+                    });
             let obs = crate::autooptimizer::mutator::describe_mutation_outcome(
                 &outcome.diff,
                 outcome.delta_sharpe,
                 status_label,
+                gate_context,
             );
             if let Err(e) = mem
                 .record_observation_in_namespace(
@@ -2468,9 +2560,10 @@ mod tests {
     }
 
     #[test]
-    fn combine_writer_advisory_context_keeps_memory_and_low_trade_sections() {
+    fn combine_writer_advisory_context_keeps_memory_gate_and_low_trade_sections() {
         let combined = combine_writer_advisory_context(
             Some("param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)"),
+            Some("Gate target contract for this writer slot\n- Objective: sharpe"),
             Some("Current parent sample-size warning:\n- Parent day-window fill legs: 2"),
         )
         .expect("non-empty sections combine");
@@ -2479,10 +2572,29 @@ mod tests {
             combined.contains("Prior optimizer outcomes on similar strategies"),
             "{combined}"
         );
+        assert!(combined.contains("Gate target contract"), "{combined}");
         assert!(
             combined.contains("Current parent sample-size warning"),
             "{combined}"
         );
+    }
+
+    #[test]
+    fn gate_target_context_surfaces_holdout_drawdown_trade_and_realized_requirements() {
+        let config = AutoOptimizerConfig::default();
+        let context = gate_target_context(
+            &metrics_with_trades(26, 0.25),
+            &metrics_with_trades(18, 0.20),
+            &config,
+            Objective::Sharpe,
+        );
+
+        assert!(context.contains("Gate target contract"), "{context}");
+        assert!(context.contains("required child day"), "{context}");
+        assert!(context.contains("required child holdout"), "{context}");
+        assert!(context.contains("Drawdown guard"), "{context}");
+        assert!(context.contains("Trade-retention guard"), "{context}");
+        assert!(context.contains("Realized-return guard"), "{context}");
     }
 
     #[test]

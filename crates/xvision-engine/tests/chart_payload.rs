@@ -112,6 +112,7 @@ fn hold_decision_for_asset(run_id: &str, asset: &str) -> DecisionRow {
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: None,
     }
 }
 

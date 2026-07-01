@@ -137,6 +137,7 @@ fn hold_decision(run_id: &str, decision_index: u32, minutes_after_start: i64) ->
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: None,
     }
 }
 

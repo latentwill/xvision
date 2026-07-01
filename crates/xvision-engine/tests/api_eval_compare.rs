@@ -50,6 +50,7 @@ async fn seed_completed_run(
             fill_size: Some(0.1),
             fee: Some(1.0),
             pnl_realized: None,
+            delayed: None,
         })
         .await
         .unwrap();

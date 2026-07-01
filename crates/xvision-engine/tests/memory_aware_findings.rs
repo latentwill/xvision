@@ -42,6 +42,7 @@ fn bad_decision(run_id: &str, idx: u32) -> DecisionRow {
         fee: Some(0.5),
         // Negative realized pnl → judge_outcome -> Bad.
         pnl_realized: Some(-25.0),
+        delayed: None,
     }
 }
 
@@ -60,6 +61,7 @@ fn good_decision(run_id: &str, idx: u32) -> DecisionRow {
         fill_size: Some(1.0),
         fee: Some(0.5),
         pnl_realized: Some(40.0),
+        delayed: None,
     }
 }
 
@@ -240,6 +242,7 @@ fn mixed_run_emits_only_for_bad_outcomes_when_opt_in_off() {
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: None,
     });
 
     let recalls = vec![

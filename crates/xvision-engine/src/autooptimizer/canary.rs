@@ -304,7 +304,14 @@ pub fn validate_prompt_semantics(prompt: &str) -> Result<(), Vec<String>> {
     let lower = prompt.to_ascii_lowercase();
 
     // 2. Required trading decision fields
-    let required_terms = ["stop_loss", "stop loss", "take_profit", "take profit", "action", "position"];
+    let required_terms = [
+        "stop_loss",
+        "stop loss",
+        "take_profit",
+        "take profit",
+        "action",
+        "position",
+    ];
     let has_decision_fields = required_terms.iter().any(|term| lower.contains(term));
     if !has_decision_fields {
         failures.push(
@@ -339,10 +346,22 @@ pub fn validate_prompt_semantics(prompt: &str) -> Result<(), Vec<String>> {
     // "go long when RSI > 70" in a mean-reversion strategy is backwards —
     // mean-reversion shorts overbought and buys oversold.
     let reversed_signal_patterns = [
-        ("buy when rsi > 70", "reversed signal: buying overbought is anti-mean-reversion"),
-        ("go long when rsi > 70", "reversed signal: going long at overbought is anti-mean-reversion"),
-        ("sell when rsi < 30", "reversed signal: selling oversold is anti-mean-reversion"),
-        ("short when rsi < 30", "reversed signal: shorting oversold is anti-mean-reversion"),
+        (
+            "buy when rsi > 70",
+            "reversed signal: buying overbought is anti-mean-reversion",
+        ),
+        (
+            "go long when rsi > 70",
+            "reversed signal: going long at overbought is anti-mean-reversion",
+        ),
+        (
+            "sell when rsi < 30",
+            "reversed signal: selling oversold is anti-mean-reversion",
+        ),
+        (
+            "short when rsi < 30",
+            "reversed signal: shorting oversold is anti-mean-reversion",
+        ),
     ];
     for (pat, reason) in &reversed_signal_patterns {
         if lower.contains(pat) {
