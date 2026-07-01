@@ -1062,6 +1062,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 skip_perfect: true,
                 use_merge: true,
                 merge_frequency: 3,
+                real_eval: None,
             });
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,

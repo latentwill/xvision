@@ -453,6 +453,7 @@ pub async fn start_cycle(
                     skip_perfect: true,
                     use_merge: true,
                     merge_frequency: 3,
+                    real_eval: None,
                 }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
