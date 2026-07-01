@@ -263,7 +263,13 @@ impl DspyBridge for GepaBridge {
 
                 // Tier 1: minibatch scoring (cheap)
                 let mb_scores = self
-                    .score_candidate(namespace, &instruction, observations, &mb_indices, &mut provenance)
+                    .score_candidate(
+                        namespace,
+                        &instruction,
+                        observations,
+                        &mb_indices,
+                        &mut provenance,
+                    )
                     .await?;
                 let mb_mean = mb_scores.mean_on_indices(&(0..mb_indices.len()).collect::<Vec<_>>());
                 if mb_scores.real_eval_skipped {
@@ -531,16 +537,15 @@ impl GepaBridge {
                 .expect("test scores poisoned")
                 .remove(0)
                 .clamp(0.0, 1.0);
-            return Ok((score, format!("Test real eval score {score:.2} for {instruction}")));
+            return Ok((
+                score,
+                format!("Test real eval score {score:.2} for {instruction}"),
+            ));
         }
 
         if let Some(evaluator) = &real_eval.evaluator {
-            let scored = score_real_eval_candidate(
-                evaluator.as_ref(),
-                instruction,
-                &real_eval.benchmark_pool,
-            )
-            .await?;
+            let scored =
+                score_real_eval_candidate(evaluator.as_ref(), instruction, &real_eval.benchmark_pool).await?;
             return Ok((scored.score, scored.feedback));
         }
 
@@ -695,10 +700,10 @@ mod tests {
 
     #[test]
     fn real_eval_options_from_config_carries_threshold_and_pool() {
-        use chrono::NaiveDate;
         use crate::autooptimizer::config::{
             AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, GepaBenchmarkWindow,
         };
+        use chrono::NaiveDate;
 
         let mut cfg = AutoOptimizerConfig::default();
         cfg.gepa_real_eval = true;
@@ -799,9 +804,11 @@ mod tests {
         let responses = vec![
             "reflection".to_string(),
             "candidate with high llm but poor real result".to_string(),
-            r#"{"results":[{"score":0.90,"why":"sounds good"},{"score":0.90,"why":"sounds good"}]}"#.to_string(),
+            r#"{"results":[{"score":0.90,"why":"sounds good"},{"score":0.90,"why":"sounds good"}]}"#
+                .to_string(),
             "candidate with lower llm but better real result".to_string(),
-            r#"{"results":[{"score":0.80,"why":"still plausible"},{"score":0.80,"why":"still plausible"}]}"#.to_string(),
+            r#"{"results":[{"score":0.80,"why":"still plausible"},{"score":0.80,"why":"still plausible"}]}"#
+                .to_string(),
         ];
         let mut gepa = mock_gepa(responses);
         gepa.real_eval = Some(RealEvalOptions::test_with_scores(0.30, vec![0.20, 0.95]));

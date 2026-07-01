@@ -194,9 +194,15 @@ pub fn generate_scenario_rotation_pool(
         if base_start >= base_end {
             continue;
         }
-        let day_win = DayWindow { start: day_start, end: day_end };
+        let day_win = DayWindow {
+            start: day_start,
+            end: day_end,
+        };
         let day = synthesize_optimizer_day_scenario(&day_win, cadence_minutes, created_by);
-        let base_win = BaselineUntouchedWindow { start: base_start, end: base_end };
+        let base_win = BaselineUntouchedWindow {
+            start: base_start,
+            end: base_end,
+        };
         let baseline = synthesize_baseline_untouched_scenario(&day, &base_win)
             .with_context(|| format!("scenario_rotation: failed to synthesize baseline for window {i}"))?;
         pool.push((day, baseline));

@@ -43,7 +43,11 @@ pub struct RealEvalCache {
 
 impl RealEvalCache {
     pub fn get(&self, key: &str) -> Option<CachedRealEvalScore> {
-        self.inner.lock().expect("real eval cache poisoned").get(key).cloned()
+        self.inner
+            .lock()
+            .expect("real eval cache poisoned")
+            .get(key)
+            .cloned()
     }
 
     pub fn insert(&self, key: String, score: f64, feedback: String) {

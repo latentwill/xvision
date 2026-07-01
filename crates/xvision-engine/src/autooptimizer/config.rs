@@ -499,10 +499,7 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_gepa_benchmark_pool(
-    pool: &[GepaBenchmarkWindow],
-    max_window_days: i64,
-) -> anyhow::Result<()> {
+fn validate_gepa_benchmark_pool(pool: &[GepaBenchmarkWindow], max_window_days: i64) -> anyhow::Result<()> {
     let mut labels = std::collections::HashSet::new();
     for item in pool {
         if item.label.trim().is_empty() {
@@ -704,7 +701,9 @@ pub fn validate_scenario_rotation(
     // Project the max day-window span to check it won't exceed the cap.
     if let Some(day_window) = fallback_day {
         let range_start = rotation.date_range_start.unwrap_or(day_window.start);
-        let range_end = rotation.date_range_end.unwrap_or(_fallback_baseline.map_or(day_window.end, |b| b.end));
+        let range_end = rotation
+            .date_range_end
+            .unwrap_or(_fallback_baseline.map_or(day_window.end, |b| b.end));
         if range_start < range_end {
             // The last window starts at: range_start + (num_windows - 1) * stride_days
             let last_day_start = range_start
@@ -883,14 +882,9 @@ impl AutoOptimizerConfig {
             );
         }
         if self.gepa_real_eval && self.gepa_benchmark_pool.is_empty() {
-            bail!(
-                "gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true"
-            );
+            bail!("gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true");
         }
-        validate_gepa_benchmark_pool(
-            &self.gepa_benchmark_pool,
-            self.effective_max_window_days(),
-        )?;
+        validate_gepa_benchmark_pool(&self.gepa_benchmark_pool, self.effective_max_window_days())?;
         if self.mutator.model.is_empty() {
             bail!("mutator model must not be empty");
         }
@@ -913,7 +907,11 @@ impl AutoOptimizerConfig {
         // B19: same structural validation for the round-robin scenario_pool.
         validate_scenario_pool(&self.scenario_pool)?;
         // Scenario rotation validation.
-        validate_scenario_rotation(&self.scenario_rotation, Some(&self.day_window), Some(&self.baseline_untouched_window))?;
+        validate_scenario_rotation(
+            &self.scenario_rotation,
+            Some(&self.day_window),
+            Some(&self.baseline_untouched_window),
+        )?;
         Ok(())
     }
 }

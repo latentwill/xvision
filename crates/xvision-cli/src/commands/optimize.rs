@@ -50,11 +50,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufWriter, Read, Write};
+#[cfg(unix)]
+use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(unix)]
-use std::os::unix::io::FromRawFd;
 
 use chrono::Utc;
 use clap::{Args, Subcommand};
@@ -1457,22 +1457,27 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     let pool = open_and_migrate_db(&db_path).await?;
 
     // Resolve the target cycle_id from args or from the lock/session.
-    let target_id = resolve_cancel_target(&pool, args.cycle_id.as_deref(), args.session_id.as_deref()).await?;
+    let target_id =
+        resolve_cancel_target(&pool, args.cycle_id.as_deref(), args.session_id.as_deref()).await?;
 
     // Get the active lock holder, if any.
-    let held: Option<(String, String)> = sqlx::query_as(
-        "SELECT cycle_id, holder FROM optimizer_cycle_lock WHERE id = 1",
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
+    let held: Option<(String, String)> =
+        sqlx::query_as("SELECT cycle_id, holder FROM optimizer_cycle_lock WHERE id = 1")
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
 
     // Find the session_id associated with the target cycle, if any.
     let session_hint = session_for_cycle(&pool, &target_id).await;
-    let session_note = session_hint.as_deref().map(|s| format!(" (session {s})")).unwrap_or_default();
+    let session_note = session_hint
+        .as_deref()
+        .map(|s| format!(" (session {s})"))
+        .unwrap_or_default();
 
     match held {
-        Some((lock_cycle_id, holder)) if lock_cycle_id == target_id || lock_cycle_id.starts_with(&target_id) => {
+        Some((lock_cycle_id, holder))
+            if lock_cycle_id == target_id || lock_cycle_id.starts_with(&target_id) =>
+        {
             xvision_engine::autooptimizer::run_lock::force_clear(&pool)
                 .await
                 .map_err(|e| CliError::upstream(anyhow::anyhow!("clear cycle lock: {e}")))?;
@@ -1483,10 +1488,17 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
         }
         Some((lock_cycle_id, _)) => {
             let lock_session = session_for_cycle(&pool, &lock_cycle_id).await;
-            let lock_session_note = lock_session.as_deref().map(|s| format!(" (session {s})")).unwrap_or_default();
+            let lock_session_note = lock_session
+                .as_deref()
+                .map(|s| format!(" (session {s})"))
+                .unwrap_or_default();
             let tip = match (&lock_session, &session_hint) {
-                (Some(ls), _) => format!("cancel with: xvn optimize cancel {lock_cycle_id}    # session {ls}"),
-                (_, Some(ts)) => format!("cancel with: xvn optimize cancel {lock_cycle_id}    # requested session {ts}"),
+                (Some(ls), _) => {
+                    format!("cancel with: xvn optimize cancel {lock_cycle_id}    # session {ls}")
+                }
+                (_, Some(ts)) => {
+                    format!("cancel with: xvn optimize cancel {lock_cycle_id}    # requested session {ts}")
+                }
                 _ => format!("cancel with: xvn optimize cancel {lock_cycle_id}"),
             };
             return Err(CliError::usage(anyhow::anyhow!(
@@ -1518,15 +1530,14 @@ async fn resolve_cancel_target(
         return cycle_for_session(pool, sid).await;
     }
     // No-arg: cancel whatever holds the lock.
-    let held: Option<(String,)> = sqlx::query_as(
-        "SELECT cycle_id FROM optimizer_cycle_lock WHERE id = 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
+    let held: Option<(String,)> = sqlx::query_as("SELECT cycle_id FROM optimizer_cycle_lock WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("read cycle lock: {e}")))?;
     match held {
         Some((cid,)) => {
-            let session_note = session_for_cycle(pool, &cid).await
+            let session_note = session_for_cycle(pool, &cid)
+                .await
                 .map(|s| format!(" (session {s})"))
                 .unwrap_or_default();
             eprintln!("no cycle_id given — cancelling active cycle {cid}{session_note}");
@@ -1581,9 +1592,9 @@ async fn session_for_cycle(pool: &sqlx::SqlitePool, cycle_id: &str) -> Option<St
 /// `autooptimizer:mutations` memory namespace and warns when < 5 (too few for
 /// meaningful DSPy training).
 async fn run_explain_missing_data(args: ExplainMissingDataArgs) -> CliResult<()> {
-    let mem_path = args.memory_db.unwrap_or_else(|| {
-        xvision_engine::api::memory::default_memory_db_path()
-    });
+    let mem_path = args
+        .memory_db
+        .unwrap_or_else(|| xvision_engine::api::memory::default_memory_db_path());
     if !mem_path.exists() {
         println!(
             "No memory database found at {}. The optimizer has no demonstration \
@@ -3145,7 +3156,9 @@ impl OptimizerLogTee {
                 return Err(std::io::Error::last_os_error());
             }
             // Close the original write_fd (dup2 duplicated it to fd 2).
-            unsafe { libc::close(write_fd); }
+            unsafe {
+                libc::close(write_fd);
+            }
 
             // Build reader file handles (owned by the reader thread).
             let reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
@@ -3193,9 +3206,7 @@ impl OptimizerLogTee {
         {
             let _ = log_dir;
             let _ = session_id;
-            Ok(std::sync::Arc::new(std::sync::Mutex::new(Self {
-                jsonl_writer,
-            })))
+            Ok(std::sync::Arc::new(std::sync::Mutex::new(Self { jsonl_writer })))
         }
     }
 

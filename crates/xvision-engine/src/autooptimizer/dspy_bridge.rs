@@ -50,7 +50,6 @@ pub trait DspyBridge: Send + Sync {
     ) -> anyhow::Result<CompileResult>;
 }
 
-
 /// No-op bridge used when `dspy_enabled = false` or in tests that don't need
 /// the compile path.
 pub struct NullDspyBridge;
@@ -101,7 +100,9 @@ impl DspyBridge for LiveDspyBridge {
             steer it toward the wins and away from the failures. Output ONLY the instruction text."
             .to_string();
         let base_hint = match base_instruction.filter(|b| !b.is_empty()) {
-            Some(base) => format!("\n\nCurrent agent system prompt (improve FROM this, do not discard):\n{base}\n"),
+            Some(base) => {
+                format!("\n\nCurrent agent system prompt (improve FROM this, do not discard):\n{base}\n")
+            }
             None => String::new(),
         };
         let user_text = format!(
