@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
+
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -10,6 +12,28 @@ use crate::autooptimizer::config::GepaBenchmarkWindow;
 pub struct CachedRealEvalScore {
     pub score: f64,
     pub feedback: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RealEvalOutcome {
+    pub label: String,
+    pub parent_sharpe: f64,
+    pub child_sharpe: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RealEvalCandidateScore {
+    pub score: f64,
+    pub feedback: String,
+}
+
+#[async_trait]
+pub trait BenchmarkEvaluator: Send + Sync {
+    async fn evaluate(
+        &self,
+        instruction: &str,
+        benchmark: &GepaBenchmarkWindow,
+    ) -> anyhow::Result<RealEvalOutcome>;
 }
 
 #[derive(Clone, Default)]
@@ -34,6 +58,43 @@ pub fn normalized_delta_score(parent_metric: f64, child_metric: f64) -> f64 {
     let denom = parent_metric.abs().max(0.01);
     let normalized = (child_metric - parent_metric) / denom;
     ((normalized + 1.0) / 2.0).clamp(0.0, 1.0)
+}
+
+pub async fn score_real_eval_candidate(
+    evaluator: &dyn BenchmarkEvaluator,
+    instruction: &str,
+    pool: &[GepaBenchmarkWindow],
+) -> anyhow::Result<RealEvalCandidateScore> {
+    let mut scores = Vec::with_capacity(pool.len());
+    let mut parts = Vec::with_capacity(pool.len());
+
+    for benchmark in pool {
+        match evaluator.evaluate(instruction, benchmark).await {
+            Ok(outcome) => {
+                let score = normalized_delta_score(outcome.parent_sharpe, outcome.child_sharpe);
+                scores.push(score);
+                parts.push(format!(
+                    "{}: parent Sharpe {:.2}, child Sharpe {:.2}, score {:.2}",
+                    outcome.label, outcome.parent_sharpe, outcome.child_sharpe, score
+                ));
+            }
+            Err(e) => {
+                scores.push(0.0);
+                parts.push(format!("{}: real eval failed: {e}", benchmark.label));
+            }
+        }
+    }
+
+    let score = if scores.is_empty() {
+        0.0
+    } else {
+        scores.iter().sum::<f64>() / scores.len() as f64
+    };
+
+    Ok(RealEvalCandidateScore {
+        score,
+        feedback: format!("Real eval mean score {:.2}. {}", score, parts.join("; ")),
+    })
 }
 
 pub fn benchmark_pool_fingerprint(pool: &[GepaBenchmarkWindow]) -> String {
@@ -82,6 +143,81 @@ mod tests {
                 end: NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
             },
         }
+    }
+
+    #[derive(Clone)]
+    struct FakeBenchmarkEvaluator {
+        outcomes: Arc<Mutex<Vec<anyhow::Result<RealEvalOutcome>>>>,
+    }
+
+    impl FakeBenchmarkEvaluator {
+        fn new(outcomes: Vec<RealEvalOutcome>) -> Self {
+            Self {
+                outcomes: Arc::new(Mutex::new(outcomes.into_iter().map(Ok).collect())),
+            }
+        }
+
+        fn failing(message: &str) -> Self {
+            Self {
+                outcomes: Arc::new(Mutex::new(vec![Err(anyhow::anyhow!(message.to_owned()))])),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BenchmarkEvaluator for FakeBenchmarkEvaluator {
+        async fn evaluate(
+            &self,
+            _instruction: &str,
+            benchmark: &GepaBenchmarkWindow,
+        ) -> anyhow::Result<RealEvalOutcome> {
+            let outcome = self
+                .outcomes
+                .lock()
+                .expect("fake benchmark outcomes poisoned")
+                .remove(0)?;
+            Ok(RealEvalOutcome {
+                label: benchmark.label.clone(),
+                ..outcome
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn benchmark_scores_average_across_windows() {
+        let evaluator = FakeBenchmarkEvaluator::new(vec![
+            RealEvalOutcome {
+                label: "bull".into(),
+                parent_sharpe: 1.0,
+                child_sharpe: 1.5,
+            },
+            RealEvalOutcome {
+                label: "bear".into(),
+                parent_sharpe: 1.0,
+                child_sharpe: 0.5,
+            },
+        ]);
+        let pool = vec![bench("bull"), bench("bear")];
+        let scored = score_real_eval_candidate(&evaluator, "candidate instruction", &pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            scored.score, 0.5,
+            "one +0.5 normalized and one -0.5 normalized average to neutral"
+        );
+        assert!(scored.feedback.contains("bull"));
+        assert!(scored.feedback.contains("bear"));
+    }
+
+    #[tokio::test]
+    async fn benchmark_failure_returns_low_score_with_feedback() {
+        let evaluator = FakeBenchmarkEvaluator::failing("missing parent strategy");
+        let pool = vec![bench("bull")];
+        let scored = score_real_eval_candidate(&evaluator, "candidate instruction", &pool)
+            .await
+            .unwrap();
+        assert_eq!(scored.score, 0.0);
+        assert!(scored.feedback.contains("missing parent strategy"));
     }
 
     #[test]

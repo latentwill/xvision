@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::autooptimizer::config::GepaBenchmarkWindow;
 use crate::autooptimizer::dspy_bridge::{CompileResult, DspyBridge};
-use crate::autooptimizer::gepa_eval::{real_eval_cache_key, RealEvalCache};
+use crate::autooptimizer::gepa_eval::{
+    real_eval_cache_key, score_real_eval_candidate, BenchmarkEvaluator, RealEvalCache,
+};
 use crate::autooptimizer::pattern_snapshot::{Provenance, SnapshotDemo};
 
 const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated trading-strategy \
@@ -31,17 +33,23 @@ pub struct RealEvalOptions {
     pub min_fast_score: f64,
     pub benchmark_pool: Vec<GepaBenchmarkWindow>,
     pub cache: RealEvalCache,
+    pub evaluator: Option<Arc<dyn BenchmarkEvaluator>>,
     #[cfg(test)]
     test_scores: Option<Arc<std::sync::Mutex<Vec<f64>>>>,
 }
 
 impl RealEvalOptions {
-    pub fn new(min_fast_score: f64, benchmark_pool: Vec<GepaBenchmarkWindow>) -> Self {
+    pub fn new(
+        min_fast_score: f64,
+        benchmark_pool: Vec<GepaBenchmarkWindow>,
+        evaluator: Option<Arc<dyn BenchmarkEvaluator>>,
+    ) -> Self {
         Self {
             enabled: true,
             min_fast_score,
             benchmark_pool,
             cache: RealEvalCache::default(),
+            evaluator,
             #[cfg(test)]
             test_scores: None,
         }
@@ -54,6 +62,7 @@ impl RealEvalOptions {
             min_fast_score,
             benchmark_pool: vec![],
             cache: RealEvalCache::default(),
+            evaluator: None,
             test_scores: Some(Arc::new(std::sync::Mutex::new(scores))),
         }
     }
@@ -500,20 +509,30 @@ impl GepaBridge {
     async fn real_eval_score_candidate(
         &self,
         _namespace: &str,
-        _instruction: &str,
-        _real_eval: &RealEvalOptions,
+        instruction: &str,
+        real_eval: &RealEvalOptions,
     ) -> anyhow::Result<(f64, String)> {
         #[cfg(test)]
-        if let Some(scores) = &_real_eval.test_scores {
+        if let Some(scores) = &real_eval.test_scores {
             let score = scores
                 .lock()
                 .expect("test scores poisoned")
                 .remove(0)
                 .clamp(0.0, 1.0);
-            return Ok((score, format!("Test real eval score {score:.2} for {_instruction}")));
+            return Ok((score, format!("Test real eval score {score:.2} for {instruction}")));
         }
 
-        anyhow::bail!("gepa_real_eval scorer is not wired")
+        if let Some(evaluator) = &real_eval.evaluator {
+            let scored = score_real_eval_candidate(
+                evaluator.as_ref(),
+                instruction,
+                &real_eval.benchmark_pool,
+            )
+            .await?;
+            return Ok((scored.score, scored.feedback));
+        }
+
+        anyhow::bail!("gepa_real_eval=true but no benchmark evaluator is configured")
     }
 
     /// Score an instruction against specific observation indices. Returns scores
