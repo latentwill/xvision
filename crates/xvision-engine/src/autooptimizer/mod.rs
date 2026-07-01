@@ -37,6 +37,7 @@ pub mod events_store;
 pub mod evidence;
 pub mod gate;
 pub mod gepa;
+pub mod gepa_eval;
 pub mod inversion;
 pub mod judge;
 pub mod lineage;
