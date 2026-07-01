@@ -453,7 +453,7 @@ pub async fn start_cycle(
                     skip_perfect: true,
                     use_merge: true,
                     merge_frequency: 3,
-                    real_eval: None,
+                    real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config(&cfg),
                 }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),

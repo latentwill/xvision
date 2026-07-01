@@ -68,6 +68,18 @@ impl RealEvalOptions {
     }
 }
 
+pub fn real_eval_options_from_config(
+    cfg: &crate::autooptimizer::config::AutoOptimizerConfig,
+) -> Option<RealEvalOptions> {
+    cfg.gepa_real_eval.then(|| {
+        RealEvalOptions::new(
+            cfg.gepa_real_eval_min_llm_score,
+            cfg.gepa_benchmark_pool.clone(),
+            None,
+        )
+    })
+}
+
 pub struct GepaBridge {
     pub dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     pub model: String,
@@ -673,6 +685,44 @@ mod tests {
             merge_frequency: 3,
             real_eval: None,
         }
+    }
+
+    #[test]
+    fn real_eval_options_from_config_respects_disabled_default() {
+        let cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
+        assert!(real_eval_options_from_config(&cfg).is_none());
+    }
+
+    #[test]
+    fn real_eval_options_from_config_carries_threshold_and_pool() {
+        use chrono::NaiveDate;
+        use crate::autooptimizer::config::{
+            AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, GepaBenchmarkWindow,
+        };
+
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.gepa_real_eval = true;
+        cfg.gepa_real_eval_min_llm_score = 0.42;
+        cfg.gepa_benchmark_pool = vec![GepaBenchmarkWindow {
+            label: "bench-a".into(),
+            parent_strategy_id: "parent-a".into(),
+            day: DayWindow {
+                start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            },
+            baseline: BaselineUntouchedWindow {
+                start: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+                end: NaiveDate::from_ymd_opt(2025, 2, 1).unwrap(),
+            },
+        }];
+
+        let options = real_eval_options_from_config(&cfg).expect("enabled real eval options");
+        assert_eq!(options.min_fast_score, 0.42);
+        assert_eq!(options.benchmark_pool.len(), 1);
+        assert!(
+            options.evaluator.is_none(),
+            "production evaluator is wired in a later task"
+        );
     }
 
     #[tokio::test]
