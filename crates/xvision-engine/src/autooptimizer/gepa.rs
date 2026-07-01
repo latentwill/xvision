@@ -378,8 +378,8 @@ impl DspyBridge for GepaBridge {
                 // Pick two best candidates by frontier count.
                 frontier_candidates.sort_by(|a, b| {
                     b.2.cmp(&a.2).then_with(|| {
-                        a.1.mean_on_indices(&active_indices)
-                            .partial_cmp(&b.1.mean_on_indices(&active_indices))
+                        b.1.mean_on_indices(&active_indices)
+                            .partial_cmp(&a.1.mean_on_indices(&active_indices))
                             .unwrap()
                     })
                 });
