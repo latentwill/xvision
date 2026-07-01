@@ -257,28 +257,33 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
 // Schema helper (used by tests that don't go through ApiContext::open)
 // ---------------------------------------------------------------------------
 
-/// Provision the evidence tables from migration 058. Idempotent — uses
-/// `CREATE TABLE IF NOT EXISTS`. Called in tests to set up an in-memory pool.
-pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
-    let sql = include_str!("../../migrations/058_autooptimizer_evidence.sql");
-    // The file contains multiple statements separated by semicolons; split and
-    // execute each one individually (SQLite can't batch multi-statement queries
-    // via plain `sqlx::query`).
-    for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-        sqlx::query(stmt).execute(pool).await?;
-    }
-    // Migration 061: additive edge-metric columns on the gate-records table.
-    // Strip `--` comment lines before splitting so leading comments don't get
-    // glued onto the first ALTER and dropped.
-    let baseline_sql = include_str!("../../migrations/061_autooptimizer_random_baseline.sql");
-    let baseline_sql: String = baseline_sql
+async fn apply_schema_sql(pool: &SqlitePool, sql: &str) -> Result<()> {
+    let sql: String = sql
         .lines()
         .filter(|l| !l.trim_start().starts_with("--"))
         .collect::<Vec<_>>()
         .join("\n");
-    for stmt in baseline_sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+
+    for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         sqlx::query(stmt).execute(pool).await?;
     }
+
+    Ok(())
+}
+
+/// Provision the evidence tables and additive gate-record columns used by this
+/// module's tests. Mirrors migrations 058, 061, 075, and 076. Idempotent where
+/// the underlying SQL is idempotent.
+pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
+    for sql in [
+        include_str!("../../migrations/058_autooptimizer_evidence.sql"),
+        include_str!("../../migrations/061_autooptimizer_random_baseline.sql"),
+        include_str!("../../migrations/075_autooptimizer_gate_trade_counts.sql"),
+        include_str!("../../migrations/076_autooptimizer_gate_realized_return.sql"),
+    ] {
+        apply_schema_sql(pool, sql).await?;
+    }
+
     Ok(())
 }
 
@@ -403,6 +408,12 @@ mod tests {
                 edge_over_random: Some(0.4),
                 parent_edge: Some(0.1),
                 edge_delta: Some(0.3),
+                parent_n_trades: None,
+                child_n_trades: None,
+                min_trade_retention_ratio: None,
+                parent_realized_return_ratio: None,
+                child_realized_return_ratio: None,
+                gate_min_realized_return_ratio: None,
             },
         )
         .await
@@ -458,6 +469,12 @@ mod tests {
                     edge_over_random: None,
                     parent_edge: None,
                     edge_delta: None,
+                    parent_n_trades: None,
+                    child_n_trades: None,
+                    min_trade_retention_ratio: None,
+                    parent_realized_return_ratio: None,
+                    child_realized_return_ratio: None,
+                    gate_min_realized_return_ratio: None,
                 },
             )
             .await

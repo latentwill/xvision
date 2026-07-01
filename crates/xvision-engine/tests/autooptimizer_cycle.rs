@@ -406,6 +406,95 @@ async fn run_cycle_smoke() {
     let _ = Ulid::new(); // suppress unused import lint
 }
 
+#[tokio::test]
+async fn run_cycle_errors_when_selected_parent_strategy_missing() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("strategy must serialise"));
+    let root_node = LineageNode {
+        bundle_hash,
+        parent_hash: None,
+        gate_verdict: GateVerdict::Pass,
+        status: LineageStatus::Active,
+        cycle_id: None,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        diversity_score: None,
+    };
+    LineageStore::new(pool.clone())
+        .insert(&root_node)
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("create temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+    let dispatch = Arc::new(MockDispatch::sequence(Vec::new()));
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+    let paper_tester = StubPaperTester {
+        metrics: metrics_stub(0.9),
+    };
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 1,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario: make_scenario("day-missing-parent-strategy", 2024, 2025),
+        baseline_scenario: make_scenario("baseline-missing-parent-strategy", 2025, 2026),
+        parent_strategies: HashMap::new(),
+        explicit_parent_hashes: Vec::new(),
+        objective: Default::default(),
+        regime_set: vec![],
+        scenario_pool: vec![],
+        max_output_tokens: None,
+        max_consecutive_errors: 3,
+    };
+
+    let result = run_cycle(
+        &pool,
+        &blob_store,
+        &AutoOptimizerConfig::default(),
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &paper_tester,
+        |_| {},
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    let err = match result {
+        Ok(_) => panic!("missing selected parent strategy must abort run_cycle"),
+        Err(err) => err.to_string(),
+    };
+
+    assert!(
+        err.contains(&bundle_hash.to_hex()),
+        "error must name selected parent hash: {err}"
+    );
+    assert!(
+        err.contains("missing from parent_strategies"),
+        "error must identify parent_strategies mismatch: {err}"
+    );
+}
+
 // ── F20: a real risk-param mutation is gated on backtests and KEPT ────────────
 
 /// Paper tester whose Sharpe tracks the strategy's `risk.stop_loss_atr_multiple`

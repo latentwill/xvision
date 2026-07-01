@@ -114,6 +114,17 @@ pub struct CycleResult {
     pub errored_count: usize,
 }
 
+fn resolve_selected_parent_strategy<'a>(
+    cycle_config: &'a CycleConfig,
+    parent_node: &LineageNode,
+) -> Result<&'a Strategy> {
+    let parent_hash = parent_node.bundle_hash.to_hex();
+    cycle_config
+        .parent_strategies
+        .get(&parent_hash)
+        .with_context(|| format!("selected parent {parent_hash} missing from parent_strategies"))
+}
+
 struct MutationOutcome {
     child: Strategy,
     diff: MutationDiff,
@@ -365,41 +376,40 @@ pub async fn run_cycle(
             break;
         }
         let ph = parent_node.bundle_hash.to_hex();
-        if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
-            progress(CycleProgressEvent::ParentSelected {
-                session_id: String::new(),
-                cycle_id: cycle_id.clone(),
-                parent_hash: ph,
-            });
-            let (active, suspect, rejected, nc, ec) = process_parent_mutations(
-                pool,
-                strategy_blob_store,
-                parent_node,
-                parent_strategy,
-                &cycle_id,
-                min_improvement,
-                holdout_min_improvement,
-                cycle_config,
-                config,
-                mutator,
-                judge,
-                paper_tester,
-                &baseline_cache,
-                &progress,
-                &mut findings_by_node,
-                dsr_prefix.as_deref(),
-                dspy_ctx,
-                memory,
-                cancel.as_ref(),
-                pause.as_ref(),
-            )
-            .await?;
-            active_nodes.extend(active);
-            suspect_nodes.extend(suspect);
-            rejected_nodes.extend(rejected);
-            no_candidate_count += nc;
-            errored_count += ec;
-        }
+        let parent_strategy = resolve_selected_parent_strategy(cycle_config, parent_node)?;
+        progress(CycleProgressEvent::ParentSelected {
+            session_id: String::new(),
+            cycle_id: cycle_id.clone(),
+            parent_hash: ph,
+        });
+        let (active, suspect, rejected, nc, ec) = process_parent_mutations(
+            pool,
+            strategy_blob_store,
+            parent_node,
+            parent_strategy,
+            &cycle_id,
+            min_improvement,
+            holdout_min_improvement,
+            cycle_config,
+            config,
+            mutator,
+            judge,
+            paper_tester,
+            &baseline_cache,
+            &progress,
+            &mut findings_by_node,
+            dsr_prefix.as_deref(),
+            dspy_ctx,
+            memory,
+            cancel.as_ref(),
+            pause.as_ref(),
+        )
+        .await?;
+        active_nodes.extend(active);
+        suspect_nodes.extend(suspect);
+        rejected_nodes.extend(rejected);
+        no_candidate_count += nc;
+        errored_count += ec;
     }
 
     // run-7: when this cycle produced NO gated candidate (every parent yielded
@@ -2314,6 +2324,36 @@ mod tests {
             honesty_check_warranted(&[], &[], &kept),
             "a rejected candidate warrants the check"
         );
+    }
+
+    #[test]
+    fn selected_parent_without_strategy_errors_instead_of_skipping_cycle() {
+        let cfg = CycleConfig {
+            num_parents: 1,
+            mutations_per_parent: 1,
+            sabotage_seed: 0,
+            judge_provider: "test".into(),
+            judge_model: "test".into(),
+            prompt_version: "test".into(),
+            sustained_no_pass_cycles: 0,
+            day_scenario: pool_scenario("day", 2025),
+            baseline_scenario: pool_scenario("baseline", 2026),
+            parent_strategies: HashMap::new(),
+            explicit_parent_hashes: Vec::new(),
+            objective: Objective::Sharpe,
+            regime_set: Vec::new(),
+            scenario_pool: Vec::new(),
+            max_output_tokens: None,
+            max_consecutive_errors: 3,
+        };
+        let selected = active_node();
+
+        let err = resolve_selected_parent_strategy(&cfg, &selected)
+            .expect_err("missing selected parent strategy must not be silently skipped")
+            .to_string();
+
+        assert!(err.contains(&selected.bundle_hash.to_hex()));
+        assert!(err.contains("missing from parent_strategies"));
     }
 
     /// Fix 1: the collision-guard predicate must return true for both Rejected
