@@ -110,6 +110,28 @@ target/
 .metaswarm/
 .xvn-dev/
 
+# Zenith local harness artifacts
+/.agents/skills/agent-browser/
+/.agents/skills/benchmark-validator/
+/.agents/skills/engineering-mission-playbook/
+/.agents/skills/optimization-mission-playbook/
+/.agents/skills/scrutiny-validator/
+/.agents/skills/user-testing-validator/
+/.agents/skills/zenith/
+/.claude/agents/
+/.claude/commands/zenith.md
+/.claude/orchestrator_prompt.md
+/.claude/skills/agent-browser/
+/.claude/skills/benchmark-validator/
+/.claude/skills/engineering-mission-playbook/
+/.claude/skills/optimization-mission-playbook/
+/.claude/skills/scrutiny-validator/
+/.claude/skills/user-testing-validator/
+/.claude/skills/zenith/
+/.codex/
+/.hermes/
+/.mcp.json
+
 # Generated graph output (graphify tool) — rebuildable, large
 /graphify-out/
 
