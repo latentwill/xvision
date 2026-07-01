@@ -42,13 +42,17 @@ pub fn benchmark_pool_fingerprint(pool: &[GepaBenchmarkWindow]) -> String {
 
 pub fn real_eval_cache_key(namespace: &str, instruction: &str, pool: &[GepaBenchmarkWindow]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"xvision.gepa.real-eval.v1\0");
-    hasher.update(namespace.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(instruction.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(benchmark_pool_fingerprint(pool).as_bytes());
+    update_framed(&mut hasher, b"xvision.gepa.real-eval.v2");
+    update_framed(&mut hasher, namespace.as_bytes());
+    update_framed(&mut hasher, instruction.as_bytes());
+    update_framed(&mut hasher, benchmark_pool_fingerprint(pool).as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn update_framed(hasher: &mut Sha256, field: &[u8]) {
+    let len = u64::try_from(field.len()).expect("cache key field length fits in u64");
+    hasher.update(len.to_be_bytes());
+    hasher.update(field);
 }
 
 fn hash_json<T: Serialize>(value: &T) -> String {
@@ -104,6 +108,16 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_eq!(a.len(), 64, "sha256 hex cache key");
+    }
+
+    #[test]
+    fn real_eval_cache_key_frames_nul_containing_fields_unambiguously() {
+        let pool = vec![bench("a")];
+
+        let namespace_contains_boundary = real_eval_cache_key("a\0b", "c", &pool);
+        let instruction_contains_boundary = real_eval_cache_key("a", "b\0c", &pool);
+
+        assert_ne!(namespace_contains_boundary, instruction_contains_boundary);
     }
 
     #[test]
