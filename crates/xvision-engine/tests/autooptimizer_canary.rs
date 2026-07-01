@@ -159,6 +159,10 @@ fn gate_builder(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Default::default(),
+        parent_n_trades: parent_day.n_trades,
+        child_n_trades: child_day.n_trades,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -239,6 +243,10 @@ fn gate_builder_total_return(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Objective::TotalReturn,
+        parent_n_trades: parent_day.n_trades,
+        child_n_trades: child_day.n_trades,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -336,11 +344,11 @@ async fn run_honesty_check_degrades_genuine_canary_error_to_neutral() {
 #[test]
 fn build_sabotaged_strategy_is_deterministic() {
     let base = make_strategy();
-    let (a, av) = build_sabotaged_strategy(&base, 42);
-    let (b, bv) = build_sabotaged_strategy(&base, 42);
+    let (a, av) = build_sabotaged_strategy(&base, 0);
+    let (b, bv) = build_sabotaged_strategy(&base, 0);
     assert_eq!(a, b, "same seed must produce identical sabotaged strategy");
     assert_eq!(av, bv, "same seed must produce the same sabotage variant");
-    // 42 % 3 == 0 → kill-trades (zeroed position sizing).
+    // 0 % 4 == 0 → kill-trades (zeroed position sizing).
     assert_eq!(av.as_str(), "kill-trades");
 }
 

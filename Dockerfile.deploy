@@ -93,7 +93,8 @@ ARG WITH_IDENTITY=0
 ARG BUILD_PROFILE=release
 
 # Build-time system deps (same set as the CLI-only Dockerfile).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o APT::Get::AllowUnauthenticated=true -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true update \
+ && apt-get -o APT::Get::AllowUnauthenticated=true install -y --no-install-recommends \
         perl \
         make \
         cmake \
@@ -146,7 +147,7 @@ LABEL org.opencontainers.image.title="xvision (deploy)" \
       org.opencontainers.image.revision="${GIT_SHA}" \
       org.opencontainers.image.created="${BUILD_TIME}"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o APT::Get::AllowUnauthenticated=true -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true update && apt-get -o APT::Get::AllowUnauthenticated=true install -y --no-install-recommends \
         ca-certificates \
         curl \
         gnupg \

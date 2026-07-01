@@ -285,7 +285,12 @@ mod tests {
 
     #[async_trait]
     impl DspyBridge for RecordingBridge {
-        async fn compile(&self, _ns: &str, obs: &[(String, String)], _base: Option<&str>) -> anyhow::Result<CompileResult> {
+        async fn compile(
+            &self,
+            _ns: &str,
+            obs: &[(String, String)],
+            _base: Option<&str>,
+        ) -> anyhow::Result<CompileResult> {
             *self.called.lock().expect("mutex poisoned") = true;
             Ok(CompileResult {
                 instruction: "compiled instruction from recording bridge".to_string(),

@@ -28,15 +28,42 @@ const PROMPT_TEMPLATE: &str = include_str!("../../prompts/autooptimizer/mutator-
 /// terminology lock; never collapses to bare `optimizer`.
 pub const MUTATIONS_NS: &str = "autooptimizer:mutations";
 
+/// Gate evidence recorded alongside an optimizer outcome memory line.
+///
+/// This is intentionally compact text input for the next experiment writer, not
+/// an alternate gate. The deterministic gate remains authoritative; this just
+/// keeps recalled memories from losing the real rejection dimension (holdout,
+/// drawdown, trades, realized return) behind a generic `ΔSharpe` summary.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MutationGateContext<'a> {
+    pub objective_label: &'a str,
+    pub delta_day: Option<f64>,
+    pub delta_holdout: Option<f64>,
+    pub drawdown_ratio: Option<f64>,
+    pub parent_n_trades: Option<u32>,
+    pub child_n_trades: Option<u32>,
+    pub min_trade_retention_ratio: Option<f64>,
+    pub parent_realized_return_ratio: Option<f64>,
+    pub child_realized_return_ratio: Option<f64>,
+    pub min_realized_return_ratio: Option<f64>,
+    pub reason: Option<&'a str>,
+}
+
 /// A compact, human-readable one-line summary of a gated candidate's outcome,
 /// suitable for recording as an Observation in [`MUTATIONS_NS`] (and later
 /// recall once distilled into a Pattern).
 ///
 /// For a single-param change it reads e.g.
-/// `param risk.stop_loss_atr_multiple 2.0→3.5 ⇒ ΔSharpe -0.40 (rejected)`; for
-/// prose/tool diffs it falls back to a short kind-based summary plus the same
-/// `⇒ ΔSharpe {:+.2} ({status_label})` suffix. Always a single line.
-pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_label: &str) -> String {
+/// `param risk.stop_loss_atr_multiple 2.0→3.5 ⇒ ΔSharpe -0.40 (rejected)`; when
+/// gate evidence is available, it appends the objective deltas, guard ratios, and
+/// rejection reason so future proposal prompts learn the real failure mode.
+/// Always a single line.
+pub fn describe_mutation_outcome(
+    diff: &MutationDiff,
+    delta_sharpe: f64,
+    status_label: &str,
+    gate: Option<MutationGateContext<'_>>,
+) -> String {
     let lever = match diff.kind {
         MutationKind::Param => {
             if let Some(p) = diff.params.first() {
@@ -98,9 +125,59 @@ pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_
             }
         }
     };
+    let mut summary = format!("{lever} ⇒ ΔSharpe {delta_sharpe:+.2} ({status_label})");
+    if let Some(gate) = gate {
+        summary.push_str(&format_gate_context(gate));
+    }
     // Strip any embedded newlines defensively so the result is always one line.
-    let lever = lever.replace('\n', " ");
-    format!("{lever} ⇒ ΔSharpe {delta_sharpe:+.2} ({status_label})")
+    summary.replace('\n', " ")
+}
+
+fn format_gate_context(gate: MutationGateContext<'_>) -> String {
+    let mut parts = Vec::new();
+    if let Some(delta_day) = gate.delta_day {
+        parts.push(format!("{} Δday {delta_day:+.4}", gate.objective_label));
+    }
+    if let Some(delta_holdout) = gate.delta_holdout {
+        parts.push(format!("Δholdout {delta_holdout:+.4}"));
+    }
+    if let Some(drawdown_ratio) = gate.drawdown_ratio {
+        parts.push(format!("drawdown {drawdown_ratio:.2}×"));
+    }
+    if let (Some(parent), Some(child), Some(ratio)) = (
+        gate.parent_n_trades,
+        gate.child_n_trades,
+        gate.min_trade_retention_ratio,
+    ) {
+        parts.push(format!("trades {child}/{parent} (min {:.0}%)", ratio * 100.0));
+    }
+    if let (Some(child_rr), Some(min_rr)) = (gate.child_realized_return_ratio, gate.min_realized_return_ratio)
+    {
+        match gate.parent_realized_return_ratio {
+            Some(parent_rr) => parts.push(format!(
+                "realized child {child_rr:.2} vs parent {parent_rr:.2} (min {min_rr:.2})"
+            )),
+            None => parts.push(format!("realized child {child_rr:.2} (min {min_rr:.2})")),
+        }
+    }
+    if let Some(reason) = gate.reason.map(compact_reason).filter(|s| !s.is_empty()) {
+        parts.push(format!("reason: {reason}"));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("; gate {}", parts.join(", "))
+    }
+}
+
+fn compact_reason(reason: &str) -> String {
+    const MAX_REASON_CHARS: usize = 240;
+    let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = one_line.chars().take(MAX_REASON_CHARS).collect();
+    if one_line.chars().count() > MAX_REASON_CHARS {
+        out.push('…');
+    }
+    out
 }
 
 /// Render a JSON scalar compactly for the outcome descriptor (drops quotes on
@@ -366,11 +443,8 @@ pub const RISK_PARAM_FIELDS: &[&str] = &[
 /// These values are NEVER tunable — they are engine-level safety limits.
 /// The optimizer should only tune decision logic, conviction thresholds,
 /// signal interpretation, and action selection heuristics.
-pub const PROTECTED_ENGINE_PARAMS: &[&str] = &[
-    "max_leverage",
-    "stop_loss_atr_multiple",
-    "daily_loss_kill_pct",
-];
+pub const PROTECTED_ENGINE_PARAMS: &[&str] =
+    &["max_leverage", "stop_loss_atr_multiple", "daily_loss_kill_pct"];
 
 /// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
 /// `<field>` naming a known risk knob — return the field name; otherwise `None`.
@@ -1649,14 +1723,13 @@ fn build_user_payload(
         )
     };
 
-    // P3: advisory cross-run/cross-framework memory. When recall surfaced prior
-    // optimizer outcomes on similar strategies, prepend them before the final
-    // instruction so the writer can build on wins and avoid repeating failures.
-    // This is advisory ONLY — it does not relax the F32 exploration directive
-    // above or the hard avoid-set (exact-repeat dedup) the orchestrator enforces.
+    // P3 + low-trade cycle context: advisory context may include recalled prior
+    // outcomes and current-window sample-size warnings. It is advisory ONLY — it
+    // does not relax the F32 exploration directive above or the hard avoid-set
+    // (exact-repeat dedup) the orchestrator enforces.
     let memory_section = match memory_context {
         Some(ctx) if !ctx.trim().is_empty() => format!(
-            "\n\nPrior optimizer outcomes on similar strategies (advisory — avoid repeating failures, build on wins):\n{ctx}"
+            "\n\nAdvisory optimizer context (do not override allowed experiment kinds or JSON schema):\n{ctx}"
         ),
         _ => String::new(),
     };
@@ -1908,10 +1981,10 @@ mod tests {
             true,
         );
         assert!(
-            with.contains("Prior optimizer outcomes on similar strategies"),
-            "memory section header missing: {with}"
+            with.contains("Advisory optimizer context"),
+            "advisory section header missing: {with}"
         );
-        assert!(with.contains(ctx), "memory context text missing: {with}");
+        assert!(with.contains(ctx), "advisory context text missing: {with}");
         // F32 exploration directive must still be present alongside memory.
         assert!(
             with.contains("Exploration directive"),
@@ -1934,8 +2007,8 @@ mod tests {
             true,
         );
         assert!(
-            !without.contains("Prior optimizer outcomes on similar strategies"),
-            "memory section must be absent when None: {without}"
+            !without.contains("Advisory optimizer context"),
+            "advisory section must be absent when None: {without}"
         );
         assert!(
             without.contains("Exploration directive"),
@@ -1957,11 +2030,10 @@ mod tests {
             true,
         );
         assert!(
-            !empty.contains("Prior optimizer outcomes on similar strategies"),
-            "blank memory context must be treated as absent: {empty}"
+            !empty.contains("Advisory optimizer context"),
+            "blank advisory context must be treated as absent: {empty}"
         );
     }
-
     #[test]
     fn build_user_payload_includes_filter_paths_when_filter_kind_allowed() {
         let kinds = vec!["filter".to_string(), "param".to_string()];
@@ -2634,11 +2706,51 @@ mod tests {
             vec![],
             vec![],
         );
-        let desc = describe_mutation_outcome(&diff, -0.40, "rejected");
+        let desc = describe_mutation_outcome(&diff, -0.40, "rejected", None);
         assert!(desc.contains("risk.stop_loss_atr_multiple"), "{desc}");
         assert!(desc.contains("2.0→3.5"), "{desc}");
         assert!(desc.contains("ΔSharpe -0.40"), "{desc}");
         assert!(desc.contains("(rejected)"), "{desc}");
+        assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
+    }
+
+    #[test]
+    fn describe_mutation_outcome_includes_gate_failure_dimensions() {
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "risk.max_position_pct_nav".into(),
+                before: serde_json::json!(0.25),
+                after: serde_json::json!(0.50),
+            }],
+            vec![],
+            vec![],
+        );
+        let desc = describe_mutation_outcome(
+            &diff,
+            2.83,
+            "rejected",
+            Some(MutationGateContext {
+                objective_label: "sharpe",
+                delta_day: Some(2.83),
+                delta_holdout: Some(-1.12),
+                drawdown_ratio: Some(1.82),
+                parent_n_trades: Some(26),
+                child_n_trades: Some(18),
+                min_trade_retention_ratio: Some(0.5),
+                parent_realized_return_ratio: Some(0.70),
+                child_realized_return_ratio: Some(0.20),
+                min_realized_return_ratio: Some(0.25),
+                reason: Some(
+                    "baseline-untouched-score (sharpe) improved by -1.120000; max drawdown deteriorated",
+                ),
+            }),
+        );
+        assert!(desc.contains("sharpe Δday +2.8300"), "{desc}");
+        assert!(desc.contains("Δholdout -1.1200"), "{desc}");
+        assert!(desc.contains("drawdown 1.82×"), "{desc}");
+        assert!(desc.contains("trades 18/26"), "{desc}");
+        assert!(desc.contains("realized child 0.20"), "{desc}");
+        assert!(desc.contains("baseline-untouched-score"), "{desc}");
         assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
     }
 

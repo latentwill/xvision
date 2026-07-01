@@ -128,6 +128,7 @@ async fn seed_run(store: &RunStore, metrics: MetricsSummary) -> Run {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: None,
         })
         .await
         .unwrap();

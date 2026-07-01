@@ -11,7 +11,8 @@ use std::sync::Arc;
 use xvision_engine::agent::memory_recorder::MemoryRecorder;
 use xvision_engine::agent::memory_recorder::RecallResult;
 use xvision_engine::autooptimizer::mutator::{
-    describe_mutation_outcome, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff, MUTATIONS_NS,
+    describe_mutation_outcome, MutationDiff, MutationGateContext, MutationKind, ParamChange, ProseEdit,
+    ToolDiff, MUTATIONS_NS,
 };
 
 use xvision_memory::store::MemoryStore;
@@ -38,7 +39,7 @@ fn param_diff() -> MutationDiff {
 
 #[test]
 fn describe_mutation_outcome_param_change_is_compact() {
-    let desc = describe_mutation_outcome(&param_diff(), -0.40, "rejected");
+    let desc = describe_mutation_outcome(&param_diff(), -0.40, "rejected", None);
     // Compact one-liner including the key, the from→to, the ΔSharpe, status.
     assert!(
         desc.contains("risk.stop_loss_atr_multiple"),
@@ -74,7 +75,7 @@ fn describe_mutation_outcome_prose_and_tools() {
         create_filter: None,
         rationale: "x".into(),
     };
-    let d = describe_mutation_outcome(&prose, 0.12, "active");
+    let d = describe_mutation_outcome(&prose, 0.12, "active", None);
     assert!(d.contains("ΔSharpe"), "prose summary has ΔSharpe: {d}");
     assert!(d.contains("active"), "prose summary has status: {d}");
     assert_eq!(d.lines().count(), 1);
@@ -91,9 +92,39 @@ fn describe_mutation_outcome_prose_and_tools() {
         create_filter: None,
         rationale: "x".into(),
     };
-    let t = describe_mutation_outcome(&tools, -0.05, "rejected");
+    let t = describe_mutation_outcome(&tools, -0.05, "rejected", None);
     assert!(t.contains("ΔSharpe"), "tool summary has ΔSharpe: {t}");
     assert_eq!(t.lines().count(), 1);
+}
+
+#[test]
+fn describe_mutation_outcome_preserves_gate_failure_reason() {
+    let desc = describe_mutation_outcome(
+        &param_diff(),
+        2.83,
+        "rejected",
+        Some(MutationGateContext {
+            objective_label: "sharpe",
+            delta_day: Some(2.83),
+            delta_holdout: Some(-1.12),
+            drawdown_ratio: Some(1.82),
+            parent_n_trades: Some(26),
+            child_n_trades: Some(18),
+            min_trade_retention_ratio: Some(0.5),
+            parent_realized_return_ratio: None,
+            child_realized_return_ratio: Some(0.2),
+            min_realized_return_ratio: Some(0.25),
+            reason: Some("baseline-untouched-score worsened\nand max drawdown deteriorated"),
+        }),
+    );
+
+    assert!(desc.contains("Δholdout -1.1200"), "{desc}");
+    assert!(desc.contains("drawdown 1.82×"), "{desc}");
+    assert!(
+        desc.contains("reason: baseline-untouched-score worsened and max drawdown deteriorated"),
+        "{desc}"
+    );
+    assert_eq!(desc.lines().count(), 1, "must be a single line: {desc}");
 }
 
 #[tokio::test]

@@ -257,8 +257,9 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
 // Schema helper (used by tests that don't go through ApiContext::open)
 // ---------------------------------------------------------------------------
 
-/// Provision the evidence tables from migration 058. Idempotent — uses
-/// `CREATE TABLE IF NOT EXISTS`. Called in tests to set up an in-memory pool.
+/// Provision the evidence tables from additive evidence migrations. Idempotent
+/// for fresh test databases because each migration creates or extends the table
+/// once in order. Called in tests that don't go through `ApiContext::open`.
 pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
     let sql = include_str!("../../migrations/058_autooptimizer_evidence.sql");
     // The file contains multiple statements separated by semicolons; split and
@@ -278,6 +279,19 @@ pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
         .join("\n");
     for stmt in baseline_sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         sqlx::query(stmt).execute(pool).await?;
+    }
+    for migration_sql in [
+        include_str!("../../migrations/075_autooptimizer_gate_trade_counts.sql"),
+        include_str!("../../migrations/076_autooptimizer_gate_realized_return.sql"),
+    ] {
+        let migration_sql: String = migration_sql
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for stmt in migration_sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            sqlx::query(stmt).execute(pool).await?;
+        }
     }
     Ok(())
 }
@@ -403,6 +417,12 @@ mod tests {
                 edge_over_random: Some(0.4),
                 parent_edge: Some(0.1),
                 edge_delta: Some(0.3),
+                parent_n_trades: Some(12),
+                child_n_trades: Some(8),
+                min_trade_retention_ratio: Some(0.5),
+                parent_realized_return_ratio: Some(0.6),
+                child_realized_return_ratio: Some(0.4),
+                gate_min_realized_return_ratio: Some(0.25),
             },
         )
         .await
@@ -429,6 +449,13 @@ mod tests {
         assert!((rec.edge_over_random.unwrap() - 0.4).abs() < 1e-9);
         assert!((rec.parent_edge.unwrap() - 0.1).abs() < 1e-9);
         assert!((rec.edge_delta.unwrap() - 0.3).abs() < 1e-9);
+        // Gate-dimension evidence round-trips through migrations 075/076.
+        assert_eq!(rec.parent_n_trades, Some(12));
+        assert_eq!(rec.child_n_trades, Some(8));
+        assert!((rec.min_trade_retention_ratio.unwrap() - 0.5).abs() < 1e-9);
+        assert!((rec.parent_realized_return_ratio.unwrap() - 0.6).abs() < 1e-9);
+        assert!((rec.child_realized_return_ratio.unwrap() - 0.4).abs() < 1e-9);
+        assert!((rec.gate_min_realized_return_ratio.unwrap() - 0.25).abs() < 1e-9);
     }
 
     /// INSERT OR REPLACE: re-persisting the same bundle_hash with a new verdict
@@ -458,6 +485,12 @@ mod tests {
                     edge_over_random: None,
                     parent_edge: None,
                     edge_delta: None,
+                    parent_n_trades: None,
+                    child_n_trades: None,
+                    min_trade_retention_ratio: None,
+                    parent_realized_return_ratio: None,
+                    child_realized_return_ratio: None,
+                    gate_min_realized_return_ratio: None,
                 },
             )
             .await

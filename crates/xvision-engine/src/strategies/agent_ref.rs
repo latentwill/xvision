@@ -8,9 +8,7 @@
 //! This file is the strategy-side half of that refactor. The agent records
 //! themselves live in `crates/xvision-engine/src/agents/`.
 
-use serde::{
-    de, Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::agents::capability::Capability;
 
@@ -336,10 +334,7 @@ mod tests {
             veto: None,
         };
         let s = serde_json::to_string(&r).unwrap();
-        assert!(
-            !s.contains("prompt"),
-            "absent override must be omitted: {s}"
-        );
+        assert!(!s.contains("prompt"), "absent override must be omitted: {s}");
         assert!(
             !s.contains("model_override"),
             "absent override must be omitted: {s}"

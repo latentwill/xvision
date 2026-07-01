@@ -123,6 +123,10 @@ pub struct ExperimentSummary {
     /// WS-11b: the persisted eval `Run.id` for this candidate's primary
     /// day-window evaluation, so an agent can drill into that run's trace.
     pub eval_run_id: Option<String>,
+    /// Human-readable gate rejection reason, when the experiment was dropped or
+    /// marked suspect by the numeric gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_reason: Option<String>,
     /// Token usage recorded on the linked eval run, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<u64>,
@@ -336,12 +340,14 @@ pub fn assemble_cycle_export(cycle_id: &str, events: Vec<CycleProgressEvent>) ->
                 outcome,
                 delta_day,
                 eval_run_id,
+                gate_reason,
                 ..
             } if !child_hash.is_empty() => {
                 let i = entry_for(child_hash, &mut experiments);
                 experiments[i].outcome = Some(experiment_outcome_label(outcome, *passed).to_string());
                 experiments[i].delta_day = *delta_day;
                 experiments[i].eval_run_id = eval_run_id.clone();
+                experiments[i].gate_reason = gate_reason.clone();
             }
             JudgeFinding {
                 child_hash,
@@ -513,6 +519,9 @@ pub fn render_cycle_export_markdown(export: &CycleExport) -> String {
                     let _ = writeln!(out, "- Eval run: —");
                 }
             }
+            if let Some(reason) = exp.gate_reason.as_deref().filter(|s| !s.is_empty()) {
+                let _ = writeln!(out, "- Gate reason: {reason}");
+            }
             if let Some(tokens) = render_tokens(exp.input_tokens, exp.output_tokens) {
                 let _ = writeln!(out, "- Tokens: {tokens}");
             }
@@ -617,6 +626,7 @@ fn event_detail(ev: &CycleProgressEvent) -> String {
             outcome,
             delta_day,
             eval_run_id,
+            gate_reason,
             ..
         } => {
             let label = experiment_outcome_label(outcome, *passed);
@@ -626,6 +636,9 @@ fn event_detail(ev: &CycleProgressEvent) -> String {
             }
             if let Some(run) = eval_run_id {
                 let _ = write!(s, " · eval run `{run}`");
+            }
+            if let Some(reason) = gate_reason.as_deref().filter(|s| !s.is_empty()) {
+                let _ = write!(s, " · reason: {reason}");
             }
             s
         }
@@ -704,6 +717,7 @@ mod tests {
                 outcome: "kept".into(),
                 delta_day: Some(0.0420),
                 eval_run_id: Some("01EVALRUN".into()),
+                gate_reason: None,
             },
             CycleProgressEvent::HonestyCheckRun {
                 session_id: "sess-1".into(),
@@ -807,6 +821,7 @@ mod tests {
                 outcome: "suspect".into(),
                 delta_day: Some(-0.01),
                 eval_run_id: None,
+                gate_reason: None,
             },
             CycleProgressEvent::MutationProposed {
                 session_id: "s".into(),
@@ -823,6 +838,7 @@ mod tests {
                 outcome: "dropped".into(),
                 delta_day: None,
                 eval_run_id: None,
+                gate_reason: Some("holdout degraded".into()),
             },
         ];
         let md = render_cycle_report_markdown("c", &events);
@@ -830,6 +846,10 @@ mod tests {
         assert!(md.contains("Rejected"), "missing Rejected:\n{md}");
         assert!(md.contains("Experiment suspect"), "missing suspect label:\n{md}");
         assert!(md.contains("Experiment dropped"), "missing dropped label:\n{md}");
+        assert!(
+            md.contains("holdout degraded"),
+            "missing gate rejection reason:\n{md}"
+        );
     }
 
     /// `assemble_cycle_export` folds the per-experiment summary and the
@@ -1024,6 +1044,7 @@ mod tests {
             outcome: "kept".into(),
             delta_day: None,
             eval_run_id: None,
+            gate_reason: None,
         };
         assert_eq!(operator_label(&kept), "Experiment kept");
         let suspect = CycleProgressEvent::MutationGated {
@@ -1034,6 +1055,7 @@ mod tests {
             outcome: "suspect".into(),
             delta_day: None,
             eval_run_id: None,
+            gate_reason: None,
         };
         assert_eq!(operator_label(&suspect), "Experiment suspect");
     }
