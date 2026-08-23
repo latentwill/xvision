@@ -6413,8 +6413,9 @@ fn mechanistic_trend(
             })
             .and_then(|value| value.as_f64())
     };
+    let close = get("close").unwrap_or(current_price);
     if let Some(ema) = get("ema_21") {
-        return Some(current_price > ema);
+        return Some(close > ema);
     }
     let mut ema = None;
     for bar in history {
@@ -6423,7 +6424,7 @@ fn mechanistic_trend(
             Some(previous) => previous + (2.0 / 22.0) * (bar.close - previous),
         });
     }
-    ema.map(|value| current_price > value)
+    ema.map(|value| close > value)
 }
 
 /// Find the trader slot's repair context — system prompt, model id,
