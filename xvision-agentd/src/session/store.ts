@@ -18,6 +18,8 @@ export interface StartRunConfig {
   system_prompt: string
   allowed_tools: string[]
   budget_limits: BudgetLimits
+  /** Maximum output tokens for each provider API call. */
+  max_tokens_per_turn?: number
   /**
    * JSON schema the agent's `submit_decision` payload must match. Required by
    * the start_run validator whenever `allowed_tools` includes `submit_decision`;

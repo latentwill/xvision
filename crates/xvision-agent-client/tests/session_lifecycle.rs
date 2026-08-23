@@ -123,10 +123,11 @@ async fn full_session_round_trip() {
             system_prompt: "you are a test agent".into(),
             allowed_tools: vec!["echo".into()],
             budget_limits: BudgetLimits {
-                max_input_tokens: 1000,
-                max_output_tokens: 1000,
+                max_input_tokens: 1_000,
+                max_output_tokens: 1_000,
                 max_wall_ms: 30_000,
             },
+            max_tokens_per_turn: None,
             decision_schema: None,
             record: false,
             slot_role: None,
