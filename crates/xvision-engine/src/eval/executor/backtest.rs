@@ -1093,6 +1093,38 @@ impl Executor {
                 .await;
                 last_partial_persist = Instant::now();
             }
+            // Feed every base-timeframe bar into the filter. The strategy
+            // cadence controls dispatch, not indicator/resampler updates;
+            // otherwise a 5m source with a 60m cadence would make the hook
+            // infer a 60m input interval and bypass its 1h aggregation.
+            let mut filter_gated = false;
+            let mut filter_trigger_context: Option<serde_json::Value> = None;
+            if let Some(hook) = filter_hook.as_mut() {
+                if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
+                    let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    if let Some(evaluation) = hook.evaluate_resampled(gate_bar, in_position) {
+                        hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
+                            .await?;
+                        if !evaluation.outcome.decision.is_active() {
+                            filter_gated = true;
+                            if matches!(
+                                evaluation.outcome.decision,
+                                xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                            ) {
+                                self.emit(ProgressEvent::FilterBlocked {
+                                    run_id: run.id.clone(),
+                                    reason: "in_position".to_string(),
+                                });
+                            }
+                        } else {
+                            filter_trigger_context = evaluation.trigger_context.clone();
+                        }
+                    } else {
+                        filter_gated = true;
+                    }
+                }
+            }
             // Cadence gate: only fire on timestamps whose minute-aligned
             // value is divisible by the strategy's cadence. Timestamp-level
             // (shared across all assets at this ts).
@@ -1118,66 +1150,6 @@ impl Executor {
                 current_ts: ts,
                 eta_secs: None,
             });
-
-            // track-plan-touches: per-bar filter evaluation. `None` means
-            // EveryBar strategy (no gating). The filter is a STRATEGY-level
-            // gate, evaluated once per timestamp; when not `Active` it skips
-            // ALL assets' decisions this timestamp. `in_position` is true
-            // when any leg is open.
-            //
-            // QA31 (filter-bypass on staggered multi-asset data): previously
-            // this hard-coded `asset_sym` (the FIRST active asset, captured
-            // outside the timestamp loop). If that first asset had a data
-            // gap at this timestamp — common in multi-asset backtests with
-            // different trading hours or holidays — the entire filter
-            // evaluation was SKIPPED, leaving `filter_gated = false`. The
-            // 6-fires/day cap and the cooldown were silently bypassed for
-            // every other asset at that timestamp, and operators saw the
-            // strategy fire every bar despite a strict filter being set.
-            //
-            // Fix: evaluate on ANY asset that has a bar at this timestamp.
-            // `assets_at_ts` is exactly that set (its keys are the assets
-            // with present bars), so picking the first entry from the
-            // BTreeMap gives a deterministic representative bar. The
-            // strategy filter is a STRATEGY-level signal — it doesn't care
-            // which asset's bar it sees, only that the timestamp has one.
-            //
-            // The wakeup gate allows LLM dispatch on both Trip (first bar
-            // the condition tree becomes true after Inactive/Cooldown) AND
-            // Hold (subsequent bars the condition tree stays true). Level
-            // operators (Gt/Lt/Gte/Lte) correctly fire every bar the level
-            // holds; Cooldown, CappedForDay, SuppressedInPosition, Warming,
-            // and Inactive still suppress dispatch.
-            let mut filter_gated = false;
-            let mut filter_trigger_context: Option<serde_json::Value> = None;
-            if let Some(hook) = filter_hook.as_mut() {
-                if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
-                    let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
-                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
-                    if let Some(evaluation) = hook.evaluate_resampled(gate_bar, in_position) {
-                        hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
-                            .await?;
-                        if !evaluation.outcome.decision.is_active() {
-                            filter_gated = true;
-                            if matches!(
-                                evaluation.outcome.decision,
-                                xvision_filters::runtime::ActivationDecision::SuppressedInPosition
-                            ) {
-                                self.emit(ProgressEvent::FilterBlocked {
-                                    run_id: run.id.clone(),
-                                    reason: "in_position".to_string(),
-                                });
-                            }
-                        } else {
-                            filter_trigger_context = evaluation.trigger_context.clone();
-                        }
-                    } else {
-                        // A higher-timeframe filter has not closed its
-                        // aggregate bar yet, so it cannot admit an entry.
-                        filter_gated = true;
-                    }
-                }
-            }
 
             // Per-asset fan-out. Each iteration runs the existing
             // per-decision body for one asset using that asset's own bar
