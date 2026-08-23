@@ -30,6 +30,7 @@ use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
+use crate::agent::mechanistic_dispatch::MechanisticDispatch;
 use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::agents::AgentStore;
 use crate::api::audit::{self, Outcome};
@@ -1749,6 +1750,16 @@ async fn build_eval_dispatch(
     agent_slots: &[ResolvedAgentSlot],
     provider_override: Option<&ProviderOverride>,
 ) -> ApiResult<(Arc<dyn LlmDispatch>, String)> {
+    if strategy.decision_mode == crate::strategies::DecisionMode::Mechanistic {
+        let cfg = strategy.mechanistic_config.as_ref().ok_or_else(|| {
+            ApiError::Validation("mechanistic strategy is missing mechanistic_config".into())
+        })?;
+        return Ok((
+            Arc::new(MechanisticDispatch::new(cfg.clone())),
+            "mechanistic".into(),
+        ));
+    }
+
     // Per-launch override (Wave B #5, `cli-eval-model-override`). When set,
     // the override replaces the strategy-bound `(provider, model)` for
     // *this run only*. Resolved through the canonical
@@ -1951,6 +1962,10 @@ async fn validate_provider_preflight(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<Vec<String>> {
+    if strategy.decision_mode == crate::strategies::DecisionMode::Mechanistic {
+        return Ok(Vec::new());
+    }
+
     let provider_names = collect_provider_names_for_strategy(ctx, strategy, agent_slots).await;
     if !req.skip_preflight && !provider_names.is_empty() {
         let preflight_results = crate::eval::preflight::preflight_providers(ctx, &provider_names).await;
@@ -2006,6 +2021,10 @@ async fn assert_launchable_with_guardrails(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<()> {
+    if strategy.decision_mode == crate::strategies::DecisionMode::Mechanistic {
+        return Ok(());
+    }
+
     // Resolve the set of providers configured in the runtime config — the
     // enabled-provider set the `provider_unavailable` guardrail checks slot
     // bindings against. A slot bound to a provider absent from this set is a
@@ -2201,6 +2220,10 @@ fn validate_eval_trader_source(
     strategy: &crate::strategies::Strategy,
     agent_slots: &[ResolvedAgentSlot],
 ) -> ApiResult<()> {
+    if strategy.decision_mode == crate::strategies::DecisionMode::Mechanistic {
+        return Ok(());
+    }
+
     // QA22 / `strategy-require-at-least-one-agent`: the eval boundary
     // requires at least one attached agent. The legacy `trader_slot`
     // fallback that previously kept pre-refactor strategies runnable
@@ -6722,6 +6745,52 @@ mod tests {
         assert!(
             result.is_err(),
             "expected Err (sidecar mandatory since WU-6), but got Ok(..)"
+        );
+    }
+
+    #[tokio::test]
+    async fn mechanistic_strategy_builds_provider_free_dispatch() {
+        use crate::agent::llm::{ContentBlock, LlmRequest, Message};
+        use crate::strategies::{ClosePolicy, DecisionMode, EntryDirection, EntryRule, MechanisticConfig};
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = crate::api::ApiContext::open(dir.path(), crate::api::Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+        let mut strategy = strategy_with_legacy_slot(slot(None, None, "mechanistic"));
+        strategy.decision_mode = DecisionMode::Mechanistic;
+        strategy.mechanistic_config = Some(MechanisticConfig {
+            entry_rules: vec![EntryRule {
+                signal_name: "gate".into(),
+                direction: EntryDirection::Long,
+            }],
+            close_policies: vec![ClosePolicy::TimeExit { bars: 10 }],
+        });
+
+        let (dispatch, findings_model) = build_eval_dispatch(&ctx, &strategy, &[], None).await.unwrap();
+        assert_eq!(findings_model, "mechanistic");
+        let response = dispatch
+            .complete(LlmRequest {
+                model: "unused".into(),
+                system_prompt: String::new(),
+                messages: vec![Message::user_text(
+                    r#"{"asset":"BTC/USD","close":100.0,"position_size":0.0}"#,
+                )],
+                max_tokens: None,
+                tools: Vec::new(),
+                temperature: None,
+                response_schema: None,
+                cache_control: None,
+                force_json: false,
+            })
+            .await
+            .unwrap();
+        let ContentBlock::Text { text } = &response.content[0] else {
+            panic!("mechanistic dispatch must return text JSON");
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(text).unwrap()["action"],
+            "long_open"
         );
     }
 }

@@ -58,6 +58,8 @@ pub enum ValidationError {
     UndeclaredTool(String),
     #[error("mechanistic strategy requires mechanistic_config to be set")]
     MechanisticConfigMissing,
+    #[error("mechanistic strategy's mechanistic_config must have at least one entry rule")]
+    MechanisticEntryRulesMissing,
     #[error("mechanistic strategy's mechanistic_config must have at least one entry rule or close policy")]
     MechanisticConfigEmpty,
     #[error("slot '{role}' has both `checkpoint` and `model_override` set; they are mutually exclusive")]
@@ -89,7 +91,12 @@ pub fn validate_strategy(b: &Strategy) -> Result<(), ValidationError> {
     if b.decision_mode == DecisionMode::Mechanistic {
         match b.mechanistic_config.as_ref() {
             None => return Err(ValidationError::MechanisticConfigMissing),
-            Some(cfg) if !cfg.has_rules() => return Err(ValidationError::MechanisticConfigEmpty),
+            Some(cfg) if cfg.entry_rules.is_empty() => {
+                if cfg.close_policies.is_empty() {
+                    return Err(ValidationError::MechanisticConfigEmpty);
+                }
+                return Err(ValidationError::MechanisticEntryRulesMissing);
+            }
             _ => {}
         }
         return validate_common(b);
@@ -1376,6 +1383,23 @@ mod preflight_tests {
 
     #[test]
     fn mechanistic_strategy_with_rules_passes_validate() {
+        use crate::strategies::mechanistic::{ClosePolicy, EntryDirection, EntryRule, MechanisticConfig};
+        let mut s = make_strategy_with_agent("BTC/USD", 60);
+        s.decision_mode = DecisionMode::Mechanistic;
+        s.mechanistic_config = Some(MechanisticConfig {
+            entry_rules: vec![EntryRule {
+                signal_name: "gate".into(),
+                direction: EntryDirection::Long,
+            }],
+            close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+        });
+        s.agents.clear();
+        s.trader_slot = None;
+        validate_strategy(&s).expect("mechanistic with entry and close policy must pass validate_strategy");
+    }
+
+    #[test]
+    fn mechanistic_strategy_without_entry_rule_fails_validate() {
         use crate::strategies::mechanistic::{ClosePolicy, MechanisticConfig};
         let mut s = make_strategy_with_agent("BTC/USD", 60);
         s.decision_mode = DecisionMode::Mechanistic;
@@ -1385,7 +1409,8 @@ mod preflight_tests {
         });
         s.agents.clear();
         s.trader_slot = None;
-        validate_strategy(&s).expect("mechanistic with close policy must pass validate_strategy");
+        let err = validate_strategy(&s).expect_err("close-only mechanistic config must fail");
+        assert!(matches!(err, ValidationError::MechanisticEntryRulesMissing));
     }
 
     #[test]
