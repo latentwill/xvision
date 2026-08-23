@@ -1868,6 +1868,10 @@ impl Executor {
                         book.entry_price(asset_sym),
                         bar.close,
                         seed_bars_held,
+                        sltp_state
+                            .get(&asset_sym)
+                            .map(|state| state.hwm)
+                            .unwrap_or_else(|| book.entry_price(asset_sym)),
                         filter_trigger_context.as_ref(),
                         history_slice,
                         bar.timestamp,
@@ -4942,6 +4946,10 @@ impl Executor {
                         .get(&asset_sym)
                         .map(|state| state.bars_held)
                         .unwrap_or(0),
+                    sltp_state
+                        .get(&asset_sym)
+                        .map(|state| state.hwm)
+                        .unwrap_or(pre_fill_entry),
                     filter_trigger_context.as_ref(),
                     &history_slice,
                     bar.timestamp,
@@ -6281,6 +6289,7 @@ fn mechanistic_action(
     entry_price: f64,
     mark_price: f64,
     bars_held: u32,
+    peak_price: f64,
     filter_context: Option<&serde_json::Value>,
     history: &[&Ohlcv],
     timestamp: chrono::DateTime<Utc>,
@@ -6332,17 +6341,7 @@ fn mechanistic_action(
     } else {
         (entry_price - mark_price) / entry_price * 100.0
     };
-    let peak = if position > 0.0 {
-        history
-            .iter()
-            .map(|bar| bar.high)
-            .fold(mark_price.max(entry_price), f64::max)
-    } else {
-        history
-            .iter()
-            .map(|bar| bar.low)
-            .fold(mark_price.min(entry_price), f64::min)
-    };
+    let peak = peak_price.max(entry_price);
     for policy in &cfg.close_policies {
         let (hit, label) = match policy {
             ClosePolicy::StopLoss { pct } => (pnl_pct <= -*pct, "stop_loss"),
