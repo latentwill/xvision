@@ -6765,6 +6765,7 @@ mod tests {
                 direction: EntryDirection::Long,
             }],
             close_policies: vec![ClosePolicy::TimeExit { bars: 10 }],
+            entry_session_utc: None,
         });
 
         let (dispatch, findings_model) = build_eval_dispatch(&ctx, &strategy, &[], None).await.unwrap();

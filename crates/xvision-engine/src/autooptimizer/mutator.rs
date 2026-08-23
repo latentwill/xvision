@@ -2841,6 +2841,7 @@ recent candidate feedback:
                 ClosePolicy::StopLoss { pct: 2.0 },
                 ClosePolicy::TimeExit { bars: 10 },
             ],
+            entry_session_utc: None,
         }
     }
 
@@ -2985,6 +2986,7 @@ recent candidate feedback:
         s.mechanistic_config = Some(MechanisticConfig {
             entry_rules: vec![],
             close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+            entry_session_utc: None,
         });
         s.tunable_bounds = vec![
             TunableBound {
