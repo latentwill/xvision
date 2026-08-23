@@ -986,6 +986,11 @@ impl Executor {
         // table-only path.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
+        if let (Some(hook), Some(asset)) = (filter_hook.as_mut(), active.first()) {
+            if let Some(warmup) = self.warmup_bars.get(asset) {
+                hook.seed_warmup(warmup);
+            }
+        }
         // ERROR-1 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
         // the documented `wake_when_in_position = Never` contract is "no
         // mid-position calls; exits rely ENTIRELY on the deterministic risk
