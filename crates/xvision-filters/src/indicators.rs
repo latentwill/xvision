@@ -1653,10 +1653,9 @@ impl RvolState {
     }
 
     fn push(&mut self, volume: f64, timestamp: Option<DateTime<Utc>>) {
-        // Always keep rolling warm — used as fallback when a TOD slot hasn't
-        // accumulated `period` bars yet, and as the primary path when timestamps
-        // are absent.
-        self.rolling.push(volume);
+        // RVOL compares the current volume with prior observations only.
+        // This matches the offline pandas definition:
+        // `volume / volume.shift(1).rolling(period).mean()`.
         let rolling_rvol = self
             .rolling
             .value()
@@ -1669,21 +1668,20 @@ impl RvolState {
                 .entry(slot)
                 .or_insert_with(|| (VecDeque::with_capacity(self.period + 1), 0.0));
             let (window, sum) = entry;
+            self.value = if window.len() == self.period && sum.abs() > f64::EPSILON {
+                Some(volume / (*sum / self.period as f64))
+            } else {
+                rolling_rvol
+            };
             window.push_back(volume);
             *sum += volume;
             if window.len() > self.period {
                 *sum -= window.pop_front().unwrap_or(0.0);
             }
-            self.value = if window.len() == self.period && sum.abs() > f64::EPSILON {
-                Some(volume / (*sum / self.period as f64))
-            } else {
-                // TOD slot not yet warm; fall back to rolling SMA.
-                rolling_rvol
-            };
-            return;
+        } else {
+            self.value = rolling_rvol;
         }
-
-        self.value = rolling_rvol;
+        self.rolling.push(volume);
     }
 
     fn value(&self) -> Option<f64> {
@@ -2870,5 +2868,16 @@ mod tests {
         for r in &all_refs {
             assert!(e.value(r).is_some(), "{} should have a value after 200 bars", r);
         }
+    }
+    #[test]
+    fn rvol_uses_prior_same_slot_bars() {
+        let mut state = RvolState::new(3);
+        for (day, volume) in [1.0, 2.0, 3.0].into_iter().enumerate() {
+            let ts = Utc.with_ymd_and_hms(2025, 1, day as u32 + 1, 0, 0, 0).unwrap();
+            state.push(volume, Some(ts));
+        }
+        let ts = Utc.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap();
+        state.push(4.0, Some(ts));
+        assert_eq!(state.value(), Some(2.0));
     }
 }
