@@ -27,8 +27,11 @@ use axum_test::TestServer;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use tower::ServiceExt;
-use xvision_dashboard::server::build_router;
-use xvision_dashboard::AppState;
+use xvision_dashboard::{
+    auth::AuthState,
+    server::{build_router, wrap_with_auth},
+    AppState,
+};
 
 // XVN_ENABLE_LOCAL_TRAINING is process-global; cargo runs these tests in parallel.
 // Serialize every test that reads/writes it through this lock so one test's
@@ -61,9 +64,11 @@ fn valid_start_body() -> Value {
 // ── POST /api/autoresearch/runs ───────────────────────────────────────────────
 
 #[tokio::test]
-async fn start_run_returns_403_when_training_gate_unset() {
+async fn start_run_returns_403_when_training_gate_disabled() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("XVN_ENABLE_LOCAL_TRAINING");
+    // Explicitly disable auto-detection so this test is deterministic on
+    // developer machines that have a supported GPU and uv installed.
+    std::env::set_var("XVN_ENABLE_LOCAL_TRAINING", "0");
 
     // TestServer is loopback → auth-exempt → reaches the handler, which checks
     // the training gate and rejects with 403.
@@ -81,12 +86,14 @@ async fn start_run_returns_403_when_training_gate_unset() {
 
 #[tokio::test]
 async fn start_run_requires_auth() {
-    // A non-loopback client with no token must be rejected by the auth
-    // middleware BEFORE the handler runs. Use oneshot to inject a public IP.
+    // Exercise the production outer auth gate with a non-loopback client.
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
-    let app = build_router(state);
+    let app = wrap_with_auth(
+        build_router(state),
+        AuthState::with_required_token("test-dashboard-token".into()),
+    );
 
     let mut request = Request::builder()
         .method("POST")

@@ -40,8 +40,8 @@ activate a passing run, or retire a Pattern.
 # Run the full optimizer cycle against a strategy
 xvn optimize run --strategy <strategy_id> --cycles 3 --json
 
-# Or run a single cycle with fine-grained control
-xvn optimize run-cycle --strategy <strategy_id> \
+# Or run one launch with fine-grained control
+xvn optimize run --strategy <strategy_id> \
   --budget 100 --provider openrouter --model kimi-k2 \
   --objective sharpe --experiments-per-cycle 5 \
   --json
@@ -82,8 +82,8 @@ Observation's bar timestamp, not the current date. Using wall clock time
 introduces look-ahead contamination.
 
 **Finding written after scores visible**: The blind finding must be composed
-before the numeric gate scores are read. Running `xvn optimize run-cycle` and
-then writing the finding retrospectively breaks the audit trail.
+before the numeric gate scores are read. Running `xvn optimize run` and then
+writing the finding retrospectively breaks the audit trail.
 
 **Hard delete without janitor path**: Retiring is soft-delete. Hard delete
 requires the explicit memory janitor confirmation flow — skipping it destroys

@@ -109,13 +109,16 @@ pub async fn sweep_once(
 ) -> Result<u64> {
     // CT5 live-exemption (contract §9.2): live deployments are intentionally
     // long-running, so the 30-min default must NEVER finalize them. Exempt
-    // `mode = 'live'` rows in the SELECT itself — only stale *backtests* are in
+    // forward-test rows in the SELECT itself — only stale *backtests* are in
     // scope for the timeout sweep. (The legacy `'paper'` alias maps to Backtest
     // on read, so it is correctly NOT exempt here.)
+    //
+    // `RunMode::Forward` serializes to 'fwd' since the live→fwd rename;
+    // pre-rename rows still carry 'live', so exempt both spellings.
     let rows = sqlx::query(
         "SELECT id, started_at, params_override_json \
          FROM eval_runs \
-         WHERE status = 'running' AND mode != 'live'",
+         WHERE status = 'running' AND mode NOT IN ('fwd', 'live')",
     )
     .fetch_all(pool)
     .await

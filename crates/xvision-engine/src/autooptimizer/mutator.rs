@@ -900,8 +900,8 @@ impl MutationDiff {
     /// Apply this diff to `base`, returning the candidate strategy.
     ///
     /// This is the **canonical** apply used by the cycle orchestrator, the
-    /// inversion-pair check, the `mutate-once` CLI verb, and the mutator's own
-    /// identity check, so all of them agree on what a diff actually changes. It
+    /// inversion-pair check, and the mutator's own identity check, so all of them
+    /// agree on what a diff actually changes. It
     /// applies:
     ///   - `params` targeting `risk.<field>` (or a bare risk-field name): routed
     ///     into the typed `risk` config via a JSON round-trip (F14/F20 — this is
@@ -1646,20 +1646,27 @@ fn build_user_payload(
         )
     };
 
+    let candidate_feedback_section = match memory_context {
+        Some(ctx) if ctx.to_lowercase().contains("recent candidate feedback") => format!(
+            "\n\nCandidate feedback preflight:\n{ctx}\n\nBefore proposing, use this feedback to avoid repeating dropped, suspect, no_candidate, or candidate_error patterns from recent candidates."
+        ),
+        _ => String::new(),
+    };
+
     // P3: advisory cross-run/cross-framework memory. When recall surfaced prior
     // optimizer outcomes on similar strategies, prepend them before the final
     // instruction so the writer can build on wins and avoid repeating failures.
     // This is advisory ONLY — it does not relax the F32 exploration directive
     // above or the hard avoid-set (exact-repeat dedup) the orchestrator enforces.
     let memory_section = match memory_context {
-        Some(ctx) if !ctx.trim().is_empty() => format!(
+        Some(ctx) if !ctx.trim().is_empty() && !ctx.to_lowercase().contains("recent candidate feedback") => format!(
             "\n\nPrior optimizer outcomes on similar strategies (advisory — avoid repeating failures, build on wins):\n{ctx}"
         ),
         _ => String::new(),
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{create_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{create_section}{errors_section}{exploration_section}{no_repeat_section}{candidate_feedback_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -1956,6 +1963,54 @@ mod tests {
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_promotes_recent_candidate_feedback_to_preflight() {
+        let kinds = vec!["param".to_string(), "filter".to_string()];
+        let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
+        let ctx = "\
+recent candidate feedback:
+- dropped: trade-retention guard rejected risk.max_leverage 1.0→3.0; reason: retained trades fell below 80%
+- suspect: holdout Sharpe degraded after shortening the RSI window; reason: holdout failed
+- candidate_error: no_candidate after create_filter with empty conditions";
+
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            Some(ctx),
+            0,
+            &[],
+            0,
+            false,
+        );
+
+        assert!(
+            payload.contains("Candidate feedback preflight"),
+            "prompt must give recent dropped/suspect/error feedback a preflight section, not bury it as generic memory: {payload}"
+        );
+        assert!(
+            payload.contains("trade-retention"),
+            "drop reason must be visible so the next candidate avoids repeating trade-retention failures: {payload}"
+        );
+        assert!(
+            payload.contains("holdout"),
+            "suspect reason must be visible so the next candidate avoids repeating holdout failures: {payload}"
+        );
+        assert!(
+            payload.contains("candidate_error") && payload.contains("no_candidate"),
+            "candidate error/no-candidate feedback must be visible to avoid repeating invalid candidate shapes: {payload}"
+        );
+        assert!(
+            payload.contains("Before proposing"),
+            "prompt must instruct the writer to consult feedback before proposing a new candidate: {payload}"
         );
     }
 

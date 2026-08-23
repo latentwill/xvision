@@ -13,13 +13,77 @@
 //! request body so the pre-Phase-B cache key shape is unchanged.
 
 use async_trait::async_trait;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use xvision_engine::agent::dispatch_capability::{dispatch_capability, AgentOutput, DispatchInput};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::{
+    dispatch_capability, AgentOutput, ClineDispatchCtx, DispatchInput,
+};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::agents::Capability;
 use xvision_engine::strategies::agent_ref::AgentRef;
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline(
+    decision_json_by_role: serde_json::Value,
+    record_path: &Path,
+) -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": decision_json_by_role,
+            "recordStepsPath": record_path,
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
+fn recorded_steps(path: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("valid mock step JSON"))
+        .collect()
+}
+
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
@@ -48,11 +112,14 @@ impl RecordingDispatch {
 #[async_trait]
 impl LlmDispatch for RecordingDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        self.seen.lock().unwrap().push(req);
+        self.seen.lock().unwrap().push(req.clone());
+        let text = if req.system_prompt.contains("You are a Filter") {
+            r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#.to_string()
+        } else {
+            self.text.clone()
+        };
         Ok(LlmResponse {
-            content: vec![ContentBlock::Text {
-                text: self.text.clone(),
-            }],
+            content: vec![ContentBlock::Text { text }],
             stop_reason: StopReason::EndTurn,
             input_tokens: 7,
             output_tokens: 11,
@@ -72,7 +139,7 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
             attested_with: vec!["mock".into()],
-            required_tools: vec![],
+            required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
@@ -86,6 +153,7 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,
@@ -101,12 +169,17 @@ fn fixture_strategy(agents: Vec<AgentRef>) -> Strategy {
 }
 
 fn resolved(role: &str) -> ResolvedAgentSlot {
+    let allowed_tools = if role == "trader" {
+        vec!["ohlcv".into(), "submit_decision".into()]
+    } else {
+        vec!["ohlcv".into()]
+    };
     ResolvedAgentSlot {
         role: role.into(),
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools,
             provider: None,
             model: Some("mock".into()),
         },
@@ -151,7 +224,16 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
-
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        serde_json::json!({
+            "regime_filter": r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#,
+            "trader": r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+        }),
+        &record_path,
+    )
+    .await;
     let dispatch = Arc::new(RecordingDispatch::new(
         r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
     ));
@@ -175,28 +257,28 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
-    .expect("pipeline runs");
+    .unwrap_or_else(|err| panic!("pipeline runs: {err}; steps={:?}", recorded_steps(&record_path)));
 
     // Trader populated; Filter stub is not exposed on the
     // legacy `PipelineOutputs` struct (Phase D will widen this).
     assert!(outs.trader.is_some(), "trader output must be populated");
     assert!(outs.regime.is_none());
 
-    // Phase C: Filter now makes a real LLM call (one for the Filter,
-    // one for the Trader). So we expect TWO dispatches:
-    // Filter + Trader. (The fixture's filter response is malformed
-    // JSON; the parse error fires but the cycle continues.)
-    let requests = dispatch.requests();
+    // Filter still uses the explicit LlmDispatch seam; Trader uses the
+    // Cline sidecar. Together they account for both capability dispatches.
+    let llm_requests = dispatch.requests();
+    let cline_steps = recorded_steps(&record_path);
     assert_eq!(
-        requests.len(),
+        llm_requests.len() + cline_steps.len(),
         2,
-        "Phase C: Filter + Trader dispatch (got {} requests)",
-        requests.len(),
+        "Phase C: Filter + Trader dispatch (got {} LlmDispatch + {} Cline steps)",
+        llm_requests.len(),
+        cline_steps.len(),
     );
 }
 
@@ -215,11 +297,19 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
     // identical contract here.
     let resolved_slot = resolved("trader");
     let slot = resolved_slot.slot.clone();
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        serde_json::json!({
+            "trader": r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
+        }),
+        &record_path,
+    )
+    .await;
     let dispatch = Arc::new(RecordingDispatch::new(
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
-
     let cycle_idx = 42_i64;
     let scenario_id = "sc-cache-key".to_string();
 
@@ -250,11 +340,12 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         trace_name: None,
         current_index: 0,
         total_agents: 1,
+        agent_roles: &["trader".to_string()],
         activates: Capability::Trader,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
@@ -268,26 +359,25 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         }
         other => panic!("expected AgentOutput::Trader, got {other:?}"),
     }
-    assert_eq!(outcome.input_tokens, 7);
-    assert_eq!(outcome.output_tokens, 11);
+    assert_eq!(outcome.input_tokens, 11);
+    assert_eq!(outcome.output_tokens, 7);
 
-    // The dispatcher saw exactly one call. The prompt body carries the
-    // upstream_inputs JSON, which is the same shape the pre-Phase-B
-    // path would have produced — the A/B cache key reads from this
-    // blob's hash via `compute_prompt_hash` (already covered in
-    // `agent_observability_hash.rs`), so a byte-identical body
-    // guarantees the key is unchanged.
-    let requests = dispatch.requests();
-    assert_eq!(requests.len(), 1);
-    let req = &requests[0];
-    let prompt_blob = serde_json::to_string(&req.messages).unwrap();
+    // The sidecar recorded exactly one call. Its run id preserves both the
+    // scenario identity and cycle id, while the prompt keeps the canonical
+    // input body shape used by cache-key derivation.
+    let steps = recorded_steps(&record_path);
+    assert_eq!(steps.len(), 1);
+    let step = &steps[0];
+    let run_id = step["run_id"].as_str().expect("recorded run id");
+    assert!(run_id.contains("run-cache-key"));
+    assert!(run_id.contains("cycle42"));
+    let prompt = step["prompt"].as_str().expect("recorded prompt");
     assert!(
-        prompt_blob.contains("bar_index"),
-        "request body must include the upstream inputs verbatim: {prompt_blob}",
+        prompt.contains("bar_index"),
+        "request body must include the upstream inputs verbatim: {prompt}",
     );
     assert!(
-        prompt_blob.contains("Inputs:"),
-        "request body's user message must carry the canonical 'Inputs:' prefix \
-         so the prompt hash matches the pre-Phase-B byte shape: {prompt_blob}",
+        prompt.contains("Inputs:"),
+        "request body must carry the canonical 'Inputs:' prefix: {prompt}",
     );
 }

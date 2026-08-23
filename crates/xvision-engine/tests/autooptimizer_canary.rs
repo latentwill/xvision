@@ -159,6 +159,10 @@ fn gate_builder(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Default::default(),
+        parent_n_trades: 0,
+        child_n_trades: 0,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -239,6 +243,10 @@ fn gate_builder_total_return(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Objective::TotalReturn,
+        parent_n_trades: 0,
+        child_n_trades: 0,
+        min_trade_retention_ratio: 0.5,
+        min_realized_return_ratio: 0.0,
     }
 }
 
@@ -340,8 +348,8 @@ fn build_sabotaged_strategy_is_deterministic() {
     let (b, bv) = build_sabotaged_strategy(&base, 42);
     assert_eq!(a, b, "same seed must produce identical sabotaged strategy");
     assert_eq!(av, bv, "same seed must produce the same sabotage variant");
-    // 42 % 3 == 0 → kill-trades (zeroed position sizing).
-    assert_eq!(av.as_str(), "kill-trades");
+    // 42 % 4 == 2 → absurd-cadence (never fires in a normal backtest).
+    assert_eq!(av.as_str(), "absurd-cadence");
 }
 
 #[test]

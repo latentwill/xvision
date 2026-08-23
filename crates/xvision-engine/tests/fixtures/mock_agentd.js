@@ -12,6 +12,11 @@
 // the missing-decision path, the crash-mid-step path, and the
 // non-JSON-decision path:
 //
+//   decisionJsonByRole optional object keyed by the slot role encoded in
+//                  `run_id` (`<run>::<role>::cycle<N>`). Each value is either
+//                  one decision string or an array consumed once per call
+//                  for that role (the final array element is reused). This
+//                  lets one sidecar exercise Filter/Router/Trader pipelines.
 //   decisionJson   JSON string returned as StepResult.decision_json on
 //                  `session.step`. Defaults to a valid hold. The literal
 //                  "OMIT" means: complete the step but do NOT include
@@ -20,6 +25,9 @@
 //                  valid JSON.
 //   stepStatus     StepResult.status (default "completed"). Set to e.g.
 //                  "aborted" to exercise the not-completed path.
+//   stepError      optional error text included with the step result. Use
+//                  with `stepStatus: "aborted"` to exercise a typed sidecar
+//                  failure while preserving the configured error text.
 //   crashOnStep    when true, the process exits hard on the first
 //                  `session.step` (sidecar crash mid-step).
 //   recordStepsPath optional JSONL path. When set, every `session.step`
@@ -113,18 +121,43 @@ try {
 }
 
 const decisionJson = cfg.decisionJson ?? '{"action":"hold","conviction":0.5,"justification":"mock cline decision"}';
+const decisionJsonByRole = cfg.decisionJsonByRole ?? {};
 const stepStatus = cfg.stepStatus ?? "completed";
+const stepError = cfg.stepError ?? null;
 const crashOnStep = cfg.crashOnStep === true;
 const requireReplay = cfg.requireReplay === true;
 const replayInjectError = cfg.replayInjectError ?? null;
 const recordStepsPath = cfg.recordStepsPath ?? null;
 
+const roleDecisionCounts = new Map();
+
 const seenRunIds = new Set();
+// run_id -> slot role, captured at start_run for role-aware decisions.
+const runSlotRoles = new Map();
 // run_id -> { frames: [...] } loaded via session.replay_load.
 const loadedReplays = new Map();
 // run_id -> { record: bool, slot_role: string } captured at start_run, used
 // to emit trajectory frames on step when recording (§2-B).
 const recordingRuns = new Map();
+
+function configuredDecision(runId, roleOverride) {
+  const parts = String(runId ?? "").split("::");
+  const role = roleOverride
+    ?? Object.keys(decisionJsonByRole).find((candidate) => parts.includes(candidate))
+    ?? (parts.length >= 2 ? parts[1] : null);
+  const configured = role && Object.prototype.hasOwnProperty.call(decisionJsonByRole, role)
+    ? decisionJsonByRole[role]
+    : undefined;
+  if (!Array.isArray(configured)) {
+    return configured ?? decisionJson;
+  }
+  if (configured.length === 0) {
+    return decisionJson;
+  }
+  const index = roleDecisionCounts.get(role) ?? 0;
+  roleDecisionCounts.set(role, index + 1);
+  return configured[Math.min(index, configured.length - 1)];
+}
 
 // Extract the recorded submit_decision payload from a frame list — the
 // last ToolCallDelta whose tool_name is "submit_decision".
@@ -201,6 +234,9 @@ const server = net.createServer((conn) => {
           break;
         }
         seenRunIds.add(runId);
+        if (typeof req.params?.slot_role === "string") {
+          runSlotRoles.set(runId, req.params.slot_role);
+        }
         // §2-B: capture record + slot_role so `step` can emit frames.
         if (req.params?.record === true) {
           recordingRuns.set(runId, {
@@ -298,10 +334,14 @@ const server = net.createServer((conn) => {
           iterations: 1,
           usage,
         };
-        if (decisionJson === "NOTJSON") {
+        if (stepError !== null) {
+          result.error = stepError;
+        }
+        const selectedDecisionJson = configuredDecision(runId, runSlotRoles.get(runId));
+        if (selectedDecisionJson === "NOTJSON") {
           result.decision_json = "this is not json {";
-        } else if (decisionJson !== "OMIT") {
-          result.decision_json = decisionJson;
+        } else if (selectedDecisionJson !== "OMIT") {
+          result.decision_json = selectedDecisionJson;
         }
         resp = ok(id, result);
         break;

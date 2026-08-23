@@ -133,7 +133,7 @@ fn string_value<'a>(array: &'a dyn Array, row: usize, column: &str) -> anyhow::R
 
 fn f64_value(array: &dyn Array, row: usize, column: &str) -> anyhow::Result<f64> {
     if array.is_null(row) {
-        return Ok(0.0);
+        anyhow::bail!("null {column} at row {row}");
     }
     if let Some(values) = array.as_any().downcast_ref::<Float64Array>() {
         return Ok(values.value(row));
@@ -245,5 +245,14 @@ mod tests {
             assert_eq!(a.timestamp, b.timestamp);
             assert_eq!(a.open, b.open);
         }
+    }
+    #[test]
+    fn null_numeric_field_is_rejected_instead_of_fabricating_zero() {
+        let values = Float64Array::from(vec![Some(42.0), None]);
+        let err = f64_value(&values, 1, "close").expect_err("null numeric field must fail");
+        assert!(
+            err.to_string().contains("null close at row 1"),
+            "error should identify the null field and row: {err}"
+        );
     }
 }

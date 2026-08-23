@@ -103,7 +103,7 @@ async fn wait_for_persisted_failure(
         bus.quiesce().await;
 
         let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'model.call'",
+            "SELECT id, status, error_json FROM spans WHERE run_id = ? AND kind = 'decision.model'",
         )
         .bind(run_id)
         .fetch_all(pool)
@@ -182,12 +182,12 @@ async fn failing_dispatch_emits_error_span_with_message() {
         obs: Some(emitter.clone()),
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
-        agent_id: String::new(),
+        agent_id: "eval-observability-trader".into(),
         scenario_start: None,
         source_window_start: None,
         source_window_end: None,
-        run_id: String::new(),
-        scenario_id: String::new(),
+        run_id: run_id.to_string(),
+        scenario_id: "test-scenario".into(),
         cycle_idx: 0,
         catalog: None,
         delta_briefing: false,

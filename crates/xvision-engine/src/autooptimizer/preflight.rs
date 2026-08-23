@@ -1,11 +1,11 @@
-//! Shared pre-cycle validation for optimizer run-cycle launches.
+//! Shared pre-cycle validation for optimizer launches.
 //!
-//! F26 (QA 2026-06-04): the CLI and the dashboard route both launch optimizer
+//! F26 (QA 2026-06-04): the CLI and the dashboard/API route both launch optimizer
 //! cycles. Previously each surface built its own cycle setup, so a guard added to
 //! one (e.g. the F22 cross-provider preflight) silently did not protect the
-//! other. This module is the single home for that guard — both `xvn optimizer
-//! run-cycle` and `POST /api/autooptimizer/run-cycle` call
-//! [`preflight_trader_provider`], so neither can drift.
+//! other. This module is the single home for that guard — both `xvn optimize run`
+//! and `POST /api/optimize/run` call [`preflight_trader_provider`], so neither
+//! can drift.
 
 use sqlx::SqlitePool;
 

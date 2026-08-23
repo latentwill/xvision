@@ -16,9 +16,14 @@
 //! 4. Portfolio flat (`position_size == 0`) → LLM IS called regardless of
 //!    noop_skip.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::agents::InputsPolicy;
@@ -27,6 +32,55 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{ActivationMode, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
+
+fn mock_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock(decision_json: &str) -> (ClineDispatchCtx, TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    let steps = dir.path().join("steps.jsonl");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::json!({
+            "decisionJson": decision_json,
+            "recordStepsPath": steps,
+        })
+        .to_string(),
+    )
+    .expect("write mock config");
+    let client = AgentClient::spawn(&mock_bin(), &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+        steps,
+    )
+}
+
+fn sidecar_step_count(path: &Path) -> usize {
+    std::fs::read_to_string(path).unwrap_or_default().lines().count()
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,9 +162,9 @@ fn trader_slot(noop_skip: bool) -> ResolvedAgentSlot {
         slot: LLMSlot {
             role: "trader".into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
-            provider: None,
-            model: Some("mock".into()),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
         system_prompt: String::new(),
         max_tokens: None,
@@ -156,6 +210,8 @@ fn seed_with_hold_only_actions(position_size: f64) -> serde_json::Value {
 async fn noop_skip_fires_when_seed_allows_only_hold() {
     let strategy = fixture_strategy();
     let agent_slots = vec![trader_slot(/* noop_skip = */ true)];
+    let (cline, _sidecar_dir, steps) =
+        spawn_mock(r#"{"action":"hold","conviction":0.1,"justification":"unused"}"#).await;
 
     let (call_count, dispatch) = CountingDispatch::new(
         r#"{"action":"long_open","conviction":0.9,"justification":"would have gone long"}"#,
@@ -180,18 +236,18 @@ async fn noop_skip_fires_when_seed_allows_only_hold() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
 
-    // LLM must never have been called.
+    // Sidecar must never be called.
     assert_eq!(
-        call_count.load(Ordering::SeqCst),
+        sidecar_step_count(&steps),
         0,
-        "noop_skip must prevent the LLM from being called when only hold is available"
+        "noop_skip must prevent the sidecar from being called when only hold is available"
     );
 
     // Trader output must be present (not silently dropped).
@@ -231,6 +287,8 @@ async fn noop_skip_fires_when_seed_allows_only_hold() {
 async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
     let strategy = fixture_strategy();
     let agent_slots = vec![trader_slot(/* noop_skip = */ true)];
+    let (cline, _sidecar_dir, steps) =
+        spawn_mock(r#"{"action":"hold","conviction":0.1,"justification":"hold in corner"}"#).await;
 
     let (call_count, dispatch) =
         CountingDispatch::new(r#"{"action":"hold","conviction":0.1,"justification":"hold in corner"}"#);
@@ -254,17 +312,17 @@ async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
 
     assert_eq!(
-        call_count.load(Ordering::SeqCst),
+        sidecar_step_count(&steps),
         1,
-        "LLM must be called when position is held but no hold-only allowed-action set is present"
+        "sidecar must be called when position is held but no hold-only allowed-action set is present"
     );
 }
 
@@ -279,6 +337,8 @@ async fn noop_skip_does_not_fire_just_because_portfolio_is_long() {
 #[tokio::test]
 async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
     let strategy = fixture_strategy();
+    let (cline, _sidecar_dir, steps) =
+        spawn_mock(r#"{"action":"hold","conviction":0.1,"justification":"hold in corner"}"#).await;
     let agent_slots = vec![trader_slot(/* noop_skip = */ false)];
 
     let (call_count, dispatch) =
@@ -303,17 +363,17 @@ async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
 
     assert_eq!(
-        call_count.load(Ordering::SeqCst),
+        sidecar_step_count(&steps),
         1,
-        "LLM must be called when noop_skip = false, even when only hold is available"
+        "sidecar must be called when noop_skip = false, even when only hold is available"
     );
 }
 
@@ -326,6 +386,8 @@ async fn noop_skip_disabled_calls_llm_even_when_only_hold_is_available() {
 /// when `noop_skip` is enabled.
 #[tokio::test]
 async fn noop_skip_does_not_fire_when_portfolio_flat() {
+    let (cline, _sidecar_dir, steps) =
+        spawn_mock(r#"{"action":"long_open","conviction":0.8,"justification":"bullish entry"}"#).await;
     let strategy = fixture_strategy();
     let agent_slots = vec![trader_slot(/* noop_skip = */ true)];
 
@@ -352,16 +414,16 @@ async fn noop_skip_does_not_fire_when_portfolio_flat() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");
 
     assert_eq!(
-        call_count.load(Ordering::SeqCst),
+        sidecar_step_count(&steps),
         1,
-        "LLM must be called when portfolio is flat (both opens are legal)"
+        "sidecar must be called when portfolio is flat (both opens are legal)"
     );
 }

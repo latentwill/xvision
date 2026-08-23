@@ -19,9 +19,12 @@ use crate::strategies::{
     mechanistic::{DecisionMode, MechanisticConfig},
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
-    store::{apply_metadata_patch, StrategyMetadataPatch, StrategyStore},
-    validate::{every_bar_warning, high_position_size_warning, no_filter_warnings, validate_strategy},
-    AgentRef, PipelineDef, PipelineKind, Strategy,
+    store::{apply_metadata_patch, validate_risk_config_for_persist, StrategyMetadataPatch, StrategyStore},
+    validate::{
+        every_bar_warning, high_position_size_warning, no_filter_warnings, route_readiness_for_strategy,
+        validate_route_contract, validate_strategy, RouteReadiness,
+    },
+    AgentRef, PipelineDef, PipelineEdge, PipelineKind, RouteDefinition, Strategy,
 };
 use xvision_filters::{parse_json, validate as validate_filter_dsl, ActivationMode, Filter};
 
@@ -142,6 +145,13 @@ pub struct RenameAgentRoleRequest {
 pub struct SetPipelineRequest {
     pub strategy_id: String,
     pub pipeline: PipelineDef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetRouteRequest {
+    pub strategy_id: String,
+    pub route: RouteDefinition,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,11 +337,13 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
         updated.push("attested_with".into());
     }
     if let Some(p) = req.provider {
-        slot.provider = if p.trim().is_empty() { None } else { Some(p) };
+        let p = p.trim();
+        slot.provider = if p.is_empty() { None } else { Some(p.to_string()) };
         updated.push("provider".into());
     }
     if let Some(m) = req.model {
-        slot.model = if m.trim().is_empty() { None } else { Some(m) };
+        let m = m.trim();
+        slot.model = if m.is_empty() { None } else { Some(m.to_string()) };
         updated.push("model".into());
     }
     if let Some(t) = req.allowed_tools {
@@ -519,15 +531,110 @@ pub async fn set_pipeline(store: &dyn StrategyStore, req: SetPipelineRequest) ->
     }
     let mut strategy = store.load(&req.strategy_id).await?;
     strategy.pipeline = req.pipeline;
+    strategy.pipeline.normalize_route_context_fields();
     validate_pipeline_shape(&strategy)?;
     store.save(&strategy).await?;
     Ok(strategy)
+}
+
+pub async fn set_route(store: &dyn StrategyStore, req: SetRouteRequest) -> anyhow::Result<Strategy> {
+    let strategy = store.load(&req.strategy_id).await?;
+    let strategy = route_candidate(strategy, req.route)?;
+    validate_pipeline_shape(&strategy)?;
+    store.save(&strategy).await?;
+    Ok(strategy)
+}
+
+pub async fn validate_route(
+    store: &dyn StrategyStore,
+    req: SetRouteRequest,
+) -> anyhow::Result<(Strategy, RouteReadiness)> {
+    let strategy = store.load(&req.strategy_id).await?;
+    let strategy = route_candidate(strategy, req.route)?;
+    let readiness = route_readiness_for_strategy(&strategy);
+    if readiness.launchable {
+        validate_pipeline_shape(&strategy)?;
+        let readiness = validate_route_contract(&strategy)?;
+        return Ok((strategy, readiness));
+    }
+    Ok((strategy, readiness))
+}
+
+fn route_candidate(mut strategy: Strategy, route: RouteDefinition) -> anyhow::Result<Strategy> {
+    let route = normalized_route(route);
+    let router_role = canonical_role(&route.router_role);
+
+    if let Some(router) = strategy
+        .agents
+        .iter_mut()
+        .find(|agent| canonical_role(&agent.role) == router_role)
+    {
+        router.activates = Some(crate::agents::Capability::Router);
+    }
+
+    strategy.pipeline.kind = PipelineKind::Graph;
+    strategy.pipeline.edges = merged_route_edges(&strategy.pipeline.edges, &route);
+    strategy.pipeline.route = Some(route);
+    strategy.pipeline.normalize_route_context_fields();
+    Ok(strategy)
+}
+
+fn normalized_route(mut route: RouteDefinition) -> RouteDefinition {
+    route.router_role = canonical_role(&route.router_role);
+    for branch in &mut route.branches {
+        branch.target_role = canonical_role(&branch.target_role);
+    }
+    for edge in &mut route.graph_edges {
+        edge.from_role = canonical_role(&edge.from_role);
+        edge.to_role = canonical_role(&edge.to_role);
+    }
+    route.normalize_context_fields();
+    route
+}
+
+fn merged_route_edges(existing: &[PipelineEdge], route: &RouteDefinition) -> Vec<PipelineEdge> {
+    let router_role = canonical_role(&route.router_role);
+    let mut merged: Vec<PipelineEdge> = existing
+        .iter()
+        .filter(|edge| canonical_role(&edge.from_role) != router_role)
+        .cloned()
+        .collect();
+    let mut seen: HashSet<(String, String)> = merged
+        .iter()
+        .map(|edge| (canonical_role(&edge.from_role), canonical_role(&edge.to_role)))
+        .collect();
+
+    for branch in &route.branches {
+        let from = router_role.clone();
+        let to = canonical_role(&branch.target_role);
+        if seen.insert((from.clone(), to.clone())) {
+            merged.push(PipelineEdge {
+                from_role: from,
+                to_role: to,
+                condition: None,
+            });
+        }
+    }
+    for edge in &route.graph_edges {
+        let from = canonical_role(&edge.from_role);
+        let to = canonical_role(&edge.to_role);
+        if seen.insert((from.clone(), to.clone())) {
+            merged.push(PipelineEdge {
+                from_role: from,
+                to_role: to,
+                condition: edge.condition.clone(),
+            });
+        }
+    }
+
+    merged
 }
 
 fn validate_pipeline_shape(strategy: &Strategy) -> anyhow::Result<()> {
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         anyhow::bail!("single pipelines cannot include more than one agent");
     }
+    validate_route_contract(strategy)?;
     if strategy.pipeline.kind == PipelineKind::Graph {
         validate_graph_pipeline(strategy)?;
     }
@@ -709,7 +816,6 @@ fn extract_filter_payload(raw_filter: serde_json::Value) -> serde_json::Value {
         other => other,
     }
 }
-
 pub async fn set_risk_config(
     store: &dyn StrategyStore,
     req: SetRiskConfigReq,
@@ -730,6 +836,7 @@ pub async fn set_risk_config(
         (Some(_), Some(_)) => anyhow::bail!("preset and explicit are mutually exclusive"),
         (None, None) => anyhow::bail!("supply either preset or explicit"),
     };
+    validate_risk_config_for_persist(&config)?;
     let mut strategy = store.load(&req.id).await?;
     strategy.risk = config;
     strategy.manifest.risk_preset_or_config = manifest_risk;
@@ -748,10 +855,11 @@ pub async fn set_strategy_filter(
     store: &dyn StrategyStore,
     req: SetStrategyFilterReq,
 ) -> anyhow::Result<SetStrategyFilterOut> {
-    let filter = match req.format.as_str() {
+    let mut filter = match req.format.as_str() {
         "json" => parse_json(&req.source).map_err(|e| anyhow::anyhow!("filter parse error: {e}"))?,
         other => anyhow::bail!("unknown filter source format `{other}` — must be `json`"),
     };
+    filter.strategy_id = req.id.clone().into();
     validate_filter_dsl(&filter).map_err(|e| anyhow::anyhow!("filter validation error: {e}"))?;
 
     let mut strategy = store.load(&req.id).await?;
@@ -780,6 +888,15 @@ pub async fn set_mechanistic_config(
     decision_mode: DecisionMode,
     mechanistic_config: Option<MechanisticConfig>,
 ) -> anyhow::Result<Strategy> {
+    match (&decision_mode, &mechanistic_config) {
+        (DecisionMode::Mechanistic, None) => {
+            anyhow::bail!("mechanistic decision mode requires mechanistic_config")
+        }
+        (DecisionMode::Agentic, Some(_)) => {
+            anyhow::bail!("agentic decision mode requires mechanistic_config to be None")
+        }
+        _ => {}
+    }
     let mut strategy = store.load(id).await?;
     strategy.decision_mode = decision_mode;
     strategy.mechanistic_config = mechanistic_config;
@@ -820,7 +937,7 @@ pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::strategies::store::FilesystemStore;
-    use crate::strategies::PipelineEdge;
+    use crate::strategies::{PipelineEdge, RouteBranch, RouteContextField, RouteDefinition};
 
     fn store_in_tmp() -> (FilesystemStore, tempfile::TempDir) {
         let td = tempfile::tempdir().unwrap();
@@ -961,6 +1078,147 @@ mod tests {
             strategy.trader_slot.unwrap().attested_with,
             "anthropic.claude-sonnet-4.6"
         );
+    }
+
+    #[tokio::test]
+    async fn update_slot_trims_provider_and_model_before_persist() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "trim-slot".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        update_slot(
+            &store,
+            UpdateSlotReq {
+                id: out.id.clone(),
+                slot: "trader".into(),
+                attested_with: None,
+                provider: Some("  openai  ".into()),
+                model: Some("  gpt-4.1  ".into()),
+                allowed_tools: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let strategy = get_strategy(&store, &out.id).await.unwrap();
+        let slot = strategy.trader_slot.unwrap();
+        assert_eq!(slot.provider.as_deref(), Some("openai"));
+        assert_eq!(slot.model.as_deref(), Some("gpt-4.1"));
+    }
+
+    #[tokio::test]
+    async fn set_risk_config_rejects_non_finite_explicit_risk() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "bad-risk".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut explicit = RiskPreset::Balanced.expand();
+        explicit.risk_pct_per_trade = f64::NAN;
+
+        let result = set_risk_config(
+            &store,
+            SetRiskConfigReq {
+                id: out.id.clone(),
+                preset: None,
+                explicit: Some(explicit),
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        let expected_default = RiskPreset::Conservative.expand().risk_pct_per_trade;
+        assert_eq!(
+            get_strategy(&store, &out.id)
+                .await
+                .unwrap()
+                .risk
+                .risk_pct_per_trade,
+            expected_default
+        );
+    }
+
+    #[tokio::test]
+    async fn set_strategy_filter_stamps_request_strategy_id() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "filter-owner".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let source = r#"{
+            "id": "f_01JX0000000000000000000000",
+            "strategy_id": "foreign-strategy",
+            "display_name": "EMA Cross",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": {"all": [{ "lhs": "ema_20", "op": ">", "rhs": "ema_50" }]}
+        }"#;
+
+        let result = set_strategy_filter(
+            &store,
+            SetStrategyFilterReq {
+                id: out.id.clone(),
+                source: source.into(),
+                format: "json".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.filter.strategy_id.as_str(), out.id);
+        assert_eq!(
+            get_strategy(&store, &out.id)
+                .await
+                .unwrap()
+                .filter
+                .unwrap()
+                .strategy_id
+                .as_str(),
+            out.id
+        );
+    }
+
+    #[tokio::test]
+    async fn set_mechanistic_config_rejects_mode_config_mismatches() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "mode-config".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            set_mechanistic_config(&store, &out.id, DecisionMode::Mechanistic, None)
+                .await
+                .is_err()
+        );
+        assert!(set_mechanistic_config(
+            &store,
+            &out.id,
+            DecisionMode::Agentic,
+            Some(MechanisticConfig::default()),
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
@@ -1290,6 +1548,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_route_activates_router_saves_route_and_preserves_unowned_graph_edges() {
+        let (store, _td) = store_in_tmp();
+        let out = create_strategy(
+            &store,
+            CreateStrategyReq {
+                name: "route authoring".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut strategy = get_strategy(&store, &out.id).await.unwrap();
+        strategy.agents = vec![
+            AgentRef {
+                agent_id: "01HZROUTER".into(),
+                role: "router".into(),
+                activates: None,
+                prompt: String::new(),
+                model_override: None,
+                checkpoint: None,
+                veto: None,
+            },
+            AgentRef {
+                agent_id: "01HZANALYST".into(),
+                role: "analyst".into(),
+                activates: None,
+                prompt: String::new(),
+                model_override: None,
+                checkpoint: None,
+                veto: None,
+            },
+            AgentRef {
+                agent_id: "01HZTRADER".into(),
+                role: "trader".into(),
+                activates: Some(crate::agents::Capability::Trader),
+                prompt: String::new(),
+                model_override: None,
+                checkpoint: None,
+                veto: None,
+            },
+        ];
+        let preserved_edge = PipelineEdge {
+            from_role: "analyst".into(),
+            to_role: "trader".into(),
+            condition: None,
+        };
+        strategy.pipeline = PipelineDef {
+            kind: PipelineKind::Graph,
+            edges: vec![preserved_edge.clone()],
+            route: None,
+        };
+        store.save(&strategy).await.unwrap();
+
+        let route = RouteDefinition {
+            router_role: "router".into(),
+            branches: vec![RouteBranch {
+                target_role: "analyst".into(),
+            }],
+            graph_edges: Vec::new(),
+            context_fields: vec![RouteContextField::MarketSnapshot],
+            trace_mode: Default::default(),
+        };
+
+        let strategy = set_route(
+            &store,
+            SetRouteRequest {
+                strategy_id: out.id.clone(),
+                route: route.clone(),
+            },
+        )
+        .await
+        .expect("valid route authoring save must succeed");
+
+        assert_eq!(strategy.pipeline.route.as_ref(), Some(&route));
+        assert!(
+            strategy.pipeline.edges.contains(&preserved_edge),
+            "set_route must preserve graph edges it does not own",
+        );
+        assert!(
+            strategy
+                .pipeline
+                .edges
+                .iter()
+                .any(|edge| edge.from_role == "router" && edge.to_role == "analyst"),
+            "set_route must compile the router branch into graph edges",
+        );
+        assert_eq!(
+            strategy
+                .agents
+                .iter()
+                .find(|agent| agent.role == "router")
+                .and_then(|agent| agent.activates),
+            Some(crate::agents::Capability::Router),
+            "set_route must mark the selected router AgentRef with router capability",
+        );
+
+        let reloaded = get_strategy(&store, &out.id).await.unwrap();
+        assert_eq!(reloaded.pipeline.route.as_ref(), Some(&route));
+        assert!(reloaded.pipeline.edges.contains(&preserved_edge));
+    }
+
+    #[tokio::test]
     async fn rename_and_remove_agent_role_match_canonical_role_keys() {
         let (store, _td) = store_in_tmp();
         let out = create_strategy(
@@ -1330,6 +1691,7 @@ mod tests {
                 to_role: "TRADER".into(),
                 condition: None,
             }],
+            route: None,
         };
         store.save(&strategy).await.unwrap();
 

@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import type { RouteReadiness } from "./strategies";
 
 export type ToolDiagnostic = {
   name: string;
@@ -26,6 +27,7 @@ export type StrategyDiagnostics = {
   unregistered_tools: UnmetTool[];
   has_decision_path: boolean;
   launchable: boolean;
+  route: RouteReadiness;
 };
 
 export type AgentSlotDiagnostics = {

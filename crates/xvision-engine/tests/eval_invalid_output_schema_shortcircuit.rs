@@ -15,13 +15,18 @@
 
 #![allow(deprecated)] // canonical_scenarios()
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
@@ -34,7 +39,6 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{AgentRef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus};
-
 mod support;
 use support::api_eval_run_context as ctx_with_tables;
 
@@ -63,6 +67,48 @@ impl LlmDispatch for ScriptedDispatch {
         let pick = idx.min(self.responses.len().saturating_sub(1));
         Ok(self.responses[pick].clone())
     }
+}
+async fn spawn_mock_cline() -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    let cfg = serde_json::json!({
+        "decisionJsonByRole": {
+            "trader": [
+                ORIGINAL_MISSING_CONVICTION,
+                r#"{"justification":"still nothing useful"}"#
+            ]
+        }
+    });
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&cfg).unwrap(),
+    )
+    .expect("write mock sidecar config");
+    let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js");
+    let client = AgentClient::spawn(&bin, &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: ProviderEntry {
+                name: "anthropic".into(),
+                kind: ProviderKind::Anthropic,
+                base_url: String::new(),
+                api_key_env: "K".into(),
+                enabled_models: vec!["claude-sonnet-4-6".into()],
+            },
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: RunMode::Backtest,
+        },
+        dir,
+    )
 }
 
 fn text_resp(body: &str) -> LlmResponse {
@@ -124,10 +170,10 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            attested_with: "openai.gpt-4o-mini+".into(),
-            allowed_tools: vec![],
-            provider: Some("openai".into()),
-            model: Some("gpt-4o-mini".into()),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
         system_prompt: "Decide.".into(),
         max_tokens: None,
@@ -137,7 +183,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-invalid-schema-trader".into(),
-        noop_skip: true,
+        noop_skip: false,
         nano: None,
     }
 }
@@ -205,7 +251,10 @@ async fn backtest_emits_invalid_output_schema_short_circuit_when_recovery_exhaus
     xvision_engine::eval::scenario_store::insert_scenario(&ctx, &scenario)
         .await
         .unwrap();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let (cline, _sidecar) = spawn_mock_cline().await;
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -213,7 +262,7 @@ async fn backtest_emits_invalid_output_schema_short_circuit_when_recovery_exhaus
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
         .run(

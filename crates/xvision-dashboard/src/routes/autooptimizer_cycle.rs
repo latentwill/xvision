@@ -1,4 +1,6 @@
-//! POST /api/autooptimizer/run-cycle — launch an optimizer run.
+//! Optimizer launch routes. `POST /api/optimize/run` is the canonical automated
+//! optimizer launch route for agents/dashboard; `POST /api/autooptimizer/run-cycle`
+//! remains manual/back-compat.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -87,6 +89,10 @@ pub struct RunDefaultsResponse {
     pub judge_model: String,
     pub config_path: String,
     pub config_exists: bool,
+    pub dspy_enabled: bool,
+    pub gepa_candidates: usize,
+    pub gepa_generations: usize,
+    pub gepa_real_eval: bool,
 }
 
 pub async fn run_defaults() -> Result<Json<RunDefaultsResponse>, DashboardError> {
@@ -94,11 +100,15 @@ pub async fn run_defaults() -> Result<Json<RunDefaultsResponse>, DashboardError>
     Ok(Json(RunDefaultsResponse {
         mutator_provider: cfg.mutator.provider.clone(),
         mutator_model: cfg.mutator.model.clone(),
-        // Dashboard run-cycle defaults the reviewer to the writer provider/model.
+        // Optimizer launches default the reviewer to the writer provider/model.
         judge_provider: cfg.mutator.provider.clone(),
         judge_model: cfg.mutator.model.clone(),
         config_path: config_path.display().to_string(),
         config_exists,
+        dspy_enabled: cfg.dspy_enabled,
+        gepa_candidates: cfg.gepa_candidates,
+        gepa_generations: cfg.gepa_generations,
+        gepa_real_eval: cfg.gepa_real_eval,
     }))
 }
 
@@ -182,10 +192,31 @@ pub async fn start_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    start_cycle_inner(state, body, false).await
+}
+
+/// Canonical automated optimizer launch entrypoint. Unlike the manual back-compat
+/// route, this path opts DSPy/GEPA into the cycle so agents launch or monitor one
+/// automated optimizer surface instead of driving manual optimization.
+pub async fn start_optimizer_run(
+    State(state): State<AppState>,
+    Json(body): Json<StartCycleBody>,
+) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    start_cycle_inner(state, body, true).await
+}
+
+async fn start_cycle_inner(
+    state: AppState,
+    body: StartCycleBody,
+    force_dspy_enabled: bool,
+) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
     let mut cfg = load_optimizer_config()?;
+    if force_dspy_enabled {
+        cfg.dspy_enabled = true;
+    }
     // F28: apply per-run evaluation-window overrides (bound bar-fetch cost), then
     // re-validate so an inverted/overlapping window fails fast with a clear
-    // message instead of deep in scenario synthesis. Mirrors the CLI run-cycle.
+    // message instead of deep in scenario synthesis. Mirrors `xvn optimize run`.
     if let Some(d) = body.day_start {
         cfg.day_window.start = d;
     }
@@ -215,6 +246,16 @@ pub async fn start_cycle(
             });
         }
     }
+    let strategy_id = body
+        .strategy_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| DashboardError::Validation {
+            field: "strategy_id".into(),
+            msg: "strategy_id is required for optimizer launches".into(),
+        })?;
     let budget_cap = body.budget_usd.unwrap_or(f64::INFINITY);
     let mutator_provider = body
         .mutator_provider
@@ -237,8 +278,8 @@ pub async fn start_cycle(
     // and unpriced-call count. The metering dispatch wraps EVERY LLM call site
     // (experiment writer + judge + the paper-test backtest decisions, which route
     // through the metered mutator dispatch), so the per-cycle cost the panel reads
-    // is real, not the old `$0.00`. Cost is metered at the dispatch boundary, the
-    // same way the CLI `run-cycle` does it.
+    // is real, not the old `$0.00`. Cost is metered at the dispatch boundary,
+    // the same way `xvn optimize run` does it.
     let meter: Arc<Mutex<CycleMeter>> = Arc::new(Mutex::new(CycleMeter::default()));
     let mutator_catalogs = load_metering_catalogs(&state.xvn_home, &mutator_provider).await;
     let metered_mutator: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
@@ -275,19 +316,15 @@ pub async fn start_cycle(
     let pool = state.pool.clone();
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
-    let strategy_id = body
-        .strategy_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| DashboardError::Validation {
-            field: "strategy_id".into(),
-            msg: "strategy_id is required for dashboard run-cycle launches".into(),
-        })?;
     // B9: load the seed strategy BEFORE building the scenario so the scenario
     // granularity matches the strategy's decision cadence (was hardcoded 1h).
-    let (bundle_hash, strategy) =
-        load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
+    let (bundle_hash, strategy) = load_strategy_parent(
+        &strategy_id,
+        &state.xvn_home,
+        &lineage_store,
+        &strategy_blob_store,
+    )
+    .await?;
 
     // Determine the trader's effective provider+model so we can route the
     // paper-test backtest through the right dispatch. Agents-backed strategies
@@ -328,7 +365,7 @@ pub async fn start_cycle(
     preflight_trader_provider(
         &pool,
         &strategy,
-        strategy_id,
+        &strategy_id,
         &effective_cycle_provider,
         false,
         skip_provider_check,
@@ -338,7 +375,7 @@ pub async fn start_cycle(
         field: "strategy_id".into(),
         msg: e.message,
     })?;
-    preflight_cycle::preflight_cycle(&pool, &strategy, strategy_id, false)
+    preflight_cycle::preflight_cycle(&pool, &strategy, &strategy_id, false)
         .await
         .map_err(|e| DashboardError::Validation {
             field: "strategy_id".into(),
@@ -554,8 +591,8 @@ pub async fn start_cycle(
                 let _ = persist_tx.send(ev.clone());
                 let _ = tx.send(ev);
             },
-            // DSPy in-loop: `Some` when `dspy_enabled = true` and the store
-            // opened successfully; `None` otherwise (operator opt-in default off).
+            // DSPy in-loop: `Some` when the effective config has
+            // `dspy_enabled = true` and the memory store opened successfully.
             cycle_dspy_ctx.as_ref(),
             // Cortex memory: optimizer recall/record (default ON, config-backed).
             cycle_memory.as_deref(),
@@ -1334,17 +1371,25 @@ mod tests {
         // Mirror exactly what the route does: cadence from the loaded strategy.
         let cadence_minutes = strategy.manifest.decision_cadence_minutes;
         let day_scenario = build_day_scenario(&cfg, cadence_minutes).expect("day scenario");
-        assert_eq!(
-            day_scenario.granularity,
-            BarGranularity::Minute15,
-            "15m strategy must produce a 15m day scenario"
+        assert!(
+            day_scenario
+                .bar_cache_policy
+                .cache_key
+                .ends_with(BarGranularity::Minute15.canonical().as_str()),
+            "15m strategy must produce a 15m day scenario (cache key {})",
+            day_scenario.bar_cache_policy.cache_key
         );
         let baseline = synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
             .expect("baseline scenario");
-        assert_eq!(
-            baseline.granularity,
-            BarGranularity::Minute15,
-            "baseline must inherit the 15m granularity"
+        assert!(
+            baseline
+                .bar_cache_policy
+                .cache_key
+                // `holdout-<day-key>-<start>-<end>`: the day key already
+                // carries the cadence-derived granularity suffix.
+                .contains(BarGranularity::Minute15.canonical().as_str()),
+            "baseline must inherit the 15m granularity (cache key {})",
+            baseline.bar_cache_policy.cache_key
         );
     }
 }

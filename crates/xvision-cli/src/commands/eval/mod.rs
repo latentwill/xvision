@@ -173,7 +173,7 @@ pub struct RunArgs {
     /// (kept for backward compat). `paper` is a legacy alias for `backtest`.
     /// Real-money venues are outside the current scope — only paper (simulated)
     /// execution is wired.
-    #[arg(long, default_value = "backtest")]
+    #[arg(long, default_value = "backtest", value_parser = normalize_mode)]
     pub mode: String,
     /// Forward-test Alpaca asset, e.g. BTC/USD. Required for --mode fwd.
     #[arg(long)]
@@ -653,6 +653,18 @@ async fn run_export(args: ExportArgs) -> CliResult<()> {
         }
     }
     Ok(())
+}
+
+/// Clap value parser: canonicalizes `live` → `fwd` and `paper` → `backtest`
+/// at arg-parse time so downstream code only ever sees the two canonical
+/// mode strings.
+fn normalize_mode(s: &str) -> Result<String, String> {
+    match RunMode::parse(s) {
+        Some(mode) => Ok(mode.as_str().to_string()),
+        None => Err(format!(
+            "unknown mode {s:?}; expected one of: backtest | fwd (legacy aliases: live, paper)"
+        )),
+    }
 }
 
 fn parse_mode(s: &str) -> Result<RunMode> {

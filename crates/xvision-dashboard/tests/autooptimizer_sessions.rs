@@ -44,7 +44,7 @@ async fn test_status_active() {
         .await
         .expect("init dashboard state");
 
-    // Insert a running session directly so we don't need to do a full run-cycle call.
+    // Insert a running session directly so we don't need a full optimizer launch call.
     let session_id = xvision_engine::autooptimizer::session::create_session(
         &state.pool,
         "test-strategy-1",
@@ -264,6 +264,59 @@ async fn test_run_cycle_compat_returns_session_id() {
     let body = serde_json::json!({});
     let res = server.post("/api/autooptimizer/run-cycle").json(&body).await;
     assert_ne!(res.status_code(), 404, "run-cycle route must exist (not 404)");
+}
+
+/// test_optimize_run_uses_cycle_contract: the canonical agent route should
+/// dispatch to the optimizer cycle launcher, so an empty body reaches
+/// strategy_id validation instead of the old memory-distillation agent_id
+/// deserializer.
+#[tokio::test]
+async fn test_optimize_run_uses_cycle_contract() {
+    let (server, _tmp) = test_server().await;
+
+    let res = server
+        .post("/api/optimize/run")
+        .json(&serde_json::json!({}))
+        .await;
+
+    assert_ne!(res.status_code(), 404, "canonical optimize route must exist");
+    assert!(
+        res.status_code().is_client_error(),
+        "missing strategy_id should be a client error, got {}",
+        res.status_code()
+    );
+    let body = res.text();
+    assert!(
+        body.contains("strategy_id"),
+        "cycle validation must mention missing strategy_id, got: {body}"
+    );
+    assert!(
+        !body.contains("agent_id") && !body.contains("pattern_text"),
+        "canonical optimize route must not expose the old memory-distillation contract, got: {body}"
+    );
+    assert!(
+        !body.contains("Failed to deserialize"),
+        "missing strategy_id should be handled by cycle validation, not serde rejection: {body}"
+    );
+}
+
+/// test_optimize_run_cycle_alias_not_registered: agents must use
+/// /api/optimize/run, while the manual dashboard cycle route remains
+/// /api/autooptimizer/run-cycle.
+#[tokio::test]
+async fn test_optimize_run_cycle_alias_not_registered() {
+    let (server, _tmp) = test_server().await;
+
+    let res = server
+        .post("/api/optimize/run-cycle")
+        .json(&serde_json::json!({}))
+        .await;
+
+    assert_eq!(
+        res.status_code(),
+        axum::http::StatusCode::NOT_FOUND,
+        "/api/optimize/run-cycle must not be registered as an agent alias"
+    );
 }
 
 // ---------------------------------------------------------------------------

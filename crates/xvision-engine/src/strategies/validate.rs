@@ -2,8 +2,9 @@ use thiserror::Error;
 
 use std::collections::{HashMap, HashSet};
 
+use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
-use crate::strategies::agent_ref::{canonical_role, EdgePredicate};
+use crate::strategies::agent_ref::{canonical_role, EdgePredicate, RouteContextField};
 use crate::strategies::{DecisionMode, PipelineKind, Strategy};
 use xvision_filters::ActivationMode;
 
@@ -25,6 +26,30 @@ pub enum ValidationError {
     PredicateWithoutUpstreamFilter { from: String, to: String },
     #[error("graph pipeline edge from '{from}' to '{to}' must target a strictly later agent (DAG-strict)")]
     BackwardEdge { from: String, to: String },
+    #[error("route contract requires at least one branch target")]
+    RouteMissingBranches,
+    #[error("route contract router role '{0}' does not match any attached agent")]
+    UnknownRouteRouter(String),
+    #[error("route contract router role '{0}' must activate Router")]
+    RouteRouterNotRouter(String),
+    #[error("route contract contains duplicate branch target '{0}'")]
+    DuplicateRouteBranchTarget(String),
+    #[error("route contract branch target '{0}' references unknown role")]
+    UnknownRouteBranchTarget(String),
+    #[error("route contract branch target '{0}' cannot point at the router itself")]
+    RouteBranchTargetsRouter(String),
+    #[error("route contract branch target '{target}' must appear after router '{router}' unless an explicit path mapping is present")]
+    BackwardRouteBranch { router: String, target: String },
+    #[error("route contract branches must reach at least one Trader-capable decision path")]
+    RouteBranchNoDecisionPath,
+    #[error("route contract graph shape is unsupported/read-only: {0}")]
+    UnsupportedRouteGraphShape(String),
+    #[error("route contract graph edge references unknown role '{0}'")]
+    UnknownRouteGraphRole(String),
+    #[error("route contract graph edge from '{from}' to '{to}' must target a strictly later agent")]
+    BackwardRouteGraphEdge { from: String, to: String },
+    #[error("route contract contains duplicate graph edge from '{from}' to '{to}'")]
+    DuplicateRouteGraphEdge { from: String, to: String },
     #[error("asset universe cannot be empty")]
     EmptyAssetUniverse,
     #[error("invalid risk config: {0}")]
@@ -424,6 +449,287 @@ fn validate_common(b: &Strategy) -> Result<(), ValidationError> {
     Ok(())
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RouteDiagnosticReason {
+    pub code: String,
+    pub message: String,
+    pub blocking: bool,
+}
+
+impl RouteDiagnosticReason {
+    pub fn blocking(code: &'static str, message: &'static str) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.to_string(),
+            blocking: true,
+        }
+    }
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RouteReadiness {
+    pub routed: bool,
+    pub context_fields: Vec<RouteContextField>,
+    pub launchable: bool,
+    pub reasons: Vec<RouteDiagnosticReason>,
+}
+
+impl RouteReadiness {
+    pub fn not_routed() -> Self {
+        Self {
+            routed: false,
+            context_fields: Vec::new(),
+            launchable: true,
+            reasons: Vec::new(),
+        }
+    }
+}
+
+fn push_route_reason(reasons: &mut Vec<RouteDiagnosticReason>, code: &'static str, message: &'static str) {
+    if reasons.iter().any(|reason| reason.code == code) {
+        return;
+    }
+    reasons.push(RouteDiagnosticReason::blocking(code, message));
+}
+
+pub fn route_readiness_for_strategy(strategy: &Strategy) -> RouteReadiness {
+    let Some(route) = strategy.pipeline.route.as_ref() else {
+        return RouteReadiness::not_routed();
+    };
+
+    let context_fields = route.materialized_context_fields();
+    let mut reasons = Vec::new();
+    if strategy.pipeline.kind != PipelineKind::Graph {
+        push_route_reason(
+            &mut reasons,
+            "route.unsupported_graph",
+            "Route Builder routes must launch from the graph prepared by the router.",
+        );
+    }
+
+    let mut role_indices = HashMap::new();
+    for (idx, agent) in strategy.agents.iter().enumerate() {
+        role_indices.insert(agent.canonical_role(), idx);
+    }
+
+    let router_role = canonical_role(&route.router_role);
+    let router_idx = role_indices.get(&router_role).copied();
+    match router_idx {
+        Some(idx) if strategy.agents[idx].activates.unwrap_or(Capability::Trader) == Capability::Router => {}
+        _ => push_route_reason(
+            &mut reasons,
+            "route.missing_router_binding",
+            "Choose an attached router before launching this Route Builder route.",
+        ),
+    }
+
+    if route.branches.is_empty() {
+        push_route_reason(
+            &mut reasons,
+            "route.missing_branch_target",
+            "Add at least one branch target so the router can choose a selected path.",
+        );
+    }
+
+    let mut seen_branch_targets = HashSet::new();
+    for branch in &route.branches {
+        let target = canonical_role(&branch.target_role);
+        if !seen_branch_targets.insert(target.clone()) {
+            push_route_reason(
+                &mut reasons,
+                "route.ambiguous_branch_target",
+                "Each Route Builder branch target must appear only once.",
+            );
+        }
+
+        let Some(&target_idx) = role_indices.get(&target) else {
+            push_route_reason(
+                &mut reasons,
+                "route.missing_branch_target",
+                "Attach every branch target before launching this Route Builder route.",
+            );
+            push_route_reason(
+                &mut reasons,
+                "route.stale_saved_route",
+                "This saved Route Builder route references a branch target that is no longer attached.",
+            );
+            continue;
+        };
+
+        if Some(target_idx) <= router_idx || target == router_role {
+            push_route_reason(
+                &mut reasons,
+                "route.unsupported_graph",
+                "Route Builder branch targets must sit on a forward test path after the router.",
+            );
+        }
+
+        let branch_reaches_trader = strategy
+            .agents
+            .iter()
+            .skip(target_idx)
+            .any(|agent| agent.activates.unwrap_or(Capability::Trader) == Capability::Trader);
+        if !branch_reaches_trader {
+            push_route_reason(
+                &mut reasons,
+                "route.no_decision_path",
+                "At least one selected path must reach a live trading decision.",
+            );
+        }
+    }
+
+    let mut seen_graph_edges = HashSet::new();
+    for edge in &route.graph_edges {
+        let from = canonical_role(&edge.from_role);
+        let to = canonical_role(&edge.to_role);
+        let from_idx = role_indices.get(&from).copied();
+        let to_idx = role_indices.get(&to).copied();
+
+        if from_idx.is_none() || to_idx.is_none() {
+            push_route_reason(
+                &mut reasons,
+                "route.stale_saved_route",
+                "This saved Route Builder route references a path that is no longer attached.",
+            );
+            push_route_reason(
+                &mut reasons,
+                "route.unsupported_graph",
+                "Route Builder routes must use a router-authored forward test path.",
+            );
+            continue;
+        }
+
+        if !seen_graph_edges.insert((from.clone(), to.clone())) {
+            push_route_reason(
+                &mut reasons,
+                "route.ambiguous_branch_target",
+                "Route Builder contains duplicate selected-path mappings.",
+            );
+        }
+        if from != router_role || to_idx <= from_idx {
+            push_route_reason(
+                &mut reasons,
+                "route.unsupported_graph",
+                "Route Builder routes must use a router-authored forward test path.",
+            );
+        }
+    }
+
+    RouteReadiness {
+        routed: true,
+        context_fields,
+        launchable: reasons.iter().all(|reason| !reason.blocking),
+        reasons,
+    }
+}
+
+pub fn validate_route_contract(strategy: &Strategy) -> Result<RouteReadiness, ValidationError> {
+    let Some(route) = strategy.pipeline.route.as_ref() else {
+        return Ok(RouteReadiness::not_routed());
+    };
+
+    let mut role_indices = HashMap::new();
+    for (idx, agent) in strategy.agents.iter().enumerate() {
+        role_indices.insert(agent.canonical_role(), idx);
+    }
+
+    let router_role = canonical_role(&route.router_role);
+    let Some(&router_idx) = role_indices.get(&router_role) else {
+        return Err(ValidationError::UnknownRouteRouter(route.router_role.clone()));
+    };
+    let router_capability = strategy.agents[router_idx]
+        .activates
+        .unwrap_or(Capability::Trader);
+    if router_capability != Capability::Router {
+        return Err(ValidationError::RouteRouterNotRouter(route.router_role.clone()));
+    }
+
+    if route.branches.is_empty() {
+        return Err(ValidationError::RouteMissingBranches);
+    }
+
+    let mut seen_branch_targets = HashSet::new();
+    for branch in &route.branches {
+        let target = canonical_role(&branch.target_role);
+        if !seen_branch_targets.insert(target.clone()) {
+            return Err(ValidationError::DuplicateRouteBranchTarget(target));
+        }
+        if target == router_role {
+            return Err(ValidationError::RouteBranchTargetsRouter(
+                branch.target_role.clone(),
+            ));
+        }
+        let Some(&target_idx) = role_indices.get(&target) else {
+            return Err(ValidationError::UnknownRouteBranchTarget(
+                branch.target_role.clone(),
+            ));
+        };
+        if target_idx <= router_idx {
+            return Err(ValidationError::BackwardRouteBranch {
+                router: route.router_role.clone(),
+                target: branch.target_role.clone(),
+            });
+        }
+        let branch_reaches_trader = strategy
+            .agents
+            .iter()
+            .skip(target_idx)
+            .any(|agent| agent.activates.unwrap_or(Capability::Trader) == Capability::Trader);
+        if !branch_reaches_trader {
+            return Err(ValidationError::RouteBranchNoDecisionPath);
+        }
+    }
+
+    let mut seen_graph_edges = HashSet::new();
+    for edge in &route.graph_edges {
+        let from = canonical_role(&edge.from_role);
+        let to = canonical_role(&edge.to_role);
+        let Some(&from_idx) = role_indices.get(&from) else {
+            return Err(ValidationError::UnknownRouteGraphRole(edge.from_role.clone()));
+        };
+        let Some(&to_idx) = role_indices.get(&to) else {
+            return Err(ValidationError::UnknownRouteGraphRole(edge.to_role.clone()));
+        };
+        if !seen_graph_edges.insert((from.clone(), to.clone())) {
+            return Err(ValidationError::DuplicateRouteGraphEdge {
+                from: edge.from_role.clone(),
+                to: edge.to_role.clone(),
+            });
+        }
+        if from != router_role {
+            return Err(ValidationError::UnsupportedRouteGraphShape(format!(
+                "read-only graph edge '{}' -> '{}' is not authored by router '{}'",
+                edge.from_role, edge.to_role, route.router_role
+            )));
+        }
+        if to_idx <= from_idx {
+            return Err(ValidationError::BackwardRouteGraphEdge {
+                from: edge.from_role.clone(),
+                to: edge.to_role.clone(),
+            });
+        }
+    }
+
+    let context_fields = route.materialized_context_fields();
+
+    Ok(RouteReadiness {
+        routed: true,
+        context_fields,
+        launchable: true,
+        reasons: Vec::new(),
+    })
+}
+
 fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
     // Canonical form across the engine: trim + ASCII lowercase. The
     // serde layer normalizes roles on deserialize/serialize, so most
@@ -463,35 +769,28 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
                 return Err(ValidationError::UnknownPipelineRole(edge.to_role.clone()));
             }
 
-            // Phase B (capability-dispatch): edges with a predicate
-            // must have at least one upstream Filter (by `activates`)
-            // in strategy order; otherwise the predicate could never
-            // fire because no `FilterSignal` would have been produced.
-            // Edges with `condition: None` always pass — they are the
-            // unconditional fall-through case.
+            let from_idx = b
+                .agents
+                .iter()
+                .position(|a| canonical_role(&a.role) == from)
+                .unwrap_or(usize::MAX);
+            let to_idx = b
+                .agents
+                .iter()
+                .position(|a| canonical_role(&a.role) == to)
+                .unwrap_or(usize::MAX);
+
+            // DAG-strict: all graph edges are forward-only. Backward / self
+            // targets are cycle introductions even when the edge is
+            // unconditional.
+            if from_idx != usize::MAX && to_idx != usize::MAX && to_idx <= from_idx {
+                return Err(ValidationError::BackwardEdge {
+                    from: edge.from_role.clone(),
+                    to: edge.to_role.clone(),
+                });
+            }
+
             if let Some(predicate) = edge.condition.as_ref() {
-                let from_idx = b
-                    .agents
-                    .iter()
-                    .position(|a| canonical_role(&a.role) == from)
-                    .unwrap_or(usize::MAX);
-                let to_idx = b
-                    .agents
-                    .iter()
-                    .position(|a| canonical_role(&a.role) == to)
-                    .unwrap_or(usize::MAX);
-
-                // DAG-strict: forward-only edges. Backward / self
-                // targets are cycle introductions — reject at draft
-                // time so Router-style runtime fall-through cannot
-                // smuggle them in.
-                if from_idx != usize::MAX && to_idx != usize::MAX && to_idx <= from_idx {
-                    return Err(ValidationError::BackwardEdge {
-                        from: edge.from_role.clone(),
-                        to: edge.to_role.clone(),
-                    });
-                }
-
                 if !predicate_has_upstream_filter(b, from_idx, predicate) {
                     return Err(ValidationError::PredicateWithoutUpstreamFilter {
                         from: edge.from_role.clone(),
@@ -501,6 +800,7 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
             }
         }
     }
+    validate_route_contract(b)?;
     Ok(())
 }
 
@@ -543,6 +843,7 @@ mod preflight_tests {
     use crate::safety::VenueLabel;
     use crate::strategies::{manifest::PublicManifest, risk::RiskPreset, AgentRef, PipelineDef, Strategy};
     use chrono::{TimeZone, Utc};
+    use serde_json::{json, Value};
     use xvision_data::alpaca::BarGranularity;
 
     fn make_strategy_with_agent(asset: &str, cadence_minutes: u32) -> Strategy {
@@ -588,6 +889,305 @@ mod preflight_tests {
             briefing_indicators: Vec::new(),
             tunable_bounds: Vec::new(),
         }
+    }
+
+    fn route_agent(role: &str, activates: &str) -> Value {
+        json!({
+            "agent_id": format!("01HZROUTECONTRACT{}", role.replace('_', "").to_ascii_uppercase()),
+            "role": role,
+            "activates": activates,
+        })
+    }
+
+    fn route_branch(target_role: &str) -> Value {
+        json!({ "target_role": target_role })
+    }
+
+    fn route_definition(
+        router_role: &str,
+        branches: Vec<Value>,
+        graph_edges: Vec<Value>,
+        context_fields: Option<Value>,
+    ) -> Value {
+        let mut route = json!({
+            "router_role": router_role,
+            "branches": branches,
+            "graph_edges": graph_edges,
+            "trace_mode": "compact",
+        });
+        if let Some(context_fields) = context_fields {
+            route
+                .as_object_mut()
+                .expect("route definition object")
+                .insert("context_fields".into(), context_fields);
+        }
+        route
+    }
+
+    fn route_strategy_value(
+        route: Value,
+        agents: Vec<Value>,
+        pipeline_kind: &str,
+        edges: Vec<Value>,
+    ) -> Value {
+        json!({
+            "manifest": {
+                "id": "01HZROUTECONTRACTSTRATEGY",
+                "display_name": "Route Builder Contract",
+                "plain_summary": "route validation fixture",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 15,
+                "attested_with": [],
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": agents,
+            "pipeline": {
+                "kind": pipeline_kind,
+                "edges": edges,
+                "route": route
+            },
+            "risk": serde_json::to_value(RiskPreset::Balanced.expand()).unwrap()
+        })
+    }
+
+    fn route_strategy(route: Value, agents: Vec<Value>) -> Strategy {
+        serde_json::from_value(route_strategy_value(route, agents, "sequential", Vec::new())).unwrap()
+    }
+
+    fn expect_route_validation_error(strategy: Strategy, reason: &str, needles: &[&str]) {
+        let err = validate_strategy(&strategy).expect_err(reason);
+        let err = err.to_string().to_ascii_lowercase();
+        assert!(
+            needles.iter().any(|needle| err.contains(needle)),
+            "expected route validation error containing one of {needles:?}, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_missing_branches() {
+        let strategy = route_strategy(
+            route_definition("router", Vec::new(), Vec::new(), None),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "route with no branch targets must fail validation",
+            &["branch", "empty", "non-empty"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_duplicate_branch_targets_after_canonicalization() {
+        let strategy = route_strategy(
+            route_definition(
+                "router",
+                vec![route_branch("Trader"), route_branch(" trader ")],
+                Vec::new(),
+                None,
+            ),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "duplicate canonical branch targets must fail validation",
+            &["duplicate", "branch", "target"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_unknown_branch_target() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("ghost_trader")], Vec::new(), None),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "unknown branch target must fail validation",
+            &["unknown", "ghost_trader", "branch"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_branch_target_equal_to_router() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("router")], Vec::new(), None),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "route branch must not target the router itself",
+            &["router", "self", "branch"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_backward_branch_without_explicit_path_mapping() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("trader")], Vec::new(), None),
+            vec![route_agent("trader", "trader"), route_agent("router", "router")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "branch target before router must fail validation without explicit path mapping",
+            &["backward", "after router", "forward", "later"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_branch_set_with_no_decision_path() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("analyst")], Vec::new(), None),
+            vec![route_agent("router", "router"), route_agent("analyst", "filter")],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "route must reach at least one Trader-capable branch target",
+            &["trader", "decision", "branch"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_unsupported_graph_shape_instead_of_rewriting_it() {
+        let strategy = route_strategy(
+            route_definition(
+                "router",
+                vec![route_branch("trader")],
+                vec![json!({
+                    "from_role": "analyst",
+                    "to_role": "trader",
+                    "condition": null
+                })],
+                None,
+            ),
+            vec![
+                route_agent("router", "router"),
+                route_agent("analyst", "filter"),
+                route_agent("trader", "trader"),
+            ],
+        );
+
+        expect_route_validation_error(
+            strategy,
+            "non-router-authored graph shape must be reported as unsupported",
+            &["unsupported", "read-only", "graph"],
+        );
+    }
+
+    #[test]
+    fn route_contract_rejects_unknown_context_field() {
+        let raw = route_strategy_value(
+            route_definition(
+                "router",
+                vec![route_branch("trader")],
+                Vec::new(),
+                Some(json!(["market_snapshot", "operator_notes"])),
+            ),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+            "sequential",
+            Vec::new(),
+        );
+
+        match serde_json::from_value::<Strategy>(raw) {
+            Err(err) => {
+                let err = err.to_string().to_ascii_lowercase();
+                assert!(
+                    err.contains("operator_notes") || err.contains("context"),
+                    "unknown context field must surface a context-specific error, got `{err}`"
+                );
+            }
+            Ok(strategy) => expect_route_validation_error(
+                strategy,
+                "unknown route context field must fail validation",
+                &["context", "operator_notes", "unknown"],
+            ),
+        }
+    }
+
+    #[test]
+    fn route_contract_materializes_default_router_context_when_omitted() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("trader")], Vec::new(), None),
+            vec![
+                route_agent("router", "router"),
+                route_agent("regime_summary", "filter"),
+                route_agent("trader", "trader"),
+            ],
+        );
+
+        validate_strategy(&strategy).expect("omitted route context fields should normalize to defaults");
+        let serialized = serde_json::to_value(&strategy).unwrap();
+        let fields = serialized
+            .pointer("/pipeline/route/context_fields")
+            .and_then(Value::as_array)
+            .expect("route context defaults must be materialized on the route definition");
+        let fields: Vec<&str> = fields.iter().filter_map(Value::as_str).collect();
+        assert_eq!(
+            fields,
+            vec![
+                "market_snapshot",
+                "tool_state",
+                "available_targets",
+                "regime_summary"
+            ]
+        );
+    }
+
+    #[test]
+    fn route_contract_normalizes_explicit_empty_context_fields_to_defaults() {
+        let strategy = route_strategy(
+            route_definition(
+                "router",
+                vec![route_branch("trader")],
+                Vec::new(),
+                Some(json!([])),
+            ),
+            vec![route_agent("router", "router"), route_agent("trader", "trader")],
+        );
+
+        let readiness = validate_route_contract(&strategy)
+            .expect("explicit empty route context fields should use defaults");
+
+        assert_eq!(
+            readiness.context_fields,
+            vec![
+                RouteContextField::MarketSnapshot,
+                RouteContextField::ToolState,
+                RouteContextField::AvailableTargets,
+                RouteContextField::RegimeSummary,
+            ],
+            "an explicit empty context_fields list must mean default router context, not no context"
+        );
+    }
+
+    #[test]
+    fn route_contract_accepts_branch_target_whose_sequential_path_reaches_trader() {
+        let strategy = route_strategy(
+            route_definition("router", vec![route_branch("analyst")], Vec::new(), None),
+            vec![
+                route_agent("router", "router"),
+                route_agent("analyst", "filter"),
+                route_agent("trader", "trader"),
+            ],
+        );
+
+        let readiness = validate_route_contract(&strategy).expect(
+            "branch targeting a non-trader must be valid when the later sequential path reaches a trader",
+        );
+
+        assert!(
+            readiness.routed,
+            "route readiness must preserve the routed contract"
+        );
     }
 
     fn make_eth_4h_scenario() -> Scenario {
@@ -703,8 +1303,10 @@ mod preflight_tests {
     }
 
     #[test]
-    fn preflight_with_scenario_timeframe_mismatch_produces_warning() {
-        // Strategy cadence 60 (1h); scenario granularity Hour4 (240 min)
+    fn preflight_with_scenario_timeframe_mismatch_is_not_flagged() {
+        // Scenarios carry a date range only; asset universe and timeframe
+        // matching happen at run time, so cadence mismatch is not a
+        // preflight warning anymore.
         let strategy = make_strategy_with_agent("ETH/USD", 60);
         let scenario = make_eth_4h_scenario(); // granularity = 4h = 240 min
         let result = preflight_validate(&strategy, Some(&scenario));
@@ -712,8 +1314,8 @@ mod preflight_tests {
             result
                 .warnings
                 .iter()
-                .any(|w| w.contains("timeframe") || w.contains("cadence")),
-            "expected timeframe mismatch warning, got: {:?}",
+                .all(|w| !(w.contains("timeframe") || w.contains("cadence"))),
+            "scenario cadence must not be compared in preflight, got: {:?}",
             result.warnings
         );
     }

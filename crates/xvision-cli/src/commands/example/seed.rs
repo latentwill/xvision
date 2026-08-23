@@ -41,7 +41,7 @@ const SEED_DEFAULT_PROVIDER: &str = "openrouter";
 const SEED_DEFAULT_MODEL: &str = "google/gemini-3.1-flash-lite";
 
 /// Default autooptimizer.toml seeded under `$XVN_HOME` so a first
-/// `xvn optimizer run-cycle` points the experiment writer (mutator) and the
+/// `xvn optimize run` points the experiment writer (mutator) and the
 /// judge at a registered, launchable provider instead of the keyless
 /// `test`/`anthropic` default. Derived from [`SEED_DEFAULT_PROVIDER`] /
 /// [`SEED_DEFAULT_MODEL`] so the optimizer config and the seeded trader can never

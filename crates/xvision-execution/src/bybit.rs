@@ -337,11 +337,17 @@ impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A> {
             .place_order(bybit_req)
             .await
             .context("bybit place_order")?;
+        tracing::warn!(
+            target: "xvision::bybit",
+            order_id = %result.order_id,
+            "bybit fill unverified: venue ack only; no execution query is exposed by BybitApi"
+        );
         Ok(OrderConfirmation {
             broker_order_id: result.order_id,
             fill_price: Some(req.reference_price_usd),
             fill_size: req.size,
             fee: None,
+            note: Some("fill unverified: venue ack only".to_string()),
         })
     }
 

@@ -34,6 +34,18 @@ use xvision_observability::{
     SupervisorNoteEvent, ToolCallFailedEvent, ToolCallFinishedEvent, ToolCallStartedEvent, ToolOrigin,
 };
 
+/// Normalize Route Builder lane labels to product-facing copy. Historical
+/// "backward test" wording is an alias for the canonical `backtest` lane.
+pub fn normalize_route_lane_label(raw: &str) -> &'static str {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "backtest" | "back test" | "backward test" | "backward" => "backtest",
+        "forward" | "forward_test" | "forward test" => "forward test",
+        "optimizer" | "optimization" | "paper tester" | "paper_test" => "optimizer",
+        "live" | "live_trading" | "live trading" => "live trading",
+        _ => "backtest",
+    }
+}
+
 /// Serializable digest input for `compute_prompt_hash`. Private —
 /// callers should never need to construct it directly. Field order is
 /// load-bearing because `serde_json::to_vec` is order-preserving and

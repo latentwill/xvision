@@ -1,12 +1,14 @@
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_engine::{
-    agents::AgentSlot,
+    agents::{AgentSlot, Capability},
     api::{
         agents::{self as agents_api, CreateAgentRequest},
-        strategy::{self, AddAgentReq, RemoveAgentReq, SetPipelineReq},
+        strategy::{self, AddAgentReq, RemoveAgentReq, SetPipelineReq, SetRouteReq, StrategyRouteOut},
         Actor, ApiContext, ApiError,
     },
-    strategies::{PipelineEdge, PipelineKind, Strategy},
+    strategies::{
+        PipelineEdge, PipelineKind, RouteBranch, RouteContextField, RouteDefinition, RouteGraphEdge, Strategy,
+    },
 };
 
 async fn ctx_with_strategies_dir() -> (ApiContext, tempfile::TempDir) {
@@ -354,6 +356,7 @@ async fn set_pipeline_rejects_graph_edges_for_non_graph_kind() {
                 to_role: "trader".into(),
                 condition: None,
             }],
+            route: None,
         },
     )
     .await
@@ -424,6 +427,7 @@ async fn set_pipeline_rejects_single_for_multi_agent_strategy() {
             strategy_id: strategy_strategy.manifest.id,
             kind: PipelineKind::Single,
             edges: vec![],
+            route: None,
         },
     )
     .await
@@ -477,6 +481,7 @@ async fn set_pipeline_accepts_valid_graph_edges_persists_and_audits() {
             strategy_id: strategy_id.clone(),
             kind: PipelineKind::Graph,
             edges: edges.clone(),
+            route: None,
         },
     )
     .await
@@ -519,6 +524,7 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
                 to_role: "trader".into(),
                 condition: None,
             }],
+            route: None,
         },
     )
     .await
@@ -527,6 +533,420 @@ async fn set_pipeline_rejects_graph_edges_for_unknown_roles() {
     assert!(
         matches!(err, ApiError::Validation(_)),
         "expected Validation, got {err:?}",
+    );
+}
+
+#[tokio::test]
+async fn set_pipeline_route_payload_rejects_unknown_branch_target() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let router = create_sample_agent(&ctx, "Router").await;
+    let trader = create_sample_agent(&ctx, "Trader").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: router.agent_id,
+            role: "router".into(),
+            activates: Some(Capability::Router),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: trader.agent_id,
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    )
+    .await
+    .unwrap();
+
+    let req: SetPipelineReq = serde_json::from_value(serde_json::json!({
+        "strategy_id": strategy_id,
+        "kind": "sequential",
+        "route": {
+            "router_role": "router",
+            "branches": [
+                { "target_role": "ghost_trader" }
+            ],
+            "trace_mode": "compact"
+        }
+    }))
+    .expect("SetPipelineReq must accept Route Builder route payloads");
+
+    let err = strategy::set_pipeline(&ctx, req)
+        .await
+        .expect_err("unknown route branch target must fail API validation");
+
+    let ApiError::Validation(message) = err else {
+        panic!("expected Validation for route branch target, got {err:?}");
+    };
+    assert!(
+        message.contains("ghost_trader") || message.to_ascii_lowercase().contains("unknown"),
+        "validation error should name the unknown route branch target, got `{message}`"
+    );
+}
+
+#[tokio::test]
+async fn set_pipeline_route_payload_normalizes_empty_context_fields_on_return_and_reload() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let router = create_sample_agent(&ctx, "Router").await;
+    let trader = create_sample_agent(&ctx, "Trader").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: router.agent_id,
+            role: "router".into(),
+            activates: Some(Capability::Router),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: trader.agent_id,
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    )
+    .await
+    .unwrap();
+
+    let req: SetPipelineReq = serde_json::from_value(serde_json::json!({
+        "strategy_id": strategy_id,
+        "kind": "sequential",
+        "route": {
+            "router_role": "router",
+            "branches": [
+                { "target_role": "trader" }
+            ],
+            "context_fields": [],
+            "trace_mode": "compact"
+        }
+    }))
+    .expect("SetPipelineReq must accept explicit empty route context_fields");
+
+    let out = strategy::set_pipeline(&ctx, req)
+        .await
+        .expect("valid route payload with empty context_fields must save");
+    let reloaded = strategy::get(&ctx, &strategy_id)
+        .await
+        .expect("saved route payload must reload");
+    let expected = vec![
+        RouteContextField::MarketSnapshot,
+        RouteContextField::ToolState,
+        RouteContextField::AvailableTargets,
+        RouteContextField::RegimeSummary,
+    ];
+    let returned_fields = out
+        .pipeline
+        .route
+        .as_ref()
+        .expect("returned pipeline must include saved route")
+        .context_fields
+        .clone();
+    let reloaded_fields = reloaded
+        .pipeline
+        .route
+        .as_ref()
+        .expect("reloaded pipeline must include saved route")
+        .context_fields
+        .clone();
+
+    assert_eq!(
+        vec![("returned", returned_fields), ("reloaded", reloaded_fields)],
+        vec![("returned", expected.clone()), ("reloaded", expected)],
+        "explicit empty context_fields must persist and read back as the default route context"
+    );
+}
+
+#[tokio::test]
+async fn set_route_saves_route_returns_readiness_and_preserves_existing_graph_edges() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let router = create_sample_agent(&ctx, "Router").await;
+    let analyst = create_sample_agent(&ctx, "Analyst").await;
+    let trader = create_sample_agent(&ctx, "Trader").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: router.agent_id,
+            role: "router".into(),
+            activates: None,
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: analyst.agent_id,
+            role: "analyst".into(),
+            activates: None,
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: trader.agent_id,
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    )
+    .await
+    .unwrap();
+
+    let preserved_edge = PipelineEdge {
+        from_role: "analyst".into(),
+        to_role: "trader".into(),
+        condition: None,
+    };
+    strategy::set_pipeline(
+        &ctx,
+        SetPipelineReq {
+            strategy_id: strategy_id.clone(),
+            kind: PipelineKind::Graph,
+            edges: vec![preserved_edge.clone()],
+            route: None,
+        },
+    )
+    .await
+    .expect("test setup must be able to seed preserved graph metadata");
+
+    let route = RouteDefinition {
+        router_role: "router".into(),
+        branches: vec![RouteBranch {
+            target_role: "analyst".into(),
+        }],
+        graph_edges: Vec::new(),
+        context_fields: vec![RouteContextField::MarketSnapshot],
+        trace_mode: Default::default(),
+    };
+
+    let out: StrategyRouteOut = strategy::set_route(
+        &ctx,
+        SetRouteReq {
+            strategy_id: strategy_id.clone(),
+            route: route.clone(),
+        },
+    )
+    .await
+    .expect("valid Route Builder save must succeed");
+
+    assert!(out.readiness.routed, "saved route must return routed readiness");
+    assert_eq!(
+        out.readiness.context_fields,
+        vec![RouteContextField::MarketSnapshot],
+        "readiness must reflect the exact saved router context contract",
+    );
+    assert_eq!(
+        out.strategy
+            .agents
+            .iter()
+            .find(|agent| agent.role == "router")
+            .and_then(|agent| agent.activates),
+        Some(Capability::Router),
+        "route save owns router activation and must persist it for runtime dispatch",
+    );
+    assert_eq!(
+        out.strategy.pipeline.route.as_ref(),
+        Some(&route),
+        "route save must persist the authored RouteDefinition",
+    );
+    assert!(
+        out.strategy.pipeline.edges.contains(&preserved_edge),
+        "route save must preserve pre-existing graph metadata it does not own",
+    );
+    assert!(
+        out.strategy
+            .pipeline
+            .edges
+            .iter()
+            .any(|edge| edge.from_role == "router" && edge.to_role == "analyst"),
+        "route save must compile the router branch into the executable graph",
+    );
+
+    let reloaded = strategy::get(&ctx, &strategy_id).await.unwrap();
+    assert_eq!(
+        reloaded.pipeline.route.as_ref(),
+        Some(&route),
+        "persisted strategy must reload with the saved route",
+    );
+    assert!(
+        reloaded.pipeline.edges.contains(&preserved_edge),
+        "persisted route save must not delete preserved graph metadata",
+    );
+    assert!(audit_row_exists(&ctx, "strategy_set_route", &strategy_id).await);
+}
+
+#[tokio::test]
+async fn validate_route_returns_readiness_without_persisting_route() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let router = create_sample_agent(&ctx, "Router").await;
+    let trader = create_sample_agent(&ctx, "Trader").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: router.agent_id,
+            role: "router".into(),
+            activates: Some(Capability::Router),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: trader.agent_id,
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        },
+    )
+    .await
+    .unwrap();
+
+    let out: StrategyRouteOut = strategy::validate_route(
+        &ctx,
+        SetRouteReq {
+            strategy_id: strategy_id.clone(),
+            route: RouteDefinition {
+                router_role: "router".into(),
+                branches: vec![RouteBranch {
+                    target_role: "trader".into(),
+                }],
+                graph_edges: Vec::new(),
+                context_fields: vec![RouteContextField::AvailableTargets],
+                trace_mode: Default::default(),
+            },
+        },
+    )
+    .await
+    .expect("valid route dry-run must return readiness");
+
+    assert!(out.readiness.routed, "dry-run must report route readiness");
+    assert_eq!(
+        out.readiness.context_fields,
+        vec![RouteContextField::AvailableTargets],
+        "dry-run readiness must be calculated from the supplied request body",
+    );
+    let reloaded = strategy::get(&ctx, &strategy_id).await.unwrap();
+    assert!(
+        reloaded.pipeline.route.is_none(),
+        "route validation is a dry-run and must not persist the supplied route",
+    );
+}
+
+#[tokio::test]
+async fn validate_route_invalid_route_returns_blocking_diagnostics_without_persisting_route() {
+    let (ctx, _dir) = test_context().await;
+    let strategy_strategy = create_sample_strategy(&ctx).await;
+    let router = create_sample_agent(&ctx, "Router").await;
+    let backup_router = create_sample_agent(&ctx, "Backup Router").await;
+    let strategy_id = strategy_strategy.manifest.id.clone();
+
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: router.agent_id,
+            role: "router".into(),
+            activates: Some(Capability::Router),
+        },
+    )
+    .await
+    .unwrap();
+    let _ = strategy::add_agent(
+        &ctx,
+        AddAgentReq {
+            strategy_id: strategy_id.clone(),
+            agent_id: backup_router.agent_id,
+            role: "backup_router".into(),
+            activates: Some(Capability::Router),
+        },
+    )
+    .await
+    .unwrap();
+
+    let out = strategy::validate_route(
+        &ctx,
+        SetRouteReq {
+            strategy_id: strategy_id.clone(),
+            route: RouteDefinition {
+                router_role: "router".into(),
+                branches: vec![RouteBranch {
+                    target_role: "backup_router".into(),
+                }],
+                graph_edges: vec![RouteGraphEdge {
+                    from_role: "backup_router".into(),
+                    to_role: "router".into(),
+                    condition: None,
+                }],
+                context_fields: vec![RouteContextField::AvailableTargets],
+                trace_mode: Default::default(),
+            },
+        },
+    )
+    .await
+    .expect(
+        "invalid route dry-run must return a diagnostic readiness envelope instead of a raw validation error",
+    );
+
+    let readiness = serde_json::to_value(&out.readiness).expect("readiness must serialize");
+    assert_eq!(
+        readiness["launchable"], false,
+        "route readiness must expose launch gating for a no-decision/unsupported route"
+    );
+    let reasons = readiness["reasons"]
+        .as_array()
+        .unwrap_or_else(|| panic!("readiness must include reasons array; readiness={readiness:#}"));
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason["code"] == "route.no_decision_path"),
+        "no Trader-capable branch target must produce route.no_decision_path; reasons={reasons:#?}",
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason["code"] == "route.unsupported_graph"),
+        "non-router authored graph routes must produce route.unsupported_graph; reasons={reasons:#?}",
+    );
+    let reason_text = serde_json::to_string(reasons).unwrap();
+    for forbidden in ["target_agent_ref_index", "agent_ref_index", "PipelineKind"] {
+        assert!(
+            !reason_text.contains(forbidden),
+            "API route readiness reasons must use Route Builder language, not `{forbidden}`; reasons={reason_text}",
+        );
+    }
+
+    let reloaded = strategy::get(&ctx, &strategy_id).await.unwrap();
+    assert!(
+        reloaded.pipeline.route.is_none(),
+        "invalid route validation remains a dry-run and must not persist the supplied route",
     );
 }
 
@@ -577,6 +997,7 @@ async fn set_pipeline_rejects_graph_cycles() {
                     condition: None,
                 },
             ],
+            route: None,
         },
     )
     .await
@@ -647,6 +1068,7 @@ async fn remove_agent_prunes_graph_edges_for_removed_role() {
                     condition: None,
                 },
             ],
+            route: None,
         },
     )
     .await

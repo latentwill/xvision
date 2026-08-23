@@ -83,6 +83,10 @@ async fn fresh_store() -> RunStore {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -92,7 +96,7 @@ async fn fresh_store() -> RunStore {
 
 fn hold_dispatch() -> Arc<dyn LlmDispatch> {
     Arc::new(MockDispatch::echo(
-        r#"{"action":"hold","conviction":0.1,"justification":"qa-30day-count"}"#,
+        r#"{"action":"hold","conviction":0.3,"justification":"qa-30day-count"}"#,
     ))
 }
 

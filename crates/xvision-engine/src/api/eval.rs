@@ -1512,6 +1512,7 @@ pub async fn run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run> {
     let broker: Option<Arc<dyn BrokerSurface>> = None;
     let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots).await?;
     apply_provider_override(&mut agent_slots, req.provider_override.as_ref());
 
     let provider_names = validate_provider_preflight(ctx, &req, &strategy, &agent_slots).await?;
@@ -3310,6 +3311,7 @@ async fn run_inner(
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
     let mut agent_slots = resolve_agent_slots(ctx, &strategy).await?;
     validate_eval_trader_source(&strategy, &agent_slots)?;
+    assert_launchable_with_guardrails(ctx, &req.agent_id, &strategy, &agent_slots).await?;
     // Per-launch override (Wave B #5): resolve against the canonical
     // `effective_providers::resolve_provider` gate. An unreachable
     // override (key_missing / model_disabled / provider_unknown /
@@ -3819,23 +3821,33 @@ async fn enrich_with_inference_cost(
 }
 
 /// Resolve a scenario id to a `Scenario`. Tries the DB-backed registry
-/// first (`api::scenario::get`); on `NotFound` (or on store errors —
-/// typically a test context without migration 006 applied), falls back
-/// to the compiled-in legacy `canonical_scenarios()` set so existing
-/// tests and pre-Task-6 caches keep working.
+/// first (`api::scenario::get`). Only a typed `NotFound` falls back to the
+/// compiled-in legacy `canonical_scenarios()` set. Store, parse, and other
+/// errors are returned to the caller so an eval never runs stale config.
 async fn resolve_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Scenario> {
     let (s, _from_db) = resolve_scenario_with_source(ctx, id).await?;
     Ok(s)
 }
 
-/// Same as `resolve_scenario` but also reports whether the row came from
-/// the DB (primary path) or from the compiled-in legacy fallback. The
-/// caller uses this to decide between routing bars through
-/// `eval::bars::load_bars` (DB path) or the legacy fixture loader.
+/// Same as `resolve_scenario` but also reports whether the row came from the
+/// DB (primary path) or from the compiled-in legacy fallback. The caller uses
+/// this to decide between routing bars through `eval::bars::load_bars` (DB
+/// path) or the legacy fixture loader.
 async fn resolve_scenario_with_source(ctx: &ApiContext, id: &str) -> ApiResult<(Scenario, bool)> {
     match api_scenario::get(ctx, id).await {
         Ok(s) => Ok((s, true)),
-        Err(_) => {
+        Err(error) => resolve_scenario_store_error(id, error),
+    }
+}
+
+/// Apply the only permitted scenario fallback policy.
+///
+/// A missing registry row is expected for legacy canonical scenarios. Any
+/// other error means the registry could not answer the request and must not be
+/// replaced with a compiled scenario that happens to use the same id.
+fn resolve_scenario_store_error(id: &str, error: ApiError) -> ApiResult<(Scenario, bool)> {
+    match error {
+        ApiError::NotFound(_) => {
             #[allow(deprecated)]
             let legacy = canonical_scenarios()
                 .into_iter()
@@ -3843,6 +3855,7 @@ async fn resolve_scenario_with_source(ctx: &ApiContext, id: &str) -> ApiResult<(
                 .ok_or_else(|| ApiError::NotFound(format!("scenario '{id}'")))?;
             Ok((legacy, false))
         }
+        other => Err(other),
     }
 }
 
@@ -4070,10 +4083,15 @@ async fn build_backtest_executor(
         if !asset_bars.is_empty() {
             // Warmup is a hard preflight error when DB-resolved: an
             // operator who set `warmup_bars > 0` expects real
-            // pre-window context, not silent emptiness.
-            let warmup = market_bars_to_ohlcv(
-                load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?,
-            );
+            // pre-window context, not silent emptiness. Load it for EVERY
+            // active asset — prefixing only the first left the rest cold.
+            let mut warmup_by_asset = std::collections::BTreeMap::new();
+            for asset in &active {
+                let warmup = market_bars_to_ohlcv(
+                    load_warmup_for_scenario(ctx, scenario, *asset, native_granularity).await?,
+                );
+                warmup_by_asset.insert(*asset, warmup);
+            }
             let mut bt = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
                 Executor::with_bars(asset_bars.remove(&first_asset).unwrap())
             } else {
@@ -4082,7 +4100,7 @@ async fn build_backtest_executor(
             };
             bt = bt
                 .with_market_data(market_data)
-                .with_warmup(warmup)
+                .with_warmup(warmup_by_asset)
                 .with_event_bus(ctx.event_bus.clone())
                 .with_provider_catalogs(provider_catalogs)
                 .with_cline_runtime(agent_runtime, cline);
@@ -6651,6 +6669,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn scenario_store_errors_do_not_use_legacy_fallback() {
+        let err = resolve_scenario_store_error(
+            "crypto-bull-q1-2025",
+            ApiError::Internal("scenario body JSON is invalid".into()),
+        )
+        .expect_err("non-NotFound registry errors must propagate");
+        assert!(
+            matches!(&err, ApiError::Internal(message) if message == "scenario body JSON is invalid"),
+            "unexpected propagated error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn scenario_not_found_still_uses_legacy_fallback() {
+        let (scenario, from_db) =
+            resolve_scenario_store_error("crypto-bull-q1-2025", ApiError::NotFound("missing".into()))
+                .expect("canonical scenario should use the NotFound fallback");
+        assert_eq!(scenario.id, "crypto-bull-q1-2025");
+        assert!(!from_db);
+    }
+
     // --- spawn_optimizer_cline_ctx (optimizer parity, WU-6) -------------------
 
     /// Since WU-6 retired LlmDispatch, spawn_optimizer_cline_ctx always
@@ -6759,7 +6799,9 @@ const LIVE_DEPLOYMENT_SELECT: &str = "\
            s.risk_veto_count AS risk_veto_count, \
            s.daily_loss_budget_usd AS daily_loss_budget_usd, s.stop_at AS stop_at \
     FROM eval_runs r LEFT JOIN live_run_state s ON s.run_id = r.id \
-    WHERE r.mode = 'live' AND r.venue_label != 'live'";
+    -- RunMode::Forward serializes to 'fwd' since the live-to-fwd rename;
+    -- pre-rename rows still carry 'live', so match both.
+    WHERE r.mode IN ('fwd', 'live') AND r.venue_label != 'live'";
 
 impl From<LiveDeploymentRow> for LiveDeploymentSummary {
     fn from(r: LiveDeploymentRow) -> Self {

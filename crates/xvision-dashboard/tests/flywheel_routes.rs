@@ -145,6 +145,10 @@ async fn autooptimizer_run_defaults_expose_config_fallback() {
         .expect("config path")
         .ends_with("autooptimizer.toml"));
     assert_eq!(body["config_exists"], false);
+    assert_eq!(body["dspy_enabled"], false);
+    assert_eq!(body["gepa_candidates"], 3);
+    assert_eq!(body["gepa_generations"], 2);
+    assert_eq!(body["gepa_real_eval"], false);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

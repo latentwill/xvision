@@ -22,6 +22,8 @@ use xvision_engine::strategies::AgentRef;
 /// legacy `trader_slot` fallback in `validate_eval_trader_source` is
 /// removed.
 async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
+    write_mock_provider_config(&ctx.xvn_home);
+    std::env::set_var("XVN_AGENTD_BIN", mock_agentd_bin());
     let store = AgentStore::new(ctx.db.clone());
     store
         .create(NewAgent {
@@ -42,13 +44,64 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
         })
         .await
         .expect("seed trader agent")
+}
+
+fn mock_agentd_bin() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn write_mock_provider_config(xvn_home: &std::path::Path) {
+    let config_dir = xvn_home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "XVN_SCENARIO_MOCK_KEY"
+enabled_models = ["claude-sonnet-4.6"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+    )
+    .unwrap();
+    std::env::set_var("XVN_SCENARIO_MOCK_KEY", "test-key");
 }
 
 async fn seed_bars_for_scenario(ctx: &ApiContext, scenario: &xvision_engine::eval::Scenario) {
@@ -200,7 +253,7 @@ async fn eval_run_returns_notfound_for_unseeded_scenario_id() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let r = eval::run_with_deps(
         &ctx,
@@ -309,7 +362,7 @@ async fn eval_run_resolves_seeded_scenario_via_db_lookup() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     // "flash-crash-aug-2024" is one of the four canonical seeds (new id
     // from `scenario_seed::canonical_seed_rows`). The lookup must hit
@@ -448,7 +501,7 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let err = eval::run_with_deps(
         &ctx,
@@ -477,9 +530,9 @@ async fn backtest_missing_cache_and_fixture_returns_actionable_validation() {
 
     match err {
         ApiError::Validation(msg) => {
-            assert!(msg.contains("missing bars cache"));
-            assert!(msg.contains("Fetch bars"));
-            assert!(msg.contains(&missing.id));
+            assert!(msg.contains("alpaca fetch"), "unexpected message: {msg}");
+            assert!(msg.contains("network error"), "unexpected message: {msg}");
+            assert!(msg.contains("timeframe=1Hour"), "unexpected message: {msg}");
         }
         other => panic!("expected Validation, got {other:?}"),
     }
@@ -581,7 +634,7 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
     ));
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let err = eval::run_with_deps(
         &ctx,
@@ -610,8 +663,8 @@ async fn backtest_db_scenario_with_warmup_does_not_fallback_to_legacy_fixture() 
 
     match err {
         ApiError::Validation(msg) => {
-            assert!(msg.contains("missing bars cache"), "unexpected message: {msg}");
-            assert!(msg.contains(&cloned.id), "scenario id should be named: {msg}");
+            assert!(msg.contains("alpaca fetch"), "unexpected message: {msg}");
+            assert!(msg.contains("network error"), "unexpected message: {msg}");
         }
         other => panic!("expected Validation, got {other:?}"),
     }

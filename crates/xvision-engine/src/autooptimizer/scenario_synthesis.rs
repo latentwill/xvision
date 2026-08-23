@@ -15,11 +15,11 @@ pub const OPTIMIZER_SCENARIO_TAG: &str = "source:autooptimizer";
 
 /// F10 (2026-06-04): the single builder for an autooptimizer "day window"
 /// scenario. Both entry points that synthesize an optimizer scenario — the CLI
-/// `xvn optimizer run-cycle` and the dashboard `POST /api/autooptimizer/run-cycle`
-/// — were hand-rolling an identical `Scenario` literal (BTC/USD 1h, Alpaca
-/// fees maker 10 / taker 25, full-at-close fills, `Capital::default()`). Two
-/// copies meant a fee or fill-model tweak in one would silently diverge the
-/// optimizer's scoring conditions from the other. They now call this; the
+/// `xvn optimize run` and the dashboard/API `POST /api/optimize/run` — were
+/// hand-rolling an identical `Scenario` literal (BTC/USD 1h, Alpaca fees maker
+/// 10 / taker 25, full-at-close fills, `Capital::default()`). Two copies meant
+/// a fee or fill-model tweak in one would silently diverge the optimizer's
+/// scoring conditions from the other. They now call this; the
 /// only per-caller variation is `created_by`.
 ///
 /// `synthesize_baseline_untouched_scenario` derives the holdout window from

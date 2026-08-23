@@ -22,6 +22,37 @@ describe("ParentDiffPanel", () => {
     expect(screen.getByText("0.7")).toBeInTheDocument();
   });
 
+  it("renders AgentRef prompt changes by role instead of dumping raw agents JSON", async () => {
+    vi.spyOn(client, "apiFetch").mockImplementation(async (url: string) => {
+      if (url.includes("/blob/child")) {
+        return {
+          agents: [
+            {
+              agent_id: "01AGENT",
+              role: "trader",
+              prompt: "Trade with trend confirmation.",
+            },
+          ],
+        };
+      }
+      if (url.includes("/blob/parent")) {
+        return {
+          agents: [{ agent_id: "01AGENT", role: "trader" }],
+        };
+      }
+      return {};
+    });
+
+    renderWithProviders(
+      <ParentDiffPanel childHash="child" parentHash="parent" />,
+    );
+
+    expect(await screen.findByText("agents.trader.prompt")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("Trade with trend confirmation.")).toBeInTheDocument();
+    expect(screen.queryByText(/"agent_id":"01AGENT"/)).not.toBeInTheDocument();
+  });
+
   it("left-aligns the heading, summary, and diff content", async () => {
     vi.spyOn(client, "apiFetch").mockImplementation(async (url: string) => {
       if (url.includes("/blob/child")) return { entry_threshold: 0.7, name: "child" };

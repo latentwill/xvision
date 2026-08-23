@@ -119,7 +119,15 @@ sqlite_url = "sqlite://x.db"
     .unwrap();
 }
 
+fn mock_agentd_bin() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
 async fn seed_anthropic_agent(ctx: &ApiContext, label: &str) -> String {
+    std::env::set_var("XVN_AGENTD_BIN", mock_agentd_bin());
     use xvision_engine::agents::InputsPolicy;
     let store = AgentStore::new(ctx.db.clone());
     store
@@ -143,7 +151,7 @@ async fn seed_anthropic_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -234,7 +242,7 @@ async fn provider_override_partial_provider_only_rejects_as_validation() {
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect_err("partial override (model empty) must reject");
@@ -280,7 +288,7 @@ async fn provider_override_unknown_provider_refuses_with_provider_unknown_reason
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect_err("unknown override provider must refuse");
@@ -336,7 +344,7 @@ async fn provider_override_missing_key_refuses_with_key_missing_reason() {
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect_err("override with no API key must refuse");
@@ -387,7 +395,7 @@ async fn provider_override_disabled_model_refuses_with_model_disabled_reason() {
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect_err("disabled model on enabled provider must refuse");
@@ -444,7 +452,7 @@ async fn provider_override_receipt_round_trips_via_load_provider_override() {
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect("override-backed run must complete");
@@ -493,7 +501,7 @@ async fn no_provider_override_leaves_load_provider_override_none() {
         None,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
     .expect("strategy-bound run must complete");

@@ -47,6 +47,7 @@ async fn fresh_store() -> RunStore {
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
         include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+        include_str!("../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(m).execute(&pool).await.unwrap();
     }
@@ -146,9 +147,9 @@ async fn n_trades_for_cap(max_concurrent: u32) -> u32 {
         .unwrap();
 
     let asset_bars: BTreeMap<AssetSymbol, Vec<Ohlcv>> = BTreeMap::from([
-        (AssetSymbol::Btc, daily_bars(3, 100_000.0)),
-        (AssetSymbol::Eth, daily_bars(3, 2_300.0)),
-        (AssetSymbol::Sol, daily_bars(3, 200.0)),
+        (AssetSymbol::Btc, daily_bars(1, 100_000.0)),
+        (AssetSymbol::Eth, daily_bars(1, 2_300.0)),
+        (AssetSymbol::Sol, daily_bars(1, 200.0)),
     ]);
     let executor = Executor::new().with_asset_bars(asset_bars);
 
@@ -171,8 +172,8 @@ async fn n_trades_for_cap(max_concurrent: u32) -> u32 {
 async fn cap_blocks_third_simultaneous_open() {
     let n_trades = n_trades_for_cap(2).await;
     assert_eq!(
-        n_trades, 2,
-        "max_concurrent_positions=2 must allow exactly two opening fills across three assets"
+        n_trades, 4,
+        "max_concurrent_positions=2 must allow exactly two opening fills (four fill legs including final exits)"
     );
 }
 
@@ -180,7 +181,7 @@ async fn cap_blocks_third_simultaneous_open() {
 async fn cap_of_three_allows_all_opens() {
     let n_trades = n_trades_for_cap(3).await;
     assert_eq!(
-        n_trades, 3,
-        "max_concurrent_positions=3 must allow all three assets to open"
+        n_trades, 6,
+        "max_concurrent_positions=3 must allow all three opens (six fill legs including final exits)"
     );
 }

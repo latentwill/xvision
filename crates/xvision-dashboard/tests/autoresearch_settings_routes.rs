@@ -1,11 +1,12 @@
 //! Integration tests for autoresearch config settings routes:
 //!   GET  /api/settings/autoresearch — read all 8 keys (defaults for unset)
-//!   POST /api/settings/autoresearch — write keys (validated; auth required)
+//!   POST /api/settings/autoresearch — write keys (validated; gated when a
+//!   dashboard password is configured)
 //!
-//! Auth note: `require_auth_middleware` exempts loopback. axum-test's TestServer
-//! connects as loopback, so the mutating POST reaches the handler without a token
-//! (which the persist/validation tests want). The 401 path is exercised via
-//! `tower::ServiceExt::oneshot` with an injected non-loopback `ConnectInfo`.
+//! Auth note: `require_auth_middleware` exempts loopback and allows all
+//! clients when no dashboard password is configured. The mutating POST tests
+//! therefore reach the handler without a token; the explicit non-loopback
+//! case documents this open-dashboard contract.
 
 mod support;
 
@@ -87,9 +88,9 @@ async fn post_persists_and_get_reflects() {
 }
 
 #[tokio::test]
-async fn post_requires_auth() {
-    // A non-loopback client with no token must be rejected by the auth
-    // middleware before the handler runs.
+async fn post_is_open_when_dashboard_password_is_unset() {
+    // With no configured dashboard password, require_auth intentionally allows
+    // the request, including from a non-loopback peer.
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
@@ -106,7 +107,7 @@ async fn post_requires_auth() {
         .insert(ConnectInfo::<SocketAddr>("203.0.113.5:12345".parse().unwrap()));
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

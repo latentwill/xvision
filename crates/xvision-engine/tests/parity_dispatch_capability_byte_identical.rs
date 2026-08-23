@@ -1,31 +1,52 @@
-//! Parity guard: `dispatch_capability` for `Capability::Trader` must set
-//! `raw_response` to the *same* `LlmResponse` that ends up inside
-//! `AgentOutput::Trader(t).response` — the `TraderDecision` wrapper must
-//! never mutate or divergently clone the underlying text.
-//!
-//! Pinned invariant (from the line-103/319 comment in `dispatch_capability.rs`):
-//!
-//!   `outcome.raw_response.unwrap().text() == outcome.output (as Trader).response.text()`
-//!
-//! Both must equal the canned mock JSON supplied by `RecordingDispatch`.
-//! Token counts `(7, 11)` from the mock must also flow through unchanged.
-//!
-//! See spec: `team/contracts/agent-graph-capability-dispatch.md` and
-//! the parity-dispatch-capability-byte-identical track.
+//! Parity guard for the Cline-only trader capability dispatch.
 
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use xvision_engine::agent::dispatch_capability::{dispatch_capability, AgentOutput, DispatchInput};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::{
+    dispatch_capability, AgentOutput, ClineDispatchCtx, DispatchInput,
+};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
 use xvision_engine::agents::Capability;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 
-// ---------------------------------------------------------------------------
-// RecordingDispatch — identical pattern to `agent_graph_dispatch.rs`
-// ---------------------------------------------------------------------------
+fn mock_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock(decision_json: &str) -> (Arc<AgentClient>, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::json!({ "decisionJson": decision_json }).to_string(),
+    )
+    .expect("write mock agentd config");
+    let client = AgentClient::spawn(&mock_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (Arc::new(client), dir)
+}
 
 struct RecordingDispatch {
     seen: Mutex<Vec<LlmRequest>>,
@@ -61,27 +82,23 @@ fn resolved_trader() -> ResolvedAgentSlot {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
-            provider: None,
-            model: Some("mock".into()),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
-        system_prompt: String::new(),
+        system_prompt: "Decide.".into(),
         max_tokens: None,
         max_wall_ms: None,
         temperature: None,
         inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
-        agent_id: String::new(),
+        agent_id: "parity-trader".into(),
         noop_skip: false,
         nano: None,
     }
 }
-
-// ---------------------------------------------------------------------------
-// The parity assertion
-// ---------------------------------------------------------------------------
 
 const CANNED_JSON: &str = r#"{"action":"hold","conviction":0.3,"justification":"parity"}"#;
 
@@ -89,7 +106,10 @@ const CANNED_JSON: &str = r#"{"action":"hold","conviction":0.3,"justification":"
 async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() {
     let resolved_slot = resolved_trader();
     let slot = resolved_slot.slot.clone();
-    let dispatch = Arc::new(RecordingDispatch::new(CANNED_JSON));
+    let (client, _sidecar_dir) = spawn_mock(CANNED_JSON).await;
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(RecordingDispatch::new(
+        r#"{"action":"flat","conviction":0.0,"justification":"unused"}"#,
+    ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let outcome = dispatch_capability(DispatchInput {
@@ -97,7 +117,7 @@ async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() 
         slot: &slot,
         system_prompt: "Decide.".into(),
         upstream_inputs: serde_json::json!({}),
-        dispatch: dispatch.clone(),
+        dispatch,
         tools,
         max_tokens: None,
         max_wall_ms: None,
@@ -105,7 +125,7 @@ async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() 
         obs: None,
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
-        agent_id: String::new(),
+        agent_id: "parity-trader".into(),
         scenario_start: None,
         source_window_start: None,
         source_window_end: None,
@@ -120,45 +140,33 @@ async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() 
         trace_attrs: None,
         current_index: 0,
         total_agents: 1,
+        agent_roles: &["trader".to_string()],
         activates: Capability::Trader,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(ClineDispatchCtx {
+            client,
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        }),
         model_call_span_id: None,
     })
     .await
     .expect("dispatch_capability must succeed");
 
-    // 1. raw_response must be Some for Trader — never None.
-    assert!(
-        outcome.raw_response.is_some(),
-        "outcome.raw_response must be Some for Capability::Trader",
-    );
-
-    // 2. Extract raw_response text.
-    let raw_text = outcome.raw_response.unwrap().text();
-
-    // 3. Extract the text from inside AgentOutput::Trader.
+    let raw = outcome.raw_response.expect("trader raw response");
+    let raw_text = raw.text();
     let trader_text = match outcome.output {
         AgentOutput::Trader(t) => t.response.text(),
         other => panic!("expected AgentOutput::Trader, got {other:?}"),
     };
-
-    // 4. Core invariant: byte-identical. TraderDecision must not mutate
-    //    or divergently clone the LlmResponse that dispatch_capability returns
-    //    in raw_response.
-    assert_eq!(
-        raw_text, trader_text,
-        "raw_response.text() must be byte-identical to AgentOutput::Trader.response.text()",
-    );
-
-    // 5. Both must equal the canned mock JSON (no silent transformation).
-    assert_eq!(
-        raw_text, CANNED_JSON,
-        "raw_response.text() must equal the canned mock JSON verbatim",
-    );
-
-    // 6. Token counts flow through unchanged from the mock LlmResponse.
-    assert_eq!(outcome.input_tokens, 7, "input_tokens must match mock (7)");
-    assert_eq!(outcome.output_tokens, 11, "output_tokens must match mock (11)");
+    assert_eq!(raw_text, trader_text);
+    assert_eq!(raw_text, CANNED_JSON);
+    // The mock sidecar usage is (input=11, output=7).
+    assert_eq!(outcome.input_tokens, 11);
+    assert_eq!(outcome.output_tokens, 7);
 }

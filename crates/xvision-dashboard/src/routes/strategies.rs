@@ -10,13 +10,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use ulid::Ulid;
+use xvision_engine::agents::Capability;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
-    set_agent_checkpoint, set_mechanistic_config, set_pipeline, set_risk_config, update_inspector,
-    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
-    MarketplaceProvenance, RemoveAgentReq, RenameAgentRoleReq, SetAgentCheckpointReq, SetPipelineReq,
-    StrategyAgentsOut, StrategyRequirements, StrategySummary,
+    set_agent_checkpoint, set_mechanistic_config, set_pipeline, set_risk_config, set_route, update_inspector,
+    update_metadata, update_slot, validate_draft, validate_route, AddAgentReq, CloneStrategyReq,
+    ListStrategiesRequest, MarketplaceProvenance, RemoveAgentReq, RenameAgentRoleReq, SetAgentCheckpointReq,
+    SetPipelineReq, SetRouteReq, StrategyAgentsOut, StrategyRequirements, StrategyRouteOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -31,6 +32,9 @@ use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
 };
 use xvision_engine::strategies::Strategy;
+use xvision_engine::strategies::{
+    RouteBranch, RouteContextField, RouteDefinition, RouteGraphEdge, RouteTraceMode,
+};
 use xvision_filters::{parse_json as parse_filter_json, Filter, FilterId, StrategyId};
 
 use crate::error::DashboardError;
@@ -270,6 +274,8 @@ pub async fn chart(
 pub struct AddAgentBody {
     pub agent_id: String,
     pub role: String,
+    #[serde(default)]
+    pub activates: Option<Capability>,
 }
 
 pub async fn post_add_agent(
@@ -283,7 +289,7 @@ pub async fn post_add_agent(
             strategy_id: id,
             agent_id: body.agent_id,
             role: body.role,
-            activates: None,
+            activates: body.activates,
         },
     )
     .await?;
@@ -332,6 +338,8 @@ pub struct SetPipelineBody {
     pub kind: xvision_engine::strategies::PipelineKind,
     #[serde(default)]
     pub edges: Vec<xvision_engine::strategies::PipelineEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<xvision_engine::strategies::RouteDefinition>,
 }
 
 pub async fn put_pipeline(
@@ -345,6 +353,65 @@ pub async fn put_pipeline(
             strategy_id: id,
             kind: body.kind,
             edges: body.edges,
+            route: body.route,
+        },
+    )
+    .await?;
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteBody {
+    pub router_role: String,
+    #[serde(default)]
+    pub branches: Vec<RouteBranch>,
+    #[serde(default)]
+    pub graph_edges: Vec<RouteGraphEdge>,
+    #[serde(default)]
+    pub context_fields: Vec<RouteContextField>,
+    #[serde(default)]
+    pub trace_mode: RouteTraceMode,
+}
+
+impl RouteBody {
+    fn into_route_definition(self) -> RouteDefinition {
+        RouteDefinition {
+            router_role: self.router_role,
+            branches: self.branches,
+            graph_edges: self.graph_edges,
+            context_fields: self.context_fields,
+            trace_mode: self.trace_mode,
+        }
+    }
+}
+
+pub async fn put_route(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<RouteBody>,
+) -> Result<Json<StrategyRouteOut>, DashboardError> {
+    let out = set_route(
+        &state.api_context(),
+        SetRouteReq {
+            strategy_id: id,
+            route: body.into_route_definition(),
+        },
+    )
+    .await?;
+    Ok(Json(out))
+}
+
+pub async fn post_validate_route(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<RouteBody>,
+) -> Result<Json<StrategyRouteOut>, DashboardError> {
+    let out = validate_route(
+        &state.api_context(),
+        SetRouteReq {
+            strategy_id: id,
+            route: body.into_route_definition(),
         },
     )
     .await?;

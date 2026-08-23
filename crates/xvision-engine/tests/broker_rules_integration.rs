@@ -124,6 +124,10 @@ async fn fresh_store() -> RunStore {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 

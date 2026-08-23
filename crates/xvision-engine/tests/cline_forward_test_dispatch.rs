@@ -120,6 +120,7 @@ async fn dispatch_via_production_path(run_mode: RunMode, run_id: &str) -> anyhow
         trace_attrs: None,
         current_index: 0,
         total_agents: 1,
+        agent_roles: &["trader".to_string()],
         activates: Capability::Trader,
         recorder: None,
         runtime: Default::default(),

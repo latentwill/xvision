@@ -1175,8 +1175,8 @@ mod tests {
     // (`autooptimizer::eval_adapter`) now call. Those adapters used to
     // pass an empty `&[]` slot slice into the backtest executor, so the
     // candidate trader had no model/prompt binding and every decision
-    // came back `<no_response>` with 0 tokens — no real `xvn optimizer
-    // run-cycle` could complete (QA 2026-06-04, finding F1). The tests
+    // came back `<no_response>` with 0 tokens — no real `xvn optimize run`
+    // could complete (QA 2026-06-04, finding F1). The tests
     // live here because this module owns the migrated agent-store pool
     // harness (`fresh_pool` + `sample_slot`).
 

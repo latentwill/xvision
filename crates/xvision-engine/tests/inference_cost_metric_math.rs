@@ -83,6 +83,10 @@ async fn in_memory_store() -> RunStore {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 
@@ -128,6 +132,7 @@ async fn seed_run(store: &RunStore, metrics: MetricsSummary) -> Run {
             fill_size: None,
             fee: None,
             pnl_realized: None,
+            delayed: Some(false),
         })
         .await
         .unwrap();

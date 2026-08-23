@@ -84,6 +84,7 @@ pub async fn eval_review_pool_with_migrations() -> SqlitePool {
         include_str!("../../migrations/027_run_bars_manifest.sql"),
         include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../../migrations/038_eval_runs_live_config.sql"),
+        include_str!("../../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -258,6 +259,7 @@ impl BrokerSurface for _SupportBroker {
             fill_price: Some(self.price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {

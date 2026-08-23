@@ -47,6 +47,89 @@ async fn setup_lineage_db(path: &Path) -> SqlitePool {
     pool
 }
 
+async fn setup_evidence_db(path: &Path, cycle_id: &str, no_candidate_reason: &str) {
+    let pool = setup_lineage_db(path).await;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_node_evaluations (\
+            cycle_id TEXT NOT NULL, \
+            bundle_hash TEXT NOT NULL, \
+            created_at TEXT NOT NULL, \
+            PRIMARY KEY (cycle_id, bundle_hash)\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create cycle_node_evaluations");
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_cost (\
+            cycle_id TEXT PRIMARY KEY, \
+            input_tokens INTEGER NOT NULL, \
+            output_tokens INTEGER NOT NULL, \
+            cost_usd REAL NOT NULL, \
+            unpriced_calls INTEGER NOT NULL, \
+            created_at TEXT NOT NULL\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create cycle_cost");
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autooptimizer_events (\
+            seq INTEGER PRIMARY KEY AUTOINCREMENT, \
+            session_id TEXT NOT NULL, \
+            cycle_id TEXT, \
+            kind TEXT NOT NULL, \
+            payload_json TEXT NOT NULL, \
+            ts TEXT NOT NULL\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create autooptimizer_events");
+
+    sqlx::query(
+        "INSERT INTO cycle_cost \
+         (cycle_id, input_tokens, output_tokens, cost_usd, unpriced_calls, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(123_i64)
+    .bind(45_i64)
+    .bind(0.0064_f64)
+    .bind(0_i64)
+    .bind("2026-06-18T12:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("seed cycle_cost");
+
+    let payload_json = serde_json::json!({
+        "type": "no_candidate",
+        "session_id": "optimize-evidence-cli-session",
+        "cycle_id": cycle_id,
+        "parent_hash": "parent-without-candidate",
+        "reason": no_candidate_reason,
+    })
+    .to_string();
+
+    sqlx::query(
+        "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("optimize-evidence-cli-session")
+    .bind(cycle_id)
+    .bind("no_candidate")
+    .bind(payload_json)
+    .bind("2026-06-18T12:00:01Z")
+    .execute(&pool)
+    .await
+    .expect("seed no_candidate event");
+
+    pool.close().await;
+}
+
 async fn seed_lineage_node(
     pool: &SqlitePool,
     bundle_hash: &str,
@@ -162,4 +245,42 @@ async fn lineage_show_known_hash() {
         dir.path(),
     );
     assert!(!out.status.success(), "nonexistent hash should exit non-zero");
+}
+
+#[tokio::test]
+async fn optimize_evidence_json_surfaces_node_less_cycle_cost_and_event_reason() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("lineage.db");
+    let cycle_id = "optimize-evidence-node-less-cycle";
+    let reason = "mutator exhausted retries without producing a valid candidate";
+    setup_evidence_db(&db_path, cycle_id, reason).await;
+
+    let out = xvn(
+        &[
+            "optimize",
+            "evidence",
+            cycle_id,
+            "--db",
+            &db_path.to_string_lossy(),
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert_ok(&out);
+
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout must be evidence JSON");
+    assert_eq!(body["cycle_id"], cycle_id);
+    assert_eq!(body["cost"]["input_tokens"], 123);
+    assert_eq!(body["counts"]["no_candidate"], 1);
+
+    let no_candidate_reasons = body["event_reasons"]["no_candidate"]
+        .as_array()
+        .expect("event_reasons.no_candidate must be an array");
+    assert!(
+        no_candidate_reasons
+            .iter()
+            .any(|value| value.as_str() == Some(reason)),
+        "expected seeded no_candidate reason in evidence JSON: {body}"
+    );
+    assert_eq!(body["nodes"], serde_json::json!([]));
 }

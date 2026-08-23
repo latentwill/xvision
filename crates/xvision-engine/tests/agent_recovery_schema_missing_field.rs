@@ -37,6 +37,7 @@
 
 #![allow(deprecated)] // canonical_scenarios()
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -44,7 +45,11 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
@@ -59,20 +64,55 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, SpanKind, SpanStatus};
 
-// First-attempt body: missing `conviction`. Captures the contract's
-// canonical example (`{"action":"hold","justification":"..."}` with no
-// conviction key).
-const ORIGINAL_MISSING_CONVICTION: &str = r#"{"action":"hold","justification":"range chop"}"#;
-// Patch body: supplies the missing conviction. Merge produces a valid
-// TraderOutput.
-const PATCH_CONVICTION: &str = r#"{"conviction":0.7}"#;
+fn mock_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mock_agentd.js")
+}
 
-// First-attempt body: invalid `action`. Validate fails with `InvalidField`.
-const ORIGINAL_INVALID_ACTION: &str = r#"{"action":"BUY_BIG","conviction":0.6,"justification":"go big"}"#;
-// Patch body: supplies a valid action.
-const PATCH_ACTION: &str = r#"{"action":"hold"}"#;
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
 
-/// Dispatch that returns a canned sequence of `LlmResponse`s and records
+async fn spawn_mock(decisions: &[&str]) -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::json!({ "decisionJsonByRole": { "trader": decisions } }).to_string(),
+    )
+    .expect("write mock config");
+    let client = AgentClient::spawn(&mock_bin(), &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: RunMode::Backtest,
+        },
+        dir,
+    )
+}
+// First-attempt body: missing `justification` (conviction now has a
+// production default, so omission of conviction is no longer recoverable).
+const ORIGINAL_MISSING_CONVICTION: &str = r#"{"action":"hold","conviction":0.5}"#;
+// Patch body: supplies the missing justification.
+const PATCH_CONVICTION: &str = r#"{"justification":"range chop"}"#;
+
+// First-attempt body: invalid `conviction`; action is now normalised by the
+// production parser, so conviction is the stable InvalidField case.
+const ORIGINAL_INVALID_ACTION: &str = r#"{"action":"hold","conviction":-0.1,"justification":"go big"}"#;
+// Patch body supplies a valid conviction.
+const PATCH_ACTION: &str = r#"{"conviction":0.6}"#;
 /// every inbound `LlmRequest` for shape assertions. The N-th call returns
 /// `responses[N]` (clamped at the last entry so additional bars reuse
 /// the final response).
@@ -135,6 +175,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/017_eval_findings_review_columns.sql"),
         include_str!("../migrations/026_trace_surface_foundation.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/071_decisions_delayed.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
         include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
     ] {
@@ -196,10 +237,10 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            attested_with: "openai.gpt-4o-mini+".into(),
-            allowed_tools: vec![],
-            provider: Some("openai".into()),
-            model: Some("gpt-4o-mini".into()),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
         system_prompt: "Decide.".into(),
         max_tokens: None,
@@ -209,7 +250,7 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-schema-patch-trader".into(),
-        noop_skip: true,
+        noop_skip: false,
         nano: None,
     }
 }
@@ -307,15 +348,12 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     // = `{"conviction": 0.7}`. Further bars reuse the patch (which alone
     // does not parse as a full TraderOutput), so we add a clean clone for
     // subsequent ticks.
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp(ORIGINAL_MISSING_CONVICTION, StopReason::EndTurn),
-        text_resp(PATCH_CONVICTION, StopReason::EndTurn),
-        // Subsequent bars: emit a full clean response so we don't loop.
-        text_resp(
-            r#"{"action":"hold","conviction":0.5,"justification":"continued chop"}"#,
-            StopReason::EndTurn,
-        ),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(PATCH_CONVICTION, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir) = spawn_mock(&[
+        ORIGINAL_MISSING_CONVICTION,
+        r#"{"action":"hold","conviction":0.5,"justification":"continued chop"}"#,
+    ])
+    .await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
@@ -324,7 +362,9 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -332,7 +372,7 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
         .run(
@@ -358,10 +398,10 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
         persisted.error,
     );
 
-    assert!(
-        dispatch.call_count() >= 2,
-        "scripted dispatcher must have been invoked at least twice: {}",
-        dispatch.call_count()
+    assert_eq!(
+        dispatch.call_count(),
+        1,
+        "one patch retry uses the scripted repair dispatch"
     );
 
     drain(&bus).await;
@@ -400,16 +440,16 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
     // schema-patch message body ("Re-emit ONLY a single JSON object
     // containing those fields") and reference the field name in brackets.
     let captured = dispatch.captured();
-    assert!(captured.len() >= 2, "must have captured at least 2 requests");
-    let patch_req = &captured[1];
+    assert!(!captured.is_empty(), "must capture the patch request");
+    let patch_req = &captured[0];
     let last = last_user_text(patch_req);
     assert!(
         last.contains("Re-emit ONLY a single JSON object"),
         "patch repair must instruct emitting ONLY the bad fields: {last}"
     );
     assert!(
-        last.contains("conviction"),
-        "patch repair must name the failing field: {last}"
+        last.contains("justification"),
+        "patch repair must name the failing `justification` field: {last}"
     );
     assert!(
         last.contains("Do not include prose, code fences, or tool calls"),
@@ -432,26 +472,8 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
         .expect("patch turn must carry response_schema");
     assert_eq!(schema.name, "trader_output");
 
-    // ─── A/B cache pairing evidence ──────────────────────────────
-    // The patch turn must use the SAME cycle_id-derived initial user
-    // prompt as the original call. That keeps the prompt-hash digest
-    // reproducible across re-runs of the same strategy/cycle.
-    let original_req = &captured[0];
-    let original_initial = first_user_text(original_req);
-    let patch_initial = first_user_text(patch_req);
-    assert_eq!(
-        original_initial, patch_initial,
-        "patch turn must reuse the initial user prompt verbatim — A/B cache pairing depends on it"
-    );
-    // Schema descriptor also identical.
-    let original_schema = original_req
-        .response_schema
-        .as_ref()
-        .expect("original turn carries schema");
-    assert_eq!(
-        original_schema.name, schema.name,
-        "schema name must match across original + patch turns"
-    );
+    // Cline owns the original model turn; the scripted dispatcher captures
+    // only the targeted repair turn.
 }
 
 // ─── Case (b): InvalidField → patch supplies valid value. ────────────────
@@ -464,14 +486,12 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     ]));
     let emitter = ObsEmitter::new(bus.clone(), "run-schema-patch-invalid-paper");
 
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp(ORIGINAL_INVALID_ACTION, StopReason::EndTurn),
-        text_resp(PATCH_ACTION, StopReason::EndTurn),
-        text_resp(
-            r#"{"action":"hold","conviction":0.4,"justification":"continued"}"#,
-            StopReason::EndTurn,
-        ),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(PATCH_ACTION, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir) = spawn_mock(&[
+        ORIGINAL_INVALID_ACTION,
+        r#"{"action":"hold","conviction":0.5,"justification":"continued chop"}"#,
+    ])
+    .await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
@@ -480,7 +500,9 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -488,7 +510,7 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
         .run(
@@ -530,13 +552,13 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
         Some(SpanStatus::Ok),
     );
 
-    // Patch turn body references `action` (the failing field).
+    // Patch turn body references `conviction` (the failing field).
     let captured = dispatch.captured();
-    let patch_req = &captured[1];
+    let patch_req = &captured[0];
     let last = last_user_text(patch_req);
     assert!(
-        last.contains("action"),
-        "patch repair must name the failing `action` field: {last}"
+        last.contains("conviction"),
+        "patch repair must name the failing `conviction` field: {last}"
     );
 }
 
@@ -561,10 +583,8 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     // First: missing conviction. Patch: still no conviction (just
     // restates an unrelated field). Merge-and-reparse fails with
     // MissingField again; the helper surfaces the ORIGINAL error.
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp(ORIGINAL_MISSING_CONVICTION, StopReason::EndTurn),
-        text_resp(r#"{"justification":"better explanation"}"#, StopReason::EndTurn),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(r#"{"action":"hold"}"#, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir) = spawn_mock(&[ORIGINAL_MISSING_CONVICTION]).await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
@@ -573,7 +593,9 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -581,7 +603,7 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
         .run(
@@ -596,13 +618,10 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
         .await
         .expect_err("second-attempt patch failure must surface the original error");
 
-    // Exactly 2 dispatch calls — original + one patch retry. No
-    // double-repair into MalformedJson.
     assert_eq!(
         dispatch.call_count(),
-        2,
-        "exactly one patch retry attempted before giving up; got {} dispatch calls",
-        dispatch.call_count()
+        1,
+        "one patch retry attempted before failing"
     );
 
     // The wire-stable [missing_field] tag must surface.
@@ -659,21 +678,21 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
     ]));
     let emitter = ObsEmitter::new(bus.clone(), "run-schema-patch-missing-backtest");
 
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp(ORIGINAL_MISSING_CONVICTION, StopReason::EndTurn),
-        text_resp(PATCH_CONVICTION, StopReason::EndTurn),
-        text_resp(
-            r#"{"action":"hold","conviction":0.5,"justification":"continued chop"}"#,
-            StopReason::EndTurn,
-        ),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(PATCH_CONVICTION, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir) = spawn_mock(&[
+        ORIGINAL_MISSING_CONVICTION,
+        r#"{"action":"hold","conviction":0.5,"justification":"continued chop"}"#,
+    ])
+    .await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
     let strategy = minimal_strategy();
     let agent_slots = vec![resolved_trader_slot()];
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -681,7 +700,7 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
         .run(

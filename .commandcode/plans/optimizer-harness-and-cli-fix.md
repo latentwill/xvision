@@ -105,30 +105,30 @@ Add `optimize explain-missing-data` (or `optimize corpus`) subcommand that:
 
 ## Problem 2: CLI/API Namespace Confusion
 
-### 2A. Add `/api/optimize/run-cycle` as a Route Alias
+### 2A. Canonical Optimizer Launch Route
 
 **Files:**
-- `crates/xvision-dashboard/src/routes/flywheel.rs` (or new route)
-- `crates/xvision-dashboard/src/server.rs` (register route)
+- `crates/xvision-dashboard/src/routes/flywheel.rs`
+- `crates/xvision-dashboard/src/server.rs`
 
-The gist identifies 3 namespaces for the same pipeline:
+The gist identified multiple namespaces for optimizer launch. The current
+contract is:
 | Path | Name |
 |------|------|
 | `xvn optimize run` | "optimizer" (CLI) |
-| `POST /api/autooptimizer/run` | "autooptimizer" (API, memory-distillation) |
-| `POST /api/autooptimizer/run-cycle` | "autooptimizer run-cycle" (API, mutation cycle) |
+| `POST /api/optimize/run` | canonical dashboard/agent optimizer launch route |
+| `POST /api/autooptimizer/run-cycle` | manual/back-compat backend route only |
 
-The CLI (`xvn optimize run`) maps to the mutation cycle, not memory distillation.
-`POST /api/optimize/run` already exists but delegates to `flywheel::optimize_run_simple`
-(memory distillation — WRONG pipeline).
+The CLI (`xvn optimize run`) and dashboard/agent API launch the optimizer
+cycle through the canonical route. The old standalone distillation wording is
+obsolete.
 
 Fix:
-1. **Add `POST /api/optimize/run-cycle`** that delegates to the same handler as
-   `POST /api/autooptimizer/run-cycle` (`autooptimizer_cycle::start_cycle`).
-   This creates a discoverable one-to-one mapping: CLI namespace `optimize` →
-   API namespace `/api/optimize/run-cycle`.
-2. **Keep `POST /api/autooptimizer/run-cycle`** as the canonical internal path.
-3. Document at both endpoints that they are aliases.
+1. **Use `POST /api/optimize/run`** for dashboard and agent launches.
+2. **Keep `POST /api/autooptimizer/run-cycle`** only as a manual/back-compat
+   backend route.
+3. Do not document a `run-cycle` alias under the canonical `/api/optimize`
+   namespace; that route is not advertised as available.
 
 ---
 
@@ -142,8 +142,8 @@ Fix:
 | 4 | `crates/xvision-engine/prompts/autooptimizer/mutator-v1.md` | Update "Protected parameters" section — never tunable, not even via param experiments |
 | 5 | `crates/xvision-cli/src/commands/optimize.rs` | Add `Cancel` subcommand, add `Inspect` alias for `Show`, add `ExplainMissingData` subcommand |
 | 6 | `crates/xvision-dashboard/src/cli_jobs/allowlist.rs` | Allow `optimize cancel` remotely, allow `optimize inspect` |
-| 7 | `crates/xvision-dashboard/src/routes/flywheel.rs` | Add `optimize_run_cycle` handler that delegates to `autooptimizer_cycle::start_cycle` |
-| 8 | `crates/xvision-dashboard/src/server.rs` | Register `POST /api/optimize/run-cycle` route |
+| 7 | `crates/xvision-dashboard/src/routes/flywheel.rs` | Keep `POST /api/optimize/run` as the dashboard/agent optimizer launch handler |
+| 8 | `crates/xvision-dashboard/src/server.rs` | Do not register or document a `run-cycle` route under `/api/optimize` |
 
 ---
 
@@ -158,5 +158,5 @@ Fix:
    should show `cancel`, `inspect`, `explain-missing-data`
 5. **Allowlist** — `cargo test -p xvision-dashboard cli_jobs_allowlist`
    (tests should verify `optimize cancel` allowed, `optimize inspect` reads allowed)
-6. **API alias** — `curl -X POST /api/optimize/run-cycle -H 'Content-Type: application/json'`
-   should start a cycle (same as `/api/autooptimizer/run-cycle`)
+6. **API launch route** — `curl -X POST /api/optimize/run -H 'Content-Type: application/json'`
+   should start a dashboard/agent optimizer run

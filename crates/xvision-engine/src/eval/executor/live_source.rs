@@ -13,11 +13,12 @@
 //!
 //! Production callers use [`LiveStream::new_with_warmup`], which
 //! synchronously loads the most-recent `warmup_bars` bars directly
-//! from Alpaca and fills gaps through [`crate::eval::bars::load_warmup_window`].
+//! from Alpaca and fills gaps through
+//! [`crate::eval::bars::load_warmup_window_with_fetcher`].
 //! Unit tests use the `_for_test` variant which accepts a pre-built warmup buffer +
 //! injected websocket/poll handles so the test doesn't need a
 //! running `ApiContext`.
-//!
+
 //! ## Lifecycle
 //!
 //! The stream transitions through four states:
@@ -27,10 +28,10 @@
 //! 2. `WebsocketLive` — consumes [`BarStreamEvent::Bar`] events.
 //!    On [`BarStreamEvent::GapDetected`], the event is logged but
 //!    not yielded (the next event drives `next_bar`).
-//!    On [`BarStreamEvent::BudgetExhausted`], transitions to
-//!    `PollFallback`.
 //! 3. `PollFallback` — consumes from [`AlpacaLivePoll::next_bar`].
-//!    On poll error, transitions to `Closed`.
+//!    Transient network errors retry with bounded backoff; after five
+//!    consecutive failures, transitions to `Closed`.
+//!    Explicitly fatal errors transition to `Closed` immediately.
 //! 4. `Closed` — `next_bar()` returns `None` forever.
 //!
 //! ## Live loop wiring status
@@ -56,7 +57,7 @@ use xvision_data::alpaca_live::{BarStreamEvent, BarSubscription};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError};
 
 use crate::api::ApiContext;
-use crate::eval::bars::load_warmup_window;
+use crate::eval::bars::load_warmup_window_with_fetcher;
 use crate::eval::executor::traits::BarSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,10 @@ enum LiveStreamState {
     Closed,
 }
 
+const POLL_MAX_CONSECUTIVE_FAILURES: u32 = 5;
+const POLL_RETRY_BASE_DELAY_MS: u64 = 100;
+const POLL_RETRY_MAX_DELAY_MS: u64 = 2_000;
+
 /// Live [`BarSource`] composing warmup + websocket + polling.
 pub struct LiveStream {
     warmup: VecDeque<Ohlcv>,
@@ -74,6 +79,7 @@ pub struct LiveStream {
     poll: Option<AlpacaLivePoll>,
     state: LiveStreamState,
     last_yielded_ts: Option<DateTime<Utc>>,
+    poll_failures: u32,
 }
 
 /// Errors returned by [`LiveStream::new_with_warmup`]. The warmup
@@ -118,9 +124,10 @@ impl LiveStream {
         alpaca_fetcher: Option<&xvision_data::alpaca::AlpacaBarsFetcher>,
     ) -> Result<Self, LiveStreamError> {
         let now = Utc::now();
-        let warmup = load_warmup_window(ctx, asset, granularity, now, warmup_bars)
-            .await
-            .map_err(|e| LiveStreamError::Warmup(format!("{e:?}")))?;
+        let warmup =
+            load_warmup_window_with_fetcher(ctx, asset, granularity, now, warmup_bars, alpaca_fetcher)
+                .await
+                .map_err(|e| LiveStreamError::Warmup(format!("{e:?}")))?;
         Ok(Self {
             warmup: warmup.into(),
             ws: Some(ws),
@@ -131,6 +138,7 @@ impl LiveStream {
                 LiveStreamState::Warmup
             },
             last_yielded_ts: None,
+            poll_failures: 0,
         })
     }
 
@@ -138,7 +146,7 @@ impl LiveStream {
     /// buffer + injected websocket/poll handles. Used by unit tests
     /// that don't have a running `ApiContext`. The acceptance
     /// bullet requires that the production path goes through
-    /// `load_warmup_window`; this variant is strictly for tests.
+    /// `load_warmup_window_with_fetcher`; this variant is strictly for tests.
     #[doc(hidden)]
     pub fn new_for_test(warmup: Vec<Ohlcv>, ws: BarSubscription, poll: AlpacaLivePoll) -> Self {
         let starts_in_warmup = !warmup.is_empty();
@@ -152,6 +160,7 @@ impl LiveStream {
                 LiveStreamState::WebsocketLive
             },
             last_yielded_ts: None,
+            poll_failures: 0,
         }
     }
 
@@ -173,6 +182,7 @@ impl LiveStream {
                 LiveStreamState::PollFallback
             },
             last_yielded_ts: None,
+            poll_failures: 0,
         }
     }
 
@@ -270,8 +280,10 @@ impl BarSource for LiveStream {
                             continue;
                         }
                     };
-                    match poll.next_bar().await {
+                    let result = poll.next_bar().await;
+                    match result {
                         Ok(bar) => {
+                            self.poll_failures = 0;
                             let ohlcv = market_bar_to_ohlcv(&bar);
                             self.last_yielded_ts = Some(ohlcv.timestamp);
                             return Some(ohlcv);
@@ -281,11 +293,36 @@ impl BarSource for LiveStream {
                             // tests get a deterministic terminator.
                             self.state = LiveStreamState::Closed;
                         }
+                        Err(e) if matches!(&e, AlpacaPollError::Network(_)) => {
+                            self.poll_failures = self.poll_failures.saturating_add(1);
+                            if self.poll_failures >= POLL_MAX_CONSECUTIVE_FAILURES {
+                                tracing::error!(
+                                    target: "xvision_engine::live_source",
+                                    failures = self.poll_failures,
+                                    error = %e,
+                                    "LiveStream: polling fallback exceeded retry budget; closing stream"
+                                );
+                                self.state = LiveStreamState::Closed;
+                            } else {
+                                let exponent = self.poll_failures.saturating_sub(1).min(4);
+                                let delay_ms = POLL_RETRY_BASE_DELAY_MS
+                                    .saturating_mul(1u64 << exponent)
+                                    .min(POLL_RETRY_MAX_DELAY_MS);
+                                tracing::warn!(
+                                    target: "xvision_engine::live_source",
+                                    failures = self.poll_failures,
+                                    delay_ms,
+                                    error = %e,
+                                    "LiveStream: transient polling error; retrying"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            }
+                        }
                         Err(e) => {
                             tracing::error!(
                                 target: "xvision_engine::live_source",
                                 error = %e,
-                                "LiveStream: polling fallback raised an error; closing stream"
+                                "LiveStream: polling fallback raised a fatal error; closing stream"
                             );
                             self.state = LiveStreamState::Closed;
                         }

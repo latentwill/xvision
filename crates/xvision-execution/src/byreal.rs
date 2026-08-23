@@ -676,6 +676,7 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
                 req.size
             },
             fee: None,
+            note: None,
         })
     }
 

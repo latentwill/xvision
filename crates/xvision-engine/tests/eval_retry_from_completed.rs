@@ -85,6 +85,10 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -192,7 +196,7 @@ sqlite_url = "sqlite://x.db"
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,

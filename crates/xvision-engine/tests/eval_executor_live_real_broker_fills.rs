@@ -90,6 +90,7 @@ impl BrokerSurface for RecordingBroker {
             fill_price: Some(self.fill_price),
             fill_size: self.fill_size.unwrap_or(req.size),
             fee: self.fee,
+            note: None,
         })
     }
 

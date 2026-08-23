@@ -107,19 +107,24 @@ impl AlpacaLivePoll {
                 // Else: dedup — drop and keep draining.
             }
 
-            // 2. Poll upstream for the most recent bar's window.
-            let end = Utc::now();
+            let end = completed_bar_end(Utc::now(), self.granularity);
             let span_secs = (self.granularity.seconds().max(1) as i64) * 4;
             let start = self
                 .last_delivered
                 .map(|ts| ts + chrono::Duration::seconds(1))
                 .unwrap_or_else(|| end - chrono::Duration::seconds(span_secs));
 
-            let bars = self
+            let mut bars = self
                 .fetcher
                 .fetch_window(&self.asset, self.granularity, start, end)
                 .await?;
 
+            // Alpaca normally returns oldest-first, but the polling
+            // contract must not depend on upstream ordering. Canonicalise
+            // each fetched batch before queuing it so delivery is
+            // deterministic and duplicate timestamps are removed.
+            bars.sort_by_key(|bar| bar.timestamp);
+            bars.dedup_by_key(|bar| bar.timestamp);
             for bar in bars {
                 if self.is_new(&bar) {
                     self.queued.push_back(bar);
@@ -142,6 +147,79 @@ impl AlpacaLivePoll {
             Some(prev) => bar.timestamp > prev,
             None => true,
         }
+    }
+}
+
+fn completed_bar_end(now: DateTime<Utc>, granularity: BarGranularity) -> DateTime<Utc> {
+    let period_secs = granularity.seconds().max(1) as i64;
+    let end_secs = now.timestamp().div_euclid(period_secs) * period_secs;
+    DateTime::from_timestamp(end_secs, 0).expect("UTC bar boundary must be representable")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct RecordingFetcher {
+        end: Mutex<Option<DateTime<Utc>>>,
+    }
+
+    #[async_trait]
+    impl LivePollFetcher for RecordingFetcher {
+        async fn fetch_window(
+            &self,
+            _asset: &str,
+            granularity: BarGranularity,
+            _start: DateTime<Utc>,
+            end: DateTime<Utc>,
+        ) -> Result<Vec<MarketBar>, AlpacaPollError> {
+            *self.end.lock().expect("recording fetcher lock") = Some(end);
+            let timestamp = end - chrono::Duration::seconds(granularity.seconds() as i64);
+            Ok(vec![MarketBar {
+                timestamp,
+                open: 1.0,
+                high: 1.0,
+                low: 1.0,
+                close: 1.0,
+                volume: 1.0,
+            }])
+        }
+    }
+
+    #[test]
+    fn completed_bar_end_floors_to_period_boundary() {
+        let now = DateTime::from_timestamp(1_700_000_123, 456_000_000).expect("valid test timestamp");
+        let end = completed_bar_end(now, BarGranularity::Minute5);
+
+        assert_eq!(
+            end,
+            DateTime::from_timestamp(1_700_000_100, 0).expect("valid expected timestamp")
+        );
+        assert!(end < now);
+    }
+
+    #[tokio::test]
+    async fn poll_window_ends_at_completed_boundary() {
+        let fetcher = Arc::new(RecordingFetcher {
+            end: Mutex::new(None),
+        });
+        let mut poll = AlpacaLivePoll::new(fetcher.clone(), "BTC/USD".to_string(), BarGranularity::Minute1)
+            .with_poll_interval(std::time::Duration::ZERO);
+
+        let bar = poll.next_bar().await.expect("closed bar");
+        let end = fetcher
+            .end
+            .lock()
+            .expect("recording fetcher lock")
+            .expect("poll end was recorded");
+
+        assert_eq!(
+            end.timestamp()
+                .rem_euclid(BarGranularity::Minute1.seconds() as i64),
+            0
+        );
+        assert!(bar.timestamp < end);
     }
 }
 

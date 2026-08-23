@@ -29,6 +29,8 @@
 // 14. DELETE /api/strategy/:id/agents/:role           strategies::delete_agent
 // 15. PATCH  /api/strategy/:id/agents/:role           strategies::patch_agent_role
 // 16. PUT    /api/strategy/:id/pipeline               strategies::put_pipeline
+// 16b. PUT   /api/strategy/:id/route                  strategies::put_route
+// 16c. POST  /api/strategy/:id/route/validate         strategies::post_validate_route
 // 17. PUT    /api/strategy/:id/risk                   strategies::put_risk
 // 17c. PUT    /api/strategy/:id/filter                 strategies::put_filter
 // 17d. DELETE /api/strategy/:id/filter                 strategies::delete_filter
@@ -85,11 +87,11 @@
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
 // 53. POST   /api/autooptimizer/sessions                autooptimizer_route::start_session  (P1-W4)
-// 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
-// 53a2.POST  /api/optimize/run-cycle                    autooptimizer_cycle::start_cycle (alias)
-// 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
-// 53c. POST  /api/autooptimizer/cycles/:id/pause        autooptimizer_cycle::pause_cycle  (P4)
-// 53d. POST  /api/autooptimizer/cycles/:id/resume       autooptimizer_cycle::resume_cycle (P4)
+// 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle (manual)
+// 53b. POST  /api/optimize/run                          autooptimizer_cycle::start_optimizer_run (agent)
+// 53c. POST  /api/autooptimizer/run                     flywheel::autooptimizer_run
+// 53d. POST  /api/autooptimizer/cycles/:id/pause        autooptimizer_cycle::pause_cycle  (P4)
+// 53e. POST  /api/autooptimizer/cycles/:id/resume       autooptimizer_cycle::resume_cycle (P4)
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
 // 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
@@ -450,7 +452,7 @@ fn readonly_router(state: AppState) -> Router {
             get(autooptimizer_route::get_blob),
         )
         // F13/F19: first-class mutation-cycle run list/detail derived from the
-        // lineage nodes a `run-cycle` produced (distinct from the flywheel
+        // lineage nodes an optimizer launch produced (distinct from the flywheel
         // distillation ledger below). Static `cycles` segment registered ahead
         // of the `:id` catch-all.
         .route(
@@ -670,6 +672,11 @@ fn mutating_router(state: AppState) -> Router {
             delete(strategies::delete_agent).patch(strategies::patch_agent_role),
         )
         .route("/api/strategy/:id/pipeline", put(strategies::put_pipeline))
+        .route("/api/strategy/:id/route", put(strategies::put_route))
+        .route(
+            "/api/strategy/:id/route/validate",
+            post(strategies::post_validate_route),
+        )
         .route("/api/strategy/:id/swap-agent", post(strategies::swap_agent))
         .route("/api/strategy/:id/risk", put(strategies::put_risk))
         .route(
@@ -790,14 +797,6 @@ fn mutating_router(state: AppState) -> Router {
             "/api/autooptimizer/run-cycle",
             post(autooptimizer_cycle::start_cycle),
         )
-        // API namespace alias: `POST /api/optimize/run-cycle` maps to the same
-        // handler as `/api/autooptimizer/run-cycle`. This bridges the namespace
-        // gap between the CLI (`xvn optimize run`) and the API so agents and
-        // scripts can discover a single unified path.
-        .route(
-            "/api/optimize/run-cycle",
-            post(autooptimizer_cycle::start_cycle),
-        )
         // F28: cancel an in-flight optimizer cycle.
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cancel",
@@ -826,7 +825,7 @@ fn mutating_router(state: AppState) -> Router {
             axum::routing::post(autooptimizer_cycle::promote_strategy),
         )
         // F29: retire a cycle-produced candidate (move its lineage node to
-        // Rejected) — dashboard parity for `xvn optimizer retire`.
+        // Rejected) — dashboard parity for the former `optimizer retire` affordance.
         .route(
             "/api/autooptimizer/lineage/:hash/retire",
             post(autooptimizer_route::retire_lineage_node),
@@ -852,10 +851,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/optimize/memory-demos/:id/gate",
             post(flywheel::optimize_memory_demos_gate),
         )
-        // Agent-facing convenience: accepts {"agent_id":"..."} with optional
-        // pattern_text / active / limit / min_observations. Defaults are
-        // synthesized so the caller doesn't need flywheel internals.
-        .route("/api/optimize/run", post(flywheel::optimize_run_simple))
+        // Canonical automated optimizer launch. This uses the same optimizer
+        // cycle machinery as the manual route and opts DSPy/GEPA in; agents can
+        // launch/monitor this job, while memory distillation stays explicit.
+        .route("/api/optimize/run", post(autooptimizer_cycle::start_optimizer_run))
         // ── Cost budget (bead-8wn) ────────────────────────────────────────
         // PUT sets the operator-set daily budget cap (mutation). A
         // non-positive / NaN cap → 400 (autooptimizer_cycle budget validation).

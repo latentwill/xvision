@@ -94,6 +94,17 @@ async fn dedup_drops_repeated_bar_timestamps() {
 }
 
 #[tokio::test]
+async fn sorts_and_deduplicates_unsorted_fetched_batch() {
+    let fetcher = ScriptedFetcher::new(vec![vec![bar_at(180), bar_at(60), bar_at(120), bar_at(120)]]);
+    let mut poll = AlpacaLivePoll::new(fetcher, "BTC/USD".into(), BarGranularity::Minute1)
+        .with_poll_interval(std::time::Duration::ZERO);
+
+    assert_eq!(poll.next_bar().await.unwrap().timestamp, ts(60));
+    assert_eq!(poll.next_bar().await.unwrap().timestamp, ts(120));
+    assert_eq!(poll.next_bar().await.unwrap().timestamp, ts(180));
+}
+
+#[tokio::test]
 async fn skips_bars_at_or_before_last_delivered() {
     // Fetch returns three bars: [t=60, t=120, t=120 again].
     // Caller already saw t=120 via `set_last_delivered`; only newer

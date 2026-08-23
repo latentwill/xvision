@@ -1673,9 +1673,12 @@ pub mod select {
 
     #[test]
     fn decision_count_4h_gran_with_0_warmup() {
-        // 4h = 14400 s. Window = 48 bars (8 days).
+        // Decision count uses the QUERY timeframe (minutes arg), not the
+        // scenario's native cadence: an 8-day window holds 192 1h slots.
         let s = make_scenario("sc2", "BTC", "4h", 48 * 4 * 3_600, 0, &[]);
-        assert_eq!(scenario_decision_count(&s, 60), 48);
+        assert_eq!(scenario_decision_count(&s, 60), 192);
+        // At the scenario's own 4h cadence the same window is 48 bars.
+        assert_eq!(scenario_decision_count(&s, 240), 48);
     }
 
     #[test]

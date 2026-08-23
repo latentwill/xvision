@@ -1,13 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::agent::dispatch_capability::{dispatch_capability, AgentOutput, DispatchInput};
 use crate::agent::edge_predicate::evaluate_predicate;
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, ResponseSchema, StopReason};
-use crate::agent::observability::ObsEmitter;
+use crate::agent::observability::{normalize_route_lane_label, ObsEmitter};
 use crate::agents::{AgentSlot, Capability, InputsPolicy};
-use crate::strategies::agent_ref::canonical_role;
+use crate::strategies::agent_ref::{canonical_role, RouteContextField, RouteDefinition};
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
@@ -281,6 +281,14 @@ fn build_pipeline_topology(strategy: &Strategy, agent_slots: &[ResolvedAgentSlot
 }
 
 pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<PipelineOutputs> {
+    if !input.agent_slots.is_empty() {
+        let roles = input
+            .agent_slots
+            .iter()
+            .map(|slot| canonical_role(&slot.role))
+            .collect::<Vec<_>>();
+        validate_unique_roles(&roles)?;
+    }
     // WS-12 (`trace-obs-ws12`): open ONE `agent.plan` topology span at
     // pipeline entry, before the first stage runs, carrying the resolved
     // pipeline topology. No-op when `obs` is `None`. We open it here in
@@ -489,6 +497,14 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
     // is enforced at runtime. Sequential pipelines never set `activates =
     // Router` so the loop walks 0..n exactly as it did pre-Phase-B.
     let n = input.agent_slots.len();
+    let agent_roles: Vec<String> = input
+        .agent_slots
+        .iter()
+        .map(|slot| canonical_role(&slot.role))
+        .collect();
+    let route_role_indices = route_role_indices(&agent_roles);
+    let mut route_started = false;
+    let mut route_trace = RouteTraceState::default();
     let mut i: usize = 0;
     while i < n {
         let resolved = &input.agent_slots[i];
@@ -642,11 +658,24 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 raw_response: None,
             }
         } else {
+            let upstream_inputs =
+                if route_router_is_current(input.strategy.pipeline.route.as_ref(), &role_key, capability) {
+                    build_route_router_inputs(
+                        input.strategy.pipeline.route.as_ref().expect("route checked"),
+                        input.agent_slots,
+                        &route_role_indices,
+                        &accumulated,
+                    )
+                } else {
+                    accumulated.clone()
+                };
+            let upstream_inputs =
+                prepare_dispatch_upstream_inputs(input.strategy, resolved, upstream_inputs)?;
             dispatch_capability(DispatchInput {
                 resolved,
                 slot: &slot_for_exec,
                 system_prompt: resolved.system_prompt.clone(),
-                upstream_inputs: accumulated.clone(),
+                upstream_inputs,
                 dispatch: input.dispatch.clone(),
                 tools: input.tools.clone(),
                 max_tokens: resolved.max_tokens,
@@ -682,6 +711,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 },
                 current_index: i,
                 total_agents: n,
+                agent_roles: &agent_roles,
                 activates: capability,
                 recorder: input.recorder,
                 runtime: input.runtime,
@@ -835,6 +865,7 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         current_index: i,
                         total_agents: n,
                         activates: capability,
+                        agent_roles: &agent_roles,
                         recorder: input.recorder,
                         runtime: input.runtime,
                         cline: input.cline.clone(),
@@ -868,19 +899,75 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 _ => {}
             }
         }
+        if let (AgentOutput::Router(_), Some(raw)) = (&outcome.output, outcome.raw_response.as_ref()) {
+            route_trace.summary = serde_json::from_str::<serde_json::Value>(&raw.text())
+                .ok()
+                .and_then(|value| value.get("reason").and_then(|v| v.as_str()).map(str::to_string));
+        }
 
         outputs_by_role.insert(role_key.clone(), outcome.output.clone());
         prev_output = Some(outcome.output);
 
-        // Decide which index to visit next: Router output jumps
-        // directly; otherwise fall through to `i + 1`. Graph edge
-        // predicates are target gates evaluated before dispatch.
-        i = next_index(&prev_output, i);
+        // Decide which index to visit next. When a Route Builder contract is
+        // present, router output enters route-owned path execution: the
+        // selected branch target is validated, unselected siblings are skipped,
+        // and explicit route graph edges own downstream continuation.
+        match route_next_index(
+            input.strategy.pipeline.route.as_ref(),
+            &agent_roles,
+            &route_role_indices,
+            &outputs_by_role,
+            i,
+            &prev_output,
+            &mut route_started,
+        ) {
+            Ok(route_next) => {
+                emit_route_step_events(
+                    input.obs.as_ref(),
+                    input.strategy.pipeline.route.as_ref(),
+                    input.agent_slots,
+                    &agent_roles,
+                    &route_role_indices,
+                    i,
+                    &prev_output,
+                    route_next,
+                    &mut route_trace,
+                )
+                .await;
+                if let Some(route_next) = route_next {
+                    i = route_next;
+                } else {
+                    i = next_index(&prev_output, i);
+                }
+            }
+            Err(error) => {
+                emit_route_error(
+                    input.obs.as_ref(),
+                    input.strategy.pipeline.route.as_ref(),
+                    &agent_roles,
+                    i,
+                    &error.to_string(),
+                )
+                .await;
+                return Err(error);
+            }
+        }
     }
 
     if input.strategy.pipeline.kind == PipelineKind::Graph && trader.is_none() {
         trader = Some(graph_skip_response());
     }
+
+    emit_route_decision_summary(
+        input.obs.as_ref(),
+        input.strategy.pipeline.route.as_ref(),
+        input.agent_slots,
+        &agent_roles,
+        &route_role_indices,
+        &outputs_by_role,
+        &route_trace,
+    )
+    .await;
 
     Ok(PipelineOutputs {
         regime,
@@ -901,6 +988,511 @@ fn next_index(prev_output: &Option<AgentOutput>, current_index: usize) -> usize 
     }
 
     current_index + 1
+}
+
+fn route_role_indices(agent_roles: &[String]) -> BTreeMap<String, usize> {
+    agent_roles
+        .iter()
+        .enumerate()
+        .map(|(idx, role)| (role.clone(), idx))
+        .collect()
+}
+
+fn validate_unique_roles(agent_roles: &[String]) -> anyhow::Result<()> {
+    let mut seen = BTreeSet::new();
+    for role in agent_roles {
+        if !seen.insert(role) {
+            anyhow::bail!("duplicate agent role '{role}' is not allowed");
+        }
+    }
+    Ok(())
+}
+
+fn prepare_dispatch_upstream_inputs(
+    strategy: &Strategy,
+    resolved: &ResolvedAgentSlot,
+    mut upstream_inputs: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    if resolved.nano.is_none() {
+        return Ok(upstream_inputs);
+    }
+
+    let target_role = canonical_role(&resolved.role);
+    let existing_signals = upstream_inputs
+        .get("filter_signals")
+        .and_then(|signals| signals.as_object());
+    let mut declared = serde_json::Map::new();
+    for edge in &strategy.pipeline.edges {
+        if canonical_role(&edge.to_role) != target_role {
+            continue;
+        }
+        let source_role = canonical_role(&edge.from_role);
+        let source_is_filter = strategy
+            .agents
+            .iter()
+            .find(|agent| canonical_role(&agent.role) == source_role)
+            .and_then(|agent| agent.activates)
+            .unwrap_or(Capability::Trader)
+            == Capability::Filter;
+        if source_is_filter {
+            let signal = existing_signals
+                .and_then(|signals| signals.get(&source_role))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            declared.insert(source_role, signal);
+        }
+    }
+
+    let object = upstream_inputs
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("nanochat upstream inputs must be a JSON object"))?;
+    object.insert(
+        "declared_filter_upstream".to_string(),
+        serde_json::Value::Object(declared),
+    );
+    Ok(upstream_inputs)
+}
+
+fn route_router_is_current(route: Option<&RouteDefinition>, role_key: &str, capability: Capability) -> bool {
+    let Some(route) = route else {
+        return false;
+    };
+    capability == Capability::Router && canonical_role(&route.router_role) == role_key
+}
+
+fn build_route_router_inputs(
+    route: &RouteDefinition,
+    agent_slots: &[ResolvedAgentSlot],
+    role_indices: &BTreeMap<String, usize>,
+    accumulated: &serde_json::Value,
+) -> serde_json::Value {
+    let route_targets = route
+        .branches
+        .iter()
+        .map(|branch| {
+            let role = canonical_role(&branch.target_role);
+            let mut target = serde_json::Map::new();
+            target.insert("role".to_string(), serde_json::Value::String(role.clone()));
+            if let Some(agent_id) = role_indices
+                .get(&role)
+                .and_then(|idx| agent_slots.get(*idx))
+                .map(|slot| slot.agent_id.as_str())
+                .filter(|agent_id| !agent_id.is_empty())
+            {
+                target.insert(
+                    "agent_id".to_string(),
+                    serde_json::Value::String(agent_id.to_string()),
+                );
+            }
+            serde_json::Value::Object(target)
+        })
+        .collect::<Vec<_>>();
+
+    let mut route_context = serde_json::Map::new();
+    for field in route.materialized_context_fields() {
+        match field {
+            RouteContextField::MarketSnapshot => {
+                route_context.insert(
+                    "market_snapshot".to_string(),
+                    accumulated
+                        .get("market_snapshot")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                );
+            }
+            RouteContextField::ToolState => {
+                route_context.insert(
+                    "tool_state".to_string(),
+                    accumulated
+                        .get("tool_state")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                );
+            }
+            RouteContextField::RegimeSummary => {
+                route_context.insert(
+                    "regime_summary".to_string(),
+                    accumulated
+                        .get("regime_summary")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                );
+            }
+            RouteContextField::AvailableTargets => {}
+        }
+    }
+
+    serde_json::json!({
+        "route_targets": route_targets,
+        "route_context": route_context,
+    })
+}
+
+fn route_next_index(
+    route: Option<&RouteDefinition>,
+    agent_roles: &[String],
+    role_indices: &BTreeMap<String, usize>,
+    outputs_by_role: &BTreeMap<String, AgentOutput>,
+    current_index: usize,
+    prev_output: &Option<AgentOutput>,
+    route_started: &mut bool,
+) -> anyhow::Result<Option<usize>> {
+    let Some(route) = route else {
+        return Ok(None);
+    };
+    let branch_targets: BTreeSet<String> = route
+        .branches
+        .iter()
+        .map(|branch| canonical_role(&branch.target_role))
+        .collect();
+
+    if let Some(AgentOutput::Router(selection)) = prev_output.as_ref() {
+        let Some(target_role) = agent_roles.get(selection.target_agent_ref_index) else {
+            anyhow::bail!(
+                "route router selected target index {} outside configured agent roles",
+                selection.target_agent_ref_index
+            );
+        };
+        if !branch_targets.contains(target_role) {
+            anyhow::bail!(
+                "route router selected target '{target_role}' (index {}) that is not a configured branch target",
+                selection.target_agent_ref_index
+            );
+        }
+        *route_started = true;
+        return Ok(Some(selection.target_agent_ref_index));
+    }
+
+    if !*route_started {
+        return Ok(None);
+    }
+
+    let Some(current_role) = agent_roles.get(current_index) else {
+        return Ok(Some(agent_roles.len()));
+    };
+
+    let mut matched_targets = Vec::new();
+    for edge in &route.graph_edges {
+        if canonical_role(&edge.from_role) != *current_role {
+            continue;
+        }
+        let to_role = canonical_role(&edge.to_role);
+        let Some(&to_idx) = role_indices.get(&to_role) else {
+            anyhow::bail!(
+                "route graph edge '{}' -> '{}' references an unknown target role",
+                edge.from_role,
+                edge.to_role
+            );
+        };
+        if to_idx <= current_index {
+            anyhow::bail!(
+                "route graph edge '{}' -> '{}' is not a supported forward route",
+                edge.from_role,
+                edge.to_role
+            );
+        }
+        let predicate_matches = match edge.condition.as_ref() {
+            Some(predicate) => outputs_by_role
+                .get(current_role)
+                .map(|output| evaluate_predicate(predicate, output))
+                .unwrap_or(false),
+            None => true,
+        };
+        if predicate_matches {
+            matched_targets.push(to_idx);
+        }
+    }
+
+    matched_targets.sort_unstable();
+    matched_targets.dedup();
+    match matched_targets.len() {
+        0 => Ok(Some(agent_roles.len())),
+        1 => Ok(Some(matched_targets[0])),
+        _ => anyhow::bail!(
+            "route graph from '{current_role}' matched multiple downstream targets; unsupported ambiguous route shape"
+        ),
+    }
+}
+
+#[derive(Default)]
+struct RouteTraceState {
+    selected_target_role: Option<String>,
+    selected_path: Vec<String>,
+    skipped_target_roles: BTreeSet<String>,
+    gated_target_roles: BTreeSet<String>,
+    graph_skips: Vec<serde_json::Value>,
+    summary: Option<String>,
+}
+
+async fn emit_route_step_events(
+    obs: Option<&ObsEmitter>,
+    route: Option<&RouteDefinition>,
+    agent_slots: &[ResolvedAgentSlot],
+    agent_roles: &[String],
+    role_indices: &BTreeMap<String, usize>,
+    current_index: usize,
+    prev_output: &Option<AgentOutput>,
+    route_next: Option<usize>,
+    trace: &mut RouteTraceState,
+) {
+    let (Some(obs), Some(route)) = (obs, route) else {
+        return;
+    };
+    if let Some(AgentOutput::Router(selection)) = prev_output.as_ref() {
+        let Some(selected_role) = agent_roles.get(selection.target_agent_ref_index).cloned() else {
+            return;
+        };
+        trace.selected_target_role = Some(selected_role.clone());
+        trace.selected_path = predicted_selected_path(route, &selected_role, role_indices, agent_roles);
+        if trace.selected_path.first().map(String::as_str)
+            != Some(canonical_role(&route.router_role).as_str())
+        {
+            trace.selected_path.insert(0, canonical_role(&route.router_role));
+        }
+        if trace.summary.is_none() {
+            trace.summary = router_reason(agent_slots, &selected_role);
+        }
+        for branch in &route.branches {
+            let target = canonical_role(&branch.target_role);
+            if target != selected_role {
+                trace.skipped_target_roles.insert(target.clone());
+                let payload = serde_json::json!({
+                    "event": "route.skip",
+                    "target_role": target,
+                    "selected_target_role": selected_role,
+                    "reason": "unselected_branch_target",
+                    "lane": normalize_route_lane_label("backtest"),
+                    "lane_label": normalize_route_lane_label("backtest"),
+                });
+                obs.emit_engine_event("route.skip", None, Some(payload.to_string()))
+                    .await;
+            }
+        }
+        return;
+    }
+
+    let Some(current_role) = agent_roles.get(current_index) else {
+        return;
+    };
+    if trace.selected_target_role.is_none() {
+        return;
+    }
+    for edge in &route.graph_edges {
+        if canonical_role(&edge.from_role) != *current_role {
+            continue;
+        }
+        let target = canonical_role(&edge.to_role);
+        let predicate_matches = match edge.condition.as_ref() {
+            Some(predicate) => outputs_role_match(prev_output, predicate),
+            None => true,
+        };
+        if !predicate_matches {
+            trace.gated_target_roles.insert(target.clone());
+            let skip = serde_json::json!({
+                "source_role": current_role,
+                "target_role": target,
+                "reason": "predicate_false",
+            });
+            trace.graph_skips.push(skip.clone());
+            let payload = serde_json::json!({
+                "event": "route.gate",
+                "source_role": current_role,
+                "target_role": target,
+                "reason": "predicate_false",
+                "lane": normalize_route_lane_label("backtest"),
+                "lane_label": normalize_route_lane_label("backtest"),
+            });
+            obs.emit_engine_event("route.gate", None, Some(payload.to_string()))
+                .await;
+        }
+    }
+    if let Some(next) = route_next.and_then(|idx| agent_roles.get(idx)).cloned() {
+        if !trace.selected_path.iter().any(|role| role == &next) {
+            trace.selected_path.push(next);
+        }
+    }
+}
+
+async fn emit_route_decision_summary(
+    obs: Option<&ObsEmitter>,
+    route: Option<&RouteDefinition>,
+    agent_slots: &[ResolvedAgentSlot],
+    agent_roles: &[String],
+    role_indices: &BTreeMap<String, usize>,
+    outputs_by_role: &BTreeMap<String, AgentOutput>,
+    trace: &RouteTraceState,
+) {
+    let (Some(obs), Some(route), Some(selected_target_role)) =
+        (obs, route, trace.selected_target_role.as_deref())
+    else {
+        return;
+    };
+    let selected_path = if trace.selected_path.is_empty() {
+        predicted_selected_path(route, selected_target_role, role_indices, agent_roles)
+    } else {
+        trace.selected_path.clone()
+    };
+    let final_trader_role = final_trader_role(outputs_by_role, &selected_path)
+        .unwrap_or_else(|| selected_target_role.to_string());
+    let final_action = selected_path
+        .iter()
+        .find_map(|role| outputs_by_role.get(role).and_then(trader_action));
+    let payload = serde_json::json!({
+        "event": "route.decision",
+        "lane": normalize_route_lane_label("backtest"),
+        "lane_label": normalize_route_lane_label("backtest"),
+        "router_role": canonical_role(&route.router_role),
+        "selected_target_role": selected_target_role,
+        "selected_path": selected_path,
+        "skipped_target_roles": trace.skipped_target_roles.iter().cloned().collect::<Vec<_>>(),
+        "gated_target_roles": trace.gated_target_roles.iter().cloned().collect::<Vec<_>>(),
+        "summary": trace.summary.clone().unwrap_or_default(),
+        "final_trader_role": final_trader_role,
+        "final_action": final_action.unwrap_or_else(|| "unknown".to_string()),
+        "intended_route": intended_route(route),
+        "actual_vs_intended": "matched",
+    });
+    obs.emit_engine_event("route.decision", None, Some(payload.to_string()))
+        .await;
+
+    let full_payload = serde_json::json!({
+        "event": "route.decision.full",
+        "route_target_identifiers": route_target_identifiers(route, agent_slots, role_indices),
+        "predicate_results": [],
+        "graph_skips": trace.graph_skips,
+        "token_cost": serde_json::Value::Null,
+        "errors": [],
+        "route_definition_hash": serde_json::to_value(route)
+            .map(|value| crate::autooptimizer::ContentHash::of_json(&value).to_hex())
+            .unwrap_or_default(),
+        "route_definition": route,
+    });
+    obs.emit_engine_event("route.decision.full", None, Some(full_payload.to_string()))
+        .await;
+}
+
+async fn emit_route_error(
+    obs: Option<&ObsEmitter>,
+    route: Option<&RouteDefinition>,
+    agent_roles: &[String],
+    current_index: usize,
+    message: &str,
+) {
+    let (Some(obs), Some(route)) = (obs, route) else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "event": "route.error",
+        "lane": normalize_route_lane_label("backtest"),
+        "lane_label": normalize_route_lane_label("backtest"),
+        "router_role": canonical_role(&route.router_role),
+        "current_role": agent_roles.get(current_index).cloned().unwrap_or_default(),
+        "error": message,
+        "intended_route": intended_route(route),
+    });
+    obs.emit_engine_event("route.error", None, Some(payload.to_string()))
+        .await;
+}
+
+fn outputs_role_match(
+    prev_output: &Option<AgentOutput>,
+    predicate: &crate::strategies::agent_ref::EdgePredicate,
+) -> bool {
+    prev_output
+        .as_ref()
+        .map(|output| evaluate_predicate(predicate, output))
+        .unwrap_or(false)
+}
+
+fn predicted_selected_path(
+    route: &RouteDefinition,
+    selected_target_role: &str,
+    role_indices: &BTreeMap<String, usize>,
+    agent_roles: &[String],
+) -> Vec<String> {
+    let mut path = vec![
+        canonical_role(&route.router_role),
+        selected_target_role.to_string(),
+    ];
+    let mut current = selected_target_role.to_string();
+    let mut seen = BTreeSet::new();
+    while seen.insert(current.clone()) {
+        let mut targets = route
+            .graph_edges
+            .iter()
+            .filter(|edge| canonical_role(&edge.from_role) == current)
+            .filter_map(|edge| {
+                let target = canonical_role(&edge.to_role);
+                role_indices.get(&target).map(|idx| (*idx, target))
+            })
+            .collect::<Vec<_>>();
+        targets.sort_by_key(|(idx, _)| *idx);
+        let Some((_, next)) = targets.into_iter().next() else {
+            break;
+        };
+        if !agent_roles.iter().any(|role| role == &next) || path.iter().any(|role| role == &next) {
+            break;
+        }
+        path.push(next.clone());
+        current = next;
+    }
+    path
+}
+
+fn final_trader_role(
+    outputs_by_role: &BTreeMap<String, AgentOutput>,
+    selected_path: &[String],
+) -> Option<String> {
+    selected_path
+        .iter()
+        .find(|role| matches!(outputs_by_role.get(*role), Some(AgentOutput::Trader(_))))
+        .cloned()
+}
+
+fn trader_action(output: &AgentOutput) -> Option<String> {
+    let AgentOutput::Trader(decision) = output else {
+        return None;
+    };
+    serde_json::from_str::<serde_json::Value>(&decision.response.text())
+        .ok()
+        .and_then(|value| value.get("action").and_then(|v| v.as_str()).map(str::to_string))
+}
+
+fn router_reason(agent_slots: &[ResolvedAgentSlot], selected_role: &str) -> Option<String> {
+    let _ = (agent_slots, selected_role);
+    None
+}
+
+fn intended_route(route: &RouteDefinition) -> serde_json::Value {
+    serde_json::json!({
+        "router_role": canonical_role(&route.router_role),
+        "branch_targets": route
+            .branches
+            .iter()
+            .map(|branch| canonical_role(&branch.target_role))
+            .collect::<Vec<_>>(),
+        "graph_edges": route.graph_edges,
+    })
+}
+
+fn route_target_identifiers(
+    route: &RouteDefinition,
+    agent_slots: &[ResolvedAgentSlot],
+    role_indices: &BTreeMap<String, usize>,
+) -> Vec<serde_json::Value> {
+    route
+        .branches
+        .iter()
+        .map(|branch| {
+            let role = canonical_role(&branch.target_role);
+            let agent_id = role_indices
+                .get(&role)
+                .and_then(|idx| agent_slots.get(*idx))
+                .map(|slot| slot.agent_id.clone())
+                .unwrap_or_default();
+            serde_json::json!({ "role": role, "agent_id": agent_id })
+        })
+        .collect()
 }
 
 fn graph_agent_is_gated_out(
@@ -1176,5 +1768,17 @@ mod legacy_max_tokens_tests {
         slot.model = None;
         slot.attested_with = "".into();
         assert_eq!(default_max_tokens_for(&slot), Some(4096));
+    }
+}
+
+#[cfg(test)]
+mod pipeline_validation_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_canonical_roles_are_rejected() {
+        let error = validate_unique_roles(&["filter".into(), "filter".into()]);
+        assert!(error.is_err());
+        assert!(error.unwrap_err().to_string().contains("duplicate agent role"));
     }
 }

@@ -9,7 +9,7 @@
 //! NAV, open positions, daily PnL window, loss streak, and 14-bar Wilder ATR
 //! are all tracked inside `BacktestState`.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -34,6 +34,19 @@ pub struct MarketBar {
     pub volume: f64,
 }
 
+/// A market order accepted by `submit()` but not yet filled. Filled at the
+/// NEXT bar's open so a decision formed on bar `i` never trades bar `i`'s
+/// own close (no same-bar lookahead).
+#[derive(Debug, Clone)]
+pub struct PendingOrder {
+    pub cycle_id: Uuid,
+    pub asset: AssetSymbol,
+    pub action: Action,
+    pub size_bps: u32,
+    pub stop_loss_pct: f32,
+    pub take_profit_pct: f32,
+}
+
 /// Realized PnL for one simulator day (indexed by `day_index`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DailyPnl {
@@ -41,9 +54,11 @@ pub struct DailyPnl {
     pub realised_usd: f64,
 }
 
-/// Returned by `tick()` describing auto-fills and day-rollover info.
+/// Returned by `tick()` describing fills and day-rollover info.
 #[derive(Debug, Clone)]
 pub struct TickReport {
+    /// Receipts for queued market orders filled at this bar's open.
+    pub market_filled_receipts: Vec<ExecutionReceipt>,
     /// Receipts for any stop-loss or take-profit orders that auto-fired during
     /// this bar (zero or more).
     pub auto_filled_receipts: Vec<ExecutionReceipt>,
@@ -113,6 +128,11 @@ pub struct BacktestState {
     pub now: DateTime<Utc>,
     /// Chronological log of all fills (entries, exits, auto-fills).
     pub fills_log: Vec<ExecutionReceipt>,
+    /// Notional USD committed at entry, per asset. Frozen at fill time so
+    /// exit PnL and fees never drift with later equity changes.
+    pub entry_notional_usd: BTreeMap<AssetSymbol, f64>,
+    /// Market orders accepted but not yet filled; filled at next bar open.
+    pub pending_orders: Vec<PendingOrder>,
 
     // --- private bookkeeping ---
     /// Running sum of true ranges for Wilder ATR warmup (first 13 bars).
@@ -148,6 +168,8 @@ impl BacktestState {
             day_index: 0,
             now,
             fills_log: Vec::new(),
+            entry_notional_usd: BTreeMap::new(),
+            pending_orders: Vec::new(),
             atr_warmup_sum: initial_range,
             bar_count: 1,
             prev_close: opening_bar.close,
@@ -198,54 +220,216 @@ impl BacktestState {
         id
     }
 
-    /// Realize a close and update PnL / equity.
-    /// Returns `(fill_price, realised_pnl_usd)`.
-    fn realize_close(
-        &mut self,
-        pos: &OpenPosition,
-        config: &BacktestConfig,
-        override_price: Option<f64>,
-    ) -> (f64, f64) {
-        let slippage_dir = match pos.direction {
-            Direction::Long => -1.0, // exit long: sell, price moves against us
-            Direction::Short => 1.0, // exit short: buy, price moves against us
-            Direction::Flat => 0.0,
+    /// Realize a close at `fill_px` (already includes any gap/slippage
+    /// adjustment chosen by the caller) and update PnL / equity.
+    ///
+    /// Notional is the USD amount FROZEN at entry (`entry_notional_usd`), so
+    /// exit fees and unit counts never drift when equity moves between entry
+    /// and exit. Returns realised net PnL (gross PnL minus exit fee).
+    fn realize_close(&mut self, pos: &OpenPosition, config: &BacktestConfig, fill_px: f64) -> f64 {
+        let notional = match self.entry_notional_usd.get(&pos.asset) {
+            Some(n) => *n,
+            // Defensive fallback (state desync): size like a fresh entry off
+            // the same NAV basis entries use, not raw stored cash equity.
+            None => self.marked_equity() * pos.size_bps as f64 / 10_000.0,
         };
-        let fill_px = override_price.unwrap_or_else(|| {
-            self.fill_price(self.current_bar.close, slippage_dir, config.slippage_atr_frac)
-        });
-
-        // Notional at entry for fee calculation (conservative: use entry size × fill price)
-        let notional = self.portfolio.equity_usd * pos.size_bps as f64 / 10_000.0;
         let exit_fee = notional * (config.fee_bps as f64 / 2.0) / 10_000.0;
-        self.portfolio.equity_usd -= exit_fee;
 
-        // PnL = direction_sign × (exit - entry) × notional / entry
-        // Expressed in USD: size is a fraction of NAV at entry, but we track
-        // it in bps, so: units = notional / entry_price; pnl = units × (exit - entry)
         let units = notional / pos.entry_price;
         let direction_sign = match pos.direction {
             Direction::Long => 1.0,
             Direction::Short => -1.0,
             Direction::Flat => 0.0,
         };
-        let realised_pnl = direction_sign * (fill_px - pos.entry_price) * units - exit_fee;
-
-        self.portfolio.equity_usd += realised_pnl + exit_fee; // equity already had exit_fee removed; add pnl
-                                                              // Correct: equity change = pnl (fees already deducted above)
-                                                              // Actually let's be explicit:
-                                                              //   equity_usd -= exit_fee  (done above)
-                                                              //   equity_usd += pnl_gross (where pnl_gross = direction_sign * (fill_px - entry) * units)
-                                                              // We'll undo the double-count here:
-        self.portfolio.equity_usd -= realised_pnl + exit_fee; // undo double-add
         let pnl_gross = direction_sign * (fill_px - pos.entry_price) * units;
-        self.portfolio.equity_usd += pnl_gross;
-
         let realised_net = pnl_gross - exit_fee;
+
+        self.portfolio.equity_usd += realised_net;
         self.current_day_pnl += realised_net;
         self.portfolio.realized_pnl_today_usd += realised_net;
+        self.entry_notional_usd.remove(&pos.asset);
 
-        (fill_px, realised_net)
+        realised_net
+    }
+
+    /// Unrealized PnL across all open positions, marked to current prices.
+    ///
+    /// A position missing its frozen entry notional falls back to fresh-entry
+    /// sizing off CASH equity. Never call `marked_equity()` here for the
+    /// fallback — it would recurse through this function.
+    pub fn unrealized_pnl(&self) -> f64 {
+        let eq = self.portfolio.equity_usd;
+        self.portfolio
+            .open_positions
+            .values()
+            .map(|pos| {
+                let notional = self
+                    .entry_notional_usd
+                    .get(&pos.asset)
+                    .copied()
+                    .unwrap_or_else(|| eq * pos.size_bps as f64 / 10_000.0);
+                let units = notional / pos.entry_price;
+                let sign = match pos.direction {
+                    Direction::Long => 1.0,
+                    Direction::Short => -1.0,
+                    Direction::Flat => 0.0,
+                };
+                sign * (pos.mark_price - pos.entry_price) * units
+            })
+            .sum()
+    }
+
+    /// NAV including unrealized PnL: what sizing and risk rules should see.
+    pub fn marked_equity(&self) -> f64 {
+        self.portfolio.equity_usd + self.unrealized_pnl()
+    }
+
+    /// Fill every queued order at this bar's open (plus adverse slippage on
+    /// market legs). Handles Buy/Sell opens, upsizes, flips, and queued
+    /// closes. Everything fills one bar after its decision bar, so a
+    /// decision never acts on its own decision bar's close. Returns one
+    /// receipt per fill, in queue order.
+    fn execute_pending_orders(
+        &mut self,
+        config: &BacktestConfig,
+        bar_open: f64,
+        ts: DateTime<Utc>,
+    ) -> Vec<ExecutionReceipt> {
+        let queued = std::mem::take(&mut self.pending_orders);
+        let mut receipts = Vec::with_capacity(queued.len());
+        for p in queued {
+            // Queued close: exit at this bar's open with exit-side slippage.
+            if p.action == Action::Close {
+                let filled = match self.portfolio.open_positions.get(&p.asset) {
+                    Some(pos) => {
+                        let pos = pos.clone();
+                        let slip_dir = match pos.direction {
+                            Direction::Long => -1.0,
+                            Direction::Short => 1.0,
+                            Direction::Flat => 0.0,
+                        };
+                        let fill_px = self.fill_price(bar_open, slip_dir, config.slippage_atr_frac);
+                        self.realize_close(&pos, config, fill_px);
+                        self.portfolio.open_positions.remove(&p.asset);
+                        (pos.size_bps, fill_px, config.fee_bps / 2)
+                    }
+                    None => (0, 0.0, 0),
+                };
+                receipts.push(ExecutionReceipt {
+                    cycle_id: p.cycle_id,
+                    venue: "backtest".into(),
+                    venue_order_id: self.next_order_id(),
+                    asset: p.asset,
+                    filled_size_bps: filled.0,
+                    avg_fill_price: filled.1,
+                    fee_bps: filled.2,
+                    submitted_at: ts,
+                    filled_at: Some(ts),
+                    note: Some("close filled at next bar open".into()),
+                });
+                continue;
+            }
+
+            let direction = match p.action {
+                Action::Buy => Direction::Long,
+                _ => Direction::Short,
+            };
+            let slip_dir = if p.action == Action::Buy { 1.0 } else { -1.0 };
+            let fill_px = self.fill_price(bar_open, slip_dir, config.slippage_atr_frac);
+            let notional = self.marked_equity() * p.size_bps as f64 / 10_000.0;
+
+            match self.portfolio.open_positions.get(&p.asset) {
+                Some(existing) if existing.direction == direction => {
+                    // Upsize: cap the accepted slice at 2000 bps so reported
+                    // size_bps and committed notional never diverge. Fees
+                    // charge only on the accepted slice.
+                    let old_entry = existing.entry_price;
+                    let old_notional = self.entry_notional_usd.get(&p.asset).copied().unwrap_or(0.0);
+                    let accepted_bps = 2000u32.saturating_sub(existing.size_bps).min(p.size_bps);
+                    if accepted_bps > 0 {
+                        let accepted_notional = notional * accepted_bps as f64 / p.size_bps as f64;
+                        self.apply_entry_fee(accepted_notional, config.fee_bps);
+                        let total_notional = old_notional + accepted_notional;
+                        let avg_px = if total_notional > 0.0 {
+                            (old_entry * old_notional + fill_px * accepted_notional) / total_notional
+                        } else {
+                            fill_px
+                        };
+                        let pos = self.portfolio.open_positions.get_mut(&p.asset).unwrap();
+                        pos.entry_price = avg_px;
+                        pos.size_bps += accepted_bps;
+                        if p.stop_loss_pct < pos.stop_loss_pct {
+                            pos.stop_loss_pct = p.stop_loss_pct;
+                        }
+                        if p.take_profit_pct > pos.take_profit_pct {
+                            pos.take_profit_pct = p.take_profit_pct;
+                        }
+                        pos.mark_price = fill_px;
+                        *self.entry_notional_usd.entry(p.asset.clone()).or_insert(0.0) += accepted_notional;
+                    }
+                    let order_id = self.next_order_id();
+                    receipts.push(ExecutionReceipt {
+                        cycle_id: p.cycle_id,
+                        venue: "backtest".into(),
+                        venue_order_id: order_id,
+                        asset: p.asset,
+                        filled_size_bps: accepted_bps,
+                        avg_fill_price: fill_px,
+                        fee_bps: if accepted_bps > 0 { config.fee_bps / 2 } else { 0 },
+                        submitted_at: ts,
+                        filled_at: Some(ts),
+                        note: None,
+                    });
+                }
+                existing => {
+                    // Flip or fresh open: realize the old leg first so its PnL
+                    // and exit fee land in equity instead of vanishing.
+                    if let Some(old) = existing.cloned() {
+                        let old_dir = old.direction;
+                        let exit_slip_dir = match old_dir {
+                            Direction::Long => -1.0,
+                            Direction::Short => 1.0,
+                            Direction::Flat => 0.0,
+                        };
+                        let exit_px = self.fill_price(bar_open, exit_slip_dir, config.slippage_atr_frac);
+                        self.realize_close(&old, config, exit_px);
+                        self.portfolio.open_positions.remove(&p.asset);
+                    }
+                    self.apply_entry_fee(notional, config.fee_bps);
+                    self.portfolio.open_positions.insert(
+                        p.asset.clone(),
+                        OpenPosition {
+                            asset: p.asset.clone(),
+                            direction,
+                            size_bps: p.size_bps,
+                            entry_price: fill_px,
+                            mark_price: fill_px,
+                            stop_loss_pct: p.stop_loss_pct,
+                            take_profit_pct: p.take_profit_pct,
+                            opened_at: ts,
+                            leverage: None,
+                            liq_price: None,
+                        },
+                    );
+                    self.entry_notional_usd.insert(p.asset.clone(), notional);
+
+                    let order_id = self.next_order_id();
+                    receipts.push(ExecutionReceipt {
+                        cycle_id: p.cycle_id,
+                        venue: "backtest".into(),
+                        venue_order_id: order_id,
+                        asset: p.asset,
+                        filled_size_bps: p.size_bps,
+                        avg_fill_price: fill_px,
+                        fee_bps: config.fee_bps / 2,
+                        submitted_at: ts,
+                        filled_at: Some(ts),
+                        note: None,
+                    });
+                }
+            }
+        }
+        receipts
     }
 }
 
@@ -272,23 +456,60 @@ impl BacktestExecutor {
 
     /// Advance the simulator to the next OHLCV bar.
     ///
-    /// 1. Checks all open positions against the new bar's high/low for
-    ///    stop-loss and take-profit triggers; auto-fills any that fire.
-    /// 2. Marks remaining positions to `next.close`.
-    /// 3. Updates Wilder ATR.
-    /// 4. Advances the clock; rolls the day when `next.timestamp` crosses UTC midnight.
+    /// 1. Rolls the UTC day when `next.timestamp` crosses midnight — BEFORE
+    ///    any fills, so fills stamped with the new day book into the new day.
+    /// 2. Fills every order queued by `submit()`/`close_position()` at
+    ///    `next.open` (plus adverse slippage). A decision formed on bar `i`
+    ///    trades bar `i+1` — never its own decision bar.
+    /// 3. Checks all open positions (including just-filled ones) against the
+    ///    new bar's high/low for stop-loss and take-profit triggers. Stop
+    ///    fills respect gaps through the level and always pay adverse
+    ///    slippage; take-profit fills capture favorable gaps to the open.
+    /// 4. Marks remaining positions to `next.close`.
+    /// 5. Updates Wilder ATR and advances the clock.
     pub fn tick(&self, next: MarketBar) -> Result<TickReport, ExecutorError> {
         let mut st = self
             .state
             .lock()
             .map_err(|_| ExecutorError::Internal("mutex poisoned".into()))?;
 
-        let mut auto_fills: Vec<ExecutionReceipt> = Vec::new();
         let prev_day = date_of(&st.now);
         let next_day = date_of(&next.timestamp);
         let day_rollover = next_day != prev_day;
 
+        // --- day rollover FIRST ---
+        // Orders queued yesterday fill at this bar's open carrying today's
+        // timestamp; flushing the old bucket before they execute books those
+        // fills into the NEW day instead of leaking them into yesterday.
+        let mut day_pnl = 0.0;
+        if day_rollover {
+            day_pnl = st.current_day_pnl;
+            let entry = DailyPnl {
+                day_index: st.day_index,
+                realised_usd: day_pnl,
+            };
+            st.realised_pnl_history.push_back(entry);
+            while st.realised_pnl_history.len() > self.config.max_history_days {
+                st.realised_pnl_history.pop_front();
+            }
+            if day_pnl < 0.0 {
+                st.loss_streak += 1;
+            } else {
+                st.loss_streak = 0;
+            }
+            st.current_day_pnl = 0.0;
+            st.portfolio.realized_pnl_today_usd = 0.0;
+            st.day_index += 1;
+            st.portfolio.day_index = st.day_index;
+            st.fill_seq = 0;
+        }
+
+        // --- queued market orders fill at this bar's open ---
+        let market_fills = st.execute_pending_orders(&self.config, next.open, next.timestamp);
+        st.fills_log.extend(market_fills.iter().cloned());
+
         // --- stop / take-profit scanning ---
+        let mut auto_fills: Vec<ExecutionReceipt> = Vec::new();
         let assets: Vec<AssetSymbol> = st.portfolio.open_positions.keys().cloned().collect();
         for asset in assets {
             let pos = match st.portfolio.open_positions.get(&asset) {
@@ -296,45 +517,54 @@ impl BacktestExecutor {
                 None => continue,
             };
 
-            // Determine the stop/target trigger price
             let (stop_px, target_px) = sl_tp_prices(&pos);
 
-            let (triggered_at, is_tp) = match pos.direction {
+            // Final exit price given trigger kind and this bar's open, with
+            // gaps and adverse slippage priced in. `None` = no trigger.
+            let trigger: Option<(f64, bool)> = match pos.direction {
                 Direction::Long => {
-                    // TP fires when high >= target; SL fires when low <= stop
                     let tp_hit = next.high >= target_px;
                     let sl_hit = next.low <= stop_px;
-                    if tp_hit && sl_hit {
-                        // Both hit — use whichever is worse (stop), conservative
-                        (Some(stop_px), false)
+                    if sl_hit {
+                        // Gap-through-stop fills at the (worse) open; a normal
+                        // touch fills at the stop level; stops are market
+                        // orders so adverse slippage applies on top.
+                        let base = if next.open <= stop_px { next.open } else { stop_px };
+                        Some((base - self.config.slippage_atr_frac * st.recent_atr, false))
                     } else if tp_hit {
-                        (Some(target_px), true)
-                    } else if sl_hit {
-                        (Some(stop_px), false)
+                        // Favorable gap above target fills at the better open.
+                        let base = if next.open >= target_px {
+                            next.open
+                        } else {
+                            target_px
+                        };
+                        Some((base, true))
                     } else {
-                        (None, false)
+                        None
                     }
                 }
                 Direction::Short => {
-                    // TP fires when low <= target; SL fires when high >= stop
                     let tp_hit = next.low <= target_px;
                     let sl_hit = next.high >= stop_px;
-                    if sl_hit && tp_hit {
-                        (Some(stop_px), false)
+                    if sl_hit {
+                        let base = if next.open >= stop_px { next.open } else { stop_px };
+                        Some((base + self.config.slippage_atr_frac * st.recent_atr, false))
                     } else if tp_hit {
-                        (Some(target_px), true)
-                    } else if sl_hit {
-                        (Some(stop_px), false)
+                        let base = if next.open <= target_px {
+                            next.open
+                        } else {
+                            target_px
+                        };
+                        Some((base, true))
                     } else {
-                        (None, false)
+                        None
                     }
                 }
-                Direction::Flat => (None, false),
+                Direction::Flat => None,
             };
 
-            if let Some(fill_at_px) = triggered_at {
-                // Auto-fill at the level price (conservative: not worse than the level)
-                let (fill_px, _realised) = st.realize_close(&pos, &self.config, Some(fill_at_px));
+            if let Some((fill_px, is_tp)) = trigger {
+                st.realize_close(&pos, &self.config, fill_px);
                 st.portfolio.open_positions.remove(&asset);
 
                 let order_id = st.next_order_id();
@@ -373,31 +603,8 @@ impl BacktestExecutor {
         st.current_bar = next;
         st.portfolio.as_of = st.now;
 
-        // --- day rollover ---
-        let mut day_pnl = 0.0;
-        if day_rollover {
-            day_pnl = st.current_day_pnl;
-            let entry = DailyPnl {
-                day_index: st.day_index,
-                realised_usd: day_pnl,
-            };
-            st.realised_pnl_history.push_back(entry);
-            while st.realised_pnl_history.len() > self.config.max_history_days {
-                st.realised_pnl_history.pop_front();
-            }
-            if day_pnl < 0.0 {
-                st.loss_streak += 1;
-            } else {
-                st.loss_streak = 0;
-            }
-            st.current_day_pnl = 0.0;
-            st.portfolio.realized_pnl_today_usd = 0.0;
-            st.day_index += 1;
-            st.portfolio.day_index = st.day_index;
-            st.fill_seq = 0;
-        }
-
         Ok(TickReport {
+            market_filled_receipts: market_fills,
             auto_filled_receipts: auto_fills,
             day_rollover,
             day_pnl,
@@ -405,11 +612,24 @@ impl BacktestExecutor {
     }
 
     /// Current portfolio snapshot (lock-free copy).
+    ///
+    /// The STORED equity stays on the cash basis; only the RETURNED copy is
+    /// marked (cash + unrealized PnL). Marking live state here would make a
+    /// later `realize_close()` book the same unrealized gain a second time.
     pub fn portfolio_snapshot(&self) -> PortfolioState {
-        // Best-effort: if lock is poisoned return an empty portfolio rather than panic.
+        // Best-effort: if lock is poisoned return the portfolio rather than panic.
         match self.state.lock() {
-            Ok(st) => st.portfolio.clone(),
-            Err(poisoned) => poisoned.into_inner().portfolio.clone(),
+            Ok(st) => {
+                let mut pf = st.portfolio.clone();
+                pf.equity_usd = st.marked_equity();
+                pf
+            }
+            Err(poisoned) => {
+                let st = poisoned.into_inner();
+                let mut pf = st.portfolio.clone();
+                pf.equity_usd = st.marked_equity();
+                pf
+            }
         }
     }
 
@@ -451,88 +671,30 @@ impl Executor for BacktestExecutor {
             .lock()
             .map_err(|_| ExecutorError::Internal("mutex poisoned".into()))?;
 
-        let slippage_dir = if td.action == Action::Buy { 1.0 } else { -1.0 };
-        let fill_px = st.fill_price(st.current_bar.close, slippage_dir, self.config.slippage_atr_frac);
-
-        let notional = st.portfolio.equity_usd * td.size_bps as f64 / 10_000.0;
-        st.apply_entry_fee(notional, self.config.fee_bps);
-
-        let direction = match td.action {
-            Action::Buy => Direction::Long,
-            Action::Sell => Direction::Short,
-            _ => unreachable!(),
-        };
-
+        // Queue the order; it fills at the NEXT bar's open in tick(). A
+        // decision formed from bar i's data must never fill at bar i's close.
         let now = st.now;
-        let day_index = st.day_index;
-        let fill_seq = st.fill_seq;
-        st.fill_seq += 1;
+        st.pending_orders.push(PendingOrder {
+            cycle_id: td.cycle_id,
+            asset,
+            action: td.action,
+            size_bps: td.size_bps,
+            stop_loss_pct: td.stop_loss_pct,
+            take_profit_pct: td.take_profit_pct,
+        });
 
-        // Upsize existing position in same asset+direction, or open new.
-        let open_pos = st
-            .portfolio
-            .open_positions
-            .entry(asset)
-            .or_insert_with(|| OpenPosition {
-                asset,
-                direction,
-                size_bps: 0,
-                entry_price: fill_px,
-                mark_price: fill_px,
-                stop_loss_pct: td.stop_loss_pct,
-                take_profit_pct: td.take_profit_pct,
-                opened_at: now,
-                leverage: None,
-                liq_price: None,
-            });
-
-        if open_pos.direction == direction {
-            // Weighted average entry price when upsizing
-            let old_notional = open_pos.size_bps as f64;
-            let new_notional = old_notional + td.size_bps as f64;
-            if new_notional > 0.0 {
-                open_pos.entry_price =
-                    (open_pos.entry_price * old_notional + fill_px * td.size_bps as f64) / new_notional;
-            }
-            open_pos.size_bps = open_pos.size_bps.saturating_add(td.size_bps).min(2000);
-            // Keep the tighter SL / larger TP when upsizing
-            if td.stop_loss_pct < open_pos.stop_loss_pct {
-                open_pos.stop_loss_pct = td.stop_loss_pct;
-            }
-            if td.take_profit_pct > open_pos.take_profit_pct {
-                open_pos.take_profit_pct = td.take_profit_pct;
-            }
-        } else {
-            // Opposite direction — treat as a close + flip (overwrite)
-            *open_pos = OpenPosition {
-                asset,
-                direction,
-                size_bps: td.size_bps,
-                entry_price: fill_px,
-                mark_price: fill_px,
-                stop_loss_pct: td.stop_loss_pct,
-                take_profit_pct: td.take_profit_pct,
-                opened_at: now,
-                leverage: None,
-                liq_price: None,
-            };
-        }
-        open_pos.mark_price = fill_px;
-
-        let receipt = ExecutionReceipt {
+        Ok(ExecutionReceipt {
             cycle_id: td.cycle_id,
             venue: "backtest".into(),
-            venue_order_id: format!("bt-{}-{}", day_index, fill_seq),
+            venue_order_id: format!("pending-{}", td.cycle_id),
             asset,
-            filled_size_bps: td.size_bps,
-            avg_fill_price: fill_px,
-            fee_bps: self.config.fee_bps / 2,
+            filled_size_bps: 0,
+            avg_fill_price: 0.0,
+            fee_bps: 0,
             submitted_at: now,
-            filled_at: Some(now),
-            note: None,
-        };
-        st.fills_log.push(receipt.clone());
-        Ok(receipt)
+            filled_at: None,
+            note: Some("queued: fills at next bar open".into()),
+        })
     }
 
     async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
@@ -541,47 +703,56 @@ impl Executor for BacktestExecutor {
             .lock()
             .map_err(|_| ExecutorError::Internal("mutex poisoned".into()))?;
 
-        let pos = match st.portfolio.open_positions.get(&asset) {
-            Some(p) => p.clone(),
-            None => {
-                // Zero-fill receipt — no state mutation
-                let now = st.now;
-                let order_id = st.next_order_id();
-                let receipt = ExecutionReceipt {
-                    cycle_id: Uuid::nil(),
-                    venue: "backtest".into(),
-                    venue_order_id: order_id,
-                    asset,
-                    filled_size_bps: 0,
-                    avg_fill_price: 0.0,
-                    fee_bps: 0,
-                    submitted_at: now,
-                    filled_at: Some(now),
-                    note: Some("no open position".into()),
-                };
-                return Ok(receipt);
-            }
-        };
+        // A close cancels anything still queued for this asset — otherwise a
+        // stale buy/sell could reopen exposure one bar after the strategy
+        // went flat.
+        st.pending_orders.retain(|p| p.asset != asset);
 
-        let (fill_px, _realised) = st.realize_close(&pos, &self.config, None);
-        st.portfolio.open_positions.remove(&asset);
+        if !st.portfolio.open_positions.contains_key(&asset) {
+            // Zero-fill receipt — no state mutation
+            let now = st.now;
+            let order_id = st.next_order_id();
+            return Ok(ExecutionReceipt {
+                cycle_id: Uuid::nil(),
+                venue: "backtest".into(),
+                venue_order_id: order_id,
+                asset,
+                filled_size_bps: 0,
+                avg_fill_price: 0.0,
+                fee_bps: 0,
+                submitted_at: now,
+                filled_at: Some(now),
+                note: Some("no open position".into()),
+            });
+        }
 
+        let pos_size_bps = st.portfolio.open_positions[&asset].size_bps;
+
+        // Queue the exit; it fills at the NEXT bar's open under the same
+        // no-lookahead rule as entries — a decision formed from bar i's data
+        // must never trade bar i's own close.
         let now = st.now;
-        let order_id = st.next_order_id();
-        let receipt = ExecutionReceipt {
+        st.pending_orders.push(PendingOrder {
+            cycle_id: Uuid::nil(),
+            asset: asset.clone(),
+            action: Action::Close,
+            size_bps: pos_size_bps,
+            stop_loss_pct: 0.0,
+            take_profit_pct: 0.0,
+        });
+
+        Ok(ExecutionReceipt {
             cycle_id: Uuid::nil(),
             venue: "backtest".into(),
-            venue_order_id: order_id,
+            venue_order_id: format!("pending-close-{}", asset),
             asset,
-            filled_size_bps: pos.size_bps,
-            avg_fill_price: fill_px,
-            fee_bps: self.config.fee_bps / 2,
+            filled_size_bps: 0,
+            avg_fill_price: 0.0,
+            fee_bps: 0,
             submitted_at: now,
-            filled_at: Some(now),
-            note: None,
-        };
-        st.fills_log.push(receipt.clone());
-        Ok(receipt)
+            filled_at: None,
+            note: Some("queued: closes at next bar open".into()),
+        })
     }
 
     async fn portfolio(&self) -> Result<PortfolioState, ExecutorError> {
@@ -589,7 +760,9 @@ impl Executor for BacktestExecutor {
             .state
             .lock()
             .map_err(|_| ExecutorError::Internal("mutex poisoned".into()))?;
-        Ok(st.portfolio.clone())
+        let mut pf = st.portfolio.clone();
+        pf.equity_usd = st.marked_equity();
+        Ok(pf)
     }
 }
 
@@ -698,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_buy_then_tick_through_take_profit() {
-        // Opening bar: close 50000, ATR seed = high-low = 500
+        // Opening bar: close 50000, ATR seed = high-low = 1000
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
             fee_bps: 10,
@@ -708,24 +881,36 @@ mod tests {
         let opening = bar(0, 50_000.0, 50_500.0, 49_500.0, 50_000.0);
         let exec = BacktestExecutor::new(cfg, opening);
 
-        // Buy 1000 bps at 50000; TP +5% = 52500
+        // Buy 1000 bps; queued on bar 0, must fill at bar 1's OPEN.
         let d = decision(Action::Buy, 1_000, Direction::Long, 2.0, 5.0);
         let receipt = exec.submit(&d).await.expect("submit must succeed");
         assert_eq!(receipt.venue, "backtest");
-        // entry price should be slipped up from 50000
-        assert!(receipt.avg_fill_price > 50_000.0, "buy must pay up");
+        assert!(receipt.filled_at.is_none(), "order must be queued, not filled");
+        assert!(
+            receipt.note.as_deref().unwrap_or("").contains("next bar open"),
+            "queued receipt must document next-open fill timing"
+        );
 
-        // Bar 2: high = 52600 → crosses TP at 52500
-        // TP = entry_price * 1.05; entry_price ≈ 50100 (slipped), so TP ≈ 52605
-        // Use a bar where high clearly blows through 52500+
-        let bar2 = bar(86_400, 51_000.0, 53_000.0, 50_900.0, 52_500.0);
-        let report = exec.tick(bar2).expect("tick must succeed");
+        // Bar 1: pending buy fills at open 51_000 + adverse slip (0.1 × ATR).
+        let bar1 = bar(3_600, 51_000.0, 51_200.0, 50_800.0, 51_000.0);
+        let report1 = exec.tick(bar1).expect("tick must succeed");
+        assert_eq!(report1.market_filled_receipts.len(), 1, "buy must fill");
+        let entry_receipt = &report1.market_filled_receipts[0];
+        assert!(
+            entry_receipt.avg_fill_price > 51_000.0,
+            "buy must pay up over the next open"
+        );
+        assert!(report1.auto_filled_receipts.is_empty());
+
+        // Entry ≈ 51_100 → TP ≈ 53_655. Bar 2 high blows through it.
+        let bar2 = bar(86_400, 52_000.0, 54_500.0, 51_900.0, 53_000.0);
+        let report2 = exec.tick(bar2).expect("tick must succeed");
 
         assert!(
-            !report.auto_filled_receipts.is_empty(),
+            !report2.auto_filled_receipts.is_empty(),
             "take-profit should have auto-fired"
         );
-        let auto = &report.auto_filled_receipts[0];
+        let auto = &report2.auto_filled_receipts[0];
         assert!(
             auto.note.as_deref().unwrap_or("").contains("take-profit"),
             "receipt note should say take-profit"
@@ -835,11 +1020,15 @@ mod tests {
     async fn loss_streak_increments_on_negative_day_rollover() {
         // Drive 3 consecutive losing days. Each day:
         //   1. Submit a long buy.
-        //   2. Tick to a bar that stays within SL/TP (no auto-fill) but closes lower.
-        //   3. Call close_position — realises a loss because close < entry.
-        //   4. Tick to a midnight-crossing bar → day_rollover fires, loss streak bumps.
+        //   2. Tick to an intra-day bar: the buy fills at that bar's open;
+        //      the bar closes lower but stays inside SL/TP.
+        //   3. Call close_position — queues the exit (no same-bar lookahead).
+        //   4. Tick a second intra-day bar: the close fills at its open,
+        //      realising a loss on the SAME UTC day.
+        //   5. Tick a midnight-crossing bar → day_rollover fires; the loss
+        //      flushes into that day's bucket and the loss streak bumps.
         //
-        // Using SL=40% and TP=40% so the bars in steps 2/4 never trigger auto-fills.
+        // Using SL=40% and TP=40% so no bar ever triggers auto-fills.
 
         // Opening bar: day 0 baseline, ts=0
         let cfg = BacktestConfig {
@@ -854,12 +1043,13 @@ mod tests {
 
         for day in 0..3u32 {
             // Each "day" gets 3 ticks of timestamps:
-            //   - intra_ts: same UTC day, just a few seconds later (no rollover)
+            //   - intra_ts / intra2_ts: same UTC day, no rollover
             //   - mid_ts: crosses into next UTC day (rollover)
             // day 0: base unix day 1 (86400)
             // day 1: base unix day 2, etc.
             let day_start_sec = (day as i64 + 1) * 86_400;
-            let intra_ts = day_start_sec - 3600; // still in the same UTC day as day_start-1
+            let intra_ts = day_start_sec - 3600; // still in the same UTC day
+            let intra2_ts = day_start_sec - 1800; // also same UTC day
             let midnight_ts = day_start_sec + 1; // just crossed UTC midnight
 
             // 1. Submit a long buy. Current close is 50000 on day 0, or whatever
@@ -889,18 +1079,38 @@ mod tests {
                 "day {day}: no auto-fill on intra-day bar"
             );
 
-            // 3. Manually close the position — realises a loss (close < entry, slippage=0).
+            // 3. Queue the manual close (fills next bar open — slippage=0).
             let close_receipt = exec.close_position(AssetSymbol::Btc).await.expect("close ok");
-            assert!(close_receipt.filled_size_bps > 0, "day {day}: close should fill");
-            // fill price should be <= entry_price (slippage=0, sell fills at close = lower_close)
             assert!(
-                close_receipt.avg_fill_price <= entry_close,
+                close_receipt.filled_at.is_none(),
+                "day {day}: close must be queued, not filled same-bar"
+            );
+
+            // 4. Second intra-day bar fills the queued close at its open.
+            let intra2_bar = bar(
+                intra2_ts,
+                lower_close,
+                lower_close * 1.001,
+                lower_close * 0.999,
+                lower_close,
+            );
+            let report_intra2 = exec.tick(intra2_bar).expect("tick ok");
+            assert_eq!(
+                report_intra2.market_filled_receipts.len(),
+                1,
+                "day {day}: queued close must fill"
+            );
+            let close_fill = &report_intra2.market_filled_receipts[0];
+            assert!(close_fill.filled_size_bps > 0, "day {day}: close should fill");
+            // Fill price <= entry (slippage=0, sell fills at open = lower_close).
+            assert!(
+                close_fill.avg_fill_price <= entry_close,
                 "day {day}: fill price {:.0} should be <= entry {:.0}",
-                close_receipt.avg_fill_price,
+                close_fill.avg_fill_price,
                 entry_close
             );
 
-            // 4. Tick to a bar crossing midnight → triggers day_rollover.
+            // 5. Tick to a bar crossing midnight → triggers day_rollover.
             let midnight_bar = bar(
                 midnight_ts,
                 lower_close,
@@ -930,8 +1140,8 @@ mod tests {
 
     #[tokio::test]
     async fn slippage_moves_price_against_taker() {
-        // Buy at close 50000, ATR 1000, slippage_atr_frac = 0.1
-        // Expected fill = 50000 × (1 + 0.1 × 1000/50000) = 50000 × 1.002 = 50100
+        // Pending buy fills at the NEXT bar's open 50000, ATR 1000,
+        // slippage_atr_frac = 0.1 → fill = 50000 × (1 + 0.1 × 1000/50000) = 50100
         let cfg = BacktestConfig {
             initial_equity_usd: 100_000.0,
             fee_bps: 10,
@@ -949,14 +1159,19 @@ mod tests {
         }
 
         let d = decision(Action::Buy, 1_000, Direction::Long, 2.0, 5.0);
-        let receipt = exec.submit(&d).await.expect("submit ok");
+        exec.submit(&d).await.expect("submit ok");
+
+        // Next bar opens at 50_000; SL/TP stay untouched within this bar.
+        let bar1 = bar(3_600, 50_000.0, 50_200.0, 49_800.0, 50_000.0);
+        let report = exec.tick(bar1).expect("tick ok");
 
         let expected_fill = 50_000.0 * (1.0 + 0.10 * 1000.0 / 50_000.0);
         assert_eq!(expected_fill, 50_100.0);
+        assert_eq!(report.market_filled_receipts.len(), 1);
         assert!(
-            (receipt.avg_fill_price - expected_fill).abs() < 1e-6,
+            (report.market_filled_receipts[0].avg_fill_price - expected_fill).abs() < 1e-6,
             "fill price {:.6} should equal {expected_fill:.6}",
-            receipt.avg_fill_price
+            report.market_filled_receipts[0].avg_fill_price
         );
     }
 
@@ -982,12 +1197,19 @@ mod tests {
 
         let equity_before = exec.portfolio_snapshot().equity_usd;
 
-        // Buy 100 bps = 1000 USD notional
+        // Buy 100 bps = 1000 USD notional; fills at next bar open.
         let d = decision(Action::Buy, 100, Direction::Long, 2.0, 5.0);
         exec.submit(&d).await.expect("submit ok");
 
-        // Close at the same price (slippage = 0, so fill_px = close = 50000)
+        // Fill bar: same prices (slippage = 0), SL/TP untouched.
+        let bar1 = bar(3_600, 50_000.0, 50_200.0, 49_800.0, 50_000.0);
+        exec.tick(bar1).expect("tick ok");
+
+        // Queue the close, then tick a second bar so the exit fills at that
+        // bar's open (slippage = 0 → fill_px = 50000 again).
         exec.close_position(AssetSymbol::Btc).await.expect("close ok");
+        let bar2 = bar(7_200, 50_000.0, 50_200.0, 49_800.0, 50_000.0);
+        exec.tick(bar2).expect("tick ok");
 
         let equity_after = exec.portfolio_snapshot().equity_usd;
         let equity_drop = equity_before - equity_after;
@@ -1045,5 +1267,119 @@ mod tests {
                 "init: asset {asset:?} must have no open position (per-asset cost must start at $0)"
             );
         }
+    }
+    // -----------------------------------------------------------------------
+    // Scenario 9: Snapshot marking must not mutate cash equity (P0 guard)
+    // -----------------------------------------------------------------------
+
+    /// Calling `portfolio_snapshot()` / `portfolio()` must never write the
+    /// marked NAV back into stored cash equity. If it did, a later close
+    /// would book the same unrealized gain twice.
+    #[tokio::test]
+    async fn snapshot_does_not_mutate_cash_equity() {
+        let cfg = BacktestConfig {
+            initial_equity_usd: 100_000.0,
+            fee_bps: 0,
+            slippage_atr_frac: 0.0,
+            max_history_days: 30,
+        };
+        let opening = bar(0, 50_000.0, 50_500.0, 49_500.0, 50_000.0);
+        let exec = BacktestExecutor::new(cfg, opening);
+
+        // Buy 1000 bps = 10_000 USD notional at bar1 open (50000).
+        let d = decision(Action::Buy, 1_000, Direction::Long, 2.0, 5.0);
+        exec.submit(&d).await.expect("submit ok");
+        let bar1 = bar(3_600, 50_000.0, 50_200.0, 49_800.0, 60_000.0);
+        exec.tick(bar1).expect("tick ok");
+
+        // Position: 0.2 BTC entered at 50000, marked to 60000 → +2000 unrealized.
+        let snap1 = exec.portfolio_snapshot().equity_usd;
+        assert!(
+            (snap1 - 102_000.0).abs() < 1e-6,
+            "marked snapshot should be 102000, got {snap1}"
+        );
+
+        // Close via queued order filling at bar2 open (60000).
+        exec.close_position(AssetSymbol::Btc).await.expect("close ok");
+        let bar2 = bar(7_200, 60_000.0, 60_200.0, 59_800.0, 60_000.0);
+        exec.tick(bar2).expect("tick ok");
+
+        // Cash 100000 + realized 2000 — NOT 104000 (double-counted).
+        let final_eq = exec.portfolio_snapshot().equity_usd;
+        assert!(
+            (final_eq - 102_000.0).abs() < 1e-6,
+            "final equity must be exactly cash + realized once; got {final_eq} (double count?)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 10: close_position cancels queued orders for the asset
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn close_cancels_pending_orders_for_asset() {
+        let cfg = BacktestConfig {
+            initial_equity_usd: 100_000.0,
+            fee_bps: 10,
+            slippage_atr_frac: 0.0,
+            max_history_days: 30,
+        };
+        let opening = bar(0, 50_000.0, 50_500.0, 49_500.0, 50_000.0);
+        let exec = BacktestExecutor::new(cfg, opening);
+
+        // Queue a buy but close before it can fill.
+        let d = decision(Action::Buy, 1_000, Direction::Long, 2.0, 5.0);
+        exec.submit(&d).await.expect("submit ok");
+        exec.close_position(AssetSymbol::Btc).await.expect("close ok");
+
+        // Next bar: the stale buy must NOT fill; no position may open.
+        let bar1 = bar(3_600, 50_000.0, 50_200.0, 49_800.0, 50_000.0);
+        let report = exec.tick(bar1).expect("tick ok");
+        assert!(
+            report.market_filled_receipts.is_empty(),
+            "queued buy must be cancelled by close_position"
+        );
+        let pf = exec.portfolio_snapshot();
+        assert!(pf.is_flat(), "no position may exist after close cancels pendings");
+        assert!(
+            (pf.equity_usd - 100_000.0).abs() < 1e-9,
+            "equity must be untouched when only a cancelled pending order existed"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario 11: manual exits defer to next-bar open (no same-bar lookahead)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn close_fills_at_next_bar_open_not_decision_close() {
+        let cfg = BacktestConfig {
+            initial_equity_usd: 100_000.0,
+            fee_bps: 0,
+            slippage_atr_frac: 0.0,
+            max_history_days: 30,
+        };
+        let opening = bar(0, 50_000.0, 50_500.0, 49_500.0, 50_000.0);
+        let exec = BacktestExecutor::new(cfg, opening);
+
+        // Entry fills at bar1 open.
+        let d = decision(Action::Buy, 1_000, Direction::Long, 40.0, 40.0);
+        exec.submit(&d).await.expect("submit ok");
+        let bar1 = bar(3_600, 50_000.0, 55_900.0, 49_800.0, 55_000.0);
+        exec.tick(bar1).expect("tick ok");
+
+        // Decision forms on bar1 (close 55000) — exit must fill at BAR2 OPEN
+        // (53000), never at bar1's own close.
+        exec.close_position(AssetSymbol::Btc).await.expect("close ok");
+        let bar2 = bar(7_200, 53_000.0, 53_100.0, 52_900.0, 53_000.0);
+        let report = exec.tick(bar2).expect("tick ok");
+
+        assert_eq!(report.market_filled_receipts.len(), 1, "exit must fill");
+        let exit = &report.market_filled_receipts[0];
+        assert!(
+            (exit.avg_fill_price - 53_000.0).abs() < 1e-6,
+            "exit must fill at next bar open 53000, got {}",
+            exit.avg_fill_price
+        );
     }
 }

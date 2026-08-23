@@ -126,7 +126,7 @@ fn make_strategy() -> Strategy {
             "required_tools": [],
             "risk_preset_or_config": "balanced"
         },
-        "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+        "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader", "prompt": "analyze market"}],
         "risk": {
             "risk_pct_per_trade": 0.01,
             "max_concurrent_positions": 1,
@@ -227,7 +227,11 @@ fn distinct_diff_json(i: usize) -> String {
         "prose": [{
             "agent_role": "trader",
             "before": "analyze market",
-            "after": format!("analyze market with strategy variant {i}")
+            "after": format!(
+                "Analyze market context for strategy variant {i}. Return an action and position size \
+                 for every decision, with explicit stop_loss and take_profit levels, while respecting \
+                 risk limits, current market conditions, and the strategy's execution rules."
+            )
         }],
         "params": [],
         "tools": {"added": [], "removed": []},

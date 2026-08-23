@@ -471,15 +471,18 @@ mod tests {
     }
 
     #[test]
-    fn from_env_non_loopback_without_token_is_open() {
+    fn from_env_non_loopback_without_token_is_rejected() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let addr: SocketAddr = "203.0.113.5:8788".parse().unwrap();
         let prev = std::env::var(AUTH_TOKEN_ENV).ok();
         std::env::remove_var(AUTH_TOKEN_ENV);
-        // No longer an error — the server starts open and the operator
-        // can set a password later via Settings UI.
-        let state = AuthState::from_env(&addr).unwrap();
-        assert!(!state.is_gated());
+        // Fail-closed: a non-loopback bind without a token refuses to
+        // start rather than serving an open dashboard.
+        let err = AuthState::from_env(&addr).unwrap_err();
+        assert!(
+            err.to_string().contains(AUTH_TOKEN_ENV),
+            "error must name the env var; got: {err}"
+        );
         match prev {
             Some(v) => std::env::set_var(AUTH_TOKEN_ENV, v),
             None => std::env::remove_var(AUTH_TOKEN_ENV),

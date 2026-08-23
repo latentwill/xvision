@@ -160,20 +160,20 @@ async fn sse_stream_emits_snapshot_then_live_event_then_closes() {
     .expect("SSE stream did not deliver expected events within 8 s");
 
     assert!(
-        body_text.contains("event: snapshot"),
-        "expected 'event: snapshot' in body; got:\n{body_text}"
+        body_text.contains("event: unified"),
+        "expected unified live event frames in body; got:\n{body_text}"
     );
     assert!(
-        body_text.contains("event: run_started") || body_text.contains("event: span_started"),
-        "expected at least one live event (run_started or span_started) in body; got:\n{body_text}"
+        body_text.contains("\"kind\":\"run_started\"") || body_text.contains("\"kind\":\"span_started\""),
+        "expected at least one live run event payload in body; got:\n{body_text}"
     );
     assert!(
-        body_text.contains("event: model_call_finished"),
-        "expected span-scoped model_call_finished in body; got:\n{body_text}"
+        body_text.contains("\"kind\":\"model_call_finished\""),
+        "expected span-scoped model_call_finished payload in body; got:\n{body_text}"
     );
     assert!(
-        body_text.contains("event: run_finished"),
-        "expected 'event: run_finished' terminator in body; got:\n{body_text}"
+        body_text.contains("\"kind\":\"run_finished\""),
+        "expected run_finished payload terminator in body; got:\n{body_text}"
     );
 }
 

@@ -12,11 +12,11 @@
 //! * `Filter`  → stub handler returning a placeholder [`FilterSignal`].
 //!   Phase C wires the real Filter LLM call + predicate-payload schema.
 //! * `Router`  → fully implemented in v1 per operator Decision 2. Runs
-//!   the slot's LLM with a JSON response schema enforcing the
-//!   `{ "target_agent_ref_index": <usize> }` shape, then validates the
-//!   index against the current position in the pipeline (must be strictly
-//!   greater than the current index — DAG-strict, no cycles per spec
-//!   Decision 8).
+//!   the Route Builder `{ "target_role": <role>, "reason": <optional text> }`
+//!   shape or the legacy `{ "target_agent_ref_index": <usize> }` shape, then
+//!   validates the normalized index against the current position in the pipeline (must be
+//!   strictly greater than the current index — DAG-strict, no cycles per
+//!   spec Decision 8).
 //!
 //! The seam is intentionally narrow: callers pass a small typed input
 //! and receive an `AgentOutput`. The pipeline owns the iteration logic
@@ -159,11 +159,11 @@ pub enum FilterGranularity {
     Decision,
 }
 
-/// Router's typed output. Phase B ships this fully — the dispatcher
-/// validates `target_agent_ref_index > current_index` AND
-/// `target_agent_ref_index < agents.len()` at runtime. The strategy
-/// validator additionally rejects backward targets at draft time so
-/// malformed graphs fail before eval-launch (spec Decision 8 — DAG-strict).
+/// Router's typed output. The dispatcher accepts the stable role-based
+/// Route Builder shape (`target_role`) and the legacy index shape
+/// (`target_agent_ref_index`), then normalizes both to an agent index for the
+/// pipeline loop. Route-specific reachability is enforced by the pipeline
+/// because it owns the route contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteSelection {
     /// Index into `Strategy.agents` of the next `AgentRef` to invoke.
@@ -242,6 +242,10 @@ pub struct DispatchInput<'a> {
     /// `Strategy.agents.len()`. Router uses this to bound
     /// `target_agent_ref_index < total_agents`.
     pub total_agents: usize,
+    /// Canonical role names in `Strategy.agents` order. Router uses this to
+    /// resolve stable `target_role` output while preserving legacy index
+    /// output.
+    pub agent_roles: &'a [String],
     /// The capability this dispatch invocation should activate, resolved
     /// once by the pipeline per spec Decision 1 (explicit `activates` or
     /// the first capability in the slot's `BTreeSet`).
@@ -314,8 +318,9 @@ pub async fn dispatch_capability(input: DispatchInput<'_>) -> anyhow::Result<Dis
 ///
 /// `llm_dir`: the upstream LLM filter's direction (conditioning token).
 /// `veto`: true = hard gate; false = advisory.
-/// Returns a `FilterSignal` whose `payload` is `Value::Null` when the gate
-/// blocks, or `{ direction, confidence }` when it passes.
+/// Returns a `FilterSignal` only after successful inference and payload
+/// validation. Inference fail-safe results and invalid payloads return an
+/// error so the pipeline cannot treat them as ordinary signals.
 ///
 /// All nanochat fields (`weights_sha256`, `input_spec`, `veto`) come from the
 /// caller (resolved from `NanoSlotConfig`). `CheckpointRef` carries only the
@@ -339,20 +344,20 @@ pub async fn dispatch_filter_with_checkpoint(
         NanoInferenceResult::Ok {
             direction,
             confidence,
-        } => resolve_nano_filter(llm_dir, direction, confidence, veto).unwrap_or(serde_json::Value::Null),
+        } => resolve_nano_filter(llm_dir, direction, confidence, veto).ok_or_else(|| {
+            anyhow::anyhow!(
+                "nanochat filter validation failed: direction={direction:?}, \
+                 conditioning={llm_dir:?}, confidence={confidence}, veto={veto}"
+            )
+        })?,
         NanoInferenceResult::FailSafe { reason } => {
-            tracing::warn!(
+            tracing::error!(
                 event = "nanochat_fail_safe",
                 role,
                 reason,
-                "nanochat inference failed; treating as NEUTRAL under veto"
+                "nanochat inference failed; halting filter cycle"
             );
-            // Fail-safe: same as NEUTRAL under veto.
-            if veto {
-                serde_json::Value::Null
-            } else {
-                serde_json::json!({"direction": "NEUTRAL", "confidence": 0.0})
-            }
+            return Err(anyhow::anyhow!("nanochat inference fail-safe: {reason}"));
         }
     };
 
@@ -365,62 +370,93 @@ pub async fn dispatch_filter_with_checkpoint(
     })
 }
 
-/// Walk `upstream_inputs["filter_signals"] → any entry → payload → direction`
-/// to extract the upstream LLM filter's direction for nanochat conditioning.
-/// Defaults to `Neutral` when absent (conservative fail-safe).
-fn extract_llm_direction(upstream: &serde_json::Value) -> NanoDirection {
-    upstream
-        .get("filter_signals")
-        .and_then(|fs| fs.as_object())
-        .and_then(|obj| obj.values().next())
-        .and_then(|sig| sig.get("payload"))
-        .and_then(|p| p.get("direction"))
-        .and_then(|d| d.as_str())
-        .and_then(|s| serde_json::from_value::<NanoDirection>(serde_json::json!(s)).ok())
-        .unwrap_or(NanoDirection::Neutral)
+/// Extract the direction from the one explicitly declared upstream Filter.
+///
+/// The pipeline sets `declared_filter_upstream` from graph edges. Refuse
+/// missing or ambiguous declarations instead of selecting a map entry by
+/// ordering.
+fn extract_llm_direction(upstream: &serde_json::Value) -> anyhow::Result<NanoDirection> {
+    let signals = upstream
+        .get("declared_filter_upstream")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| anyhow::anyhow!("nanochat filter requires an explicit upstream Filter edge"))?;
+    if signals.len() != 1 {
+        anyhow::bail!(
+            "nanochat filter requires exactly one declared upstream Filter; found {}",
+            signals.len()
+        );
+    }
+    let signal = signals.values().next().expect("length checked");
+    let direction = signal
+        .get("payload")
+        .and_then(|payload| payload.get("direction"))
+        .and_then(|direction| direction.as_str())
+        .ok_or_else(|| anyhow::anyhow!("declared upstream Filter signal has no direction"))?;
+    serde_json::from_value::<NanoDirection>(serde_json::Value::String(direction.to_string()))
+        .map_err(|error| anyhow::anyhow!("declared upstream Filter direction is invalid: {error}"))
 }
 
 /// Extract OHLCV bars from `upstream_inputs["market_data"]["ohlcv"]`.
-/// Returns an empty vec when absent.
-fn extract_ohlcv(upstream: &serde_json::Value) -> Vec<[f64; 5]> {
-    upstream
+/// Every row must contain exactly five finite numbers.
+fn extract_ohlcv(upstream: &serde_json::Value) -> anyhow::Result<Vec<[f64; 5]>> {
+    let rows = upstream
         .get("market_data")
-        .and_then(|md| md.get("ohlcv"))
-        .and_then(|arr| arr.as_array())
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let arr = row.as_array()?;
-                    if arr.len() < 5 {
-                        return None;
-                    }
-                    Some([
-                        arr[0].as_f64().unwrap_or(0.0),
-                        arr[1].as_f64().unwrap_or(0.0),
-                        arr[2].as_f64().unwrap_or(0.0),
-                        arr[3].as_f64().unwrap_or(0.0),
-                        arr[4].as_f64().unwrap_or(0.0),
-                    ])
-                })
-                .collect()
+        .and_then(|market_data| market_data.get("ohlcv"))
+        .and_then(|ohlcv| ohlcv.as_array())
+        .ok_or_else(|| anyhow::anyhow!("market_data.ohlcv is missing or is not an array"))?;
+    rows.iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let values = row
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("market_data.ohlcv row {row_index} is not an array"))?;
+            if values.len() != 5 {
+                anyhow::bail!(
+                    "market_data.ohlcv row {row_index} must contain exactly 5 values, found {}",
+                    values.len()
+                );
+            }
+            let mut parsed = [0.0; 5];
+            for (value_index, value) in values.iter().enumerate() {
+                let number = value.as_f64().ok_or_else(|| {
+                    anyhow::anyhow!("market_data.ohlcv row {row_index} value {value_index} is not a number")
+                })?;
+                if !number.is_finite() {
+                    anyhow::bail!("market_data.ohlcv row {row_index} value {value_index} is not finite");
+                }
+                parsed[value_index] = number;
+            }
+            Ok(parsed)
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// Extract named indicator values from `upstream_inputs["market_data"]["indicator_panel"]`.
-/// Values absent in the panel default to 0.0.
-fn extract_indicators(upstream: &serde_json::Value, names: &[String]) -> BTreeMap<String, f64> {
+/// Every indicator declared by the nano input spec must be present and numeric.
+fn extract_indicators(
+    upstream: &serde_json::Value,
+    names: &[String],
+) -> anyhow::Result<BTreeMap<String, f64>> {
+    if names.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let panel = upstream
         .get("market_data")
-        .and_then(|md| md.get("indicator_panel"))
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
+        .and_then(|market_data| market_data.get("indicator_panel"))
+        .and_then(|panel| panel.as_object())
+        .ok_or_else(|| anyhow::anyhow!("market_data.indicator_panel is missing or is not an object"))?;
 
     names
         .iter()
         .map(|name| {
-            let val = panel.get(name).and_then(|v| v.as_f64()).unwrap_or(0.0);
-            (name.clone(), val)
+            let value = panel
+                .get(name)
+                .and_then(|value| value.as_f64())
+                .ok_or_else(|| anyhow::anyhow!("indicator_panel is missing numeric indicator '{name}'"))?;
+            if !value.is_finite() {
+                anyhow::bail!("indicator_panel indicator '{name}' is not finite");
+            }
+            Ok((name.clone(), value))
         })
         .collect()
 }
@@ -433,10 +469,19 @@ fn extract_indicators(upstream: &serde_json::Value, names: &[String]) -> BTreeMa
 /// `FilterSignal.payload` regardless of the producer.
 ///
 /// On LLM parse failure, the dispatcher records the
-/// `filter_parse_error` event (inside `filter_dispatch`) and returns a
-/// `FilterSignal` whose `payload` is `Value::Null`. Downstream edge
-/// predicates that depend on a missing field then evaluate to `false`
-/// per the contract — edges do not fire, the cycle falls through.
+/// `filter_parse_error` event (inside `filter_dispatch`) and returns an
+/// error. A failed Filter must fail the cycle; it must never become an
+/// ordinary null signal that silently disables downstream gates.
+fn propagate_filter_dispatch_error(
+    error: crate::agent::filter_dispatch::FilterDispatchError,
+) -> anyhow::Error {
+    match error {
+        crate::agent::filter_dispatch::FilterDispatchError::Parse(error) => {
+            anyhow::anyhow!("filter output parse failed: {error}")
+        }
+        crate::agent::filter_dispatch::FilterDispatchError::Dispatch(error) => error,
+    }
+}
 async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let role = input.resolved.role.clone();
 
@@ -453,17 +498,17 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("nanochat/infer.py"));
 
-        // The upstream FilterSignal conditioning direction is read from
-        // `input.upstream_inputs["filter_signals"][<prev_role>]["payload"]["direction"]`.
-        // Default to NEUTRAL when absent (conservative fail-safe).
-        let llm_dir = extract_llm_direction(&input.upstream_inputs);
+        // The upstream FilterSignal conditioning direction must come from
+        // one explicit graph edge. Missing or ambiguous declarations fail
+        // closed instead of selecting an arbitrary map entry.
+        let llm_dir = extract_llm_direction(&input.upstream_inputs)?;
 
         // veto and input_spec come from nano (NanoSlotConfig), not from CheckpointRef.
         let veto = nano.veto.unwrap_or(true);
         let spec = &nano.input_spec;
 
-        let ohlcv = extract_ohlcv(&input.upstream_inputs);
-        let indicator_values = extract_indicators(&input.upstream_inputs, &spec.indicators);
+        let ohlcv = extract_ohlcv(&input.upstream_inputs)?;
+        let indicator_values = extract_indicators(&input.upstream_inputs, &spec.indicators)?;
 
         // weights_sha256 comes from nano (loaded from trained_models at resolve time).
         // nano.checkpoint.model_id is used only for identity/logging.
@@ -537,26 +582,14 @@ async fn dispatch_filter(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
                 raw_response: None,
             })
         }
-        Err(crate::agent::filter_dispatch::FilterDispatchError::Parse(_)) => {
-            // Parse error already emitted as `filter_parse_error`
-            // (filter_dispatch::run_llm_filter). Surface a `null`
-            // payload so the pipeline can keep walking — predicates
-            // resolve to `false` per the edge-predicate "unknown
-            // field" rule (see `agent::edge_predicate`).
-            Ok(DispatchOutcome {
-                output: AgentOutput::Filter(FilterSignal {
-                    name: role,
-                    payload: serde_json::Value::Null,
-                    granularity: FilterGranularity::Bar,
-                    ts: Utc::now(),
-                    scope: SignalScope::Global,
-                }),
-                input_tokens: 0,
-                output_tokens: 0,
-                raw_response: None,
-            })
+        Err(error) => {
+            let reason = error.to_string();
+            if let Some(obs) = obs_clone.as_ref() {
+                obs.emit_filter_eval_finished(&span_id, "error", Some(&reason))
+                    .await;
+            }
+            Err(propagate_filter_dispatch_error(error))
         }
-        Err(crate::agent::filter_dispatch::FilterDispatchError::Dispatch(e)) => Err(e),
     }
 }
 
@@ -688,7 +721,38 @@ async fn execute_slot_for_runtime(
 /// Since WU-6, the call always routes through the Cline sidecar.
 async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let resp = execute_slot_for_runtime(&input, ResponseSchema::trader_output()).await?;
-
+    if let (Some(recorder), Some(source_window_start), Some(source_window_end)) = (
+        input.memory.as_ref(),
+        input.source_window_start,
+        input.source_window_end,
+    ) {
+        let text = resp.text();
+        let action = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("action")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            });
+        if !matches!(action.as_deref(), Some("hold") | Some("flat")) && !text.is_empty() {
+            if let Err(error) = recorder
+                .record(
+                    input.memory_mode,
+                    &input.agent_id,
+                    &text,
+                    input.run_id.clone(),
+                    input.scenario_id.clone(),
+                    input.cycle_idx,
+                    source_window_start,
+                    source_window_end,
+                )
+                .await
+            {
+                tracing::warn!(%error, role = %input.resolved.role, "Cline memory write failed");
+            }
+        }
+    }
     let input_tokens = resp.input_tokens;
     let output_tokens = resp.output_tokens;
     Ok(DispatchOutcome {
@@ -701,11 +765,12 @@ async fn dispatch_trader(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
     })
 }
 
-/// Router handler. Runs the slot's LLM with a strict JSON response
-/// schema requiring `{ "target_agent_ref_index": <usize> }`, parses the
-/// output, and validates the index is strictly greater than the Router's
-/// own position. Backward / out-of-range targets are rejected as errors
-/// so the operator sees the violation rather than a silent fall-through.
+/// Router handler. Runs the slot's LLM with a strict JSON response schema
+/// requiring either `{ "target_role": <role>, "reason": <optional text> }`
+/// or the legacy `{ "target_agent_ref_index": <usize> }`, parses the output,
+/// and validates that the normalized index is strictly greater than the Router's own
+/// position and in range. Route-specific branch-target validation is performed
+/// by the pipeline after dispatch.
 async fn dispatch_router(input: DispatchInput<'_>) -> anyhow::Result<DispatchOutcome> {
     let current_index = input.current_index;
     let total_agents = input.total_agents;
@@ -713,8 +778,7 @@ async fn dispatch_router(input: DispatchInput<'_>) -> anyhow::Result<DispatchOut
 
     let input_tokens = resp.input_tokens;
     let output_tokens = resp.output_tokens;
-    let selection = parse_router_response(&resp, current_index, total_agents)?;
-
+    let selection = parse_router_response(&resp, current_index, total_agents, input.agent_roles)?;
     Ok(DispatchOutcome {
         output: AgentOutput::Router(selection),
         input_tokens,
@@ -731,11 +795,21 @@ fn router_response_schema() -> ResponseSchema {
         schema: serde_json::json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["target_agent_ref_index"],
+            "oneOf": [
+                { "required": ["target_role"] },
+                { "required": ["target_agent_ref_index"] }
+            ],
             "properties": {
+                "target_role": {
+                    "type": "string",
+                    "minLength": 1
+                },
                 "target_agent_ref_index": {
                     "type": "integer",
                     "minimum": 0,
+                },
+                "reason": {
+                    "type": "string"
                 }
             }
         }),
@@ -744,28 +818,52 @@ fn router_response_schema() -> ResponseSchema {
 
 /// Parse + validate a Router's LLM response.
 ///
-/// Validation rules (Phase B Decision 8 — DAG-strict):
-/// 1. The text must parse as JSON with a top-level
-///    `target_agent_ref_index` integer.
-/// 2. The index must be strictly greater than the Router's `current_index`
-///    (no self-loops, no backward jumps).
-/// 3. The index must be strictly less than `total_agents` (in-range).
+/// Validation rules:
+/// 1. The text must parse as JSON with exactly one top-level target:
+///    `target_role` or legacy `target_agent_ref_index`.
+/// 2. Role targets must resolve to a known agent role.
+/// 3. The normalized index must be strictly greater than the Router's
+///    `current_index` (no self-loops, no backward jumps).
+/// 4. The normalized index must be strictly less than `total_agents`
+///    (in-range).
 fn parse_router_response(
     resp: &LlmResponse,
     current_index: usize,
     total_agents: usize,
+    agent_roles: &[String],
 ) -> anyhow::Result<RouteSelection> {
     let text = resp.text();
     let parsed: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow::anyhow!("router output is not valid JSON: {e} (raw: {text:.200})"))?;
-    let idx = parsed
-        .get("target_agent_ref_index")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("router output missing `target_agent_ref_index` (raw: {text:.200})"))?
-        as usize;
+    let has_role = parsed.get("target_role").is_some();
+    let has_index = parsed.get("target_agent_ref_index").is_some();
+    if has_role && has_index {
+        anyhow::bail!(
+            "router output must choose exactly one of `target_role` or `target_agent_ref_index` (raw: {text:.200})"
+        );
+    }
+
+    let idx = if let Some(target_role) = parsed.get("target_role").and_then(|v| v.as_str()) {
+        let target_role = crate::strategies::agent_ref::canonical_role(target_role);
+        agent_roles
+            .iter()
+            .position(|role| role == &target_role)
+            .ok_or_else(|| {
+                anyhow::anyhow!("router target_role='{target_role}' does not match any configured agent role")
+            })?
+    } else {
+        parsed
+            .get("target_agent_ref_index")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "router output missing `target_agent_ref_index` or `target_role` (raw: {text:.200})"
+                )
+            })? as usize
+    };
     if idx <= current_index {
         anyhow::bail!(
-            "router target_agent_ref_index={idx} is not strictly greater than current_index={current_index} \
+            "router target index={idx} is not strictly greater than current_index={current_index} \
              (DAG-strict: no self-loops or backward jumps)"
         );
     }
@@ -864,42 +962,171 @@ mod tests {
     #[test]
     fn parse_router_response_accepts_forward_target() {
         let resp = router_resp(r#"{"target_agent_ref_index": 2}"#);
-        let sel = parse_router_response(&resp, 0, 3).unwrap();
+        let roles = vec!["router".to_string(), "filter".to_string(), "trader".to_string()];
+        let sel = parse_router_response(&resp, 0, 3, &roles).unwrap();
         assert_eq!(sel.target_agent_ref_index, 2);
+    }
+
+    #[test]
+    fn parse_router_response_accepts_forward_role_target() {
+        let resp = router_resp(r#"{"target_role": "trend_trader"}"#);
+        let roles = vec![
+            "router".to_string(),
+            "trend_trader".to_string(),
+            "range_trader".to_string(),
+        ];
+        let sel = parse_router_response(&resp, 0, 3, &roles).unwrap();
+        assert_eq!(sel.target_agent_ref_index, 1);
+    }
+
+    #[test]
+    fn parse_router_response_accepts_forward_role_target_with_reason() {
+        let resp = router_resp(r#"{"target_role": "trend_trader", "reason": "ADX trend regime"}"#);
+        let roles = vec![
+            "router".to_string(),
+            "trend_trader".to_string(),
+            "range_trader".to_string(),
+        ];
+        let sel = parse_router_response(&resp, 0, 3, &roles).unwrap();
+        assert_eq!(
+            sel.target_agent_ref_index, 1,
+            "documented Route Builder output with an explanatory reason must resolve to the configured target role"
+        );
+    }
+
+    #[test]
+    fn router_response_schema_allows_optional_reason_while_staying_closed() {
+        let schema = router_response_schema();
+        let properties = schema
+            .schema
+            .pointer("/properties")
+            .and_then(|v| v.as_object())
+            .expect("router schema properties object");
+
+        assert_eq!(
+            schema.schema.pointer("/additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "router schema must stay closed so unrelated unknown keys are rejected by strict structured-output providers"
+        );
+        assert!(
+            properties.contains_key("reason"),
+            "router schema must permit the documented Cline output {{\"target_role\":\"trend_trader\",\"reason\":\"ADX trend regime\"}}"
+        );
+        assert_eq!(
+            schema
+                .schema
+                .pointer("/properties/reason/type")
+                .and_then(|v| v.as_str()),
+            Some("string"),
+            "router reason is explanatory text, not another routing discriminator"
+        );
+        let required = schema
+            .schema
+            .pointer("/required")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !required.iter().any(|v| v.as_str() == Some("reason")),
+            "reason must be optional so legacy router outputs remain valid"
+        );
+        assert!(
+            !properties.contains_key("confidence"),
+            "closed router schema must not permit unrelated unknown keys"
+        );
     }
 
     #[test]
     fn parse_router_response_rejects_same_index() {
         let resp = router_resp(r#"{"target_agent_ref_index": 1}"#);
-        let err = parse_router_response(&resp, 1, 3).unwrap_err();
+        let roles = vec!["router".to_string(), "trader".to_string()];
+        let err = parse_router_response(&resp, 1, 3, &roles).unwrap_err();
         assert!(err.to_string().contains("not strictly greater"), "got: {err}");
     }
 
     #[test]
     fn parse_router_response_rejects_backward_target() {
         let resp = router_resp(r#"{"target_agent_ref_index": 0}"#);
-        let err = parse_router_response(&resp, 1, 3).unwrap_err();
+        let roles = vec!["router".to_string(), "trader".to_string()];
+        let err = parse_router_response(&resp, 1, 3, &roles).unwrap_err();
         assert!(err.to_string().contains("not strictly greater"), "got: {err}");
     }
 
     #[test]
     fn parse_router_response_rejects_out_of_range_target() {
         let resp = router_resp(r#"{"target_agent_ref_index": 5}"#);
-        let err = parse_router_response(&resp, 0, 3).unwrap_err();
+        let roles = vec!["router".to_string(), "trader".to_string()];
+        let err = parse_router_response(&resp, 0, 3, &roles).unwrap_err();
         assert!(err.to_string().contains("out of range"), "got: {err}");
     }
 
     #[test]
     fn parse_router_response_rejects_invalid_json() {
         let resp = router_resp("not json");
-        let err = parse_router_response(&resp, 0, 3).unwrap_err();
+        let roles = vec!["router".to_string(), "trader".to_string()];
+        let err = parse_router_response(&resp, 0, 3, &roles).unwrap_err();
         assert!(err.to_string().contains("not valid JSON"), "got: {err}");
+    }
+    #[test]
+    fn filter_parse_error_propagates_as_error() {
+        let error = crate::agent::filter_dispatch::FilterDispatchError::Parse(anyhow::anyhow!("bad json"));
+        let propagated = propagate_filter_dispatch_error(error);
+        assert!(propagated.to_string().contains("filter output parse failed"));
+    }
+
+    #[tokio::test]
+    async fn nano_fail_safe_propagates_as_error() {
+        let spec = crate::agent::nano_dispatch::NanoInputSpec {
+            window_bars: 1,
+            indicators: Vec::new(),
+            normalization: crate::agent::nano_dispatch::NanoNormalization::None,
+        };
+        let error = dispatch_filter_with_checkpoint(
+            "nano",
+            NanoDirection::Neutral,
+            &spec,
+            &[],
+            &BTreeMap::new(),
+            std::path::Path::new("/definitely/missing/nanochat-worker.py"),
+            "",
+            true,
+            1,
+        )
+        .await
+        .expect_err("worker read fail-safe must fail the filter cycle");
+        assert!(error.to_string().contains("nanochat inference fail-safe"));
+    }
+
+    #[test]
+    fn ambiguous_or_missing_upstream_direction_is_an_error() {
+        let missing = extract_llm_direction(&serde_json::json!({"filter_signals": {}}));
+        assert!(missing.is_err());
+
+        let ambiguous = extract_llm_direction(&serde_json::json!({
+            "declared_filter_upstream": {
+                "first": {"payload": {"direction": "LONG"}},
+                "second": {"payload": {"direction": "SHORT"}}
+            }
+        }));
+        assert!(ambiguous.is_err());
+    }
+
+    #[test]
+    fn malformed_ohlcv_row_is_an_error() {
+        let malformed = serde_json::json!({
+            "market_data": {
+                "ohlcv": [[1.0, 2.0, "bad", 4.0, 5.0]]
+            }
+        });
+        let error = extract_ohlcv(&malformed).expect_err("malformed OHLCV must fail closed");
+        assert!(error.to_string().contains("row 0 value 2"));
     }
 
     #[test]
     fn parse_router_response_rejects_missing_field() {
         let resp = router_resp(r#"{"other": 1}"#);
-        let err = parse_router_response(&resp, 0, 3).unwrap_err();
+        let roles = vec!["router".to_string(), "trader".to_string()];
+        let err = parse_router_response(&resp, 0, 3, &roles).unwrap_err();
         assert!(
             err.to_string().contains("missing `target_agent_ref_index`"),
             "got: {err}"

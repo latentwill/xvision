@@ -12,6 +12,7 @@ use xvision_core::trading::AssetSymbol;
 
 use crate::agent::dispatch_capability::ClineDispatchCtx;
 use crate::agent::llm::LlmDispatch;
+use crate::agents::AgentStore;
 use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
 use crate::eval::executor::asset_set::active_assets;
@@ -114,6 +115,28 @@ impl BacktestPaperTester {
     }
 }
 
+async fn assert_optimizer_route_launchable(store: &RunStore, strategy: &Strategy) -> Result<()> {
+    if strategy.pipeline.route.is_none() {
+        return Ok(());
+    }
+    let agent_store = AgentStore::new(store.pool().clone());
+    let mut agents = Vec::new();
+    for agent_ref in &strategy.agents {
+        if let Some(agent) = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .with_context(|| format!("load Route Builder branch binding `{}`", agent_ref.role))?
+        {
+            agents.push(agent);
+        }
+    }
+    let diagnostics = crate::diagnostics::diagnose(strategy, &agents);
+    if let Err(error) = crate::diagnostics::assert_launchable(&diagnostics) {
+        anyhow::bail!("{error}");
+    }
+    Ok(())
+}
+
 impl BacktestPaperTester {
     async fn run_inner(
         &self,
@@ -135,6 +158,7 @@ impl BacktestPaperTester {
         canary: Option<&str>,
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
     ) -> Result<MetricsSummary> {
+        assert_optimizer_route_launchable(&self.store, strategy).await?;
         let dispatch = dispatch_override.unwrap_or_else(|| Arc::clone(&self.dispatch));
         let mut executor = match self.injected_bars.as_ref() {
             Some(bars) => Executor::with_bars(bars.clone()),
@@ -313,6 +337,20 @@ impl CachedBacktestPaperTester {
         canary: Option<&str>,
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
     ) -> Result<(MetricsSummary, String)> {
+        if strategy.pipeline.route.is_some() {
+            crate::diagnostics::capability_diagnostics(&self.ctx, &strategy.manifest.id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "check Route Builder launch readiness for `{}`",
+                        strategy.manifest.id
+                    )
+                })
+                .and_then(|diagnostics| {
+                    crate::diagnostics::assert_launchable(&diagnostics)
+                        .map_err(|error| anyhow::anyhow!("{error}"))
+                })?;
+        }
         ensure_scenario_persisted(&self.ctx, scenario).await?;
         let executor = build_cached_backtest_executor(
             &self.ctx,
@@ -342,7 +380,7 @@ impl CachedBacktestPaperTester {
         let dispatch: Arc<dyn LlmDispatch> = dispatch_override.unwrap_or_else(|| self.dispatch.clone());
         // Resolve the candidate strategy's agent slots (trader model/prompt
         // binding). The production CLI/dashboard optimizer adapter previously
-        // passed `&[]` here, which is why a real `run-cycle` failed at
+        // passed `&[]` here, which is why a real `xvn optimize run` failed at
         // decision 0 with `trader_output[missing_response]` for every strategy.
         let agent_slots =
             crate::agent::pipeline::resolve_agent_slots_for_strategy(&self.ctx.db, strategy).await?;
@@ -450,7 +488,7 @@ impl PaperTestRunner for StubPaperTester {
 /// shared handle via [`Self::new_with_handle`] (use `f64::INFINITY` to meter an
 /// unbudgeted cycle without ever tripping).
 ///
-/// It exists so `xvn optimizer run-cycle --budget` is a real guard rather than
+/// It exists so `xvn optimize run --budget` is a real guard rather than
 /// the silent no-op it used to be (QA 2026-06-04, F2/F11).
 pub struct BudgetCappedPaperTester {
     inner: Box<dyn PaperTestRunner>,
@@ -663,7 +701,11 @@ async fn build_cached_backtest_executor(
         asset_bars.insert(*asset, bars.to_vec());
     }
 
-    let warmup = load_warmup_for_scenario(ctx, scenario, first_asset, native_granularity).await?;
+    let mut warmup_by_asset = BTreeMap::new();
+    for asset in &active {
+        let warmup = load_warmup_for_scenario(ctx, scenario, *asset, native_granularity).await?;
+        warmup_by_asset.insert(*asset, warmup);
+    }
     let mut executor = if asset_bars.len() == 1 && asset_bars.contains_key(&first_asset) {
         Executor::with_bars(
             asset_bars
@@ -674,7 +716,7 @@ async fn build_cached_backtest_executor(
         Executor::new().with_asset_bars(asset_bars)
     }
     .with_market_data(market_data)
-    .with_warmup(warmup)
+    .with_warmup(warmup_by_asset)
     .with_event_bus(ctx.event_bus.clone());
     // Parity (2026-06-13): trader runs on Cline, which does NOT do execute_slot-layer per-decision
     // memory recall/write (matching live). No with_memory_recorder here — adding it back would

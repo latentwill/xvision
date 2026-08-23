@@ -291,7 +291,7 @@ async fn seed_direct_eval_only(db_path: &std::path::Path, eval_run_id: &str) -> 
     insert_eval_run(
         &pool,
         eval_run_id,
-        "live",
+        "fwd",
         "completed",
         Some(completed_at),
         Some(777),
@@ -574,7 +574,7 @@ fn inspect_reconciles_completed_eval_accounting_when_sidecar_is_stale() {
 }
 
 #[test]
-fn inspect_reconciles_live_eval_accounting_when_sidecar_is_stale() {
+fn inspect_reconciles_fwd_eval_accounting_when_sidecar_is_stale() {
     let home = tempdir().unwrap();
     let out_dir = tempdir().unwrap();
     let db_path = home.path().join("data").join("store.db");
@@ -583,9 +583,9 @@ fn inspect_reconciles_live_eval_accounting_when_sidecar_is_stale() {
         .enable_all()
         .build()
         .unwrap();
-    let run_id = "agent_stale_live";
-    let eval_run_id = "eval_completed_live";
-    let completed_at = rt.block_on(seed_stale_sidecar_eval(&db_path, run_id, eval_run_id, "live"));
+    let run_id = "agent_stale_fwd";
+    let eval_run_id = "eval_completed_fwd";
+    let completed_at = rt.block_on(seed_stale_sidecar_eval(&db_path, run_id, eval_run_id, "fwd"));
 
     let json = inspect_to_dir(&db_path, run_id, home.path(), out_dir.path());
     assert_eq!(json["schema_version"], "xvn.agent_run.v3");

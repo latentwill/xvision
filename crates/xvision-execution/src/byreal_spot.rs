@@ -342,6 +342,7 @@ impl<A: ByrealSpotApi + Send + Sync + 'static> BrokerSurface for ByrealSpotSurfa
             fill_price: (req.reference_price_usd > 0.0).then_some(req.reference_price_usd),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
 

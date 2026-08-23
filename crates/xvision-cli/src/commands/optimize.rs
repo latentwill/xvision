@@ -31,6 +31,7 @@
 //! * **inspect** — alias for `show`.
 //! * **diff** — diff a candidate strategy blob against its parent.
 //! * **export** — export a complete cycle as a high-fidelity document.
+//! * **evidence** — emit a compact evidence bundle for one cycle.
 //! * **lineage** — lineage graph inspection (ls / show).
 //! * **cancel** — request cancellation of an in-flight optimizer cycle
 //!   (remote-safe, works over the Dashboard API).
@@ -74,7 +75,9 @@ use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
-use xvision_engine::autooptimizer::cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail};
+use xvision_engine::autooptimizer::cycle_runs::{
+    get_cycle_evidence_bundle, get_cycle_run, list_cycle_runs, CycleRunDetail,
+};
 use xvision_engine::autooptimizer::eval_adapter::{
     BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
@@ -143,6 +146,8 @@ enum OptimizeAction {
     /// findings + the compiled prompt pattern). Markdown or JSON; to a file or
     /// stdout. Works on any past cycle — the feedback artifact for the flywheel.
     Export(ExportArgs),
+    /// Emit a compact evidence bundle for one optimizer cycle.
+    Evidence(EvidenceArgs),
     /// Lineage graph inspection (ls / show).
     Lineage(LineageCmd),
     /// Request cancellation of an in-flight optimizer cycle. Clears the cycle
@@ -225,6 +230,18 @@ pub struct ShowArgs {
     #[arg(long)]
     pub blob_root: Option<PathBuf>,
     /// Emit the cycle detail as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct EvidenceArgs {
+    /// Cycle id to inspect.
+    pub cycle_id: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Emit the evidence bundle as JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -479,6 +496,7 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Inspect(args)) => run_show(args).await,
         Some(OptimizeAction::Diff(args)) => run_diff(args).await,
         Some(OptimizeAction::Export(args)) => run_export(args).await,
+        Some(OptimizeAction::Evidence(args)) => run_evidence(args).await,
         Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
             LineageOp::Ls(args) => lineage_ls(args).await,
             LineageOp::Show(args) => lineage_show(args).await,
@@ -489,7 +507,16 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     }
 }
 
-// ── run-cycle ─────────────────────────────────────────────────────────────────
+fn cycle_meter_delta(previous: CycleMeter, current: CycleMeter) -> CycleMeter {
+    CycleMeter {
+        spent_usd: (current.spent_usd - previous.spent_usd).max(0.0),
+        unpriced_calls: current.unpriced_calls.saturating_sub(previous.unpriced_calls),
+        input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
+        output_tokens: current.output_tokens.saturating_sub(previous.output_tokens),
+    }
+}
+
+// ── run ───────────────────────────────────────────────────────────────────────
 
 pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some(budget) = args.budget {
@@ -1178,6 +1205,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // feedback document per cycle after the session loop returns.
     let completed_cycle_ids: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
     let completed_ids_ref = &completed_cycle_ids;
+    let last_persisted_meter: Arc<std::sync::Mutex<CycleMeter>> =
+        Arc::new(std::sync::Mutex::new(CycleMeter::default()));
+    let last_persisted_meter_ref = &last_persisted_meter;
 
     let session_result = xvision_engine::autooptimizer::run_session(
         &pool,
@@ -1269,10 +1299,18 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 sustained_ref.store(new_sustained, std::sync::atomic::Ordering::Relaxed);
 
                 let totals = *meter_ref.lock().expect("meter mutex poisoned");
+                let delta = {
+                    let mut previous = last_persisted_meter_ref
+                        .lock()
+                        .expect("previous meter mutex poisoned");
+                    let delta = cycle_meter_delta(*previous, totals);
+                    *previous = totals;
+                    delta
+                };
                 if let Err(e) = xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
                     pool_ref,
                     &result.cycle_id,
-                    &totals,
+                    &delta,
                     &Utc::now().to_rfc3339(),
                 )
                 .await
@@ -1788,6 +1826,55 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         let blob_root = args.blob_root.unwrap_or(default_lineage_blob_root()?);
         let mutation_summaries = load_cycle_mutation_summaries(&blob_root, &detail).await;
         print_cycle_detail(&detail, &mutation_summaries);
+    }
+    Ok(())
+}
+
+async fn run_evidence(args: EvidenceArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let evidence = if db_path.exists() {
+        let pool = open_lineage_db(&db_path).await?;
+        get_cycle_evidence_bundle(&pool, &args.cycle_id)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("get cycle evidence: {e}")))?
+    } else {
+        None
+    };
+    let evidence = evidence.ok_or_else(|| {
+        CliError::not_found(anyhow::anyhow!(
+            "no optimizer cycle evidence with id {}",
+            args.cycle_id
+        ))
+    })?;
+
+    if args.json {
+        print_json(&evidence)?;
+    } else {
+        println!("cycle: {}", evidence.cycle_id);
+        println!(
+            "cost: ${:.4} (input {}, output {}, unpriced {})",
+            evidence.cost.cost_usd.unwrap_or(0.0),
+            evidence.cost.input_tokens.unwrap_or(0),
+            evidence.cost.output_tokens.unwrap_or(0),
+            evidence.cost.unpriced_calls.unwrap_or(0)
+        );
+        println!(
+            "counts: kept {} suspect {} dropped {} no_candidate {} candidate_error {}",
+            evidence.counts.kept,
+            evidence.counts.suspect,
+            evidence.counts.dropped,
+            evidence.counts.no_candidate,
+            evidence.counts.candidate_error
+        );
+        for reason in &evidence.event_reasons.no_candidate {
+            println!("no_candidate: {reason}");
+        }
+        for reason in &evidence.event_reasons.candidate_error {
+            println!("candidate_error: {reason}");
+        }
+        for reason in &evidence.event_reasons.mutation_gated {
+            println!("mutation_gated: {reason}");
+        }
     }
     Ok(())
 }
@@ -3364,6 +3451,56 @@ sqlite_url = "sqlite://x.db"
             "default lineage db must be the shared $XVN_HOME/xvn.db (F8 convergence)"
         );
         assert!(default_db.starts_with(&home));
+    }
+
+    #[test]
+    fn cycle_meter_delta_persists_only_new_usage_since_previous_cycle_snapshot() {
+        let previous = CycleMeter {
+            input_tokens: 100,
+            output_tokens: 10,
+            spent_usd: 0.01,
+            unpriced_calls: 1,
+        };
+        let current = CycleMeter {
+            input_tokens: 350,
+            output_tokens: 40,
+            spent_usd: 0.04,
+            unpriced_calls: 3,
+        };
+
+        let delta = cycle_meter_delta(previous, current);
+
+        assert_eq!(delta.input_tokens, 250);
+        assert_eq!(delta.output_tokens, 30);
+        assert_eq!(delta.unpriced_calls, 2);
+        assert!(
+            (delta.spent_usd - 0.03).abs() < f64::EPSILON,
+            "cost delta must be current minus previous, got {}",
+            delta.spent_usd
+        );
+    }
+
+    #[test]
+    fn cycle_meter_delta_clamps_when_cumulative_meter_moves_backwards() {
+        let previous = CycleMeter {
+            input_tokens: 350,
+            output_tokens: 40,
+            spent_usd: 0.04,
+            unpriced_calls: 3,
+        };
+        let current = CycleMeter {
+            input_tokens: 100,
+            output_tokens: 10,
+            spent_usd: 0.01,
+            unpriced_calls: 1,
+        };
+
+        let delta = cycle_meter_delta(previous, current);
+
+        assert_eq!(delta.input_tokens, 0);
+        assert_eq!(delta.output_tokens, 0);
+        assert_eq!(delta.unpriced_calls, 0);
+        assert_eq!(delta.spent_usd, 0.0);
     }
 
     #[test]

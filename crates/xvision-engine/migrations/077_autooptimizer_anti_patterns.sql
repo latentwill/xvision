@@ -1,4 +1,4 @@
--- Migration 058: anti-pattern memory registry
+-- Migration 077: anti-pattern memory registry
 -- Phase 7 — recurring failure patterns promoted to preflight blockades.
 -- Modeled on the AutoResearch self-play paper's "baked the lesson into
 -- operating constraints" pattern (Chen 2026, §V16).

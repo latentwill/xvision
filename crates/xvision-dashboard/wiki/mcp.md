@@ -35,8 +35,8 @@ fresh sqlite pool scoped to the request.
 | `xvn_macd` | `xvision_data::macd` | `prices[]`, `fast`, `slow`, `signal` | `{macd, signal, histogram}` arrays | no |
 | `xvn_donchian` | `xvision_data::donchian` | `high[]`, `low[]`, `period` | `{upper, lower}` arrays | no |
 | `xvn_fib_retracements` | `xvision_data::fib_retracements` | `prices[]`, `lookback` | `{found, high, low, direction, levels}` | no |
-| `xvn_list_templates` | `xvision_engine::authoring::list_templates` | — | `[{name, display_name, plain_summary}]` | no |
-| `xvn_create_strategy` | `authoring::create_strategy` | `template`, `name`, `creator?` | `{id}` | yes — writes strategy file |
+| `xvn_list_templates` | deprecated stub | — | `[]` (template registry removed 2026-05-21; browse `$XVN_HOME/strategies/library/`) | no |
+| `xvn_create_strategy` | `authoring::create_strategy` | `name`, `creator?` | `{id}` — blank draft | yes — writes strategy file |
 | `xvn_get_strategy` | `authoring::get_strategy` | `id` | full Strategy JSON | no |
 | `xvn_update_slot` | `authoring::update_slot` | `id`, `slot`, `prompt?`, `attested_with?`, `provider?`, `model?`, `allowed_tools?` | `{id, updated}` | yes — mutates strategy |
 | `xvn_set_risk_config` | `authoring::set_risk_config` | `id`, `preset` or `explicit` | `{id, applied}` | yes — mutates strategy |
@@ -52,7 +52,7 @@ fresh sqlite pool scoped to the request.
 | `xvn_eval_batch_run` | `api_eval::run` × N scenarios | `strategy_id`, `scenario_ids[]`, `mode?`, `review_with?` | `{batch_id, strategy_id, runs[]}` | yes — creates run rows |
 | `xvn_eval_batch_status` | `api_eval::get_batch` | `batch_id` | `BatchDetail` | no |
 | `xvn_eval_compare_ext` | `api_eval::compare` | `run_ids[]` or `batch_id`, `markdown?` | `ComparisonReport` or Markdown string | no |
-| `xvn_scenarios_select` | `api_scenario::list` + filter | `assets[]?`, `timeframe?`, `target_decisions` or `same_decisions+max_decisions`, `regimes[]?`, `count?` | `[{id, name, asset, timeframe, decision_count}]` | no |
+| `xvn_scenarios_select` | `api_scenario::select` | `timeframe?` (cadence filter), `target_decisions` or `same_decisions+max_decisions`, `regimes[]?`, `count?` | `[{id, name, decision_count}]` | no |
 | `xvn_eval_compare_report` | `api_eval::compare` + behavior decoration | `run_ids[]` (≥2), `sort?` | `CompareReport` with behavior fields | no |
 | `xvn_scenario_inspect_card` | `api_scenario::get` + run aggregate | `id` | `{card: string}` | no |
 | `xvn_eval_behavior` | `api_eval::get_run_behavior` | `run_id` | `BehaviorSummary` | no |

@@ -146,11 +146,10 @@ async fn approve_double_approve_is_200_noop() {
     assert_eq!(res.status_code(), StatusCode::OK);
 }
 
-/// Verify that approve returns 401 from a non-loopback client without a token.
-/// Uses `tower::ServiceExt::oneshot` with a manually injected public-IP
-/// ConnectInfo (the same pattern as auth_session.rs).
+/// Verify that approve remains open from a non-loopback client when no
+/// dashboard password is configured.
 #[tokio::test]
-async fn approve_requires_auth_from_non_loopback() {
+async fn approve_is_open_when_dashboard_password_is_unset() {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf()).await.expect("init state");
     state.run_dashboard_migrations().await.unwrap();
@@ -164,13 +163,12 @@ async fn approve_requires_auth_from_non_loopback() {
         .header("content-type", "application/json")
         .body(Body::empty())
         .unwrap();
-    // Inject a public IP so require_auth_middleware sees a non-loopback client.
     request
         .extensions_mut()
         .insert(ConnectInfo::<SocketAddr>("203.0.113.5:12345".parse().unwrap()));
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 /// Verify that approve with a valid session token from a non-loopback client succeeds.

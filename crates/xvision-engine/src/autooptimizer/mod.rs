@@ -106,5 +106,5 @@ pub use session::{
     increment_cycle_completed, loosening_floor_reached, mark_interrupted_sessions, run_session,
     transition_state, CycleRunOutcome, OptimizerSession,
 };
-pub use validator::{validate_mutation_diff, ValidationError};
+pub use validator::{validate_mutation_diff, validate_optimizer_candidate_route, ValidationError};
 pub mod anti_pattern;

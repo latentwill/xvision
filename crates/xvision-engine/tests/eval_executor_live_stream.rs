@@ -13,12 +13,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use futures::stream;
+use sqlx::sqlite::SqlitePoolOptions;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xvision_core::market::Ohlcv;
-use xvision_data::alpaca::{BarGranularity, MarketBar};
+use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, LiveBarItem};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFetcher};
 
+use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::executor::traits::BarSource;
 use xvision_engine::eval::executor::LiveStream;
 
@@ -176,4 +180,70 @@ async fn websocket_budget_exhaustion_transitions_to_polling_fallback() {
         "stream must close after poll exhaustion"
     );
     assert_eq!(fetcher.calls(), 2);
+}
+
+#[tokio::test]
+async fn explicit_fetcher_supplies_live_warmup_credentials() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1beta3/crypto/us/bars"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "bars": {
+                "BTC/USD": [{
+                    "t": "2024-02-03T00:00:00Z",
+                    "o": 2300.0,
+                    "h": 2320.0,
+                    "l": 2290.0,
+                    "c": 2310.0,
+                    "v": 1500.0
+                }]
+            },
+            "next_page_token": null
+        })))
+        .mount(&server)
+        .await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ApiContext::new(
+        pool,
+        Actor::Cli {
+            user: "live-warmup-test".into(),
+        },
+        dir.path().to_path_buf(),
+    );
+    let explicit_fetcher =
+        AlpacaBarsFetcher::new(server.uri(), "explicit-key".into(), "explicit-secret".into());
+    let ws = client().subscription_from_stream(BarGranularity::Minute1, stream::empty::<LiveBarItem>());
+    let poll = AlpacaLivePoll::new(
+        ScriptedFetcher::new(vec![]),
+        "BTC/USD".into(),
+        BarGranularity::Minute1,
+    )
+    .with_poll_interval(Duration::ZERO);
+
+    let mut live = LiveStream::new_with_warmup_and_fetcher(
+        &ctx,
+        "BTC/USD",
+        BarGranularity::Minute1,
+        1,
+        ws,
+        poll,
+        Some(&explicit_fetcher),
+    )
+    .await
+    .expect("explicit fetcher should supply warmup");
+
+    let warmup = live.take_warmup();
+    assert_eq!(warmup.len(), 1);
+    assert_eq!(warmup[0].close, 2310.0);
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "warmup must use the explicit fetcher instead of context default"
+    );
 }

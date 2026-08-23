@@ -7,6 +7,7 @@ import {
   formatGateVerdict,
   getCycleRun,
   listLineageNodes,
+  startOptimizerRun,
   useCycleEvents,
   useRiver,
   type CycleRunDetail,
@@ -43,6 +44,33 @@ describe("autooptimizer api additions", () => {
       "/api/autooptimizer/lineage?cycle_id=cyc-1",
     );
   });
+  it("startOptimizerRun posts launch payloads to the canonical optimizer run endpoint", async () => {
+    const spy = vi.spyOn(client, "apiFetch").mockResolvedValue({
+      started: true,
+      message: "Optimizer run started.",
+    });
+    const body = {
+      strategy_id: "strategy-1",
+      mutator_provider: "ollama",
+      mutator_model: "qwen2.5-coder:7b",
+      judge_provider: "anthropic",
+      judge_model: "claude-haiku-4-5",
+      budget_usd: 12.5,
+      day_start: "2026-06-01",
+      day_end: "2026-06-07",
+      baseline_start: "2026-05-01",
+      baseline_end: "2026-05-07",
+      experiments_per_cycle: 8,
+    };
+
+    await startOptimizerRun(body);
+
+    expect(spy).toHaveBeenCalledWith("/api/optimize/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  });
+
 });
 
 // Regression: rejected lineage nodes serialize `gate_verdict` as the Rust

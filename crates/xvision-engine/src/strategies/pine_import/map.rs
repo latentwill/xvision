@@ -972,6 +972,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     // ── Build the Strategy ─────────────────────────────────────────────────
     let manifest = make_scaffold_manifest(title);
     let risk = RiskPreset::Balanced.expand();
+    let has_filter = final_filter.is_some();
 
     // Agentic strategies require at least one agent to pass `validate_strategy`.
     // For pine-import Agentic strategies we add a placeholder trader agent that
@@ -1001,9 +1002,15 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
         regime_slot: None,
         trader_slot: None,
         risk,
-        activation_mode: ActivationMode::EveryBar,
+        // A mapped Pine guard is an xvision filter gate. EveryBar would
+        // make the persisted strategy invalid and cause import to fail.
+        activation_mode: if has_filter {
+            ActivationMode::FilterGated
+        } else {
+            ActivationMode::EveryBar
+        },
+        acknowledge_no_filter: !has_filter,
         filter: final_filter,
-        acknowledge_no_filter: true, // pine-import strategies don't require a filter gate
         decision_mode,
         mechanistic_config,
         briefing_indicators,

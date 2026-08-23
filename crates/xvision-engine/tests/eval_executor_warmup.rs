@@ -89,6 +89,10 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 
@@ -255,7 +259,9 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
     ));
     let dispatch_for_inspect = dispatch.clone();
     let tools = Arc::new(ToolRegistry::empty());
-    let executor = Executor::with_bars(decision_bars).with_warmup(warmup);
+    let mut warmup_by_asset = std::collections::BTreeMap::new();
+    warmup_by_asset.insert(xvision_core::trading::AssetSymbol::Btc, warmup);
+    let executor = Executor::with_bars(decision_bars).with_warmup(warmup_by_asset);
 
     executor
         .run(

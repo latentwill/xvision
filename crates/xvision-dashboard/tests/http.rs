@@ -31,18 +31,29 @@ async fn health_endpoint_reports_probes() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
 
-    // The aggregate status mirrors the worst probe — a fresh tempdir with
-    // a freshly migrated db should be "ok" across all probes.
-    assert_eq!(body["status"], "ok");
+    // A fresh home has no configured provider, so the aggregate status is
+    // degraded even though the local filesystem, database, and strategies
+    // probes are healthy. The sidecar probe follows the configured env path.
+    assert_eq!(body["status"], "degraded");
 
     let probes = body["probes"].as_array().expect("probes array");
-    let names: Vec<_> = probes
-        .iter()
-        .map(|p| p["name"].as_str().unwrap_or("").to_string())
-        .collect();
-    assert!(names.contains(&"data_dir".into()), "data_dir probe present");
-    assert!(names.contains(&"db".into()), "db probe present");
-    assert!(names.contains(&"strategies".into()), "strategies probe present");
+    let probe_status = |name: &str| {
+        probes
+            .iter()
+            .find(|probe| probe["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name} probe"))["status"]
+            .as_str()
+            .unwrap_or("")
+    };
+    assert_eq!(probe_status("data_dir"), "ok");
+    assert_eq!(probe_status("db"), "ok");
+    assert_eq!(probe_status("strategies"), "ok");
+    let sidecar_expected = match std::env::var("XVN_AGENTD_BIN") {
+        Ok(path) if std::path::Path::new(&path).exists() => "ok",
+        _ => "degraded",
+    };
+    assert_eq!(probe_status("agent_sidecar"), sidecar_expected);
+    assert_eq!(probe_status("providers"), "degraded");
 
     // Every probe carries an explicit status — schema contract.
     for p in probes {
@@ -551,6 +562,7 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
             fill_size: Some(0.05),
             fee: Some(3.35),
             pnl_realized: None,
+            delayed: Some(false),
         })
         .await
         .unwrap();
@@ -569,6 +581,7 @@ async fn eval_run_detail_returns_summary_decisions_and_equity() {
             fill_size: Some(0.05),
             fee: Some(3.43),
             pnl_realized: Some(75.0),
+            delayed: Some(false),
         })
         .await
         .unwrap();
@@ -757,7 +770,6 @@ fn minimal_create_request() -> serde_json::Value {
             "start": "2025-01-01T00:00:00Z",
             "end": "2025-04-01T00:00:00Z"
         },
-        "granularity": "Hour1",
         "timezone": "UTC",
         "calendar": "Continuous24x7",
         "venue": {

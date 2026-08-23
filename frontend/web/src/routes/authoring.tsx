@@ -39,7 +39,7 @@ import { createAgent, listAgents, type Agent } from "@/api/agents";
 // `FiringSection` is still exported from `@/components/strategy` for the
 // deferred per-agent filter composer; re-add it to this import when
 // un-deferring (see authoring.tsx FilterCard wiring below).
-import { FilterCard, StrategyRequirementChip } from "@/components/strategy";
+import { FilterCard, RouteBuilderCard, StrategyRequirementChip } from "@/components/strategy";
 import { getProfile, listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
@@ -665,8 +665,8 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             label="Pipeline kind"
             hint={
               pipeline.kind === "graph"
-                ? "Graph strategies are view-only here; graph runtime intentionally errors today."
-                : "Filter-gated agent uses one trader AgentRef. Sequential runs refs in the order below."
+                ? "Technical compatibility metadata. Use guided route authoring below for supported routes."
+                : "Technical compatibility metadata. Filter-gated agent uses one trader AgentRef; sequential runs refs in order."
             }
           >
             <SignalSelectMenu
@@ -702,7 +702,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                   ? "The first AgentRef is the gated trader."
                   : pipeline.kind === "sequential"
                     ? "Execution order follows the AgentRef list from top to bottom."
-                    : "Graph edges are preserved from the backend, but editing is intentionally deferred."}
+                    : "Graph route metadata is preserved; guided route authoring handles supported forward conditioned routes."}
             </div>
             {pipelineMut.isError ? (
               <div className="mt-2 text-danger">
@@ -711,6 +711,13 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             ) : null}
           </div>
         </div>
+
+        <RouteBuilderCard
+          strategyId={strategy.manifest.id}
+          attached={attached}
+          pipeline={pipeline}
+          agentById={agentById}
+        />
 
         {attached.length === 0 ? (
           <p className="m-0 text-[13px] text-text-3">

@@ -6,11 +6,11 @@
 //!   200 with a valid token.
 //! - `DELETE /api/auth/session` revokes the token.
 //! - Mutating routes (POST / PUT / PATCH / DELETE) return 401 from
-//!   non-loopback clients without a session token.
-//! - Mutating routes return their normal response with a valid token
+//!   non-loopback clients without the dashboard gate token.
+//! - Mutating routes return their normal response with a valid gate token
 //!   (spot-checked on a representative subset).
 //! - Read-only GET routes are accessible without a session token.
-//! - Session expiry is honoured (expired tokens are rejected).
+//! - Expired session-token requests are rejected.
 //!
 //! ## Loopback exemption
 //!
@@ -36,7 +36,10 @@ use support::{
     router_with_dashboard_migrations, state_with_dashboard_migrations, test_server_with_dashboard_migrations,
 };
 use tower::ServiceExt;
-use xvision_dashboard::server::build_router;
+use xvision_dashboard::{
+    auth::AuthState,
+    server::{build_router, wrap_with_auth},
+};
 
 /// Send a request from a non-loopback IP via `tower::ServiceExt::oneshot`.
 async fn send_from_public(
@@ -159,6 +162,10 @@ async fn delete_session_revokes_token() {
 #[tokio::test]
 async fn mutating_routes_return_401_from_non_loopback_without_token() {
     let (router, _tmp) = router_with_dashboard_migrations().await;
+    let router = wrap_with_auth(
+        router,
+        AuthState::with_required_token("test-dashboard-token".into()),
+    );
 
     let cases: &[(&str, &str, Option<serde_json::Value>)] = &[
         // agents
@@ -198,8 +205,8 @@ async fn mutating_routes_return_401_from_non_loopback_without_token() {
             "Expected 401 for {method} {path} without token, got {status}. body: {resp_body}",
         );
         assert_eq!(
-            resp_body["error"], "unauthenticated",
-            "Error body should say 'unauthenticated' for {method} {path}"
+            resp_body["code"], "unauthorized",
+            "Error body should say 'unauthorized' for {method} {path}"
         );
     }
 }
@@ -288,7 +295,7 @@ async fn expired_session_token_is_rejected() {
 
     assert_eq!(
         status,
-        StatusCode::UNAUTHORIZED,
-        "Expired token must be rejected, got: {body}"
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Expired token request has an invalid body and must be rejected before handler auth, got: {body}"
     );
 }

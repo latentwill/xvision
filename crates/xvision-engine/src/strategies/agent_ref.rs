@@ -8,7 +8,7 @@
 //! This file is the strategy-side half of that refactor. The agent records
 //! themselves live in `crates/xvision-engine/src/agents/`.
 
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::agents::capability::Capability;
 
@@ -260,6 +260,105 @@ pub struct PipelineEdge {
     pub condition: Option<EdgePredicate>,
 }
 
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RouteBranch {
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
+    pub target_role: String,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RouteGraphEdge {
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
+    pub from_role: String,
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
+    pub to_role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub condition: Option<EdgePredicate>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteContextField {
+    MarketSnapshot,
+    ToolState,
+    AvailableTargets,
+    RegimeSummary,
+}
+
+pub(crate) fn default_route_context_fields() -> Vec<RouteContextField> {
+    vec![
+        RouteContextField::MarketSnapshot,
+        RouteContextField::ToolState,
+        RouteContextField::AvailableTargets,
+        RouteContextField::RegimeSummary,
+    ]
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteTraceMode {
+    #[default]
+    Compact,
+    Full,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RouteDefinition {
+    #[serde(deserialize_with = "deserialize_role", serialize_with = "serialize_role")]
+    pub router_role: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<RouteBranch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub graph_edges: Vec<RouteGraphEdge>,
+    #[serde(default = "default_route_context_fields")]
+    pub context_fields: Vec<RouteContextField>,
+    #[serde(default)]
+    pub trace_mode: RouteTraceMode,
+}
+
+impl RouteDefinition {
+    pub(crate) fn materialized_context_fields(&self) -> Vec<RouteContextField> {
+        if self.context_fields.is_empty() {
+            default_route_context_fields()
+        } else {
+            self.context_fields.clone()
+        }
+    }
+
+    pub(crate) fn normalize_context_fields(&mut self) {
+        if self.context_fields.is_empty() {
+            self.context_fields = default_route_context_fields();
+        }
+    }
+}
+
 /// Wiring spec for a strategy's agents.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -271,6 +370,9 @@ pub struct PipelineDef {
     pub kind: PipelineKind,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<PipelineEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub route: Option<RouteDefinition>,
 }
 
 impl PipelineDef {
@@ -279,6 +381,7 @@ impl PipelineDef {
         Self {
             kind: PipelineKind::Single,
             edges: Vec::new(),
+            route: None,
         }
     }
 
@@ -288,6 +391,13 @@ impl PipelineDef {
         Self {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
+        }
+    }
+
+    pub(crate) fn normalize_route_context_fields(&mut self) {
+        if let Some(route) = self.route.as_mut() {
+            route.normalize_context_fields();
         }
     }
 }
@@ -405,6 +515,7 @@ mod tests {
                     condition: None,
                 },
             ],
+            route: None,
         };
         let s = serde_json::to_string(&d).unwrap();
         let back: PipelineDef = serde_json::from_str(&s).unwrap();
@@ -423,6 +534,19 @@ mod tests {
         );
         let back: PipelineDef = serde_json::from_str(&s).unwrap();
         assert_eq!(back, d);
+    }
+
+    #[test]
+    fn pipeline_def_omits_absent_route_definition() {
+        // Route Builder metadata is additive. Strategies that have not opted
+        // into routing must keep the legacy PipelineDef wire shape so export,
+        // import, and content hashes do not change.
+        let d = PipelineDef::sequential();
+        let v = serde_json::to_value(&d).unwrap();
+        assert!(
+            v.get("route").is_none(),
+            "absent route definition must be omitted from PipelineDef JSON: {v}"
+        );
     }
 
     #[test]

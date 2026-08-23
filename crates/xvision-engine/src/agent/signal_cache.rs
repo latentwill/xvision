@@ -17,8 +17,9 @@
 //! * `Bar` granularity: callers do not consult the cache. Every new bar
 //!   re-evaluates the Filter.
 //! * `Minute` granularity: callers consult the cache and re-fire the
-//!   cached signal when the current bar's minute-truncated timestamp is
-//!   `<=` the cached signal's minute-truncated timestamp.
+//!   cached signal only when the current bar's minute exactly matches
+//!   the cached signal's minute. Earlier or later current timestamps
+//!   are misses.
 //! * `Decision` granularity: callers consult the cache; re-evaluation is
 //!   driven by graph topology (the dispatcher walks forward to see if a
 //!   Trader is reachable downstream of the Filter — if so, re-evaluate;
@@ -125,7 +126,7 @@ pub fn truncate_to_minute(ts: DateTime<Utc>) -> DateTime<Utc> {
 /// fresh for `now`: i.e. truncating both to their minute yields the
 /// same instant. Used by `filter_dispatch::should_reevaluate_minute`.
 pub fn minute_cache_is_fresh(cached_ts: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    truncate_to_minute(now) <= truncate_to_minute(cached_ts)
+    truncate_to_minute(cached_ts) == truncate_to_minute(now)
 }
 
 #[cfg(test)]
@@ -208,5 +209,14 @@ mod tests {
         let cached = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
         let now = Utc.with_ymd_and_hms(2026, 5, 22, 9, 31, 0).unwrap();
         assert!(!minute_cache_is_fresh(cached, now));
+    }
+    #[test]
+    fn minute_cache_is_stale_for_earlier_current_timestamp() {
+        let cached = Utc.with_ymd_and_hms(2026, 5, 22, 9, 31, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 45).unwrap();
+        assert!(
+            !minute_cache_is_fresh(cached, now),
+            "an out-of-order current bar must not reuse a future signal"
+        );
     }
 }

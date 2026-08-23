@@ -12,10 +12,10 @@ import { useCycleEventStream } from "../hooks/useCycleEventStream";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StrategyPicker } from "@/components/primitives/StrategyPicker";
 import {
-  type StartRunCycleRequest,
+  type StartOptimizerRunRequest,
   getCycleCost,
   getRunDefaults,
-  startRunCycle,
+  startOptimizerRun,
   autooptimizerKeys,
 } from "../api";
 import {
@@ -43,7 +43,7 @@ type OptimizerModelSelection = {
   judgeModel: string;
 };
 
-type LaunchConfig = StartRunCycleRequest & {
+type LaunchConfig = StartOptimizerRunRequest & {
   maxCycles: number | null;
   totalBudgetUsd: number | null;
 };
@@ -459,7 +459,7 @@ export function LaunchPanel() {
     lastProcessedRowId.current = -1;
     setLoopActive(true);
     try {
-      await startRunCycle({
+      await startOptimizerRun({
         strategy_id: config.strategy_id,
         mutator_provider: config.mutator_provider,
         mutator_model: config.mutator_model,
@@ -509,7 +509,7 @@ export function LaunchPanel() {
         setLoopActive(false);
         return;
       }
-      void startRunCycle({
+      void startOptimizerRun({
         strategy_id: l.strategy_id,
         mutator_provider: l.mutator_provider,
         mutator_model: l.mutator_model,

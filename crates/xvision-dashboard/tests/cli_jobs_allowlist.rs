@@ -206,7 +206,6 @@ async fn mutating_nested_subcommands_are_rejected() {
 
     for argv in [
         serde_json::json!(["scenario", "rm", "sc_1"]),
-        serde_json::json!(["strategy", "remove-agent", "st_1", "--role", "trader"]),
         serde_json::json!(["obs", "retention", "set", "--mode", "full-debug"]),
         serde_json::json!(["store", "migrate"]),
     ] {

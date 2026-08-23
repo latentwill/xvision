@@ -2,10 +2,9 @@
 //! patch surface added by the
 //! `strategy-edit-top-level-fields` track (QA operator round 4, item 2).
 //!
-//! The patch covers `display_name`, `plain_summary`, and
-//! `asset_universe`. Anything else (id, creator, template,
-//! published_at, agents, pipeline, risk) is out of scope and has its
-//! own route or is immutable post-create.
+//! The patch covers `display_name`, `plain_summary`, `asset_universe`, and
+//! `creator`. Anything else (id, template, published_at, agents, pipeline,
+//! risk) is out of scope and has its own route or is immutable post-create.
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
@@ -213,10 +212,6 @@ async fn patch_metadata_rejects_out_of_scope_fields() {
         serde_json::json!({
             "display_name": "ShouldNotPersist",
             "id": "01JSHOULDNOTCHANGE0000000000",
-        }),
-        serde_json::json!({
-            "display_name": "ShouldNotPersist",
-            "creator": "@other",
         }),
         serde_json::json!({
             "display_name": "ShouldNotPersist",

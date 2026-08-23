@@ -13,7 +13,7 @@ use tower::ServiceExt;
 use xvision_dashboard::server::build_router;
 
 #[tokio::test]
-async fn venue_account_requires_auth_even_when_dashboard_password_is_unset() {
+async fn venue_account_is_open_when_dashboard_password_is_unset() {
     let (state, _tmp) = support::state_with_dashboard_migrations().await;
     let app = build_router(state);
 
@@ -27,5 +27,5 @@ async fn venue_account_requires_auth_even_when_dashboard_password_is_unset() {
         .insert(ConnectInfo::<SocketAddr>("203.0.113.5:49152".parse().unwrap()));
 
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::OK);
 }

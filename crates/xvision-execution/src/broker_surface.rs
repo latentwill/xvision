@@ -118,6 +118,9 @@ pub struct OrderConfirmation {
     pub fill_price: Option<f64>,
     pub fill_size: f64,
     pub fee: Option<f64>,
+    /// Explicit state notes, such as partial fills or failed bracket legs.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Coarse classification of a broker-side failure. The shared
@@ -651,11 +654,14 @@ impl BrokerSurface for AlpacaPaperSurface {
         // 4. Poll for terminal state.
         let filled = self.await_fill(&order_id).await?;
 
+        let note = (filled.filled_qty > 0.0 && filled.filled_qty < req.size)
+            .then(|| format!("partial fill {}/{}", filled.filled_qty, req.size));
         Ok(OrderConfirmation {
             broker_order_id: filled.id,
             fill_price: filled.avg_fill_price,
             fill_size: filled.filled_qty,
             fee: None, // Alpaca paper has no fee model in v1
+            note,
         })
     }
 
@@ -723,9 +729,33 @@ impl AlpacaPaperSurface {
                 if order.is_rejected() {
                     return Err(anyhow::anyhow!("alpaca order {order_id} rejected"));
                 }
+                if order.filled_qty <= 0.0 {
+                    return Err(anyhow::anyhow!(
+                        "alpaca order {order_id} not filled: status={}, filled_qty={}",
+                        order.status,
+                        order.filled_qty
+                    ));
+                }
                 return Ok(order);
             }
             tokio::time::sleep(Duration::from_millis(ALPACA_FILL_POLL_DELAY_MS)).await;
+        }
+        if let Err(e) = self.api.cancel_order(order_id).await {
+            tracing::warn!(target: "xvision::alpaca", order_id, "timed-out order cancellation failed: {e}");
+        }
+
+        // Cancellation races with fills at the venue. Fetch the final order
+        // state once so a fill accepted just before cancellation is not lost.
+        match self.api.get_order(order_id).await {
+            Ok(order) if order.filled_qty > 0.0 => return Ok(order),
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "xvision::alpaca",
+                    order_id,
+                    "post-cancel order fetch failed: {e}"
+                );
+            }
         }
         Err(anyhow::anyhow!(
             "alpaca order {order_id} did not fill within {} polls",
@@ -838,9 +868,13 @@ impl<A: OrderlyApi> OrderlyLiveSurface<A> {
                 .await
                 .map_err(|e| anyhow::anyhow!("orderly get_order: {e}"))?;
             if order.is_terminal() {
-                if order.is_unfilled_terminal() {
+                if order.is_rejected() {
+                    anyhow::bail!("orderly order {order_id} rejected");
+                }
+                let filled_qty = order.executed_quantity.unwrap_or(0.0);
+                if filled_qty <= 0.0 {
                     anyhow::bail!(
-                        "orderly order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
+                        "orderly order {order_id} not filled: status={}, filled_qty={filled_qty}",
                         order.status
                     );
                 }
@@ -888,10 +922,13 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
             .create_order(&symbol, side, qty, Some(req.idempotency_key.clone()), None)
             .await
             .map_err(|e| anyhow::anyhow!("orderly create_order: {e}"))?;
-
         let filled = self.await_fill(entry.order_id).await?;
         let fill_price = filled.average_executed_price;
-        let fill_qty = filled.executed_quantity.unwrap_or(qty);
+        let fill_qty = filled.executed_quantity.unwrap_or(0.0);
+        let mut notes = Vec::new();
+        if fill_qty > 0.0 && fill_qty < qty {
+            notes.push(format!("partial fill {fill_qty}/{qty}"));
+        }
 
         // Best-effort SL/TP bracket via reduce-only algo orders. Trigger
         // prices derive from the caller's reference price (the live bar
@@ -924,11 +961,12 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
                     )
                     .await
                 {
-                    tracing::warn!(
+                    tracing::error!(
                         target: "xvision::orderly",
                         asset = %req.asset,
                         "orderly take-profit algo order failed (entry stands): {e}"
                     );
+                    notes.push(format!("TP placement failed: {e}"));
                 }
             }
             if let Some(sl_pct) = req.stop_loss_pct {
@@ -946,11 +984,12 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
                     )
                     .await
                 {
-                    tracing::warn!(
+                    tracing::error!(
                         target: "xvision::orderly",
                         asset = %req.asset,
                         "orderly stop-loss algo order failed (entry stands): {e}"
                     );
+                    notes.push(format!("SL placement failed: {e}"));
                 }
             }
         }
@@ -960,6 +999,7 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
             fill_price,
             fill_size: fill_qty,
             fee: None,
+            note: (!notes.is_empty()).then(|| notes.join("; ")),
         })
     }
 
@@ -1060,6 +1100,7 @@ impl BrokerSurface for MockBrokerSurface {
             fill_price: Some(req.reference_price_usd),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
 
@@ -1481,6 +1522,96 @@ mod venue_identity_tests {
         async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
             Err(ExecutorError::Internal("unused stub".into()))
         }
+    }
+
+    struct PartialFillAfterCancelApi {
+        get_calls: Mutex<u32>,
+        canceled: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl AlpacaApi for PartialFillAfterCancelApi {
+        async fn create_order(&self, _req: ApacOrderRequest) -> Result<AlpacaOrder, ExecutorError> {
+            Ok(AlpacaOrder {
+                id: "partial-order".into(),
+                client_order_id: "test".into(),
+                status: "new".into(),
+                filled_qty: 0.0,
+                avg_fill_price: None,
+                submitted_at: None,
+                filled_at: None,
+            })
+        }
+
+        async fn get_order(&self, _order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
+            let mut calls = self.get_calls.lock().unwrap();
+            *calls += 1;
+            if *calls <= ALPACA_FILL_POLL_MAX {
+                Ok(AlpacaOrder {
+                    id: "partial-order".into(),
+                    client_order_id: "test".into(),
+                    status: "new".into(),
+                    filled_qty: 0.0,
+                    avg_fill_price: None,
+                    submitted_at: None,
+                    filled_at: None,
+                })
+            } else {
+                Ok(AlpacaOrder {
+                    id: "partial-order".into(),
+                    client_order_id: "test".into(),
+                    status: "canceled".into(),
+                    filled_qty: 0.25,
+                    avg_fill_price: Some(101.0),
+                    submitted_at: None,
+                    filled_at: None,
+                })
+            }
+        }
+
+        async fn cancel_order(&self, _order_id: &str) -> Result<(), ExecutorError> {
+            *self.canceled.lock().unwrap() = true;
+            Ok(())
+        }
+
+        async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn list_positions(&self) -> Result<Vec<AlpacaPosition>, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+
+        async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
+            Err(ExecutorError::Internal("unused stub".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn alpaca_timeout_keeps_partial_fill_after_cancel() {
+        let api = Arc::new(PartialFillAfterCancelApi {
+            get_calls: Mutex::new(0),
+            canceled: Mutex::new(false),
+        });
+        let surface = AlpacaPaperSurface::with_api(api.clone());
+        let confirmation = surface
+            .submit_order(OrderRequest {
+                asset: "AAPL".into(),
+                side: Side::Buy,
+                size: 1.0,
+                reference_price_usd: 100.0,
+                stop_loss_pct: None,
+                take_profit_pct: None,
+                idempotency_key: "test".into(),
+            })
+            .await
+            .expect("post-cancel partial fill must be returned");
+
+        assert!(*api.canceled.lock().unwrap());
+        assert_eq!(confirmation.fill_size, 0.25);
+        assert_eq!(confirmation.fill_price, Some(101.0));
+        assert!(confirmation.note.as_deref().unwrap().contains("partial fill"));
+        assert_eq!(*api.get_calls.lock().unwrap(), ALPACA_FILL_POLL_MAX + 1);
     }
 
     #[test]

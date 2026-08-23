@@ -80,7 +80,7 @@ pub struct CycleConfig {
     /// enforcement happens at the provider boundary, so this field is the
     /// recorded cycle-level intent that travels with the config.
     ///
-    /// Set by `xvn optimizer run-cycle --max-output-tokens N`.
+    /// Set by `xvn optimize run --max-output-tokens N`.
     pub max_output_tokens: Option<u32>,
     /// Circuit-breaker limit: how many consecutive candidate eval failures halt
     /// the session with a loud error (systemic misconfiguration). `0` disables
@@ -1085,6 +1085,21 @@ where
                 cycle_id: cycle_id.to_string(),
                 parent_hash: parent_node.bundle_hash.to_hex(),
                 reason: "experiment writer produced a no-op (identity) diff".to_string(),
+            });
+            continue;
+        }
+
+        if let Err(error) =
+            crate::autooptimizer::validator::validate_optimizer_candidate_route(&enriched_parent, &candidate)
+        {
+            let reason = format!("{}: {}", error.code(), error.message);
+            tracing::debug!(cycle_id, %reason, "rejecting Route Builder topology mutation");
+            no_candidate_count += 1;
+            progress(CycleProgressEvent::NoCandidate {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: parent_node.bundle_hash.to_hex(),
+                reason,
             });
             continue;
         }

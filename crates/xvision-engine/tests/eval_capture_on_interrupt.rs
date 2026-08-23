@@ -4,14 +4,18 @@
 //! `RunStore::finalize`, which the cancel/fail paths never reach — so all
 //! cancelled and failed runs in the live DB had NULL metrics.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
-use xvision_engine::agent::llm::{LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
+use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::agent::pipeline::ResolvedAgentSlot;
 use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
@@ -45,43 +49,45 @@ async fn fresh_store() -> RunStore {
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
         include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+        include_str!("../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
     RunStore::new(pool)
 }
-
-fn hold_dispatch() -> Arc<dyn LlmDispatch> {
-    Arc::new(MockDispatch::echo(
-        r#"{"action":"hold","conviction":0.0,"justification":"test"}"#,
-    ))
-}
-
-/// A dispatch that cancels its own eval run after the Nth completion, then keeps
-/// echoing `hold`. Lets a test reach a genuine *mid-flight* cancel: the executor
-/// makes a few real decisions (so the accumulators are non-trivial), the run
-/// flips to cancelled, and the executor's next in-loop terminal check captures
-/// the partial metrics and bails.
-struct CancelAfterDispatch {
-    inner: Arc<dyn LlmDispatch>,
-    store: RunStore,
-    run_id: String,
-    cancel_after: u32,
-    calls: AtomicU32,
-}
-
-#[async_trait]
-impl LlmDispatch for CancelAfterDispatch {
-    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if n == self.cancel_after {
-            let _ = self
-                .store
-                .cancel_active(&self.run_id, "cancelled mid-flight by test")
-                .await;
-        }
-        self.inner.complete(req).await
-    }
+async fn spawn_mock_cline() -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        br#"{"decisionJson":"{\"action\":\"hold\",\"conviction\":0.0,\"justification\":\"capture test\"}"}"#,
+    )
+    .expect("write mock sidecar config");
+    let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js");
+    let client = AgentClient::spawn(&bin, &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: ProviderEntry {
+                name: "anthropic".into(),
+                kind: ProviderKind::Anthropic,
+                base_url: String::new(),
+                api_key_env: "K".into(),
+                enabled_models: vec!["claude-sonnet-4-6".into()],
+            },
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: RunMode::Backtest,
+        },
+        dir,
+    )
 }
 
 fn test_bars(count: usize) -> Vec<Ohlcv> {
@@ -143,6 +149,28 @@ fn minimal_strategy() -> Strategy {
         tunable_bounds: Vec::new(),
     }
 }
+fn resolved_trader_slot() -> ResolvedAgentSlot {
+    ResolvedAgentSlot {
+        role: "trader".into(),
+        slot: LLMSlot {
+            role: "trader".into(),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
+        },
+        system_prompt: String::new(),
+        max_tokens: None,
+        max_wall_ms: None,
+        temperature: None,
+        inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: xvision_memory::types::MemoryMode::Off,
+        agent_id: "capture-trader".into(),
+        noop_skip: false,
+        nano: None,
+    }
+}
 
 /// Direct unit test of the new `RunStore::persist_partial`: it writes
 /// `metrics_json` + tokens on a running row without flipping status.
@@ -192,28 +220,49 @@ async fn cancelled_run_persists_partial_metrics_not_null() {
     );
     store.create(&run).await.unwrap();
 
-    // Cancel the run from inside the dispatch after the 3rd decision, so the
-    // executor is genuinely mid-flight (running, with accumulators populated)
-    // when it next checks for termination.
-    let dispatch: Arc<dyn LlmDispatch> = Arc::new(CancelAfterDispatch {
-        inner: hold_dispatch(),
-        store: RunStore::new(store.pool().clone()),
-        run_id: run.id.clone(),
-        cancel_after: 3,
-        calls: AtomicU32::new(0),
+    let agent_slots = vec![resolved_trader_slot()];
+    let (cline, _sidecar) = spawn_mock_cline().await;
+
+    // Observe persisted decisions and cancel after the third completed one.
+    // This keeps the cancellation trigger independent of the retired
+    // LlmDispatch path while still exercising a genuine mid-flight interrupt.
+    let cancel_store = RunStore::new(store.pool().clone());
+    let cancel_id = run.id.clone();
+    let watcher = tokio::spawn(async move {
+        loop {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM eval_decisions WHERE run_id = ?")
+                .bind(&cancel_id)
+                .fetch_one(cancel_store.pool())
+                .await
+                .unwrap();
+            if count >= 3 {
+                let _ = cancel_store
+                    .cancel_active(&cancel_id, "cancelled mid-flight by test")
+                    .await;
+                break;
+            }
+            if cancel_store.status(&cancel_id).await.unwrap().is_terminal() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
     });
 
     let result = Executor::with_bars(bars)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline))
         .run(
             &mut run,
             &strategy,
             &scenario,
-            &[],
-            dispatch,
-            Arc::new(ToolRegistry::empty()),
+            &agent_slots,
+            Arc::new(MockDispatch::echo(
+                r#"{"action":"hold","conviction":0.0,"justification":"unused"}"#,
+            )),
+            Arc::new(ToolRegistry::default_with_builtins()),
             &store,
         )
         .await;
+    watcher.await.unwrap();
     // The executor bails with "eval run stopped" once it sees the cancellation.
     assert!(
         result.is_err(),

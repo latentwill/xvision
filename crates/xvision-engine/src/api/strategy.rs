@@ -16,15 +16,16 @@ use crate::api::{
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
     RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
-    SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq, UpdateSlotOut,
-    UpdateSlotReq, ValidateDraftOut,
+    SetRouteRequest, SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq,
+    UpdateSlotOut, UpdateSlotReq, ValidateDraftOut,
 };
 use crate::eval::store::{ListFilter as RunListFilter, RunStore};
+use crate::strategies::validate::{validate_route_contract, RouteReadiness};
 use crate::strategies::{
     store::{
         apply_metadata_patch, strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
     },
-    ActivationMode, AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind, Strategy,
+    ActivationMode, AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind, RouteDefinition, Strategy,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -231,6 +232,27 @@ pub struct SetPipelineReq {
     pub kind: PipelineKind,
     #[serde(default)]
     pub edges: Vec<PipelineEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub route: Option<RouteDefinition>,
+}
+
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetRouteReq {
+    pub strategy_id: String,
+    pub route: RouteDefinition,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyRouteOut {
+    pub strategy: Strategy,
+    pub readiness: RouteReadiness,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -1473,7 +1495,10 @@ async fn import_strategy_inner(ctx: &ApiContext, manifest: serde_json::Value) ->
 
     strategy.manifest.id = Ulid::new().to_string();
     strategy.manifest.published_at = None;
-
+    if let Err(e) = crate::strategies::validate::validate_strategy(&strategy) {
+        cleanup_created_clone_agents(ctx, &created_agent_ids).await;
+        return Err(ApiError::Validation(format!("import validation failed: {e}")));
+    }
     // Nanochat gate: an imported strategy carrying a checkpoint slot must pass
     // the live_approved + indicator-compat checks (fail-closed; no bypass).
     if let Err(e) = validate_checkpoint_pre_save(&strategy, &ctx.db).await {
@@ -1818,8 +1843,11 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "single-agent pipeline cannot include multiple agents",
         "graph pipeline edge references unknown role",
         "graph pipeline edge from",
+        "route contract",
         "asset universe cannot be empty",
         "invalid risk config",
+        "mechanistic decision mode requires",
+        "agentic decision mode requires",
         "preset and explicit are mutually exclusive",
         "supply either preset or explicit",
         "unknown template",
@@ -2373,6 +2401,7 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
             pipeline: PipelineDef {
                 kind: req.kind,
                 edges: req.edges,
+                route: req.route,
             },
         },
     )
@@ -2397,6 +2426,78 @@ pub async fn set_pipeline(ctx: &ApiContext, req: SetPipelineReq) -> ApiResult<St
     if result.is_ok() {
         index_strategy_after_mutation(ctx, &store, &strategy_id).await;
     }
+    result
+}
+
+pub async fn set_route(ctx: &ApiContext, req: SetRouteReq) -> ApiResult<StrategyRouteOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_route(
+        &store,
+        SetRouteRequest {
+            strategy_id: req.strategy_id,
+            route: req.route,
+        },
+    )
+    .await
+    .and_then(|strategy| {
+        let readiness = validate_route_contract(&strategy)?;
+        Ok(StrategyRouteOut { strategy, readiness })
+    })
+    .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_set_route",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, &strategy_id).await;
+    }
+    result
+}
+
+pub async fn validate_route(ctx: &ApiContext, req: SetRouteReq) -> ApiResult<StrategyRouteOut> {
+    let started = Instant::now();
+    let strategy_id = req.strategy_id.clone();
+    let args_json = serde_json::to_string(&req).ok();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::validate_route(
+        &store,
+        SetRouteRequest {
+            strategy_id: req.strategy_id,
+            route: req.route,
+        },
+    )
+    .await
+    .map(|(strategy, readiness)| StrategyRouteOut { strategy, readiness })
+    .map_err(|e| map_authoring_error(e, Some(&strategy_id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "strategy_validate_route",
+        Some(&strategy_id),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
     result
 }
 
@@ -2857,7 +2958,15 @@ mod tests {
         .await
         .unwrap();
         let source = get(&ctx, &created.id).await.unwrap();
-        let manifest = serde_json::to_value(&source).unwrap();
+        let mut manifest = serde_json::to_value(&source).unwrap();
+        manifest["manifest"]["asset_universe"] = serde_json::json!(["BTC/USD"]);
+        manifest["decision_mode"] = serde_json::json!("mechanistic");
+        manifest["mechanistic_config"] = serde_json::json!({
+            "entry_rules": [{
+                "signal_name": "ema_cross",
+                "direction": "long"
+            }]
+        });
 
         let imported = import_strategy(&ctx, manifest).await.unwrap();
         assert_ne!(imported.manifest.id, created.id, "must mint a NEW ULID");
@@ -2867,6 +2976,50 @@ mod tests {
         let reread = get(&ctx, &imported.manifest.id).await.unwrap();
         assert_eq!(reread.manifest.display_name, source.manifest.display_name);
         assert!(audit_row_exists(&ctx, "import", &imported.manifest.id).await);
+    }
+
+    #[tokio::test]
+    async fn import_strategy_rejects_structurally_invalid_strategy() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let r = import_strategy(
+            &ctx,
+            serde_json::json!({
+                "manifest": {
+                    "id": "01HZINVALIDIMPORT000000000000",
+                    "display_name": "invalid",
+                    "plain_summary": "invalid",
+                    "creator": "@seller",
+                    "template": "custom",
+                    "regime_fit": [],
+                    "asset_universe": ["BTC/USD"],
+                    "decision_cadence_minutes": 60,
+                    "attested_with": [],
+                    "required_tools": [],
+                    "risk_preset_or_config": "balanced"
+                },
+                "risk": {
+                    "risk_pct_per_trade": 0.015,
+                    "max_concurrent_positions": 2,
+                    "max_leverage": 3.0,
+                    "stop_loss_atr_multiple": 2.0,
+                    "daily_loss_kill_pct": 0.05
+                },
+                "agents": [],
+                "pipeline": {
+                    "kind": "single",
+                    "edges": []
+                },
+                "activation_mode": "every_bar",
+                "filter": null,
+                "acknowledge_no_filter": false,
+                "decision_mode": "agentic",
+                "mechanistic_config": null,
+                "briefing_indicators": [],
+                "tunable_bounds": []
+            }),
+        )
+        .await;
+        assert!(matches!(r, Err(ApiError::Validation(_))), "got {r:?}");
     }
 
     #[tokio::test]

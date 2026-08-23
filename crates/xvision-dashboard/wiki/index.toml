@@ -73,7 +73,7 @@ path = "scenarios.md"
 slug = "eval-runs"
 title = "Eval Runs"
 section = "Concepts"
-last_reviewed = "2026-05-20"
+last_reviewed = "2026-08-23"
 path = "eval-runs.md"
 
 [[page]]
@@ -101,14 +101,14 @@ path = "driving-xvn-as-an-agent.md"
 slug = "agentd"
 title = "Agent daemon"
 section = "Agent"
-last_reviewed = "2026-05-21"
+last_reviewed = "2026-08-23"
 path = "agentd.md"
 
 [[page]]
 slug = "mcp"
 title = "MCP surface"
 section = "Agent"
-last_reviewed = "2026-05-20"
+last_reviewed = "2026-08-23"
 path = "mcp.md"
 
 [[page]]
@@ -136,7 +136,7 @@ path = "filter-dsl-catalog.md"
 slug = "cli-non-surfaced"
 title = "Why some commands aren't in xvn"
 section = "Operator"
-last_reviewed = "2026-05-20"
+last_reviewed = "2026-08-23"
 path = "cli-non-surfaced.md"
 
 [[page]]

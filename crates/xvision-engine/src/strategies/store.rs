@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::strategies::id::{validate_strategy_id_for_path, StrategyIdError};
+use crate::strategies::risk::RiskConfig;
 use crate::strategies::Strategy;
 use xvision_filters::ActivationMode;
 
@@ -216,26 +217,43 @@ pub fn apply_metadata_patch(
     Ok(())
 }
 
+/// Validate the risk fields that `strategies::validate` checks before a
+/// strategy reaches persistent storage.
+pub fn validate_risk_config_for_persist(risk: &RiskConfig) -> anyhow::Result<()> {
+    if !risk.risk_pct_per_trade.is_finite() || risk.risk_pct_per_trade <= 0.0 || risk.risk_pct_per_trade > 0.5
+    {
+        anyhow::bail!(
+            "invalid risk config: risk_pct_per_trade must be in (0, 0.5], got {}",
+            risk.risk_pct_per_trade
+        );
+    }
+    if !risk.max_leverage.is_finite() || risk.max_leverage <= 0.0 || risk.max_leverage > 100.0 {
+        anyhow::bail!(
+            "invalid risk config: max_leverage must be in (0, 100], got {}",
+            risk.max_leverage
+        );
+    }
+    Ok(())
+}
+
 /// Pre-persist validation seam used by every [`StrategyStore`]
-/// implementation.
+/// implementation. It rejects invalid risk values and inconsistent
+/// activation-mode/filter pairs before any filesystem write.
 ///
-/// Before the 2026-05-21 template-registry removal this ran an F-6
-/// typed parse against `manifest.template` to catch
-/// `deny_unknown_fields` violations that bypassed the deserialize
-/// boundary via direct struct construction. With the template registry
-/// gone there is no per-strategy schema to dispatch against, so the
-/// seam is currently a no-op. Kept as a seam so the V2F per-strategy
-/// schema work (declared per seed in `docs/strategies/templates/`) has
-/// a fixed place to slot in.
-///
-/// Public so alternative `StrategyStore` impls (in-memory stubs,
-/// future remote stores) can call the same seam instead of
-/// re-deriving the checks.
+/// Public so alternative [`StrategyStore`] implementations can call the same
+/// checks instead of re-deriving them.
 pub fn validate_strategy_for_persist(strategy: &Strategy) -> anyhow::Result<()> {
+    validate_risk_config_for_persist(&strategy.risk)?;
     if strategy.activation_mode == ActivationMode::FilterGated && strategy.filter.is_none() {
         anyhow::bail!(
             "activation_mode is filter_gated but filter is None — \
              the filter block failed to load or is missing from the file"
+        );
+    }
+    if strategy.activation_mode == ActivationMode::EveryBar && strategy.filter.is_some() {
+        anyhow::bail!(
+            "activation_mode is every_bar but filter is Some — \
+             the runtime ignores filters in every_bar mode"
         );
     }
     Ok(())
@@ -489,6 +507,41 @@ mod tests {
         let err = store.delete("../escape").await.unwrap_err();
         let downcast: Option<&StrategyIdError> = err.downcast_ref();
         assert!(downcast.is_some(), "expected StrategyIdError, got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn persist_rejects_every_bar_strategy_with_filter() {
+        let (store, _td) = store_in_tmp();
+        let mut strategy = strategy_with_id("01HZSTRATEGYFILTERMISMATCH");
+        strategy.filter = Some(
+            serde_json::from_value(serde_json::json!({
+                "id": "f_01JX0000000000000000000000",
+                "strategy_id": "01HZSTRATEGYFILTERMISMATCH",
+                "display_name": "test filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {"all": []}
+            }))
+            .unwrap(),
+        );
+
+        let result = store.save(&strategy).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("every_bar but filter is Some"));
+    }
+
+    #[tokio::test]
+    async fn persist_rejects_non_finite_risk_pct_per_trade() {
+        let (store, _td) = store_in_tmp();
+        let mut strategy = strategy_with_id("01HZSTRATEGYRISKINVALID");
+        strategy.risk.risk_pct_per_trade = f64::NAN;
+
+        let result = store.save(&strategy).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("risk_pct_per_trade"));
     }
 
     #[tokio::test]

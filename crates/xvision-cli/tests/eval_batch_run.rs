@@ -56,8 +56,17 @@ fn batch_request(
         assets_subset: None,
     }
 }
+/// Point eval runs at the hermetic sidecar harness. The production eval path
+/// always uses Cline (WU-6), so these tests must exercise the same lifecycle
+/// without reaching a real provider.
+fn use_mock_agentd() {
+    let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../xvision-engine/tests/fixtures/mock_agentd.js");
+    std::env::set_var("XVN_AGENTD_BIN", bin);
+}
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
+    use_mock_agentd();
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -67,6 +76,17 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
+    // Launch preflight checks each slot's provider against the runtime
+    // config's provider list; seed a minimal valid runtime config that
+    // enables `openai` so the fixture strategy is launchable without real
+    // credentials.
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        "[runtime]\nmode = \"backtest\"\nexecutor = \"alpaca\"\nrandom_seed = 42\n\n[[providers]]\nname = \"openai\"\nkind = \"openai-compat\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"OPENAI_API_KEY\"\nenabled_models = [\"gpt-4.1-mini\"]\n\n[trader]\nmodel_path = \"models/x.gguf\"\ntemperature = 0.0\nforward_paper_temperature = 0.4\nmax_tokens = 512\n[trader.vectors]\nenabled = false\nconfig = \"off\"\n\n[paths]\ndata_root = \"data\"\nvectors = \"vectors\"\nprobes = \"probes\"\nsqlite_url = \"sqlite://xvision.db\"\n\n[backtest]\nstep = 24\nhorizon = 16\nbootstrap_resamples = 1000\nbootstrap_block_size = 8\n",
+    )
+    .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -125,6 +145,9 @@ async fn apply_batch_test_migrations(pool: &SqlitePool) {
         include_str!("../../xvision-engine/migrations/064_autooptimizer_pattern_snapshots.sql"),
         include_str!("../../xvision-engine/migrations/065_eval_run_source_and_unrealized_pnl.sql"),
         include_str!("../../xvision-engine/migrations/066_cost_budget.sql"),
+        include_str!("../../xvision-engine/migrations/071_decisions_delayed.sql"),
+        include_str!("../../xvision-engine/migrations/073_eval_run_bars.sql"),
+        include_str!("../../xvision-engine/migrations/074_disconnected_status.sql"),
     ] {
         sqlx::query(migration).execute(pool).await.unwrap();
     }
@@ -166,7 +189,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -245,7 +268,7 @@ async fn batch_run_two_scenarios_both_complete() {
 
     let _broker: Arc<dyn BrokerSurface> = Arc::new(MockBrokerSurface::new(100_000.0));
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = batch_request(
         strategy_id,
@@ -300,7 +323,7 @@ async fn batch_run_partial_failure_surfaces_per_run_error() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = batch_request(
         strategy_id,
@@ -342,7 +365,7 @@ async fn batch_result_serialises_to_expected_json_shape() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = long_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = batch_request(strategy_id, vec!["flash-crash-2024-08".into()], dispatch, tools);
 
@@ -392,6 +415,7 @@ async fn batch_result_serialises_to_expected_json_shape() {
 /// Build an ApiContext with the batch-test migration set for the
 /// --review-with tests.
 async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
+    use_mock_agentd();
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -401,6 +425,13 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        "[runtime]\nmode = \"backtest\"\nexecutor = \"alpaca\"\nrandom_seed = 42\n\n[[providers]]\nname = \"openai\"\nkind = \"openai-compat\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"OPENAI_API_KEY\"\nenabled_models = [\"gpt-4.1-mini\"]\n\n[trader]\nmodel_path = \"models/x.gguf\"\ntemperature = 0.0\nforward_paper_temperature = 0.4\nmax_tokens = 512\n[trader.vectors]\nenabled = false\nconfig = \"off\"\n\n[paths]\ndata_root = \"data\"\nvectors = \"vectors\"\nprobes = \"probes\"\nsqlite_url = \"sqlite://xvision.db\"\n\n[backtest]\nstep = 24\nhorizon = 16\nbootstrap_resamples = 1000\nbootstrap_block_size = 8\n",
+    )
+    .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -450,7 +481,7 @@ async fn review_with_populates_review_field_for_completed_run() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let rev_dispatch = review_dispatch();
 
     let mut req = batch_request(strategy_id, vec!["flash-crash-2024-08".into()], dispatch, tools);
@@ -490,7 +521,7 @@ async fn review_with_skips_review_for_failed_run() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let rev_dispatch = review_dispatch();
 
     let mut req = batch_request(
@@ -521,7 +552,7 @@ async fn review_with_json_shape_review_present_for_completed_absent_for_failed()
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let rev_dispatch = review_dispatch();
 
     let mut req = batch_request(

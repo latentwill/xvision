@@ -820,53 +820,57 @@ impl<A: HyperliquidApi + 'static> BrokerSurface for DegenArenaSurface<A> {
             .map_err(|e| anyhow::anyhow!("degen arena place_order: {e}"))?;
 
         // Best-effort reduce-only TP/SL bracket legs (HL market trigger orders),
-        // derived from the fill (or reference) anchor. Direction-aware: a long
-        // takes profit above / stops below; a short is inverted. Bracket
-        // failures never fail the entry — same policy as Orderly/Byreal.
-        let bracket_sz = if ack.filled_sz > 0.0 {
-            ack.filled_sz
-        } else {
-            req.size
-        };
+        // derived from the actual fill. Resting acknowledgements are accepted
+        // as entry success, but remain explicitly unconfirmed.
+        let mut notes = Vec::new();
+        let resting = ack.status.eq_ignore_ascii_case("resting");
+        if resting {
+            notes.push("resting/unconfirmed".to_string());
+        }
+        let bracket_sz = ack.filled_sz;
         let fill_anchor = ack.avg_px.filter(|p| *p > 0.0 && p.is_finite()).unwrap_or(anchor);
         let dir = if is_buy { 1.0 } else { -1.0 };
         let close_is_buy = !is_buy;
-        for (pct, tpsl, sign) in [
-            (req.take_profit_pct, "tp", 1.0_f64),
-            (req.stop_loss_pct, "sl", -1.0_f64),
-        ] {
-            let Some(pct) = pct.filter(|p| *p > 0.0) else {
-                continue;
-            };
-            let trigger_px = round_px(fill_anchor * (1.0 + dir * sign * pct as f64 / 100.0));
-            // Marketable cap past the trigger in the close direction.
-            let order_px = round_px(if close_is_buy {
-                trigger_px * (1.0 + slip)
-            } else {
-                trigger_px * (1.0 - slip)
-            });
-            if let Err(e) = self
-                .api
-                .place_order(HlOrderReq {
-                    coin: coin.clone(),
-                    is_buy: close_is_buy,
-                    px: order_px,
-                    sz: bracket_sz,
-                    reduce_only: true,
-                    cloid: None,
-                    trigger: Some(HlTrigger {
-                        trigger_px,
-                        tpsl: tpsl.into(),
-                    }),
-                })
-                .await
-            {
-                tracing::warn!(
-                    target: "xvision::degen",
-                    asset = %req.asset,
-                    tpsl,
-                    "degen arena {tpsl} bracket leg failed (entry stands): {e}"
-                );
+        if bracket_sz > 0.0 {
+            for (pct, tpsl, sign) in [
+                (req.take_profit_pct, "tp", 1.0_f64),
+                (req.stop_loss_pct, "sl", -1.0_f64),
+            ] {
+                let Some(pct) = pct.filter(|p| *p > 0.0) else {
+                    continue;
+                };
+                let trigger_px = round_px(fill_anchor * (1.0 + dir * sign * pct as f64 / 100.0));
+                // Marketable cap past the trigger in the close direction.
+                let order_px = round_px(if close_is_buy {
+                    trigger_px * (1.0 + slip)
+                } else {
+                    trigger_px * (1.0 - slip)
+                });
+                if let Err(e) = self
+                    .api
+                    .place_order(HlOrderReq {
+                        coin: coin.clone(),
+                        is_buy: close_is_buy,
+                        px: order_px,
+                        sz: bracket_sz,
+                        reduce_only: true,
+                        cloid: None,
+                        trigger: Some(HlTrigger {
+                            trigger_px,
+                            tpsl: tpsl.into(),
+                        }),
+                    })
+                    .await
+                {
+                    let label = if tpsl == "tp" { "TP" } else { "SL" };
+                    tracing::error!(
+                        target: "xvision::degen",
+                        asset = %req.asset,
+                        tpsl,
+                        "degen arena {tpsl} bracket leg failed (entry stands): {e}"
+                    );
+                    notes.push(format!("{label} placement failed: {e}"));
+                }
             }
         }
 
@@ -875,6 +879,7 @@ impl<A: HyperliquidApi + 'static> BrokerSurface for DegenArenaSurface<A> {
             fill_price: ack.avg_px,
             fill_size: ack.filled_sz,
             fee: None,
+            note: (!notes.is_empty()).then(|| notes.join("; ")),
         })
     }
 
@@ -1261,12 +1266,17 @@ pub struct MockHyperliquidApi {
     pub positions: Vec<HlPosition>,
     pub equity: f64,
     pub place_err: Option<String>,
+    pub trigger_err: Option<String>,
 }
 
 #[async_trait]
 impl HyperliquidApi for MockHyperliquidApi {
     async fn place_order(&self, order: HlOrderReq) -> Result<HlOrderAck, ExecutorError> {
-        if let Some(e) = &self.place_err {
+        if order.trigger.is_some() {
+            if let Some(e) = &self.trigger_err {
+                return Err(ExecutorError::Rejected(e.clone()));
+            }
+        } else if let Some(e) = &self.place_err {
             return Err(ExecutorError::Rejected(e.clone()));
         }
         let (px, sz) = (order.px, order.sz);
@@ -1405,6 +1415,48 @@ mod tests {
             sl.trigger.unwrap().trigger_px < 70_000.0,
             "SL triggers below for a long"
         );
+    }
+
+    #[tokio::test]
+    async fn resting_ack_is_unconfirmed_and_does_not_size_brackets_from_request() {
+        let surface = DegenArenaSurface::with_api(MockHyperliquidApi {
+            ack: Some(HlOrderAck {
+                oid: 7,
+                status: "resting".into(),
+                avg_px: None,
+                filled_sz: 0.0,
+            }),
+            ..Default::default()
+        });
+        let mut req = buy_req("BTC/USD", 0.05);
+        req.take_profit_pct = Some(5.0);
+        req.stop_loss_pct = Some(2.0);
+
+        let conf = surface.submit_order(req).await.expect("resting entry succeeds");
+        assert_eq!(conf.fill_size, 0.0);
+        assert_eq!(conf.note.as_deref(), Some("resting/unconfirmed"));
+        assert_eq!(surface.api.placed.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bracket_failure_is_not_silent() {
+        let surface = DegenArenaSurface::with_api(MockHyperliquidApi {
+            ack: Some(HlOrderAck {
+                oid: 8,
+                status: "filled".into(),
+                avg_px: Some(70_000.0),
+                filled_sz: 0.05,
+            }),
+            trigger_err: Some("trigger unavailable".into()),
+            ..Default::default()
+        });
+        let mut req = buy_req("BTC/USD", 0.05);
+        req.take_profit_pct = Some(5.0);
+        req.stop_loss_pct = Some(2.0);
+        let conf = surface.submit_order(req).await.expect("entry remains successful");
+        let note = conf.note.expect("bracket failure note");
+        assert!(note.contains("TP placement failed: rejected by venue: trigger unavailable"));
+        assert!(note.contains("SL placement failed: rejected by venue: trigger unavailable"));
     }
 
     #[tokio::test]

@@ -74,6 +74,12 @@ function strategyDiag(): StrategyDiagnostics {
         ],
       },
     ],
+    route: {
+      routed: false,
+      context_fields: [],
+      launchable: true,
+      reasons: [],
+    },
   };
 }
 

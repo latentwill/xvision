@@ -23,6 +23,10 @@ impl ValidationError {
         }
     }
 
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
     fn with_path(code: &str, message: impl Into<String>, path: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -55,6 +59,58 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
     } else {
         Err(errors)
     }
+}
+
+pub fn validate_optimizer_candidate_route(
+    parent: &Strategy,
+    child: &Strategy,
+) -> Result<(), ValidationError> {
+    let parent_route = parent.pipeline.route.as_ref();
+    let child_route = child.pipeline.route.as_ref();
+    if parent_route.is_none() && child_route.is_none() {
+        return Ok(());
+    }
+
+    let err = || {
+        ValidationError::new(
+            "route.topology_mutation_forbidden",
+            "Route Builder topology is author-controlled; optimizer candidates may tune prompts and route context fields, but must not rewire router, branch target, selected path, or forward-test graph structure.",
+        )
+    };
+
+    if parent.pipeline.kind != child.pipeline.kind || parent.pipeline.edges != child.pipeline.edges {
+        return Err(err());
+    }
+
+    let agent_signature = |strategy: &Strategy| {
+        strategy
+            .agents
+            .iter()
+            .map(|agent_ref| {
+                (
+                    agent_ref.agent_id.clone(),
+                    canonical_role(&agent_ref.role),
+                    agent_ref.activates,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    if agent_signature(parent) != agent_signature(child) {
+        return Err(err());
+    }
+
+    let (Some(parent_route), Some(child_route)) = (parent_route, child_route) else {
+        return Err(err());
+    };
+    if canonical_role(&parent_route.router_role) != canonical_role(&child_route.router_role)
+        || parent_route.branches != child_route.branches
+        || parent_route.graph_edges != child_route.graph_edges
+        || parent_route.trace_mode != child_route.trace_mode
+    {
+        return Err(err());
+    }
+
+    Ok(())
 }
 
 /// Emit a non-fatal tracing warn for each proposed value that is outside its
@@ -596,6 +652,98 @@ mod tests {
             create_filter: None,
             rationale: "test filter mutation".into(),
         }
+    }
+
+    fn routed_fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST000000000000ROUTE",
+                "display_name": "Route Validator Test Strategy",
+                "plain_summary": "Routed strategy for optimizer topology tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [
+                {"agent_id": "router-agent", "role": "router", "activates": "router", "prompt": "route using regime evidence"},
+                {"agent_id": "trend-agent", "role": "trend_trader", "activates": "trader", "prompt": "trade trends"},
+                {"agent_id": "range-agent", "role": "range_trader", "activates": "trader", "prompt": "trade ranges"}
+            ],
+            "pipeline": {
+                "kind": "graph",
+                "edges": [],
+                "route": {
+                    "router_role": "router",
+                    "branches": [
+                        {"target_role": "trend_trader"},
+                        {"target_role": "range_trader"}
+                    ],
+                    "graph_edges": [
+                        {"from_role": "router", "to_role": "trend_trader"}
+                    ],
+                    "context_fields": ["available_targets"],
+                    "trace_mode": "compact"
+                }
+            },
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            }
+        });
+        serde_json::from_value(v).expect("routed fixture strategy must deserialise")
+    }
+
+    #[test]
+    fn optimizer_candidate_cannot_rewrite_route_topology() {
+        let parent = routed_fixture_strategy();
+        let mut child = parent.clone();
+        child.pipeline.route.as_mut().expect("route").branches.reverse();
+
+        let err = validate_optimizer_candidate_route(&parent, &child).unwrap_err();
+        assert_eq!(err.code(), "route.topology_mutation_forbidden");
+    }
+
+    #[test]
+    fn optimizer_candidate_cannot_change_route_agent_activations_or_graph_edges() {
+        let parent = routed_fixture_strategy();
+        let mut activation_child = parent.clone();
+        activation_child.agents[1].activates = Some(crate::agents::Capability::Filter);
+
+        let activation_err = validate_optimizer_candidate_route(&parent, &activation_child).unwrap_err();
+        assert_eq!(activation_err.code(), "route.topology_mutation_forbidden");
+
+        let mut graph_child = parent.clone();
+        graph_child
+            .pipeline
+            .route
+            .as_mut()
+            .expect("route")
+            .graph_edges
+            .clear();
+        let graph_err = validate_optimizer_candidate_route(&parent, &graph_child).unwrap_err();
+        assert_eq!(graph_err.code(), "route.topology_mutation_forbidden");
+    }
+
+    #[test]
+    fn optimizer_candidate_may_tune_router_prompt_and_route_context_without_rewiring() {
+        let parent = routed_fixture_strategy();
+        let mut child = parent.clone();
+        child.agents[0].prompt = "route using sharper regime criteria".into();
+        child.pipeline.route.as_mut().expect("route").context_fields = vec![
+            crate::strategies::RouteContextField::MarketSnapshot,
+            crate::strategies::RouteContextField::ToolState,
+            crate::strategies::RouteContextField::RegimeSummary,
+            crate::strategies::RouteContextField::AvailableTargets,
+        ];
+
+        validate_optimizer_candidate_route(&parent, &child).unwrap();
     }
 
     #[test]

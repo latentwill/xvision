@@ -249,6 +249,46 @@ async fn corrupted_cache_blob_treated_as_miss_and_self_heals() {
 }
 
 #[tokio::test]
+async fn structurally_invalid_cached_bars_are_evicted_before_return() {
+    let (ctx, server) = test_ctx_with_mock_alpaca().await;
+    let args = BarCacheArgs {
+        cache_key: "invalid_structure_key".into(),
+        asset_pair: "ETH/USD".into(),
+        granularity: xvision_data::alpaca::BarGranularity::Hour1,
+        start: Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap(),
+        end: Utc.with_ymd_and_hms(2024, 2, 3, 4, 0, 0).unwrap(),
+        data_source_tag: "alpaca-historical-v1".into(),
+    };
+    let poisoned = br#"{"t":"2024-02-03T00:00:00Z","o":2300.0,"h":2200.0,"l":2290.0,"c":2310.0,"v":1500.0}
+"#;
+    sqlx::query(
+        "INSERT INTO bars_cache \
+         (cache_key, asset, granularity, window_start, window_end, \
+          data_source, fetched_at, bar_count, bars_blob, compression) \
+         VALUES (?, 'ETH/USD', '1Hour', ?, ?, 'alpaca-historical-v1', ?, 1, ?, 'none')",
+    )
+    .bind(&args.cache_key)
+    .bind(args.start.to_rfc3339())
+    .bind(args.end.to_rfc3339())
+    .bind(args.start.to_rfc3339())
+    .bind(poisoned.as_slice())
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let bars = load_bars(&ctx, &args)
+        .await
+        .expect("invalid cache must be evicted and replaced from upstream");
+    assert_eq!(bars.len(), 4);
+    assert!(bars.iter().all(|bar| bar.high >= bar.open.max(bar.close)));
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "poisoned cache must not be returned or reused"
+    );
+}
+
+#[tokio::test]
 async fn concurrent_misses_serialize_through_singleflight() {
     let (ctx, server) = test_ctx_with_mock_alpaca().await;
     let args = std::sync::Arc::new(BarCacheArgs {

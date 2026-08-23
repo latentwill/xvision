@@ -60,7 +60,10 @@ pub struct TunableBound {
 use serde::{Deserialize, Serialize};
 pub use xvision_filters::{ActivationMode, Filter};
 
-pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, PipelineKind};
+pub use crate::strategies::agent_ref::{
+    AgentRef, PipelineDef, PipelineEdge, PipelineKind, RouteBranch, RouteContextField, RouteDefinition,
+    RouteGraphEdge, RouteTraceMode,
+};
 pub use crate::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use crate::strategies::manifest::PublicManifest;
 pub use crate::strategies::mechanistic::{

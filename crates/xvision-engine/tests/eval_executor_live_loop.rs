@@ -165,6 +165,7 @@ impl BrokerSurface for PerAssetRecordingBroker {
             fill_price: Some(price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -234,6 +235,7 @@ impl BrokerSurface for RecordingBroker {
             broker_order_id: format!("recorded-{}", req.idempotency_key),
             fill_price: Some(self.fill_price),
             fill_size: self.fill_size.unwrap_or(req.size),
+            note: None,
             fee: self.fee,
         })
     }
@@ -710,6 +712,7 @@ impl BrokerSurface for CancelAfterOpenBroker {
             fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -877,6 +880,7 @@ impl BrokerSurface for PerAssetCancelAfterOpenBroker {
             fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -1100,6 +1104,7 @@ impl BrokerSurface for RejectCloseBroker {
                 fill_price: Some(self.open_fill_price),
                 fill_size: req.size,
                 fee: None,
+                note: None,
             })
         } else {
             // REJECT the closing Sell — the broker refuses to flatten.
@@ -1256,6 +1261,7 @@ impl BrokerSurface for PartialCloseOnCancelBroker {
                 fill_price: Some(self.open_fill_price),
                 fill_size: req.size,
                 fee: None,
+                note: None,
             })
         } else {
             Ok(OrderConfirmation {
@@ -1263,6 +1269,7 @@ impl BrokerSurface for PartialCloseOnCancelBroker {
                 fill_price: Some(self.close_fill_price),
                 fill_size: self.close_fill_size,
                 fee: None,
+                note: None,
             })
         }
     }
@@ -1742,6 +1749,7 @@ impl BrokerSurface for FlattenAfterOpenBroker {
             fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -1982,6 +1990,7 @@ impl BrokerSurface for PauseFlattenAfterOpenBroker {
             fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {

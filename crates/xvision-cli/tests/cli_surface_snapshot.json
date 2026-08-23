@@ -992,11 +992,11 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
-        "--agent",
         "--force",
         "--format",
         "--help",
         "--output",
+        "--prompt",
         "--xvn-home"
       ],
       "mutates": false,
@@ -1022,6 +1022,8 @@
         "--live-duration",
         "--live-time-limit-secs",
         "--live-warmup-bars",
+        "--max-agent-ms",
+        "--max-consecutive-skips",
         "--max-decisions",
         "--max-input-tokens",
         "--max-output-tokens",
@@ -1037,6 +1039,7 @@
         "--scenario",
         "--skip-bar-coverage-check",
         "--skip-preflight",
+        "--stale-data-max-age-ms",
         "--strategy",
         "--stream-progress",
         "--xvn-home"
@@ -2599,6 +2602,17 @@
       "path": [
         "help",
         "optimize",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
         "diff"
       ]
     },
@@ -2610,7 +2624,40 @@
       "path": [
         "help",
         "optimize",
+        "evidence"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
+        "explain-missing-data"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
         "export"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
+        "inspect"
       ]
     },
     {
@@ -3257,6 +3304,41 @@
     },
     {
       "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "route"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "route",
+        "setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "route",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
       "mutates": false,
@@ -3286,6 +3368,17 @@
         "help",
         "strategy",
         "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "set-risk"
       ]
     },
     {
@@ -3714,12 +3807,14 @@
         "--help",
         "--i-understand-real-money",
         "--json",
+        "--max-drawdown",
         "--network",
         "--strategy",
         "--time-limit-secs",
         "--venue",
         "--warmup-bars",
-        "--xvn-home"
+        "--xvn-home",
+        "--yes"
       ],
       "mutates": false,
       "path": [
@@ -4669,6 +4764,21 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--db",
+        "--help",
+        "--session",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "optimize",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--blob-root",
         "--db",
         "--help",
@@ -4678,6 +4788,34 @@
       "path": [
         "optimize",
         "diff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "evidence"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--memory-db",
+        "--verbose"
+      ],
+      "mutates": true,
+      "path": [
+        "optimize",
+        "explain-missing-data"
       ]
     },
     {
@@ -4713,7 +4851,40 @@
       "path": [
         "optimize",
         "help",
+        "cancel"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
         "diff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "evidence"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "explain-missing-data"
       ]
     },
     {
@@ -4736,6 +4907,17 @@
         "optimize",
         "help",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "inspect"
       ]
     },
     {
@@ -4815,6 +4997,21 @@
         "optimize",
         "help",
         "unlock"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--blob-root",
+        "--db",
+        "--help",
+        "--json"
+      ],
+      "mutates": true,
+      "path": [
+        "optimize",
+        "inspect"
       ]
     },
     {
@@ -4982,7 +5179,7 @@
         "--help",
         "--xvn-home"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "optimize",
         "unlock"
@@ -5382,7 +5579,6 @@
         "--fees-taker",
         "--from",
         "--from-file",
-        "--granularity",
         "--help",
         "--json",
         "--latency-ms",
@@ -6228,6 +6424,41 @@
     },
     {
       "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "route"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "route",
+        "setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "route",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
       "mutates": false,
@@ -6257,6 +6488,17 @@
         "strategy",
         "help",
         "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "set-risk"
       ]
     },
     {
@@ -6426,6 +6668,98 @@
     },
     {
       "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "help",
+        "setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "help",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--dry-run",
+        "--from-json",
+        "--from-stdin",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "setup"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--from-json",
+        "--from-stdin",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "route",
+        "validate"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": false,
       "long_flags": [
         "--decisions",
@@ -6444,6 +6778,7 @@
       "has_subcommands": false,
       "long_flags": [
         "--from-json",
+        "--from-stdin",
         "--help"
       ],
       "mutates": false,
@@ -6464,6 +6799,21 @@
       "path": [
         "strategy",
         "set-pipeline"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--id",
+        "--max-drawdown-pct",
+        "--max-drawdown-usd"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "set-risk"
       ]
     },
     {

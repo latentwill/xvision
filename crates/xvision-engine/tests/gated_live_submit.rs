@@ -237,6 +237,7 @@ impl BrokerSurface for CountingBroker {
             fill_price: Some(50_000.0),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
 

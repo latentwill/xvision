@@ -1,9 +1,14 @@
 //! V2D dispatcher wiring — integration tests for memory recall/write.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::TimeZone;
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
@@ -17,6 +22,53 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
 use xvision_memory::store::MemoryStore;
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline() -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": {
+                "trader": r#"{"action":"long_open","conviction":0.6,"justification":"PIPELINE_THREADED_DECISION"}"#,
+            },
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
 use xvision_memory::types::{MemoryItem, MemoryMode, Tier};
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus};
 
@@ -812,7 +864,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         slot: LLMSlot {
             role: "trader".into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
             provider: None,
             model: Some("mock".into()),
         },
@@ -835,6 +887,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         r#"{"action":"long_open","conviction":0.6,"justification":"PIPELINE_THREADED_DECISION"}"#,
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let (cline, _agentd_dir) = spawn_mock_cline().await;
 
     let outs = run_pipeline(PipelineInputs {
         strategy: &strategy,
@@ -857,8 +910,8 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await

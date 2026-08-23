@@ -114,6 +114,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
                 edges: vec![],
+                route: None,
             },
             regime_slot: None,
             trader_slot: None,
@@ -234,8 +235,8 @@ fn validate_does_not_warn_when_filter_already_gates_trader() {
             "create",
             "--name",
             "wired-filter",
-            "--capability",
-            "filter",
+            "--tools",
+            "indicator_panel",
             "--provider",
             "anthropic",
             "--model",

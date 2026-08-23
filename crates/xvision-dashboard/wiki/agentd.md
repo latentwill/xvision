@@ -33,13 +33,16 @@ The `xvn` CLI hides the daemon entirely.
 ## Launch
 
 The daemon is launched by the engine as part of `xvn eval run` or
-`xvn experiment run`. If you're running it standalone:
+`xvn experiment run`. Since WU-6 the Cline sidecar is the only dispatch
+path, so every run requires `XVN_AGENTD_BIN` to point at the built
+entrypoint:
 
 ```bash
-node xvision-agentd/dist/index.js --socket /tmp/agentd.sock \
-  [--callback-socket /tmp/agentd-cb.sock] \
-  [--event-socket /tmp/agentd-events.sock]
+pnpm --dir xvision-agentd install && pnpm --dir xvision-agentd build
+export XVN_AGENTD_BIN="$PWD/xvision-agentd/dist/index.js"
 ```
+
+If you're running it standalone:
 
 Flags:
 

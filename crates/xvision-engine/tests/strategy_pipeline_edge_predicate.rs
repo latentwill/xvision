@@ -9,6 +9,9 @@
 
 use serde_json::{json, Value};
 use xvision_engine::strategies::agent_ref::{EdgePredicate, PipelineEdge};
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::validate::{validate_strategy, ValidationError};
+use xvision_engine::strategies::{PipelineDef, PipelineKind, Strategy};
 
 fn sample_predicates() -> Vec<EdgePredicate> {
     vec![
@@ -57,6 +60,83 @@ fn sample_predicates() -> Vec<EdgePredicate> {
             value: Value::Bool(true),
         })),
     ]
+}
+
+fn valid_strategy_with_agents<const N: usize>(roles: [&str; N]) -> Strategy {
+    let agents: Vec<Value> = roles
+        .iter()
+        .enumerate()
+        .map(|(i, role)| {
+            json!({
+                "agent_id": format!("01HZROUTEEDGE{i}"),
+                "role": role,
+            })
+        })
+        .collect();
+
+    serde_json::from_value(json!({
+        "manifest": {
+            "id": "01HZROUTEEDGESTRATEGY",
+            "display_name": "Route Builder Edge Contract",
+            "plain_summary": "route edge validation fixture",
+            "creator": "@test",
+            "template": "custom",
+            "regime_fit": [],
+            "asset_universe": ["BTC/USD"],
+            "decision_cadence_minutes": 15,
+            "attested_with": [],
+            "required_tools": [],
+            "risk_preset_or_config": "balanced"
+        },
+        "agents": agents,
+        "pipeline": { "kind": "sequential" },
+        "risk": serde_json::to_value(RiskPreset::Balanced.expand()).unwrap()
+    }))
+    .unwrap()
+}
+
+fn assert_backward_edge(err: ValidationError, expected_from: &str, expected_to: &str) {
+    match err {
+        ValidationError::BackwardEdge { from, to } => {
+            assert_eq!(from, expected_from);
+            assert_eq!(to, expected_to);
+        }
+        other => panic!("expected BackwardEdge, got {other:?}"),
+    }
+}
+
+#[test]
+fn graph_validation_rejects_unconditional_self_edge() {
+    let mut strategy = valid_strategy_with_agents(["router", "trader"]);
+    strategy.pipeline = PipelineDef {
+        kind: PipelineKind::Graph,
+        edges: vec![PipelineEdge {
+            from_role: "router".into(),
+            to_role: "router".into(),
+            condition: None,
+        }],
+        route: None,
+    };
+
+    let err = validate_strategy(&strategy).expect_err("unconditional self edge must fail validation");
+    assert_backward_edge(err, "router", "router");
+}
+
+#[test]
+fn graph_validation_rejects_unconditional_backward_edge() {
+    let mut strategy = valid_strategy_with_agents(["router", "trader"]);
+    strategy.pipeline = PipelineDef {
+        kind: PipelineKind::Graph,
+        edges: vec![PipelineEdge {
+            from_role: "trader".into(),
+            to_role: "router".into(),
+            condition: None,
+        }],
+        route: None,
+    };
+
+    let err = validate_strategy(&strategy).expect_err("unconditional backward edge must fail validation");
+    assert_backward_edge(err, "trader", "router");
 }
 
 #[test]

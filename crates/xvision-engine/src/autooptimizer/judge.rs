@@ -52,7 +52,13 @@ pub struct Judge {
 /// Asserts that the given text contains none of the forbidden metric tokens.
 /// Called on the user body before dispatch to ensure the judge is metrics-blind.
 pub fn assert_metrics_blind(text: &str) {
-    let lower = text.to_lowercase();
+    let lower = text
+        .to_lowercase()
+        // These are risk-control configuration keys, not outcome metrics.
+        // They are present in every current RiskConfig serialization and must
+        // not make an otherwise metrics-blind Judge prompt fail closed.
+        .replace("max_drawdown_usd", "")
+        .replace("max_drawdown_pct", "");
     for token in FORBIDDEN_METRIC_TOKENS {
         assert!(
             !lower.contains(token),

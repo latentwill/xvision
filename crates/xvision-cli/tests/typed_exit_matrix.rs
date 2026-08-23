@@ -84,10 +84,11 @@ fn usage_2_agent_create_empty_name() {
     );
 }
 
-/// Missing `--capability` (clap required arg) → clap emits usage error
-/// and exits 2 before reaching `run_create`.
+/// The old `--capability` spelling is retained only as a hidden deprecated
+/// flag. Supplying it must produce the typed Usage(2) error and direct callers
+/// to `--tools`.
 #[test]
-fn usage_2_agent_create_missing_capability() {
+fn usage_2_agent_create_deprecated_capability() {
     let dir = tempdir().unwrap();
     let out = xvn(
         &[
@@ -95,7 +96,8 @@ fn usage_2_agent_create_missing_capability() {
             "create",
             "--name",
             "missing-cap",
-            // --capability intentionally absent
+            "--capability",
+            "trader",
             "--provider",
             "anthropic",
             "--model",
@@ -108,7 +110,7 @@ fn usage_2_agent_create_missing_capability() {
     assert_eq!(
         code(&out),
         2,
-        "missing --capability must exit 2 (clap Usage); stderr: {}",
+        "deprecated --capability must exit 2 (Usage); stderr: {}",
         String::from_utf8_lossy(&out.stderr),
     );
 }
@@ -152,8 +154,8 @@ fn conflict_7_agent_create_duplicate_name() {
             "create",
             "--name",
             "duplicate-name-agent",
-            "--capability",
-            "trader",
+            "--tools",
+            "ohlcv,submit_decision",
             "--provider",
             "anthropic",
             "--model",
@@ -177,7 +179,7 @@ fn conflict_7_agent_create_duplicate_name() {
             "create",
             "--name",
             "duplicate-name-agent",
-            "--capability",
+            "--tools",
             "filter",
             "--provider",
             "openrouter",

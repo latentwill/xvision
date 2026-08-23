@@ -82,7 +82,7 @@ fn seed_strategy_with_trader(
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
-                    allowed_tools: Vec::new(),
+                    allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                     delta_briefing: None,
                 }],
                 scope_strategy_id: None,
@@ -127,6 +127,7 @@ fn seed_strategy_with_trader(
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
                 edges: vec![],
+                route: None,
             },
             regime_slot: None,
             trader_slot: None,
@@ -182,6 +183,7 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
         pipeline: PipelineDef {
             kind: PipelineKind::Single,
             edges: vec![],
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,
@@ -217,10 +219,11 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
 
 /// Create a scenario via the CLI and return its id.
 /// Uses a 6-month window (Jan–Jul 2025) so that 200 warmup bars still leaves
-/// a positive `expected_decisions` count even at 4h granularity:
+/// a positive `expected_decisions` count:
 ///   181 days × 6 bars/day − 200 warmup = 886 − 200 = 686 decisions.
-fn create_scenario(home: &Path, granularity: &str, name: &str) -> String {
-    // Scenarios are asset-free; `scenario create` no longer accepts `--asset`.
+fn create_scenario(home: &Path, name: &str) -> String {
+    // Scenarios are asset-free and timeframe-free; `scenario create`
+    // accepts neither `--asset` nor `--granularity`.
     let out = xvn(
         &[
             "scenario",
@@ -231,8 +234,6 @@ fn create_scenario(home: &Path, granularity: &str, name: &str) -> String {
             "2025-01-01",
             "--to",
             "2025-07-01",
-            "--granularity",
-            granularity,
             "--warmup-bars",
             "200",
             "--json",
@@ -407,7 +408,7 @@ fn validate_happy_path_eval_ready() {
     );
 
     // 4h scenario (scenarios are asset-free).
-    let scenario_id = create_scenario(dir.path(), "4h", "happy-path-btc-scenario");
+    let scenario_id = create_scenario(dir.path(), "happy-path-btc-scenario");
 
     let edit = xvn(
         &["strategy", "edit", &strategy_id, "--no-filter-warning"],

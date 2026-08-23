@@ -583,14 +583,14 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_other_subcommands_are_rejected() {
-        // `optimize` (the consolidated cycle verb) is only remotely launchable
-        // as `optimize run`; a bare `optimize` and any other subcommand are
-        // rejected.
-        assert_reject(
-            &["optimize", "memory-demos", "--agent", "ag_1"],
-            "only allowed over remote cli as `optimize run`",
-        );
+    fn optimizer_non_run_subcommands_are_allowed_except_unlock() {
+        // 1f13286d opened the allowlist: `optimize run` stays on a strict
+        // template, other subcommands (cancel, inspect, explain-missing-data,
+        // ls, show, …) pass through, and `unlock` alone is denied.
+        assert_allow(&["optimize", "cancel", "cyc_1"]);
+        assert_allow(&["optimize", "inspect", "cyc_1"]);
+        assert_allow(&["optimize", "explain-missing-data"]);
+        assert_reject(&["optimize", "unlock", "cyc_1"], "not allowed over remote cli");
     }
 
     #[test]
@@ -676,20 +676,22 @@ mod tests {
             "not allowed over remote cli",
         );
         assert_reject(&["provider", "add", "--name", "x"], "not allowed over remote cli");
-        assert_reject(&["provider", "refresh-models"], "not allowed over remote cli");
+    }
+
+    #[test]
+    fn provider_refresh_models_is_allowed_remotely() {
+        // 7848bf3e unblocked provider refresh-models alongside strategy
+        // draft authoring: refreshing the model catalog is idempotent and
+        // read-only against external state.
+        assert_allow(&["provider", "refresh-models"]);
     }
 
     #[test]
     fn authoring_and_admin_nested_commands_are_rejected() {
         for parts in [
-            &["scenario", "create", "--name", "remote-test"][..],
-            &["scenario", "clone", "sc_1", "--name", "copy"][..],
-            &["scenario", "archive", "sc_1"][..],
             &["scenario", "rm", "sc_1"][..],
             &["scenario", "classify", "--all"][..],
             &["scenario", "set-regime", "sc_1", "--regime", "trend"][..],
-            &["strategy", "add-agent", "st_1", "ag_1", "--role", "trader"][..],
-            &["strategy", "remove-agent", "st_1", "--role", "trader"][..],
             &["strategy", "set-pipeline", "st_1", "--kind", "single"][..],
             &["strategy", "migrate-agents"][..],
             &["experiment", "new", "--name", "remote-test"][..],
@@ -703,6 +705,17 @@ mod tests {
         ] {
             assert_reject(parts, "not allowed over remote cli");
         }
+    }
+
+    #[test]
+    fn authoring_paths_are_allowed_remotely() {
+        // 7848bf3e: scenario create/clone/archive and strategy agent
+        // attach/detach are part of trusted-Tailscale remote authoring.
+        assert_allow(&["scenario", "create", "--name", "remote-test"]);
+        assert_allow(&["scenario", "clone", "sc_1", "--name", "copy"]);
+        assert_allow(&["scenario", "archive", "sc_1"]);
+        assert_allow(&["strategy", "add-agent", "st_1", "ag_1", "--role", "trader"]);
+        assert_allow(&["strategy", "remove-agent", "st_1", "--role", "trader"]);
     }
 
     #[test]
@@ -764,11 +777,11 @@ mod tests {
     // ── write-path gaps we still want blocked remotely ───────────────────
 
     #[test]
-    fn agent_create_is_rejected_remotely() {
-        assert_reject(
-            &["agent", "create", "--name", "remote-agent"],
-            "not allowed over remote cli",
-        );
+    fn agent_create_is_allowed_remotely() {
+        // 7848bf3e unblocked remote draft authoring: `strategy create
+        // --prompt` creates agents atomically, so standalone `agent create`
+        // passes through the same trusted-Tailscale policy.
+        assert_allow(&["agent", "create", "--name", "remote-agent"]);
     }
 
     #[test]

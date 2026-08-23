@@ -386,7 +386,7 @@ impl Default for AutoOptimizerConfig {
             min_realized_return_ratio: default_min_realized_return_ratio(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
             // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,
-            // so a no-config `run-cycle` silently fetched ~16k bars per
+            // so a no-config `xvn optimize run` silently fetched ~16k bars per
             // candidate. Default to a compact, recent, contiguous span
             // (3-month day window + 1-month held-out baseline) that keeps the
             // train-before-holdout ordering; operators who want the larger

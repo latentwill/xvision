@@ -1,6 +1,6 @@
 //! `xvn strategy ...` — strategy authoring subcommands.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,7 +27,10 @@ use xvision_engine::strategies::validate::{
     every_bar_warning, high_position_size_warning, no_filter_warnings, preflight_validate, validate_strategy,
 };
 use xvision_engine::strategies::Hypothesis;
-use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
+use xvision_engine::strategies::{
+    AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind, RouteBranch, RouteContextField,
+    RouteDefinition, RouteGraphEdge, RouteTraceMode,
+};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
 use xvision_filters::{parse_json as parse_filter_json, ActivationMode, FilterId, StrategyId};
@@ -383,6 +386,11 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
+    /// Configure and validate a Route Builder router contract.
+    Route {
+        #[command(subcommand)]
+        action: RouteAction,
+    },
     /// Remove a Filter agent (and every PipelineEdge it originates) by
     /// role. Idempotent — removing a non-existent role prints a warning
     /// and exits 0.
@@ -541,6 +549,41 @@ enum StrategyAction {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum RouteAction {
+    /// Save a Route Builder contract on a strategy.
+    Setup {
+        /// Strategy id returned from `xvn strategy create`.
+        strategy_id: String,
+        /// Read RouteDefinition JSON from a file.
+        #[arg(long = "from-json", conflicts_with = "from_stdin")]
+        from_json: Option<PathBuf>,
+        /// Read RouteDefinition JSON from stdin.
+        #[arg(long = "from-stdin", conflicts_with = "from_json")]
+        from_stdin: bool,
+        /// Validate and preview without persisting the route.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit `{ strategy, readiness }` JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate the saved route, or a supplied RouteDefinition candidate.
+    Validate {
+        /// Strategy id returned from `xvn strategy create`.
+        strategy_id: String,
+        /// Read RouteDefinition JSON from a file instead of the saved route.
+        #[arg(long = "from-json", conflicts_with = "from_stdin")]
+        from_json: Option<PathBuf>,
+        /// Read RouteDefinition JSON from stdin instead of the saved route.
+        #[arg(long = "from-stdin", conflicts_with = "from_json")]
+        from_stdin: bool,
+        /// Emit `{ strategy, readiness }` JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct PreflightReport {
     pub strategy_id: String,
@@ -643,6 +686,21 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             from_stdin,
         } => set_filter(&strategy_id, from_json.as_ref(), from_stdin).await,
         StrategyAction::FilterCatalog { json } => filter_catalog(json),
+        StrategyAction::Route { action } => match action {
+            RouteAction::Setup {
+                strategy_id,
+                from_json,
+                from_stdin,
+                dry_run,
+                json,
+            } => route_setup(&strategy_id, from_json.as_ref(), from_stdin, dry_run, json).await,
+            RouteAction::Validate {
+                strategy_id,
+                from_json,
+                from_stdin,
+                json,
+            } => route_validate(&strategy_id, from_json.as_ref(), from_stdin, json).await,
+        },
         StrategyAction::RemoveFilter { strategy_id, role } => remove_filter(&strategy_id, &role).await,
         StrategyAction::SetPipeline {
             strategy_id,
@@ -1160,6 +1218,14 @@ async fn new(
 
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
         let id = strategy.manifest.id.clone();
+        // Index for `strategy ls` / ⌘K search. Best-effort: a failed index
+        // write must not fail the create (same policy as `strategy reindex`).
+        {
+            let ctx = open_ctx().await?;
+            if let Err(e) = api_search::upsert_strategy(&ctx, &strategy).await {
+                eprintln!("warning: search index upsert failed for {id}: {e}");
+            }
+        }
         if json {
             let out = serde_json::json!({
                 "id": id,
@@ -1449,6 +1515,17 @@ async fn new_atomic(
 
     // 4. Persist the strategy.
     store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
+    // Index for `strategy ls` / ⌘K search (best-effort, same policy as
+    // `--from-file` create and `strategy reindex`).
+    {
+        let ctx = open_ctx().await?;
+        if let Err(e) = api_search::upsert_strategy(&ctx, &strategy).await {
+            eprintln!(
+                "warning: search index upsert failed for {}: {e}",
+                strategy.manifest.id
+            );
+        }
+    }
 
     // 5. Emit output.
     let mut warnings = preflight.warnings;
@@ -2006,6 +2083,353 @@ async fn remove_agent(strategy_id: &str, role: &str) -> CliResult<()> {
     Ok(())
 }
 
+async fn route_setup(
+    strategy_id: &str,
+    from_json: Option<&PathBuf>,
+    from_stdin: bool,
+    dry_run: bool,
+    json: bool,
+) -> CliResult<()> {
+    let (route, confirmed_save) = if from_stdin || from_json.is_some() {
+        (
+            read_route_definition(strategy_id, from_json, from_stdin, json, "setup")?,
+            true,
+        )
+    } else {
+        read_route_wizard(strategy_id, json)?
+    };
+    let ctx = open_ctx().await?;
+    let req = api_strategy::SetRouteReq {
+        strategy_id: strategy_id.to_string(),
+        route,
+    };
+    let out = if dry_run || !confirmed_save {
+        api_strategy::validate_route(&ctx, req)
+            .await
+            .map_err(|e| route_api_error(strategy_id, "strategy route setup", e, json))?
+    } else {
+        api_strategy::set_route(&ctx, req)
+            .await
+            .map_err(|e| route_api_error(strategy_id, "strategy route setup", e, json))?
+    };
+    emit_route_output(
+        &out,
+        json,
+        if dry_run || !confirmed_save {
+            "validated"
+        } else {
+            "saved"
+        },
+    )
+}
+
+async fn route_validate(
+    strategy_id: &str,
+    from_json: Option<&PathBuf>,
+    from_stdin: bool,
+    json: bool,
+) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let route = if from_stdin || from_json.is_some() {
+        read_route_definition(strategy_id, from_json, from_stdin, json, "validate")?
+    } else {
+        let strategy = api_strategy::get(&ctx, strategy_id)
+            .await
+            .map_err(|e| route_api_error(strategy_id, "strategy route validate", e, json))?;
+        match strategy.pipeline.route {
+            Some(route) => route,
+            None => {
+                let message = "strategy has no saved Route Builder route";
+                return route_json_or_cli_error(strategy_id, message, XvnExit::Usage, json);
+            }
+        }
+    };
+    let out = api_strategy::validate_route(
+        &ctx,
+        api_strategy::SetRouteReq {
+            strategy_id: strategy_id.to_string(),
+            route,
+        },
+    )
+    .await
+    .map_err(|e| route_api_error(strategy_id, "strategy route validate", e, json))?;
+    emit_route_output(&out, json, "validated")
+}
+
+fn read_route_definition(
+    strategy_id: &str,
+    from_json: Option<&PathBuf>,
+    from_stdin: bool,
+    json: bool,
+    verb: &str,
+) -> CliResult<RouteDefinition> {
+    let raw = if from_stdin {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("failed to read route JSON from stdin: {e}")))?;
+        if buf.trim().is_empty() {
+            return route_json_or_cli_error(
+                strategy_id,
+                "stdin is empty; pipe RouteDefinition JSON to strategy route --from-stdin",
+                XvnExit::Usage,
+                json,
+            );
+        }
+        buf
+    } else if let Some(path) = from_json {
+        let buf = std::fs::read_to_string(path).map_err(|e| {
+            route_error_after_optional_json(
+                strategy_id,
+                format!("failed to read route JSON `{}`: {e}", path.display()),
+                XvnExit::Usage,
+                json,
+            )
+        })?;
+        if buf.trim().is_empty() {
+            return route_json_or_cli_error(
+                strategy_id,
+                &format!("route JSON file `{}` is empty", path.display()),
+                XvnExit::Usage,
+                json,
+            );
+        }
+        buf
+    } else {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "strategy route {verb} requires --from-stdin or --from-json"
+        )));
+    };
+
+    serde_json::from_str::<RouteDefinition>(&raw).map_err(|e| {
+        route_error_after_optional_json(
+            strategy_id,
+            format!("invalid route JSON: {e}"),
+            XvnExit::Usage,
+            json,
+        )
+    })
+}
+
+fn read_route_wizard(strategy_id: &str, json: bool) -> CliResult<(RouteDefinition, bool)> {
+    let router_role = prompt_route_answer("router role")?;
+    let branch_targets = prompt_route_answer("branch targets (comma-separated)")?;
+    let graph_from_role = prompt_route_answer("graph route source")?;
+    let graph_to_role = prompt_route_answer("graph route target")?;
+    let condition = prompt_route_answer("optional graph route condition (field=value)")?;
+    let context_fields = prompt_route_answer("context fields (comma-separated)")?;
+    let trace_mode = prompt_route_answer("trace mode (compact|full)")?;
+    let confirm_save = prompt_route_answer("confirm save (y/N)")?;
+
+    let route = RouteDefinition {
+        router_role: router_role.trim().to_string(),
+        branches: parse_route_branches(&branch_targets),
+        graph_edges: vec![RouteGraphEdge {
+            from_role: graph_from_role.trim().to_string(),
+            to_role: graph_to_role.trim().to_string(),
+            condition: parse_route_condition(strategy_id, &condition, json)?,
+        }],
+        context_fields: parse_route_context_fields(strategy_id, &context_fields, json)?,
+        trace_mode: parse_route_trace_mode(strategy_id, &trace_mode, json)?,
+    };
+    let confirmed_save = matches!(confirm_save.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+
+    Ok((route, confirmed_save))
+}
+
+fn prompt_route_answer(prompt: &str) -> CliResult<String> {
+    eprint!("{prompt}: ");
+    std::io::stderr()
+        .flush()
+        .map_err(|e| CliError::usage(anyhow::anyhow!("failed to flush route wizard prompt: {e}")))?;
+
+    let mut answer = String::new();
+    let bytes = std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("failed to read route wizard answer: {e}")))?;
+    if bytes == 0 {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "route wizard expected an answer for `{prompt}`"
+        )));
+    }
+    Ok(answer.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn parse_route_branches(raw: &str) -> Vec<RouteBranch> {
+    split_csv(raw)
+        .into_iter()
+        .map(|target_role| RouteBranch { target_role })
+        .collect()
+}
+
+fn parse_route_condition(strategy_id: &str, raw: &str, json: bool) -> CliResult<Option<EdgePredicate>> {
+    let condition = raw.trim();
+    if condition.is_empty() {
+        return Ok(None);
+    }
+    let Some((field, value)) = condition.split_once('=') else {
+        return route_json_or_cli_error(
+            strategy_id,
+            "route wizard condition must be blank or use field=value",
+            XvnExit::Usage,
+            json,
+        );
+    };
+    let signal_field = field.trim();
+    if signal_field.is_empty() {
+        return route_json_or_cli_error(
+            strategy_id,
+            "route wizard condition field must be non-empty",
+            XvnExit::Usage,
+            json,
+        );
+    }
+    let value = parse_condition_value(value.trim());
+    Ok(Some(EdgePredicate::Eq {
+        signal_field: signal_field.to_string(),
+        value,
+    }))
+}
+
+fn parse_condition_value(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+}
+
+fn parse_route_context_fields(strategy_id: &str, raw: &str, json: bool) -> CliResult<Vec<RouteContextField>> {
+    split_csv(raw)
+        .into_iter()
+        .map(|field| {
+            serde_json::from_value::<RouteContextField>(serde_json::Value::String(field.to_ascii_lowercase()))
+                .map_err(|e| {
+                    route_error_after_optional_json(
+                        strategy_id,
+                        format!("invalid route context field `{field}`: {e}"),
+                        XvnExit::Usage,
+                        json,
+                    )
+                })
+        })
+        .collect()
+}
+
+fn parse_route_trace_mode(strategy_id: &str, raw: &str, json: bool) -> CliResult<RouteTraceMode> {
+    let mode = raw.trim();
+    if mode.is_empty() {
+        return Ok(RouteTraceMode::Compact);
+    }
+    serde_json::from_value::<RouteTraceMode>(serde_json::Value::String(mode.to_ascii_lowercase())).map_err(
+        |e| {
+            route_error_after_optional_json(
+                strategy_id,
+                format!("invalid route trace mode `{mode}`: {e}"),
+                XvnExit::Usage,
+                json,
+            )
+        },
+    )
+}
+
+fn split_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn emit_route_output(out: &api_strategy::StrategyRouteOut, json: bool, action: &str) -> CliResult<()> {
+    if json {
+        if !out.readiness.launchable {
+            let body = serde_json::json!({
+                "strategy_id": out.strategy.manifest.id,
+                "readiness": out.readiness,
+                "strategy": out.strategy,
+            });
+            crate::io::print_json(&body)?;
+        } else {
+            crate::io::print_json(out)?;
+        }
+    } else {
+        println!(
+            "route {action} for strategy {} (routed: {})",
+            out.strategy.manifest.id, out.readiness.routed
+        );
+    }
+    if !out.readiness.launchable {
+        return Err(CliError {
+            exit: XvnExit::OptValidation,
+            source: anyhow::anyhow!(
+                "Route Builder route is not launchable; fix readiness reasons before forward test or live trading"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn route_api_error(strategy_id: &str, prefix: &str, error: ApiError, json: bool) -> CliError {
+    let exit = match &error {
+        ApiError::NotFound(_) => XvnExit::NotFound,
+        ApiError::Validation(_) => XvnExit::Usage,
+        ApiError::Conflict(_) => XvnExit::Conflict,
+        ApiError::Internal(_) | ApiError::Db(_) | ApiError::Other(_) => XvnExit::Upstream,
+    };
+    let message = match &error {
+        ApiError::NotFound(message)
+        | ApiError::Validation(message)
+        | ApiError::Conflict(message)
+        | ApiError::Internal(message) => message.clone(),
+        ApiError::Db(_) | ApiError::Other(_) => error.to_string(),
+    };
+    if json {
+        let body = serde_json::json!({
+            "strategy_id": strategy_id,
+            "errors": [message],
+        });
+        if let Err(err) = crate::io::print_json(&body) {
+            return err;
+        }
+    }
+    CliError {
+        exit,
+        source: anyhow::anyhow!("{prefix}: {error}"),
+    }
+}
+
+fn route_json_or_cli_error<T>(strategy_id: &str, message: &str, exit: XvnExit, json: bool) -> CliResult<T> {
+    if json {
+        let body = serde_json::json!({
+            "strategy_id": strategy_id,
+            "errors": [message],
+        });
+        crate::io::print_json(&body)?;
+    }
+    Err(CliError {
+        exit,
+        source: anyhow::anyhow!(message.to_string()),
+    })
+}
+
+fn route_error_after_optional_json(
+    strategy_id: &str,
+    message: String,
+    exit: XvnExit,
+    json: bool,
+) -> CliError {
+    if json {
+        let body = serde_json::json!({
+            "strategy_id": strategy_id,
+            "errors": [message.clone()],
+        });
+        if let Err(err) = crate::io::print_json(&body) {
+            return err;
+        }
+    }
+    CliError {
+        exit,
+        source: anyhow::anyhow!(message),
+    }
+}
+
 async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliResult<()> {
     let kind = parse_pipeline_kind(kind)?;
     let edges = edges
@@ -2019,6 +2443,7 @@ async fn set_pipeline(strategy_id: &str, kind: &str, edges: &[String]) -> CliRes
             strategy_id: strategy_id.to_string(),
             kind,
             edges,
+            route: None,
         },
     )
     .await
@@ -2083,7 +2508,7 @@ async fn add_filter(
         .any(|s| s.allowed_tools.iter().any(|tool| tool == "indicator_panel"));
     if !is_filter_capable {
         return Err(CliError::usage(anyhow::anyhow!(
-            "agent `{filter_agent_id}` (\"{}\") cannot run as a filter — grant `indicator_panel` with `xvn agent create --tools indicator_panel ...` or `xvn agent set-tools`.",
+            "agent `{filter_agent_id}` (\"{}\") is not Filter-capable and cannot run as a filter — grant `indicator_panel` with `xvn agent create --tools indicator_panel ...` or `xvn agent set-tools`.",
             filter_agent.name,
         )));
     }
@@ -2135,6 +2560,7 @@ async fn add_filter(
         strategy.pipeline = PipelineDef {
             kind: PipelineKind::Graph,
             edges: materialized_edges,
+            route: None,
         };
     }
 

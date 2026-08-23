@@ -113,6 +113,7 @@ async fn assert_surface_reaches_sidecar(surface: &str, run_mode: RunMode) {
         trace_attrs: None,
         current_index: 0,
         total_agents: 1,
+        agent_roles: &["trader".to_string()],
         activates: Capability::Trader,
         recorder: None,
         runtime: Default::default(),

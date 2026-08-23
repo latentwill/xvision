@@ -54,6 +54,7 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
         pipeline: PipelineDef {
             kind: PipelineKind::Single,
             edges: vec![],
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,

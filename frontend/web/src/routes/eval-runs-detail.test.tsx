@@ -688,10 +688,13 @@ describe("EvalRunDetailRoute", () => {
       await screen.findByText(/no review yet for this run/i),
     ).toBeInTheDocument();
     const preset = screen.getByLabelText("Review prompt preset");
-    expect(preset).toHaveTextContent("Fast Trader");
     expect(preset).toHaveTextContent("Reasoning");
-    expect(preset).toHaveTextContent("Risk");
-    expect(preset).toHaveTextContent("Research");
+    fireEvent.click(preset);
+    const listbox = await screen.findByRole("listbox");
+    expect(within(listbox).getByRole("option", { name: "Fast Trader" })).toBeInTheDocument();
+    expect(within(listbox).getByRole("option", { name: "Reasoning" })).toBeInTheDocument();
+    expect(within(listbox).getByRole("option", { name: "Risk" })).toBeInTheDocument();
+    expect(within(listbox).getByRole("option", { name: "Research" })).toBeInTheDocument();
     expect(screen.queryByText(/claude-sonnet/i)).not.toBeInTheDocument();
   });
 

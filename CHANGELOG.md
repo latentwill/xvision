@@ -12,6 +12,44 @@ container reports must match the tag pulled.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Eval substrate correctness** — backtest executor: flip PnL no longer
+  erases prior realized PnL (entry notional frozen at entry); sizing uses
+  marked equity including unrealized PnL; market fills defer to next-bar
+  open (lookahead removed); stop/target fills are gap-aware with slippage.
+  Baselines and report metrics updated to match (`xvision-eval`).
+- **Live deployments list survived the `live`→`fwd` mode rename** — the
+  deployments projection filtered `mode = 'live'`, matching no forward-test
+  rows written after the rename; now matches both spellings for pre-rename
+  rows (`xvision-engine`). The watchdog timeout sweep exempts both too.
+- **Run charts tolerate corrupt strategy files** — chart granularity
+  resolution falls back to Hour1 when the strategy artifact is unreadable,
+  mirroring the asset fallback; old runs can outlive malformed artifacts.
+- **Sidecar socket paths fit macOS `SUN_LEN`** — UDS paths longer than the
+  104-byte kernel limit now fall back to a short hash-named socket in the
+  system temp dir instead of failing every spawn with "path must be shorter
+  than SUN_LEN" (`xvision-ipc`).
+- **`strategy create --from-file` / atomic create now index the strategy**
+  into the search index, so `xvn strategy ls` lists freshly created
+  strategies without a manual `strategy reindex`.
+- **`bars_cache` migration restored** — migration 010 was declared but never
+  executed by `ApiContext::open`, breaking any flow touching the bars cache.
+- Stale test scaffolds across engine/CLI/dashboard suites updated to current
+  contracts (071 delayed-decision migration, launch-grant tooling, scenario
+  asset-free/timeframe-free shape, `live`→`fwd` mode rename, fail-closed
+  auth gate, allowlist policy tests, docs review dates).
+
+## [0.38.0] - 2026-07-01
+
+### Fixed
+
+- **Optimizer launch convergence** — `xvn optimize run`, the dashboard launch
+  panel, and `POST /api/optimize/run` now share the automated optimizer-cycle
+  path. `/api/optimize/run-cycle` remains unregistered, and the legacy
+  memory-distillation shortcut is no longer described as the agent/dashboard
+  optimizer route.
+
 ### Changed
 
 - **Dashboard auth is now opt-in** — the server no longer requires

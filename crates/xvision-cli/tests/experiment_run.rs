@@ -40,6 +40,53 @@ async fn ctx_with_experiment_tables() -> (ApiContext, tempfile::TempDir) {
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
+    std::fs::create_dir_all(dir.path().join("config")).unwrap();
+    std::fs::write(
+        dir.path().join("config").join("default.toml"),
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openai"
+kind = "openai-compat"
+base_url = "https://api.openai.com/v1"
+api_key_env = "XVN_EXPERIMENT_MOCK_KEY"
+enabled_models = ["gpt-4.1-mini"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "vectors"
+probes = "probes"
+sqlite_url = "sqlite://xvision.db"
+"#,
+    )
+    .map(|_| {
+        std::env::set_var(
+            "XVN_AGENTD_BIN",
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../xvision-engine/tests/fixtures/mock_agentd.js"),
+        )
+    })
+    .unwrap();
+    std::env::set_var("XVN_EXPERIMENT_MOCK_KEY", "test-key");
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -87,7 +134,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -161,7 +208,7 @@ async fn experiment_run_creates_experiment_binds_batch_writes_result() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = ExperimentRunRequest {
         name: "compression-sniper-v2-smoke".into(),
@@ -229,7 +276,7 @@ async fn experiment_run_result_json_has_expected_shape() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = ExperimentRunRequest {
         name: "shape-test".into(),
@@ -294,7 +341,7 @@ async fn experiment_run_json_output_shape() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = ExperimentRunRequest {
         name: "json-shape-test".into(),
@@ -352,7 +399,7 @@ async fn experiment_run_db_row_has_result_json_populated() {
     save_test_strategy(&ctx, strategy_id).await;
 
     let dispatch = hold_dispatch();
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
 
     let req = ExperimentRunRequest {
         name: "db-roundtrip-test".into(),

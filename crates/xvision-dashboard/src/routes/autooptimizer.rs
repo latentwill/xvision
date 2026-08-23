@@ -582,8 +582,8 @@ pub async fn get_lineage_node(
 // GET /api/autooptimizer/cycles
 //
 // F13/F19 (QA 2026-06-04): a first-class "historic run" list derived from the
-// lineage nodes a completed `run-cycle` produced (grouped by cycle_id). The
-// pre-existing `GET /api/autooptimizer` list serves the memory-distillation
+// lineage nodes a completed optimizer launch produced (grouped by cycle_id).
+// The pre-existing `GET /api/autooptimizer` list serves the memory-distillation
 // ledger, which mutation cycles deliberately don't write to; this surfaces the
 // cycles an operator actually ran.
 // ---------------------------------------------------------------------------
@@ -754,8 +754,8 @@ pub async fn get_cycle_cost_handler(
 // POST /api/autooptimizer/lineage/:hash/retire
 //
 // F29: retire a cycle-produced candidate by moving its lineage node to
-// `Rejected` (the operator-surface "Rejected" status). Brings the CLI
-// `xvn optimizer retire` affordance to the dashboard genealogy. Idempotent:
+// `Rejected` (the operator-surface "Rejected" status). Brings the former CLI
+// `optimizer retire` affordance to the dashboard genealogy. Idempotent:
 // retiring an already-rejected node succeeds. 404 when no node has that hash.
 // ---------------------------------------------------------------------------
 
@@ -1753,6 +1753,7 @@ mod tests {
                 parent_holdout_score: Some(0.8),
                 child_holdout_score: Some(1.0),
                 gate_epsilon: Some(0.05),
+                holdout_epsilon: None,
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),
@@ -1762,6 +1763,12 @@ mod tests {
                 edge_over_random: Some(0.5),
                 parent_edge: Some(0.2),
                 edge_delta: Some(0.3),
+                parent_n_trades: None,
+                child_n_trades: None,
+                min_trade_retention_ratio: None,
+                parent_realized_return_ratio: None,
+                child_realized_return_ratio: None,
+                gate_min_realized_return_ratio: None,
             },
         )
         .await

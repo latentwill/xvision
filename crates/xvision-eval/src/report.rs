@@ -157,6 +157,7 @@ pub fn render(result: &BacktestResult, cfg: &ReportConfig) -> anyhow::Result<Str
             &cfg.baseline_arm,
             cfg.n_bootstrap_resamples,
             cfg.block_size,
+            cfg.periods_per_year,
         ) {
             Ok(m) => m,
             Err(e) => {

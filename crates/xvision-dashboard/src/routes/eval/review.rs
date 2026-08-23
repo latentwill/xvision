@@ -507,6 +507,7 @@ mod tests {
                     fill_size: Some(0.01),
                     fee: Some(1.0),
                     pnl_realized: Some(0.0),
+                    delayed: Some(false),
                 })
                 .await
                 .unwrap();
@@ -638,11 +639,12 @@ mod tests {
         let summary = resolve_scenario_summary(&ctx, &run_id)
             .await
             .expect("seeded canonical scenario should resolve");
-        // id and name come from the canonical scenario; granularity +
-        // window come from the parsed body_json.
+        // id and name come from the canonical scenario; the window comes
+        // from the parsed body_json. Asset/granularity stay None —
+        // scenarios are asset-free and timeframe-free now.
         assert_eq!(summary.id, scenario.id);
         assert_eq!(summary.name.as_deref(), Some(scenario.display_name.as_str()));
-        assert!(summary.granularity.is_some(), "granularity should be set");
+        assert!(summary.granularity.is_none(), "scenarios carry no granularity");
         assert!(summary.start.is_some(), "time_window.start should be set");
         assert!(summary.end.is_some(), "time_window.end should be set");
     }

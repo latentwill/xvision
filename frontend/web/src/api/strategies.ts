@@ -108,9 +108,31 @@ export type PipelineEdge = {
   /// upstream Filter agent's most-recent signal.
   condition?: EdgePredicate | null;
 };
+
+export type { RouteContextField } from "./types.gen/RouteContextField";
+export type { RouteTraceMode } from "./types.gen/RouteTraceMode";
+export type { RouteBranch } from "./types.gen/RouteBranch";
+export type { RouteGraphEdge } from "./types.gen/RouteGraphEdge";
+export type { RouteDefinition } from "./types.gen/RouteDefinition";
+import type { RouteContextField } from "./types.gen/RouteContextField";
+import type { RouteDefinition } from "./types.gen/RouteDefinition";
+
+export type RouteDiagnosticReason = {
+  code: string;
+  message: string;
+  blocking: boolean;
+};
+
+export type RouteReadiness = {
+  routed: boolean;
+  context_fields: RouteContextField[];
+  launchable: boolean;
+  reasons: RouteDiagnosticReason[];
+};
 export type PipelineDef = {
   kind: PipelineKind;
   edges?: PipelineEdge[];
+  route?: RouteDefinition | null;
 };
 
 type StrategiesListResponse = {
@@ -215,6 +237,11 @@ export type Strategy = {
   briefing_indicators?: string[];
 };
 
+export type StrategyRouteOut = {
+  strategy: Strategy;
+  readiness: RouteReadiness;
+};
+
 export type SetFilterBody = {
   source: string;
   format: "json";
@@ -229,6 +256,7 @@ export type StrategyAgentsOut = {
 export type SetPipelineBody = {
   kind: PipelineKind;
   edges?: PipelineEdge[];
+  route?: RouteDefinition | null;
 };
 
 export type PutRiskBody =
@@ -537,6 +565,32 @@ export function setStrategyPipeline(
     `/api/strategy/${encodeURIComponent(strategyId)}/pipeline`,
     {
       method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function setStrategyRoute(
+  strategyId: string,
+  body: RouteDefinition,
+): Promise<StrategyRouteOut> {
+  return apiFetch<StrategyRouteOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/route`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function validateStrategyRoute(
+  strategyId: string,
+  body: RouteDefinition,
+): Promise<StrategyRouteOut> {
+  return apiFetch<StrategyRouteOut>(
+    `/api/strategy/${encodeURIComponent(strategyId)}/route/validate`,
+    {
+      method: "POST",
       body: JSON.stringify(body),
     },
   );

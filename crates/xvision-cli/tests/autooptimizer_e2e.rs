@@ -127,19 +127,17 @@ fn optimize_help_exits_zero_and_lists_known_subcommands() {
         );
     }
 
-    // Removed verbs must NOT appear.
-    assert!(
-        !stdout.contains("mutate-once"),
-        "optimize --help must NOT list mutate-once (removed), got:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("run-cycle"),
-        "optimize --help must NOT list run-cycle (removed), got:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("demo"),
-        "optimize --help must NOT list demo (removed), got:\n{stdout}"
-    );
+    // Removed verbs must NOT appear as command rows. Match rows instead of raw
+    // substrings so unrelated prose like "demonstration" doesn't trip the test.
+    let command_rows: Vec<&str> = stdout.lines().filter(|line| line.starts_with("  ")).collect();
+    for verb in &["mutate-once", "run-cycle", "demo"] {
+        assert!(
+            !command_rows
+                .iter()
+                .any(|line| line.trim_start().starts_with(verb)),
+            "optimize --help must NOT list {verb:?} (removed), got:\n{stdout}"
+        );
+    }
 }
 
 /// GH #965/#966/#968: `xvn optimize run --help` exposes the continuous-loop and

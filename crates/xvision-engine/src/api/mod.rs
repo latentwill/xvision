@@ -471,6 +471,7 @@ impl ApiContext {
         sqlx::query(MIGRATION_005_AGENTS).execute(&pool).await?;
         sqlx::query(MIGRATION_007_SKILLS).execute(&pool).await?;
         seed_default_skills(&pool).await?;
+        sqlx::query(MIGRATION_010_BARS_CACHE).execute(&pool).await?;
         sqlx::query(MIGRATION_011_SCENARIOS).execute(&pool).await?;
         sqlx::query(MIGRATION_012_RUNS_FK).execute(&pool).await?;
         sqlx::query(MIGRATION_013_CLI_JOBS).execute(&pool).await?;
@@ -528,7 +529,7 @@ impl ApiContext {
         migrate_holdout(&pool).await?;
         migrate_agent_slot_max_wall_ms(&pool).await?;
         // F8: the autooptimizer lineage tables now live in xvn.db (shared by
-        // the dashboard panel read path and CLI run-cycle writes).
+        // the dashboard panel read path and `xvn optimize run` writes).
         migrate_autooptimizer_lineage(&pool).await?;
         // F8 one-time import of any pre-fix `lineage/lineage.db` (non-fatal).
         import_legacy_lineage_db(&pool, xvn_home).await;
@@ -1216,7 +1217,7 @@ async fn migrate_autooptimizer_lineage(pool: &SqlitePool) -> ApiResult<()> {
 }
 
 /// F8 one-time import: copy lineage rows from a legacy
-/// `$XVN_HOME/lineage/lineage.db` (written by pre-fix CLI `run-cycle` runs)
+/// `$XVN_HOME/lineage/lineage.db` (written by legacy CLI cycle runs)
 /// into the now-canonical `xvn.db` so prior CLI cycles aren't lost from the
 /// optimizer panel. Best-effort and non-fatal — a failure here must never
 /// block `ApiContext::open`. Guarded by a sentinel file so the ATTACH+copy

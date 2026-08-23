@@ -110,7 +110,7 @@ pub struct AppState {
     safety_manager: SafetyManager,
     /// Broadcast channel for autooptimizer cycle progress events. The IPC
     /// bridge (`ipc::spawn_autooptimizer_subscriber`) publishes here when
-    /// `xvn optimizer mutate-once --ipc-socket` connects; the SSE handler
+    /// `xvn optimize run --ipc-socket` connects; the SSE handler
     /// at `GET /api/autooptimizer/events` subscribes per request.
     pub autooptimizer_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
     /// Broadcast channel for autoresearch training subprocess stdout lines.

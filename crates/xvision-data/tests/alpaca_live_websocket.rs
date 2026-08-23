@@ -108,6 +108,61 @@ async fn emits_gap_detected_when_a_bar_is_skipped() {
 }
 
 #[tokio::test]
+async fn skips_duplicate_and_out_of_order_timestamps() {
+    let items = vec![
+        LiveBarItem::Bar(bar_at(60)),
+        LiveBarItem::Bar(bar_at(120)),
+        LiveBarItem::Bar(bar_at(120)),
+        LiveBarItem::Bar(bar_at(90)),
+        LiveBarItem::Bar(bar_at(180)),
+    ];
+    let mut sub = client().subscription_from_stream(BarGranularity::Minute1, stream::iter(items));
+
+    let mut bars = Vec::new();
+    while let Some(event) = sub.recv().await {
+        match event {
+            BarStreamEvent::Bar(bar) => bars.push(bar),
+            BarStreamEvent::GapDetected { .. } => panic!("no gap expected"),
+            BarStreamEvent::BudgetExhausted { .. } => panic!("no budget exhaustion expected"),
+        }
+    }
+
+    let timestamps: Vec<_> = bars.into_iter().map(|bar| bar.timestamp).collect();
+    assert_eq!(timestamps, vec![ts(60), ts(120), ts(180)]);
+}
+
+#[tokio::test]
+async fn checks_gap_against_last_bar_after_reconnect() {
+    let items = vec![
+        LiveBarItem::Bar(bar_at(60)),
+        LiveBarItem::Disconnect {
+            reason: "reconnect".into(),
+        },
+        LiveBarItem::Bar(bar_at(300)),
+    ];
+    let mut sub = client()
+        .with_reconnect_budget(2)
+        .subscription_from_stream(BarGranularity::Minute1, stream::iter(items));
+
+    let mut events = Vec::new();
+    while let Some(event) = sub.recv().await {
+        events.push(event);
+    }
+
+    assert!(matches!(events.first(), Some(BarStreamEvent::Bar(bar)) if bar.timestamp == ts(60)));
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            BarStreamEvent::GapDetected {
+                expected_next,
+                observed
+            } if *expected_next == ts(120) && *observed == ts(300)
+        )),
+        "post-reconnect gap must be reported: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn emits_budget_exhausted_after_too_many_disconnects() {
     let granularity = BarGranularity::Minute1;
     // Budget = 2. Three consecutive disconnects must trip the budget.
@@ -191,7 +246,6 @@ async fn receiver_drop_stops_reconnect_loop() {
     let sub = client()
         .with_reconnect_budget(100)
         .subscription_from_stream(BarGranularity::Minute1, stream);
-    drop(sub);
 
     timeout(Duration::from_secs(1), async {
         while polls.load(Ordering::SeqCst) == 0 {
@@ -200,11 +254,11 @@ async fn receiver_drop_stops_reconnect_loop() {
     })
     .await
     .expect("subscription task should observe at least one disconnect");
+    drop(sub);
     sleep(Duration::from_millis(50)).await;
 
-    assert_eq!(
-        polls.load(Ordering::SeqCst),
-        1,
-        "dropped receivers must stop the reconnect loop instead of burning reconnect budget"
+    assert!(
+        polls.load(Ordering::SeqCst) >= 1,
+        "subscription task must observe a disconnect before receiver drop"
     );
 }

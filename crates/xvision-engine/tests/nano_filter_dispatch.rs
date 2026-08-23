@@ -93,7 +93,7 @@ async fn checkpoint_slot_veto_neutral_produces_null_payload() {
     // Safety: set env var while holding ENV_LOCK so no other test sees it.
     // SAFETY: single-threaded access guaranteed by ENV_LOCK.
     unsafe { std::env::set_var("STUB_DIRECTION", "NEUTRAL") };
-    let signal = dispatch_filter_with_checkpoint(
+    let err = dispatch_filter_with_checkpoint(
         "nanochat",
         NanoDirection::Long,
         &spec,
@@ -105,12 +105,10 @@ async fn checkpoint_slot_veto_neutral_produces_null_payload() {
         /*timeout_ms=*/ 5_000,
     )
     .await
-    .unwrap();
+    .expect_err("neutral output must fail the veto validation");
     unsafe { std::env::remove_var("STUB_DIRECTION") };
-
     assert!(
-        signal.payload.is_null(),
-        "NEUTRAL + veto=true must produce null payload, got: {:?}",
-        signal.payload
+        err.to_string().contains("direction=Neutral"),
+        "error must identify the neutral direction: {err}"
     );
 }

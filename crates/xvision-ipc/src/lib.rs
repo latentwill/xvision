@@ -39,7 +39,26 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 pub fn local_socket_path(dir: &Path, file_name: &str) -> PathBuf {
     #[cfg(unix)]
     {
-        dir.join(file_name)
+        let joined = dir.join(file_name);
+        // macOS caps a UDS path at `SUN_LEN` (104 bytes incl. the NUL).
+        // Long prefixes — macOS tempdirs, deep `xvn_home`s — overflow it
+        // and every bind fails with "path must be shorter than SUN_LEN".
+        // Fall back to a short hash-named socket in the system temp dir;
+        // callers already embed a ULID in `file_name`, so the hashed name
+        // is unique per call.
+        const MAX_SUN_PATH: usize = 100;
+        if joined.as_os_str().len() >= MAX_SUN_PATH {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            dir.hash(&mut hasher);
+            file_name.hash(&mut hasher);
+            let short_name = match file_name.rsplit_once('.') {
+                Some((stem, ext)) => format!("xvn-ipc-{:016x}.{ext}", hasher.finish()),
+                None => format!("xvn-ipc-{:016x}", hasher.finish()),
+            };
+            return std::env::temp_dir().join(short_name);
+        }
+        joined
     }
     #[cfg(windows)]
     {
@@ -236,6 +255,24 @@ mod tests {
         assert_eq!(p, PathBuf::from("/var/run/xvn/agentd-abc.ev.sock"));
         #[cfg(windows)]
         assert_eq!(p, PathBuf::from(r"\\.\pipe\agentd-abc.ev.sock"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_socket_path_falls_back_when_over_sun_len() {
+        // A macOS-style tempdir prefix plus the agentd socket filename
+        // overflows SUN_LEN (104); the helper must return a short
+        // hash-named path under the system temp dir instead.
+        let deep = Path::new(
+            "/var/folders/hb/tz1vs5c4nd6vbp4_bz4twsw0000gn/T/.tmp1234567890/xvn-home/agent_runs/sockets",
+        );
+        let name = "agentd-01HZZZZZZZZZZZZZZZZZZZZZZZ.sock";
+        let p = local_socket_path(deep, name);
+        assert!(
+            p.as_os_str().len() < 100,
+            "fallback path must fit SUN_LEN, got {p:?}"
+        );
+        assert!(p.to_string_lossy().starts_with("/tmp") || p.starts_with(std::env::temp_dir()));
     }
 
     /// Full connect → accept → newline-JSON round-trip over the abstraction,

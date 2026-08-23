@@ -85,6 +85,7 @@ mod tests {
         assert_eq!(
             slugs,
             vec![
+                "updates",
                 "quickstart",
                 "strategies",
                 "agents",

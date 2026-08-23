@@ -177,6 +177,7 @@ mod tests {
                 fill_price: Some(100.0),
                 fill_size: 1.0,
                 fee: None,
+                note: None,
             })
         }
 

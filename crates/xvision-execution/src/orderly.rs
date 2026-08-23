@@ -178,7 +178,7 @@ impl OrderlyOrder {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self.status.as_str(),
-            "FILLED" | "CANCELLED" | "REJECTED" | "EXPIRED"
+            "FILLED" | "CANCELLED" | "REJECTED" | "EXPIRED" | "REPLACED"
         )
     }
     pub fn is_rejected(&self) -> bool {
@@ -727,11 +727,15 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         for _ in 0..MAX_POLLS {
             let order = self.api.get_order(order_id).await?;
             if order.is_terminal() {
-                if order.is_unfilled_terminal() {
-                    return Err(ExecutorError::Rejected(format!(
-                        "order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
-                        order.status
-                    )));
+                if order.is_rejected() {
+                    return Err(ExecutorError::Rejected(format!("order {order_id} rejected")));
+                }
+                let filled_qty = order.executed_quantity.unwrap_or(0.0);
+                if filled_qty <= 0.0 {
+                    return Err(ExecutorError::NotFilled {
+                        status: order.status,
+                        filled_qty,
+                    });
                 }
                 return Ok(order);
             }
@@ -853,7 +857,11 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         // 7. Poll for fill.
         let filled = self.await_fill(entry.order_id).await?;
         let fill_price = filled.average_executed_price.unwrap_or(mark_price);
-        let fill_qty = filled.executed_quantity.unwrap_or(qty);
+        let fill_qty = filled.executed_quantity.unwrap_or(0.0);
+        let mut notes = Vec::new();
+        if fill_qty > 0.0 && fill_qty < qty {
+            notes.push(format!("partial fill {fill_qty}/{qty}"));
+        }
 
         // 8. Place TP/SL bracket legs (best-effort).
         let close_side = match side {
@@ -872,7 +880,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         };
 
         if fill_price > 0.0 {
-            let _ = self
+            if let Err(e) = self
                 .api
                 .create_algo_order(
                     &symbol,
@@ -883,9 +891,17 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     Some(venue_client_id("tp-", &td.cycle_id.to_string())),
                     Some(true),
                 )
-                .await;
+                .await
+            {
+                tracing::error!(
+                    target: "xvision::orderly",
+                    asset = %td.asset,
+                    "orderly take-profit algo order failed (entry stands): {e}"
+                );
+                notes.push(format!("TP placement failed: {e}"));
+            }
 
-            let _ = self
+            if let Err(e) = self
                 .api
                 .create_algo_order(
                     &symbol,
@@ -896,14 +912,22 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     Some(venue_client_id("sl-", &td.cycle_id.to_string())),
                     Some(true),
                 )
-                .await;
+                .await
+            {
+                tracing::error!(
+                    target: "xvision::orderly",
+                    asset = %td.asset,
+                    "orderly stop-loss algo order failed (entry stands): {e}"
+                );
+                notes.push(format!("SL placement failed: {e}"));
+            }
         }
 
         // 9. Build receipt.
         let filled_size_bps = if equity > 0.0 && fill_price > 0.0 {
             ((fill_qty * fill_price / equity) * 10_000.0).round() as u32
         } else {
-            td.size_bps
+            0
         };
 
         Ok(ExecutionReceipt {
@@ -916,7 +940,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             fee_bps: 0,
             submitted_at: Utc::now(),
             filled_at: Some(Utc::now()),
-            note: None,
+            note: (!notes.is_empty()).then(|| notes.join("; ")),
         })
     }
 
@@ -1078,6 +1102,7 @@ mod tests {
         account: OrderlyAccount,
         positions: Vec<OrderlyPosition>,
         create_order_err: Option<ExecutorError>,
+        algo_err: Option<String>,
         captured_create: Arc<Mutex<Option<CreateOrderCall>>>,
         captured_algo: Arc<Mutex<Vec<AlgoOrderCall>>>,
     }
@@ -1095,9 +1120,15 @@ mod tests {
                 account,
                 positions,
                 create_order_err: None,
+                algo_err: None,
                 captured_create: Arc::new(Mutex::new(None)),
                 captured_algo: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        fn with_algo_err(mut self, err: &str) -> Self {
+            self.algo_err = Some(err.to_string());
+            self
         }
 
         fn with_err(mut self, err: ExecutorError) -> Self {
@@ -1105,7 +1136,6 @@ mod tests {
             self
         }
     }
-
     #[async_trait]
     impl OrderlyApi for MockOrderlyApi {
         async fn create_order(
@@ -1149,6 +1179,9 @@ mod tests {
                 trigger_price,
                 client_order_id,
             });
+            if let Some(err) = &self.algo_err {
+                return Err(ExecutorError::Rejected(err.clone()));
+            }
             Ok(999)
         }
 
@@ -1255,12 +1288,14 @@ mod tests {
         // NO positions — the mark must come from the public endpoint.
         let api = MockOrderlyApi::new(fixture_account(), vec![], filled.clone(), filled);
         let captured_create = Arc::clone(&api.captured_create);
-
         let executor = OrderlyExecutor::with_api(api);
-        executor
+
+        let receipt = executor
             .submit(&fixture_buy_decision(cycle_id))
             .await
             .expect("submit must succeed");
+        assert_eq!(receipt.filled_size_bps, 700, "receipt must use actual 0.1 fill");
+        assert_eq!(receipt.note.as_deref(), Some("partial fill 0.1/0.2"));
 
         let call = captured_create.lock().unwrap().clone().unwrap();
         // equity 100_000 × 1000 bps = 10_000 notional / 50_000 public mark.
@@ -1300,8 +1335,14 @@ mod tests {
             .await
             .expect_err("cancelled-unfilled must be an error");
         assert!(
-            matches!(err, ExecutorError::Rejected(_)),
-            "expected Rejected, got {err:?}"
+            matches!(
+                &err,
+                ExecutorError::NotFilled {
+                    status,
+                    filled_qty
+                } if status == "CANCELLED" && *filled_qty == 0.0
+            ),
+            "expected NotFilled, got {err:?}"
         );
     }
 
@@ -1383,6 +1424,28 @@ mod tests {
             .as_deref()
             .map(|s| s.starts_with("sl-"))
             .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn bracket_failure_is_reported_without_aborting_entry() {
+        let cycle_id = Uuid::new_v4();
+        let filled = fixture_filled_order(44, Some(&cycle_id.to_string()));
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![fixture_btc_position(0.1)],
+            filled.clone(),
+            filled,
+        )
+        .with_algo_err("venue unavailable");
+        let executor = OrderlyExecutor::with_api(api);
+
+        let receipt = executor
+            .submit(&fixture_buy_decision(cycle_id))
+            .await
+            .expect("entry must succeed when bracket placement fails");
+        let note = receipt.note.expect("bracket failure note");
+        assert!(note.contains("TP placement failed: rejected by venue: venue unavailable"));
+        assert!(note.contains("SL placement failed: rejected by venue: venue unavailable"));
     }
 
     // ── Test 2 ───────────────────────────────────────────────────────────────

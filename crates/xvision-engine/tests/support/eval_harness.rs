@@ -30,6 +30,7 @@ pub async fn fresh_store() -> RunStore {
         include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../../migrations/038_eval_runs_live_config.sql"),
         include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
+        include_str!("../../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

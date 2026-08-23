@@ -224,11 +224,7 @@ impl FillSink for RealBrokerFills {
                 } else {
                     fill_price
                 };
-                let realized = if req.pos != 0.0 {
-                    req.pos * (fill_price - req.entry)
-                } else {
-                    0.0
-                };
+                let realized = realized_pnl_for_fill(req.pos, req.entry, fill_price, fill_size);
                 let fee = conf.fee.unwrap_or(0.0);
                 let provenance = FillProvenance {
                     slip_bps_applied: req.slip_bps,
@@ -245,7 +241,7 @@ impl FillSink for RealBrokerFills {
                 // Terminal order state for this fill — computed once so
                 // the WS-4 `order_state` engine event and the FillRecord
                 // agree byte-for-byte.
-                let order_state = if fill_size + f64::EPSILON < size {
+                let order_state = if fill_size < size * (1.0 - 1e-9) {
                     OrderState::PartiallyFilled
                 } else {
                     OrderState::Filled
@@ -364,10 +360,20 @@ impl FillSink for RealBrokerFills {
     }
 }
 
+/// Calculate PnL for the part of an existing position that the fill closes.
+fn realized_pnl_for_fill(pos: f64, entry: f64, fill_price: f64, fill_size: f64) -> f64 {
+    if pos == 0.0 {
+        return 0.0;
+    }
+    let closed_qty = fill_size.min(pos.abs());
+    pos.signum() * closed_qty * (fill_price - entry)
+}
+
 /// Build a "no-op" `FillRecord` for cases where the action is a hold
 /// or matches the current position. Mirrors the no-op branch in
 /// `simulate_fill_inner` byte-for-byte (modulo the inputs we have
 /// access to here).
+
 fn noop_fill_record(req: &FillRequest) -> FillRecord {
     FillRecord {
         new_pos: req.pos,
@@ -403,5 +409,94 @@ fn rejected_no_fill(req: &FillRequest, class: BrokerErrorClass, reason: String) 
         order_state: Some(OrderState::Rejected),
         volume_cap_hit: None,
         broker_error: Some((class, reason)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use chrono::{TimeZone, Utc};
+    use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation};
+
+    use super::realized_pnl_for_fill;
+    use super::RealBrokerFills;
+    use crate::eval::executor::traits::{FillRequest, FillSink};
+    use crate::eval::scenario::{FeeSource, SlippageModel};
+
+    struct PartialFillBroker;
+
+    #[async_trait]
+    impl BrokerSurface for PartialFillBroker {
+        async fn submit_order(
+            &self,
+            _req: xvision_execution::broker_surface::OrderRequest,
+        ) -> anyhow::Result<OrderConfirmation> {
+            Ok(OrderConfirmation {
+                broker_order_id: "partial-close".into(),
+                fill_price: Some(110.0),
+                fill_size: 0.5,
+                fee: None,
+                note: None,
+            })
+        }
+
+        async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+
+        async fn balance(&self) -> anyhow::Result<f64> {
+            Ok(10_000.0)
+        }
+    }
+
+    fn partial_close_request() -> FillRequest {
+        FillRequest {
+            pos: 2.0,
+            entry: 100.0,
+            action: "flat".into(),
+            next_open: 110.0,
+            bar_volume: 1_000.0,
+            slip_bps: 0.0,
+            spread_bps: 0.0,
+            taker_bps: 0.0,
+            maker_bps: 0.0,
+            equity: 10_000.0,
+            risk_pct: 0.01,
+            slippage_model: SlippageModel::None,
+            fee_source: FeeSource::Default,
+            asset: "BTC/USD".into(),
+            bar_ts: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            bar_open: 110.0,
+            bar_high: 111.0,
+            bar_low: 109.0,
+            bar_close: 110.0,
+            decision_to_fill_ms: 0,
+            bar_duration_ms: 60_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn real_fill_partial_close_realizes_only_filled_size() {
+        let mut fills = RealBrokerFills::new(Arc::new(PartialFillBroker));
+        let record = fills.submit(partial_close_request()).await;
+
+        assert_eq!(record.new_pos, 1.5);
+        assert_eq!(record.realized_pnl, 5.0);
+        assert_eq!(record.fill_size, Some(0.5));
+        assert_eq!(
+            record.order_state,
+            Some(crate::eval::orders::OrderState::PartiallyFilled)
+        );
+    }
+
+    #[test]
+    fn partial_close_pnl_clamps_to_open_position() {
+        assert_eq!(realized_pnl_for_fill(2.0, 100.0, 110.0, 0.5), 5.0);
+        assert_eq!(realized_pnl_for_fill(-2.0, 100.0, 90.0, 0.5), 5.0);
+        // A fill larger than the open position can cross through it, but
+        // realized PnL is limited to the quantity that was already open.
+        assert_eq!(realized_pnl_for_fill(0.25, 100.0, 110.0, 1.0), 2.5);
     }
 }

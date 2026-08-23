@@ -62,10 +62,10 @@ switch to `xvision-dev`.
 - `agent get <id>` — fetch one agent record from the workspace agent library (shape matches the `agents[]` slot in `EvalRunExport`).
 - `agent inspect <id> --diagnostics` — per-capability readiness for one agent (prompt / model / tools / runtime / optimizable). State-only; exits 0 for a resolved agent.
 - `strategy diagnostics <id>` — whole-strategy launch readiness; exits **14** (`OptValidation`) when not launchable, listing each unmet required capability with a typed reason.
-- `optimize` — **canonical Optimizer CLI** (codename autooptimizer): offline strategy-mutation flywheel. Sub-commands: `run --strategy <id> [--cycles N] [--mock]` (full optimizer cycle against a strategy), `run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]`, `mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]`, `demo [--fixture PATH] [-v]`, `inspect <run-id> [--json]`, `memory-demos --target-agent-id <id> [--apply] [--json]`. Offline-only, never on the eval/live path. **Distinct from the deprecated `optimizer`** (see disambiguation below). Operate it via the `xvision/autooptimizer-ops` skill.
-- Agent-facing convenience endpoint: **`POST /api/optimize/run`** — accepts `{"agent_id":"<id>"}` with optional `pattern_text`, `active`, `limit`, `min_observations`. Returns an `AutoOptimizerRunDto`. Synthesizes defaults so the caller doesn't need flywheel internals. Use this when driving xvn as an agent; prefer the CLI `xvn optimize run --strategy <id>` for interactive operator use.
-- **Cross-provider warning**: when the strategy's trader uses a different provider than the optimizer's mutator (e.g. ollama trader + deepseek mutator), the CLI must pass `--provider <trader-provider>` (e.g. `--provider ollama`). The dashboard `POST /api/autooptimizer/run-cycle` auto-detects this; the CLI does not. Without `--provider`, the preflight rejects with a cross-provider error.
-- `optimizer` — **DEPRECATED.** All sub-commands (`run-cycle`, `mutate-once`, `demo`, `run`, `ls`, `inspect`, `gate`, `activate`, `retire`, `lineage`) print deprecation notices and delegate to `xvn optimize`. Use `xvn optimize` instead. Kept for backwards compatibility only.
+- `optimize` — **canonical Optimizer CLI** (codename autooptimizer): offline strategy-mutation flywheel. High-traffic subcommands: `run --strategy <id> [--cycles N] [--mock]` (full optimizer cycle against a strategy), `ls`, `show`, `inspect`, `diff`, `export`, `lineage`, `cancel`, `unlock`, and `explain-missing-data`. Offline-only, never on the eval/live path. **Distinct from the deprecated `optimizer`** (see disambiguation below).
+- Agent/dashboard launch endpoint: **`POST /api/optimize/run`** — accepts the optimizer launch payload (`strategy_id` plus optional provider/model, budget, window, and candidate-count overrides) and runs the real optimizer cycle. This is the HTTP peer of `xvn optimize run`.
+- **Cross-provider warning**: when the strategy's trader uses a different provider than the optimizer's mutator (e.g. ollama trader + deepseek mutator), the CLI must pass `--provider <trader-provider>` (e.g. `--provider ollama`). The dashboard/agent endpoint `POST /api/optimize/run` auto-detects this; the CLI does not. Without `--provider`, the preflight rejects with a cross-provider error.
+- `optimizer` — **DEPRECATED.** Back-compat subcommands print deprecation notices and delegate to `xvn optimize` where an equivalent still exists. Use `xvn optimize` instead. Kept for backwards compatibility only.
 - `flywheel` — observability over memory + Optimizer activity (velocity / health cards).
 - `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
 - `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
@@ -314,18 +314,18 @@ Run the strategy-mutation flywheel **offline** — never on the eval or live pat
 
 Sub-commands:
 
-- `run --strategy <id> [--cycles N] [--mock]` — run the full optimizer cycle against a strategy (strategy ID is required)
-- `run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]` — full optimizer cycle (strategy optional for backwards compat)
-- `mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]` — single mutation proposal
-- `demo [--fixture PATH] [-v]` — replay a saved cycle from a fixture file
+- `run --strategy <id> [--cycles N] [--mock] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]` — run the full optimizer cycle against a strategy (strategy ID is required)
+- `ls` / `show` / `inspect` / `diff` / `export` / `lineage` — inspect optimizer history and candidate artifacts
+- `cancel` / `unlock` — stop or clear in-flight cycle state
+- `explain-missing-data` — inspect optimizer demonstration/corpus state
 - `inspect <run-id> [--json]` — inspect a persisted optimization run
 
 ```bash
 # Run the full optimizer cycle against a strategy
 xvn optimize run --strategy <strategy_id> --cycles 3
 
-# Run a single optimizer cycle (fine-grained control)
-xvn optimize run-cycle --strategy <strategy_id> \
+# Run one optimizer launch with fine-grained control
+xvn optimize run --strategy <strategy_id> \
   --budget 100 --provider openrouter --model kimi-k2 \
   --objective sharpe --experiments-per-cycle 5
 

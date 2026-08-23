@@ -231,7 +231,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -304,9 +304,9 @@ random_seed = 42
 
 [[providers]]
 name = "local"
-kind = "local-candle"
+kind = "openai-compat"
 base_url = "http://{addr}"
-api_key_env = ""
+api_key_env = "XVN_BAKEOFF_MOCK_KEY"
 enabled_models = ["model-a", "model-b", "strategy-default"]
 
 [trader]
@@ -333,6 +333,12 @@ sqlite_url = "sqlite://x.db"
         ),
     )
     .unwrap();
+    std::env::set_var("XVN_BAKEOFF_MOCK_KEY", "test-key");
+    std::env::set_var(
+        "XVN_AGENTD_BIN",
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../xvision-engine/tests/fixtures/mock_agentd.js"),
+    );
 
     tokio::spawn(async move { while let Ok((_stream, _peer)) = listener.accept().await {} })
 }
@@ -405,7 +411,7 @@ async fn bakeoff_2x2_all_arms_terminal_and_compare_lists_them() {
         mode_run: RunMode::Backtest,
         broker: None,
         findings_model: DEFAULT_FINDINGS_MODEL.to_string(),
-        tools: Arc::new(ToolRegistry::empty()),
+        tools: Arc::new(ToolRegistry::default_with_builtins()),
         name: Some("cli-2x2".into()),
     };
 

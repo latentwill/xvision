@@ -63,6 +63,22 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    // `resolve_scenario` reads the scenarios registry before falling back
+    // to the compiled-in canonical set; a missing table surfaces as a DB
+    // error (not NotFound) and correctly aborts the fallback.
+    sqlx::query(include_str!("../migrations/011_scenarios.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    // 024 adds the regime_* columns get_scenario SELECTs.
+    sqlx::query(include_str!("../migrations/024_scenario_regime_labels.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/071_decisions_delayed.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {

@@ -141,7 +141,6 @@ fn scenario_serde_roundtrip() {
             "start": "2024-02-03T00:00:00Z",
             "end": "2025-02-03T00:00:00Z"
         },
-        "granularity": "1h",
         "timezone": "UTC",
         "calendar": "Continuous24x7",
         "data_source": {

@@ -439,6 +439,8 @@ id for per-user overrides.
 | `xvn eod [--hours <n>]` | End-of-day operator report as markdown to stdout (default window: 24 h). |
 | `xvn doctor [--json]` | Config / DB / provider health check; lists paths, template registry, and secret-file presence. |
 | `xvn spot --side buy\|sell --symbol <ticker> --amount <usd> [--slippage <bps>] [--i-understand-real-money]` | Gated one-shot **Solana spot** swap via `byreal-cli` (curated SPL + xStocks; symbol→mint from `$XVN_HOME/config/byreal_spot_assets.toml`). **Defaults to a no-funds `--dry-run` preview**; `--i-understand-real-money` executes a real swap, with the global safety kill-switch checked first. Long/Flat only; custody is the byreal-cli keystore. |
+| `xvn update [--check] [--version <tag>]` | Self-update from GitHub Releases: downloads the platform binary, verifies SHA256, and replaces the running binary in place. `--check` only reports availability (exit 0 = current, 1 = update available); `--version` pins a specific release. |
+| `xvn config get <key>` / `xvn config set <key> <value>` | Read or write dot-namespaced operator config keys persisted in the `xvn_config` SQLite table (currently the `autoresearch.*` thresholds; new namespaces extend the same verb). |
 
 ---
 

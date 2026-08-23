@@ -186,12 +186,13 @@ the rejection reason surfaces every failing dimension.
   - `GET /api/optimizations/:id` — run detail: candidate table, snapshot, lineage.
   - `POST /api/optimizations/:id/accept` — mint a child agent from a snapshot.
   - `POST /api/optimizations/:id/revert` — unwind an accepted snapshot.
-  - **Launch:** `POST /api/autooptimizer/run-cycle` launches a new optimizer
-    run under the job supervisor. The same endpoint is called by the
-    **Improve this agent** panel on the agent edit page — click the button,
-    the dashboard spawns `xvn optimize run` (the exact same verb operators
-    use), cancels are supported, and runtime/output are capped. Live progress
-    streams to the `/optimizer` page via SSE (`GET /api/autooptimizer/events`)
+  - **Launch:** `POST /api/optimize/run` starts a fully automated optimizer run
+    under the job supervisor. The same endpoint is called by the dashboard launch
+    panel and matches `xvn optimize run`, so agents, operators, and the UI share
+    one launch/monitoring contract rather than a manual agent-optimization path.
+    Runtime/output are capped, cancellation remains available through the cycle
+    control endpoints, and live progress streams to the `/optimizer` page via SSE
+    (`GET /api/autooptimizer/events`)
     over a Unix socket. Start the dashboard server with
     `--autooptimizer-ipc-socket /tmp/xvn-optimizer.sock` and the optimizer CLI
     auto-connects to it. See [Optimizer Config](/docs?slug=autooptimizer-config)

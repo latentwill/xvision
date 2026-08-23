@@ -764,7 +764,13 @@ pub async fn build_run_payload_with(
             )),
             other => other,
         })?;
-    let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id).await?;
+    // Tolerate unreadable/malformed strategy files: old runs can outlive
+    // deleted or corrupt strategy artifacts, so fall back to the Hour1
+    // default instead of failing the whole chart (mirrors the asset
+    // fallback in `resolve_run_asset_for_chart`).
+    let granularity = resolve_strategy_granularity_for_chart(ctx, &run.agent_id)
+        .await
+        .unwrap_or(xvision_data::alpaca::BarGranularity::Hour1);
 
     let decisions = store
         .read_decisions(run_id)

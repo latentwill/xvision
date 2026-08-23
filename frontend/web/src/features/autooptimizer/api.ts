@@ -1,12 +1,12 @@
-// AutoOptimizer API — wrappers around the dashboard's `/api/autooptimizer/*`
-// surface added in the AR-3 backend PR.
+// AutoOptimizer API — wrappers around the dashboard optimizer surface.
 //
 // Routes:
-//   GET  /api/autooptimizer/lineage           → LineageNode[]
-//   GET  /api/autooptimizer/lineage/:hash     → LineageNode
-//   GET  /api/autooptimizer/ladder            → MutatorScore[]
-//   GET  /api/autooptimizer/diversity?...     → DiversityEntry[]
-//   GET  /api/autooptimizer/events            → SSE stream of CycleProgressEvent
+//   POST /api/optimize/run                  → start dashboard optimizer run
+//   GET  /api/autooptimizer/lineage         → LineageNode[]
+//   GET  /api/autooptimizer/lineage/:hash   → LineageNode
+//   GET  /api/autooptimizer/ladder          → MutatorScore[]
+//   GET  /api/autooptimizer/diversity?...   → DiversityEntry[]
+//   GET  /api/autooptimizer/events          → SSE stream of CycleProgressEvent
 //
 // Operator-facing names (per terminology lock):
 //   LineageNode    → "Experiment" / genealogy node
@@ -82,7 +82,7 @@ export type CycleProgressEvent = {
   [key: string]: unknown;
 };
 
-export type StartRunCycleRequest = {
+export type StartOptimizerRunRequest = {
   strategy_id: string;
   mutator_provider?: string | null;
   mutator_model?: string | null;
@@ -100,7 +100,7 @@ export type StartRunCycleRequest = {
   experiments_per_cycle?: number | null;
 };
 
-export type StartRunCycleResponse = {
+export type StartOptimizerRunResponse = {
   started: boolean;
   message: string;
 };
@@ -250,7 +250,7 @@ export async function getCycleCost(cycleId: string): Promise<CycleCost> {
 }
 
 /** F29: retire a cycle-produced candidate (move its lineage node to Rejected) —
- *  dashboard parity for `xvn optimizer retire`. */
+ *  dashboard parity for the former `optimizer retire` affordance. */
 export type RetireResponse = {
   bundle_hash: string;
   status: string;
@@ -276,10 +276,10 @@ export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]
   return apiFetch<DiversityEntry[]>(buildDiversityUrl(q));
 }
 
-export async function startRunCycle(
-  body: StartRunCycleRequest,
-): Promise<StartRunCycleResponse> {
-  return apiFetch<StartRunCycleResponse>("/api/autooptimizer/run-cycle", {
+export async function startOptimizerRun(
+  body: StartOptimizerRunRequest,
+): Promise<StartOptimizerRunResponse> {
+  return apiFetch<StartOptimizerRunResponse>("/api/optimize/run", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -294,8 +294,8 @@ export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
 }
 
 /** F28: request cancellation of an in-flight optimizer cycle. */
-export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResponse> {
-  return apiFetch<StartRunCycleResponse>(
+export async function cancelRunCycle(cycleId: string): Promise<StartOptimizerRunResponse> {
+  return apiFetch<StartOptimizerRunResponse>(
     `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cancel`,
     { method: "POST" },
   );
@@ -308,16 +308,16 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
 // `/sessions/:id/...` route and are dead — use these from the Active-tasks strip.
 
 /** Pause the in-flight optimizer cycle (suspends before the next candidate). */
-export async function pauseCycle(cycleId: string): Promise<StartRunCycleResponse> {
-  return apiFetch<StartRunCycleResponse>(
+export async function pauseCycle(cycleId: string): Promise<StartOptimizerRunResponse> {
+  return apiFetch<StartOptimizerRunResponse>(
     `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
     { method: "POST" },
   );
 }
 
 /** Resume a paused optimizer cycle. */
-export async function resumeCycle(cycleId: string): Promise<StartRunCycleResponse> {
-  return apiFetch<StartRunCycleResponse>(
+export async function resumeCycle(cycleId: string): Promise<StartOptimizerRunResponse> {
+  return apiFetch<StartOptimizerRunResponse>(
     `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
     { method: "POST" },
   );

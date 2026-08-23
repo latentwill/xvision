@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::agents::{Agent, AgentSlot};
 use crate::api::{agents as agents_api, strategy as strategy_api, ApiContext, ApiError};
 use crate::strategies::agent_ref::{canonical_role, AgentRef};
+use crate::strategies::validate::{route_readiness_for_strategy, RouteDiagnosticReason, RouteReadiness};
 use crate::strategies::Strategy;
 use crate::tools::built_in_tool_descriptors;
 
@@ -60,6 +61,7 @@ pub struct StrategyDiagnostics {
     pub per_agent: Vec<AgentDiagnostics>,
     pub unregistered_tools: Vec<UnmetTool>,
     pub has_decision_path: bool,
+    pub route: RouteReadiness,
     pub launchable: bool,
 }
 
@@ -80,7 +82,7 @@ pub fn assert_launchable(diag: &StrategyDiagnostics) -> Result<(), DiagnosticsEr
     if diag.per_agent.is_empty() {
         return Err(DiagnosticsError::NoAgents(diag.strategy_id.clone()));
     }
-    if diag.unregistered_tools.is_empty() && diag.has_decision_path {
+    if diag.launchable {
         return Ok(());
     }
 
@@ -97,6 +99,17 @@ pub fn assert_launchable(diag: &StrategyDiagnostics) -> Result<(), DiagnosticsEr
     }
     if !diag.has_decision_path {
         parts.push("no slot grants submit_decision".to_string());
+    }
+    if !diag.route.launchable {
+        let route_codes = diag
+            .route
+            .reasons
+            .iter()
+            .filter(|reason| reason.blocking)
+            .map(|reason| reason.code.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("Route Builder route is not launchable: {route_codes}"));
     }
 
     Err(DiagnosticsError::NotLaunchable {
@@ -158,6 +171,84 @@ fn diagnose_agent(
     }
 }
 
+fn push_route_reason(reasons: &mut Vec<RouteDiagnosticReason>, code: &'static str, message: &'static str) {
+    if reasons.iter().any(|reason| reason.code == code) {
+        return;
+    }
+    reasons.push(RouteDiagnosticReason::blocking(code, message));
+}
+
+fn route_slot_unreachable(slot: &AgentSlot) -> bool {
+    let provider = slot.provider.trim().to_ascii_lowercase();
+    let model = slot.model.trim().to_ascii_lowercase();
+    if provider.is_empty() || model.is_empty() {
+        return true;
+    }
+    provider == "openrouter" && model.starts_with("deepseek/")
+}
+
+fn augment_route_readiness(strategy: &Strategy, agents: &[Agent], route: &mut RouteReadiness) {
+    let Some(definition) = strategy.pipeline.route.as_ref() else {
+        return;
+    };
+
+    let resolved_roles: BTreeSet<String> = strategy
+        .agents
+        .iter()
+        .filter(|agent_ref| agents.iter().any(|agent| agent.agent_id == agent_ref.agent_id))
+        .map(|agent_ref| canonical_role(&agent_ref.role))
+        .collect();
+
+    let router_role = canonical_role(&definition.router_role);
+    if !resolved_roles.contains(&router_role) {
+        push_route_reason(
+            &mut route.reasons,
+            "route.missing_router_binding",
+            "Choose an attached router before launching this Route Builder route.",
+        );
+    }
+
+    for branch in &definition.branches {
+        let target = canonical_role(&branch.target_role);
+        if !resolved_roles.contains(&target) {
+            push_route_reason(
+                &mut route.reasons,
+                "route.missing_branch_target",
+                "Attach every branch target before launching this Route Builder route.",
+            );
+            continue;
+        }
+
+        let Some(agent_ref) = strategy
+            .agents
+            .iter()
+            .find(|agent_ref| agent_ref.canonical_role() == target)
+        else {
+            continue;
+        };
+        let Some(agent) = agents.iter().find(|agent| agent.agent_id == agent_ref.agent_id) else {
+            continue;
+        };
+        let Some(slot) = slot_for_role(agent, &agent_ref.role) else {
+            push_route_reason(
+                &mut route.reasons,
+                "route.unreachable_provider_model",
+                "Bind each branch target to a model that can run before starting a forward test or live trading.",
+            );
+            continue;
+        };
+        if route_slot_unreachable(slot) {
+            push_route_reason(
+                &mut route.reasons,
+                "route.unreachable_provider_model",
+                "Bind each branch target to a model that can run before starting a forward test or live trading.",
+            );
+        }
+    }
+
+    route.launchable = route.reasons.iter().all(|reason| !reason.blocking);
+}
+
 pub fn diagnose(strategy: &Strategy, agents: &[Agent]) -> StrategyDiagnostics {
     let registered = registry_map();
     let strategy_id = strategy.manifest.id.clone();
@@ -194,13 +285,17 @@ pub fn diagnose(strategy: &Strategy, agents: &[Agent]) -> StrategyDiagnostics {
         .map(|(role, agent_id, tool)| UnmetTool { role, agent_id, tool })
         .collect::<Vec<_>>();
 
-    let launchable = !per_agent.is_empty() && unregistered_tools.is_empty() && has_decision_path;
+    let mut route = route_readiness_for_strategy(strategy);
+    augment_route_readiness(strategy, agents, &mut route);
+    let launchable =
+        !per_agent.is_empty() && unregistered_tools.is_empty() && has_decision_path && route.launchable;
 
     StrategyDiagnostics {
         strategy_id,
         per_agent,
         unregistered_tools,
         has_decision_path,
+        route,
         launchable,
     }
 }

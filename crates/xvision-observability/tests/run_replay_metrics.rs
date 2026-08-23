@@ -24,7 +24,7 @@ async fn pool_with_run(run_id: &str) -> SqlitePool {
     sqlx::query(
         "CREATE TABLE agent_runs (
            id TEXT PRIMARY KEY,
-           trajectory_mode TEXT NOT NULL DEFAULT 'live',
+           trajectory_mode TEXT NOT NULL DEFAULT 'fwd',
            replay_hit_ratio REAL,
            dropped_events INTEGER NOT NULL DEFAULT 0,
            recovery_reason TEXT
@@ -129,7 +129,7 @@ async fn run_started_event_can_stamp_record_mode() {
            mcp_servers_json TEXT,
            final_artifact_id TEXT,
            error TEXT,
-           trajectory_mode TEXT NOT NULL DEFAULT 'live',
+           trajectory_mode TEXT NOT NULL DEFAULT 'fwd',
            replay_hit_ratio REAL,
            dropped_events INTEGER NOT NULL DEFAULT 0,
            recovery_reason TEXT

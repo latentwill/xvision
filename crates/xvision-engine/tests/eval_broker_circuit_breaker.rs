@@ -243,6 +243,7 @@ impl BrokerSurface for ScriptedBroker {
                     fill_price: Some(req.reference_price_usd),
                     fill_size: req.size,
                     fee: None,
+                    note: None,
                 })
             }
             BrokerScriptStep::Failure(msg) => Err(anyhow::anyhow!("{msg}")),

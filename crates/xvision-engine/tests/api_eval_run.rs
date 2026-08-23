@@ -109,6 +109,10 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
 /// legacy `trader_slot` fallback in `validate_eval_trader_source` is
 /// removed.
 async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
+    // These tests inject deterministic sidecar fixtures. Keep the saved
+    // provider launchable so validation reaches the scenario/executor path.
+    write_mock_provider_config(&ctx.xvn_home);
+    std::env::set_var("XVN_AGENTD_BIN", mock_agentd_bin());
     use xvision_engine::agents::InputsPolicy;
     let store = AgentStore::new(ctx.db.clone());
     store
@@ -130,7 +134,7 @@ async fn seed_trader_agent(ctx: &ApiContext, label: &str) -> String {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -185,6 +189,57 @@ sqlite_url = "sqlite://x.db"
     .unwrap();
 }
 
+fn mock_agentd_bin() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn write_mock_provider_config(xvn_home: &std::path::Path) {
+    let config_dir = xvn_home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "XVN_API_EVAL_MOCK_KEY"
+enabled_models = ["claude-sonnet-4.6"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+    )
+    .unwrap();
+    std::env::set_var("XVN_API_EVAL_MOCK_KEY", "test-key");
+}
+
 fn hold_dispatch() -> Arc<dyn LlmDispatch> {
     Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"hold"}"#,
@@ -229,7 +284,7 @@ async fn run_with_mock_deps(
         broker,
         dispatch,
         xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL.to_string(),
-        Arc::new(ToolRegistry::empty()),
+        Arc::new(ToolRegistry::default_with_builtins()),
     )
     .await
 }
@@ -595,7 +650,7 @@ async fn save_openrouter_strategy_with_agent_ref(ctx: &ApiContext, strategy_id: 
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,

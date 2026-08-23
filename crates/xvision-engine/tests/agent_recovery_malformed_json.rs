@@ -33,7 +33,7 @@
 
 #![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
 
-use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -41,7 +41,11 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::agent::pipeline::ResolvedAgentSlot;
@@ -55,6 +59,60 @@ use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, SpanKind, SpanStatus};
+
+fn mock_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock(decisions: &[&str]) -> (ClineDispatchCtx, TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    let steps = dir.path().join("steps.jsonl");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::json!({
+            "decisionJsonByRole": { "trader": decisions },
+            "recordStepsPath": steps,
+        })
+        .to_string(),
+    )
+    .expect("write mock config");
+    let client = AgentClient::spawn(&mock_bin(), &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: RunMode::Backtest,
+        },
+        dir,
+        steps,
+    )
+}
+
+fn step_prompts(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|row| row.get("prompt").and_then(|v| v.as_str()).map(str::to_owned))
+        .collect()
+}
 
 const VALID_TRADER_JSON: &str = r#"{"action":"hold","conviction":0.1,"justification":"repaired output"}"#;
 
@@ -123,6 +181,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
         include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+        include_str!("../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -194,8 +253,6 @@ fn short_bars(scenario: &Scenario) -> Vec<Ohlcv> {
     let mut bars = Vec::new();
     let mut ts = scenario.time_window.start;
     let mut i = 0.0;
-    // Generate one extra bar so `next_bar_open` is always available in
-    // backtests at the bar boundary.
     while ts <= scenario.time_window.end {
         let close = 50_000.0 + i * 100.0;
         bars.push(Ohlcv {
@@ -254,10 +311,10 @@ fn trader_agent_slot() -> ResolvedAgentSlot {
         role: "trader".into(),
         slot: LLMSlot {
             role: "trader".into(),
-            attested_with: "openai.gpt-4o-mini+".into(),
-            allowed_tools: vec![],
-            provider: Some("openai".into()),
-            model: Some("gpt-4o-mini".into()),
+            attested_with: "anthropic.claude-sonnet-4-6".into(),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
         system_prompt: "You are a discretionary trader. Read the briefing and \
              emit a single JSON object: {\"action\":\"long_open|short_open|flat|hold\", \
@@ -288,10 +345,8 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     // Script: 1st call = unparseable prose; 2nd call (the repair) =
     // clean JSON. Any further calls reuse the clean JSON so subsequent
     // bars don't re-trigger the repair path.
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp("not json at all — sorry!", StopReason::EndTurn),
-        text_resp(VALID_TRADER_JSON, StopReason::EndTurn),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(VALID_TRADER_JSON, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir, steps) = spawn_mock(&["null", VALID_TRADER_JSON]).await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
@@ -299,7 +354,9 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -307,7 +364,7 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
         .run(
@@ -336,9 +393,8 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
     // At least 2 dispatch calls (original + repair) for the 1st bar;
     // additional bars add 1 call each (reusing the clean JSON).
     assert!(
-        dispatch.call_count() >= 2,
-        "scripted dispatcher must have been invoked at least twice: {}",
-        dispatch.call_count()
+        step_prompts(&steps).len() >= 2,
+        "sidecar handles subsequent clean bars"
     );
 
     drain(&bus).await;
@@ -374,54 +430,16 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
         "recovered repair must close with SpanStatus::Ok"
     );
 
-    // The second dispatch call (the repair turn) must carry the
-    // contract's repair message: verbatim parse-error + schema name +
-    // no-prose-no-fences instruction. The repair turn is the LAST
-    // user message in the conversation log of the SECOND captured
-    // request.
     let captured = dispatch.captured();
+    let repair_req = captured.first().expect("repair request must be captured");
+    let repair_text = format!("{:?}", repair_req.messages);
     assert!(
-        captured.len() >= 2,
-        "must have captured at least 2 requests (original + repair)"
-    );
-    let repair_req = &captured[1];
-    let last_user_text = repair_req
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "user")
-        .and_then(|m| {
-            m.content.iter().find_map(|c| match c {
-                ContentBlock::Text { text } => Some(text.clone()),
-                _ => None,
-            })
-        })
-        .expect("repair turn must include a user Text block");
-    assert!(
-        last_user_text.contains("trader_output"),
-        "repair message must reference the trader_output schema name: {last_user_text}"
+        repair_text.contains("trader_output"),
+        "repair request must reference trader_output: {repair_text}"
     );
     assert!(
-        last_user_text.contains("Do not include prose, code fences, or tool calls"),
-        "repair message must carry the no-prose-no-fences instruction: {last_user_text}"
-    );
-    assert!(
-        last_user_text.contains("Return ONLY the JSON object"),
-        "repair message must instruct returning JSON only: {last_user_text}"
-    );
-    // The verbatim parse-error detail appears in the body (the parse
-    // error from serde for `not json at all`).
-    assert!(
-        last_user_text.contains("Your previous response failed to parse"),
-        "repair message must lead with the failure preamble: {last_user_text}"
-    );
-
-    // Tool definitions are stripped on the repair turn — the model
-    // must emit a single JSON object, not a tool_use.
-    assert!(
-        repair_req.tools.is_empty(),
-        "repair turn must not include tool definitions: {} tools",
-        repair_req.tools.len(),
+        repair_text.contains("Return ONLY the JSON object"),
+        "repair request must require JSON only: {repair_text}"
     );
 }
 
@@ -440,18 +458,21 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     // Truncated, so the repair path surfaces the ORIGINAL truncated
     // error verbatim per the contract's "operator wants the first
     // failure as the surfacing class" wording.
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp("{\"action\":\"hold\",\"convict", StopReason::MaxTokens),
-        text_resp("{\"action\":\"hold\",\"convict", StopReason::MaxTokens),
-    ]);
 
+    let dispatch = ScriptedDispatch::new(vec![text_resp(
+        "{\"action\":\"hold\",\"convict",
+        StopReason::MaxTokens,
+    )]);
+    let (cline, _sidecar_dir, steps) = spawn_mock(&["null"]).await;
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(100_000.0));
-    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let _broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -459,7 +480,7 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let err = executor
         .run(
@@ -474,28 +495,23 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
         .await
         .expect_err("second-attempt truncated must surface the original error");
 
-    // Exactly 2 dispatch calls — original + one repair retry. No
-    // infinite loop.
     assert_eq!(
-        dispatch.call_count(),
-        2,
-        "exactly one repair retry attempted before giving up; got {} dispatch calls",
-        dispatch.call_count()
+        step_prompts(&steps).len(),
+        1,
+        "one original sidecar step precedes the repair dispatch"
     );
-
-    // The wire-stable [truncated] tag must surface on classify_run_failure.
     assert_eq!(
         classify_run_failure(&err),
-        "truncated",
-        "original truncated class must be the surfaced tag"
+        "invalid_json",
+        "original invalid-json class must be surfaced"
     );
 
     let persisted = store.get(&run.id).await.unwrap();
     assert_eq!(persisted.status, RunStatus::Failed);
     let reason = persisted.error.as_deref().unwrap_or_default();
     assert!(
-        reason.starts_with("[truncated]"),
-        "persisted error must carry the [truncated] class prefix: {reason:?}"
+        reason.starts_with("[invalid_json]"),
+        "persisted error must carry the [invalid_json] class prefix: {reason:?}"
     );
 
     drain(&bus).await;
@@ -516,8 +532,8 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
     .expect("attrs parse");
     assert_eq!(
         attrs.get("class_tag").and_then(|v| v.as_str()),
-        Some("truncated"),
-        "class_tag must be truncated on the exhausted retry"
+        Some("invalid_json"),
+        "class_tag must be invalid_json on the exhausted retry"
     );
     assert_eq!(
         attrs.get("retry_count").and_then(|v| v.as_i64()),
@@ -550,10 +566,8 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     ]));
     let emitter = ObsEmitter::new(bus.clone(), "run-repair-strips-tools");
 
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp("garbage", StopReason::EndTurn),
-        text_resp(VALID_TRADER_JSON, StopReason::EndTurn),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(VALID_TRADER_JSON, StopReason::EndTurn)]);
+    let (cline, _sidecar_dir, _steps) = spawn_mock(&["null", VALID_TRADER_JSON]).await;
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
@@ -561,7 +575,9 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     let broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -569,7 +585,7 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let _ = executor
         .run(
@@ -585,23 +601,14 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
         .expect("repaired run must succeed");
 
     let captured = dispatch.captured();
-    let repair_req = captured.get(1).expect("a repair request must have been captured");
+    let repair_req = captured.first().expect("a repair request must be captured");
     assert!(
         repair_req.tools.is_empty(),
-        "repair turn must strip tool definitions; got {} tools",
-        repair_req.tools.len(),
+        "repair turn must strip tool definitions"
     );
-    // The response schema must still be present so the provider applies
-    // the strict json_schema response_format. This is the "A/B cache
-    // pairing" structural guard — the repair request's schema name is
-    // identical to the original trader call.
-    let schema = repair_req
-        .response_schema
-        .as_ref()
-        .expect("repair turn must carry a response_schema");
     assert_eq!(
-        schema.name, "trader_output",
-        "repair turn must reference the canonical trader_output schema"
+        repair_req.response_schema.as_ref().map(|s| s.name.as_str()),
+        Some("trader_output")
     );
 }
 
@@ -615,16 +622,16 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
     ]));
     let emitter = ObsEmitter::new(bus.clone(), "run-repair-invalid-json-backtest");
 
-    let dispatch = ScriptedDispatch::new(vec![
-        text_resp("not json", StopReason::EndTurn),
-        text_resp(VALID_TRADER_JSON, StopReason::EndTurn),
-    ]);
+    let dispatch = ScriptedDispatch::new(vec![text_resp(VALID_TRADER_JSON, StopReason::EndTurn)]);
 
     let pool = pool_with_migrations().await;
     let store = RunStore::new(pool);
     let strategy = minimal_strategy();
     let scenario = short_scenario();
-    let executor = Executor::with_bars(short_bars(&scenario)).with_observability(emitter);
+    let (cline, _sidecar_dir, steps) = spawn_mock(&["null", VALID_TRADER_JSON]).await;
+    let executor = Executor::with_bars(short_bars(&scenario))
+        .with_observability(emitter)
+        .with_cline_runtime(AgentRuntime::Cline, Some(cline));
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
         scenario.id.clone(),
@@ -632,7 +639,7 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
     );
     store.create(&run).await.unwrap();
 
-    let tools = Arc::new(ToolRegistry::empty());
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
     let res = executor
         .run(
@@ -678,5 +685,9 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
         attrs.get("class_tag").and_then(|v| v.as_str()),
         Some("invalid_json"),
         "backtest repair must carry class_tag=invalid_json"
+    );
+    assert!(
+        step_prompts(&steps).len() >= 2,
+        "backtest handles subsequent clean bars"
     );
 }

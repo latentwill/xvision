@@ -171,6 +171,7 @@ pub fn compute_pre_committed(
     arm_b: &str,
     n_resamples: usize,
     block_size: Option<usize>,
+    periods_per_year: f32,
 ) -> Result<PreCommittedMetrics, MetricsError> {
     use crate::bootstrap::paired_bootstrap_sharpe_delta;
 
@@ -189,11 +190,8 @@ pub fn compute_pre_committed(
             b: b.returns.len(),
         });
     }
-
-    // Periods per year: assume hourly returns scaled to 8_760 h/yr.
-    // The constant is immaterial for the bootstrap comparison; the caller may
-    // override by interpreting the result directly.
-    const PERIODS_PER_YEAR: f32 = 8_760.0;
+    // Use the report cadence so every Δ-Sharpe table in one report shares the
+    // same annualisation factor.
     const SEED: u64 = 0xdeadbeef_cafef00d;
 
     // Primary Δ-Sharpe bootstrap
@@ -202,7 +200,7 @@ pub fn compute_pre_committed(
         &b.returns,
         n_resamples,
         block_size,
-        PERIODS_PER_YEAR,
+        periods_per_year,
         SEED,
     )?;
 
@@ -219,9 +217,7 @@ pub fn compute_pre_committed(
 
     // Decision divergence rate — paired by cycle_id index
     let divergence_rate = compute_divergence_rate(a, b);
-
-    // Regime-stratified Δ-Sharpe
-    let regime_stratified = compute_regime_stratified(a, b, n_resamples, block_size, PERIODS_PER_YEAR, SEED)?;
+    let regime_stratified = compute_regime_stratified(a, b, n_resamples, block_size, periods_per_year, SEED)?;
 
     Ok(PreCommittedMetrics {
         delta_sharpe,

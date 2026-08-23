@@ -85,13 +85,12 @@ The current surface, for reference:
 | `xvn strategy *` | Create, validate, list, show, run strategies |
 | `xvn eval *` | Launch and inspect eval runs |
 | `xvn scenario *` | Create, classify, inspect scenarios |
-| `xvn trader run / preview` | Agent dispatch in isolation |
+| `xvn spot` | One-shot gated Solana-spot swap (`--dry-run` default) |
 | `xvn portfolio --venue` | Read live venue state (read-only) |
 | `xvn close-position --venue --asset` | Flatten one symbol |
 | `xvn fire-trade --venue` | Submit a trade (paper or testnet) |
 | `xvn show-briefing / show-decision` | Read cached run data |
 | `xvn store migrate / stats` | Explicit DB ops |
-| `xvn metrics / xvn gate` | Pre-committed metrics + anti-overfit verdict |
 | `xvn indicator <name>` | Compute one indicator from a JSON price series |
 | `xvn provider *` | Manage LLM provider registry |
 

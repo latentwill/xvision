@@ -46,6 +46,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use ulid::Ulid;
 
 use crate::agents::{Agent, AgentStore};
@@ -88,6 +89,10 @@ pub struct EvalRunExport {
     pub filter_events: Vec<FilterEventV1>,
     #[serde(default)]
     pub filter_summaries: Vec<FilterSummary>,
+    #[serde(default)]
+    pub route_trace_summary: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub route_trace_full: Vec<serde_json::Value>,
     /// Run-level error log. Today wraps `run.error` as a single entry
     /// (or empty when the run completed cleanly). Per-decision errors
     /// live alongside their decision row in `decisions[]`.
@@ -291,6 +296,7 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| ApiError::Internal(format!("serialize filter_events: {e:#}")))?;
+    let (route_trace_summary, route_trace_full) = load_route_trace_events(&ctx.db, &run.id).await;
 
     let reviews: Vec<ReviewExportRow> = match store.list_reviews_for_run(&run.id).await {
         Ok(rs) => {
@@ -343,10 +349,47 @@ pub async fn build_export(ctx: &ApiContext, run_id: &str) -> ApiResult<EvalRunEx
         events,
         filter_events,
         filter_summaries,
+        route_trace_summary,
+        route_trace_full,
         errors,
         reviews,
         provider_diagnostics,
     })
+}
+
+async fn load_route_trace_events(
+    db: &sqlx::SqlitePool,
+    run_id: &str,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let rows = match sqlx::query(
+        "SELECT kind, payload_json FROM events \
+         WHERE run_id = ? AND kind IN ('route.decision', 'route.decision.full') \
+         ORDER BY created_at ASC, id ASC",
+    )
+    .bind(run_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
+
+    let mut compact = Vec::new();
+    let mut full = Vec::new();
+    for row in rows {
+        let kind: String = row.get("kind");
+        let payload = row
+            .try_get::<String, _>("payload_json")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .unwrap_or(serde_json::Value::Null);
+        match kind.as_str() {
+            "route.decision" => compact.push(payload),
+            "route.decision.full" => full.push(payload),
+            _ => {}
+        }
+    }
+    (compact, full)
 }
 
 async fn load_strategy_agents(ctx: &ApiContext, strategy: &Strategy) -> Vec<Agent> {
@@ -713,6 +756,7 @@ mod roundtrip {
             // 065 added source + unrealized_pnl_usd, projected by the shared
             // RunStore get/list SELECTs (CT5 Wave 3a). Same precedent as 038.
             include_str!("../../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+            include_str!("../../migrations/071_decisions_delayed.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
@@ -1158,6 +1202,7 @@ mod provider_attestation {
             // 065 added source + unrealized_pnl_usd, projected by the shared
             // RunStore get/list SELECTs (CT5 Wave 3a). Same precedent as 038.
             include_str!("../../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+            include_str!("../../migrations/071_decisions_delayed.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }

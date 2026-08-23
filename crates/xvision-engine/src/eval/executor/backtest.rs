@@ -111,12 +111,13 @@ pub struct Executor {
     /// from `data/probes/<scenario.bar_cache_policy.cache_key>.parquet`
     /// via `load_ohlcv_fixture`.
     injected_bars: Option<Vec<Ohlcv>>,
-    /// Optional warmup bars to prepend before the scenario window. These
-    /// are not iterated for decisions — they only feed the rolling
+    /// Optional per-asset warmup bars to prepend before the scenario window.
+    /// These are not iterated for decisions — they only feed the rolling
     /// `bar_history` window in each per-decision seed so the trader LLM
-    /// (and any indicator tools it invokes) has real context at bar 1.
+    /// (and any indicator tools it invokes) has real context at bar 1 for
+    /// EVERY asset, not just the first active one.
     /// See `crates/xvision-engine/src/eval/bars.rs::load_warmup_bars`.
-    warmup_bars: Vec<Ohlcv>,
+    warmup_bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>,
     /// Optional live-stream event bus. When `Some`, the executor emits
     /// `RunChartEvent::Equity` and `RunChartEvent::Marker` events after
     /// each decision cycle so SSE subscribers at `/live/<run_id>` see
@@ -237,7 +238,7 @@ impl Executor {
         Ok(Self {
             progress: None,
             injected_bars: None,
-            warmup_bars: Vec::new(),
+            warmup_bars: BTreeMap::new(),
             event_bus: None,
             obs_emitter,
             memory_recorder: None,
@@ -277,7 +278,7 @@ impl Executor {
         Self {
             progress: Some(progress),
             injected_bars: None,
-            warmup_bars: Vec::new(),
+            warmup_bars: BTreeMap::new(),
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
@@ -308,7 +309,7 @@ impl Executor {
         Self {
             progress: None,
             injected_bars: Some(bars),
-            warmup_bars: Vec::new(),
+            warmup_bars: BTreeMap::new(),
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
@@ -333,7 +334,7 @@ impl Executor {
         Self {
             progress: Some(progress),
             injected_bars: Some(bars),
-            warmup_bars: Vec::new(),
+            warmup_bars: BTreeMap::new(),
             event_bus: None,
             obs_emitter: None,
             memory_recorder: None,
@@ -408,15 +409,19 @@ impl Executor {
         self
     }
 
-    /// Pre-window warmup bars. The decision loop never iterates these;
-    /// they only feed the per-decision rolling `bar_history` window in
-    /// the seed. Chains with `with_bars` / `with_progress` / `with_event_bus`:
+    /// Attach per-asset warmup bars, keyed by asset symbol. Every active
+    /// asset should get its own warmup prefix so `bar_history` at bar 1 has
+    /// real context for all of them (multi-asset runs previously prefixed
+    /// only the first asset). Chains with
+    /// `with_bars` / `with_progress` / `with_event_bus`:
     ///   `Executor::with_bars(bars).with_warmup(warmup)`.
-    pub fn with_warmup(mut self, warmup_bars: Vec<Ohlcv>) -> Self {
+    pub fn with_warmup(
+        mut self,
+        warmup_bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>,
+    ) -> Self {
         self.warmup_bars = warmup_bars;
         self
     }
-
     /// Attach per-run hard caps. Builder-style so callers can chain after
     /// `with_bars` / `with_warmup` / `with_event_bus`. When the limits
     /// argument's `is_empty()` returns true, the executor stores it but
@@ -771,25 +776,19 @@ impl Executor {
         let total_decision_bars = timeline.len().max(1) as f64;
 
         // Per-decision rolling-history window. Warmup bars (from
-        // `eval::bars::load_warmup_bars`) are concatenated in front of the
-        // first active asset's bars so we can slice the last
-        // `scenario.warmup_bars` bars at each decision and surface them in
-        // the seed as `market_data.bar_history`. v1 warmup is single-asset
-        // (the DB path resolves warmup per the single resolved asset); for
-        // additional assets in a multi-asset run the history window is
-        // built from that asset's own in-window bars with no warmup prefix.
-        let warmup_count = self.warmup_bars.len();
+        // `eval::bars::load_warmup_bars`) are concatenated in front of EACH
+        // asset's own bars so we can slice the last `scenario.warmup_bars`
+        // bars at each decision and surface them in the seed as
+        // `market_data.bar_history` with real context for every asset.
         let history_window = scenario.warmup_bars as usize;
         // Per-asset combined `[warmup..., bars...]` views for history
-        // slicing. Only the first active asset gets the warmup prefix
-        // (warmup is single-asset in v1); the rest use their bars as-is.
+        // slicing. Assets without a warmup entry use their bars as-is.
         let combined_bars_by_asset: BTreeMap<xvision_core::trading::AssetSymbol, Vec<&Ohlcv>> = active
             .iter()
             .map(|a| {
-                let combined: Vec<&Ohlcv> = if *a == asset_sym {
-                    self.warmup_bars.iter().chain(asset_bars[a].iter()).collect()
-                } else {
-                    asset_bars[a].iter().collect()
+                let combined: Vec<&Ohlcv> = match self.warmup_bars.get(a) {
+                    Some(warmup) => warmup.iter().chain(asset_bars[a].iter()).collect(),
+                    None => asset_bars[a].iter().collect(),
                 };
                 (*a, combined)
             })
@@ -1189,13 +1188,9 @@ impl Executor {
                 let bars = &asset_bars[&asset_sym];
                 let bar = &bars[i];
                 let combined_bars = &combined_bars_by_asset[&asset_sym];
-                // Warmup prefix only precedes the first active asset's bars
-                // (v1 warmup is single-asset); others have no warmup offset.
-                let warmup_count = if asset_sym == *active.first().unwrap() {
-                    warmup_count
-                } else {
-                    0
-                };
+                // Each asset's warmup prefix length drives its own history
+                // offset; assets without warmup start at 0.
+                let warmup_count = self.warmup_bars.get(&asset_sym).map_or(0, Vec::len);
 
                 // A decision at bar T normally fills at T+1's open. For the
                 // final bar of an asset's window there is no T+1, so the
@@ -1674,6 +1669,7 @@ impl Executor {
                         pnl_realized: None,
                         delayed: Some(false),
                     };
+                    store.record_decision(&inherited_row).await?;
                     self.emit_chart(
                         &run.id,
                         RunChartEvent::Decision(LiveDecisionRow::from(&inherited_row)),

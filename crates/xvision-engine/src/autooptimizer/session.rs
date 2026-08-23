@@ -403,7 +403,7 @@ where
         //    maps it to a distinct exit code). A one-off error falls through to
         //    the normal mode/budget/floor exit checks (so e.g. `once` still
         //    stops after its single — errored — cycle) and exits 0.
-        let (outcome_bucket, cum_cost_usd, sustained_no_pass) = match &cycle_result {
+        let (outcome_bucket, cum_cost_usd, _sustained_no_pass) = match &cycle_result {
             Ok(o) => {
                 session_breaker.record_success();
                 (o.outcome.clone(), o.cum_cost_usd, o.sustained_no_pass_cycles)
@@ -439,7 +439,9 @@ where
             increment_cycle_completed(pool, session_id, &outcome_bucket).await?;
         }
 
-        if cycle_result.is_ok() && outcome_bucket.as_str() == "dropped" {
+        if cycle_result.is_ok() && outcome_bucket.as_str() == "kept" {
+            consecutive_zero_keep = 0;
+        } else if cycle_result.is_ok() {
             consecutive_zero_keep += 1;
         } else {
             consecutive_zero_keep = 0;
@@ -449,9 +451,8 @@ where
             if max > 0 && consecutive_zero_keep >= max {
                 let msg = format!(
                     "optimizer halted: {consecutive_zero_keep} consecutive cycles produced 0 kept candidates. \
-                     All candidates were dropped — the mutator cannot generate winning mutations for \
-                     this strategy given the current evaluation windows. \
-                     Suggestions: widen scenario windows, loosen the strategy filter, \
+                     Zero-kept outcomes include dropped, suspect, and no-candidate/candidate generation failures. \
+                     Suggestions: inspect candidate feedback reasons, widen scenario windows, loosen the strategy filter, \
                      switch the mutator model, or try a different parent strategy."
                 );
                 transition_state(pool, session_id, "failed", Some(&msg)).await?;
@@ -956,6 +957,123 @@ mod tests {
         assert_eq!(row.state, "failed");
         assert_eq!(row.errored_count, 2);
         assert!(row.error.is_some(), "the failure reason is persisted");
+    }
+
+    #[tokio::test]
+    async fn test_suspect_cycles_trip_zero_kept_breaker() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-suspect", "{}", "n_experiments", Some(10))
+            .await
+            .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+
+        let result = run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(10),
+            None,
+            vec![],
+            0,
+            Some(2),
+            Arc::new(|| 0.0),
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let outcome = make_outcome("suspect");
+                async move { Ok(outcome) }
+            },
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "suspect-only cycles produce zero kept candidates and must halt on the no-keep breaker"
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "max_consecutive_no_keep=2 must trip on the second suspect-only cycle"
+        );
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "failed");
+        assert_eq!(row.cycles_completed, 2);
+        assert_eq!(row.suspect_count, 2);
+        assert_eq!(row.kept_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_zero_kept_breaker_message_names_all_non_kept_outcomes() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-zero-kept-message", "{}", "n_experiments", Some(10))
+            .await
+            .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        let result = run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(10),
+            None,
+            vec![],
+            0,
+            Some(1),
+            Arc::new(|| 0.0),
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                let outcome = make_outcome("dropped");
+                async move { Ok(outcome) }
+            },
+        )
+        .await;
+
+        let err = result.expect_err("dropped zero-kept cycle must halt immediately");
+        let msg = format!("{err:#}");
+        let lower = msg.to_lowercase();
+        assert!(
+            msg.contains("0 kept"),
+            "halt message must name the externally visible zero-kept condition: {msg}"
+        );
+        assert!(
+            lower.contains("dropped"),
+            "halt message must mention dropped candidates: {msg}"
+        );
+        assert!(
+            lower.contains("suspect"),
+            "halt message must mention suspect candidates as a zero-kept outcome: {msg}"
+        );
+        assert!(
+            lower.contains("no-candidate") || lower.contains("no_candidate"),
+            "halt message must mention no-candidate/candidate generation failures: {msg}"
+        );
+        assert!(
+            !msg.contains("All candidates were dropped"),
+            "halt message must not misdiagnose every zero-kept breaker as all-dropped: {msg}"
+        );
+
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let persisted = row.error.expect("halt reason must be persisted");
+        assert!(
+            persisted.contains("0 kept"),
+            "persisted halt reason must match the zero-kept diagnostic: {persisted}"
+        );
     }
 
     /// R3 regression (adversarial review): an errored cycle must still honor the

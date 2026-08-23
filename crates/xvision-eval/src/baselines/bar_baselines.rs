@@ -309,7 +309,7 @@ fn baseline_simple_mean_reversion(
             // Close current position if any.
             if direction != 0.0 && entry_price > 0.0 {
                 let units = (equity / entry_price) * direction.signum();
-                equity += units * (bar.close - entry_price) * direction;
+                equity += units * (bar.close - entry_price);
             }
             direction = target_dir;
             entry_price = if direction != 0.0 { bar.close } else { 0.0 };
@@ -631,6 +631,24 @@ mod tests {
         assert!(
             result.return_pct > 0.0,
             "recovery from oversold → positive return, got {:.4}",
+            result.return_pct
+        );
+    }
+
+    #[test]
+    fn mean_reversion_short_round_trip_books_positive_pnl_on_decline() {
+        // A high close after warmup opens a short at 130. The next close at
+        // 100 returns the signal to flat, so the short must book a gain.
+        let mut bars: Vec<Ohlcv> = (0..19).map(|_| bar(100.0)).collect();
+        bars.push(bar(130.0));
+        bars.push(bar(100.0));
+
+        let result = baseline_simple_mean_reversion(&bars, 10_000.0, 252.0);
+
+        let expected_return_pct = (30.0 / 130.0) * 100.0;
+        assert!(
+            (result.return_pct - expected_return_pct).abs() < 1e-9,
+            "short decline should produce {expected_return_pct:.6}% return, got {:.6}%",
             result.return_pct
         );
     }

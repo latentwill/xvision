@@ -110,6 +110,7 @@ impl BrokerSurface for VenueBroker {
             fill_price: Some(self.fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
 

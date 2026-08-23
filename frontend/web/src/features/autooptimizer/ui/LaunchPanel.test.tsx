@@ -76,7 +76,7 @@ beforeEach(() => {
         config_exists: false,
       });
     }
-    if (path === "/api/autooptimizer/run-cycle") {
+    if (path === "/api/optimize/run") {
       return Promise.resolve({
         started: true,
         message: "Optimizer run started.",
@@ -184,15 +184,16 @@ describe("LaunchPanel", () => {
     await chooseStrategy(user, "Trend follower");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
-    // Assert the POST happened against the right path with the selected
-    // strategy. Avoid pinning every optional field (F28 added budget/window,
-    // future flags will add more) — strategy_id + method are the stable
-    // contract; an exact-body match silently rots on each new launch option.
+    // Assert the POST happened against the canonical optimizer route with the
+    // selected strategy. Avoid pinning every optional field (F28 added
+    // budget/window, future flags will add more) — strategy_id + method are the
+    // stable contract; an exact-body match silently rots on each new launch
+    // option.
     await waitFor(() => {
       const call = vi
         .mocked(apiFetch)
-        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
-      expect(call, "run-cycle POST was issued").toBeTruthy();
+        .mock.calls.find(([path]) => path === "/api/optimize/run");
+      expect(call, "canonical optimizer launch POST was issued").toBeTruthy();
       const init = call![1] as { method?: string; body?: string };
       expect(init.method).toBe("POST");
       expect(JSON.parse(init.body ?? "{}")).toMatchObject({ strategy_id: "strategy-1" });
@@ -271,8 +272,9 @@ describe("LaunchPanel", () => {
     await waitFor(() => {
       const call = vi
         .mocked(apiFetch)
-        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
-      const init = call?.[1] as { body?: string } | undefined;
+        .mock.calls.find(([path]) => path === "/api/optimize/run");
+      expect(call, "canonical optimizer launch POST was issued").toBeTruthy();
+      const init = call![1] as { body?: string };
       expect(JSON.parse(init?.body ?? "{}")).toMatchObject({
         strategy_id: "strategy-1",
         mutator_provider: "ollama",
@@ -318,8 +320,9 @@ describe("LaunchPanel", () => {
     await waitFor(() => {
       const call = vi
         .mocked(apiFetch)
-        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
-      const init = call?.[1] as { body?: string } | undefined;
+        .mock.calls.find(([path]) => path === "/api/optimize/run");
+      expect(call, "canonical optimizer launch POST was issued").toBeTruthy();
+      const init = call![1] as { body?: string };
       expect(JSON.parse(init?.body ?? "{}")).toMatchObject({
         strategy_id: "strategy-1",
         mutator_provider: null,

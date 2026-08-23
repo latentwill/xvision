@@ -173,6 +173,7 @@ fn order_confirmation_has_expected_fields() {
         fill_price: Some(70_500.0),
         fill_size: 0.05,
         fee: None,
+        note: None,
     };
     assert_eq!(conf.broker_order_id, "abc-123");
     assert_eq!(conf.fill_size, 0.05);

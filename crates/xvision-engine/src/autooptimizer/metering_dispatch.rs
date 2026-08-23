@@ -1,6 +1,6 @@
 //! Cost-metering `LlmDispatch` decorator for the optimizer cycle.
 //!
-//! F11 (QA 2026-06-04): `xvn optimizer run-cycle` printed `cycle cost: $0.00`
+//! F11 (QA 2026-06-04): `xvn optimize run` printed `cycle cost: $0.00`
 //! and `--budget` never tripped, because the cost path depended on the
 //! `model_calls` observability ledger via the `agent_runs.eval_run_id` join —
 //! and the optimizer's backtest decisions aren't linked to the paper-test eval
@@ -104,7 +104,7 @@ impl LlmDispatch for CostMeteringDispatch {
 /// cap on every request, overriding whatever `max_tokens` the request
 /// carried (per-slot value, model default, or `None`).
 ///
-/// Used by `xvn optimizer run-cycle --max-output-tokens N`: the CLI
+/// Used by `xvn optimize run --max-output-tokens N`: the CLI
 /// wraps the ONE dispatch every cycle LLM call funnels through — the
 /// paper-test backtest trader decisions AND the experiment writer
 /// (mutator) AND the judge — so the operator's cap is applied at the

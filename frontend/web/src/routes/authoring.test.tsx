@@ -8,9 +8,11 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
 
 import { AttachedAgentRow, AuthoringRoute } from "./authoring";
 import * as strategyApi from "@/api/strategies";
+import type { RouteContextField } from "@/api/strategies";
 import * as agentApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
 import * as chartApi from "@/api/chart";
@@ -32,6 +34,8 @@ vi.mock("@/api/strategies", async () => {
     renameStrategyAgentRole: vi.fn(),
     removeStrategyAgent: vi.fn(),
     cloneStrategy: vi.fn(),
+    setStrategyRoute: vi.fn(),
+    validateStrategyRoute: vi.fn(),
   };
 });
 
@@ -115,6 +119,14 @@ const baseAgent = {
   updated_at: "2026-05-13T14:52:21Z",
 };
 
+const readyRouteReadiness = {
+  routed: true,
+  context_fields: [] as RouteContextField[],
+  launchable: true,
+  reasons: [],
+};
+
+
 function renderRoute() {
   return render(
     <MemoryRouter initialEntries={["/authoring/01TEST"]}>
@@ -142,6 +154,8 @@ beforeEach(() => {
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
   vi.mocked(strategyApi.cloneStrategy).mockReset();
+  vi.mocked(strategyApi.setStrategyRoute).mockReset();
+  vi.mocked(strategyApi.validateStrategyRoute).mockReset();
   vi.mocked(chartApi.getStrategyChart).mockReset();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
       default_model: null,
@@ -162,6 +176,14 @@ beforeEach(() => {
     id: "01TEST",
     ok: true,
     errors: [],
+  });
+  vi.mocked(strategyApi.setStrategyRoute).mockResolvedValue({
+    strategy: baseStrategy,
+    readiness: readyRouteReadiness,
+  });
+  vi.mocked(strategyApi.validateStrategyRoute).mockResolvedValue({
+    strategy: baseStrategy,
+    readiness: readyRouteReadiness,
   });
 });
 
@@ -407,5 +429,427 @@ describe("AttachedAgentRow cross-strategy resync", () => {
       ).toHaveAttribute("aria-expanded", "true");
     });
     expect(screen.getByText("01DEEPSEEK")).toBeInTheDocument();
+  });
+});
+
+const filterAgent = {
+  ...baseAgent,
+  agent_id: "01FILTER",
+  name: "Regime filter agent",
+};
+
+const routerAgent = {
+  ...baseAgent,
+  agent_id: "01ROUTER",
+  name: "Router agent",
+};
+
+const trendAgent = {
+  ...baseAgent,
+  agent_id: "01TREND",
+  name: "Trend trader agent",
+};
+
+const rangeAgent = {
+  ...baseAgent,
+  agent_id: "01RANGE",
+  name: "Range trader agent",
+};
+const riskAgent = {
+  ...baseAgent,
+  agent_id: "01RISK",
+  name: "Risk reviewer agent",
+};
+
+const routedStrategy = {
+  ...baseStrategy,
+  agents: [
+    { agent_id: "01FILTER", role: "regime_filter", activates: "filter" as const },
+    { agent_id: "01ROUTER", role: "router", activates: "router" as const },
+    { agent_id: "01TREND", role: "trend_trader", activates: "trader" as const },
+    { agent_id: "01RANGE", role: "range_trader", activates: "trader" as const },
+  ],
+  pipeline: {
+    kind: "graph" as const,
+    route: {
+      router_role: "router",
+      branches: [
+        { target_role: "trend_trader" },
+        { target_role: "range_trader" },
+      ],
+      graph_edges: [
+        {
+          from_role: "regime_filter",
+          to_role: "trend_trader",
+          condition: { eq: { signal_field: "regime", value: "trend" } },
+        },
+      ],
+      context_fields: ["market_snapshot", "tool_state", "available_targets"] as RouteContextField[],
+      trace_mode: "compact" as const,
+    },
+    edges: [],
+  },
+};
+
+const routedStrategyWithDownstreamReviewer = {
+  ...routedStrategy,
+  agents: [
+    { agent_id: "01FILTER", role: "regime_filter", activates: "filter" as const },
+    { agent_id: "01ROUTER", role: "router", activates: "router" as const },
+    { agent_id: "01TREND", role: "trend_trader", activates: "trader" as const },
+    { agent_id: "01RISK", role: "risk_reviewer", activates: "trader" as const },
+    { agent_id: "01RANGE", role: "range_trader", activates: "trader" as const },
+  ],
+  pipeline: {
+    ...routedStrategy.pipeline,
+    route: {
+      ...routedStrategy.pipeline.route,
+      graph_edges: [
+        {
+          from_role: "router",
+          to_role: "trend_trader",
+          condition: { eq: { signal_field: "regime", value: "trend" } },
+        },
+      ],
+    },
+    edges: [
+      {
+        from_role: "trend_trader",
+        to_role: "risk_reviewer",
+      },
+    ],
+  },
+};
+const routedStrategyWithoutRoute = {
+  ...routedStrategy,
+  pipeline: { kind: "graph" as const, route: null, edges: [] },
+};
+const routeSaveResult = {
+  strategy: routedStrategy,
+  readiness: {
+    routed: true,
+    context_fields: ["market_snapshot", "tool_state"] as RouteContextField[],
+    launchable: true,
+    reasons: [],
+  },
+};
+
+const routeJsonWithGraphEdgeAndContext = {
+  router_role: "router",
+  branches: [
+    { target_role: "trend_trader" },
+    { target_role: "range_trader" },
+  ],
+  graph_edges: [
+    {
+      from_role: "regime_filter",
+      to_role: "trend_trader",
+      condition: { eq: { signal_field: "regime", value: "trend" } },
+    },
+  ],
+  context_fields: ["market_snapshot", "tool_state", "available_targets"] as RouteContextField[],
+  trace_mode: "compact" as const,
+};
+
+async function chooseRouteOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerName: RegExp,
+  optionName: RegExp,
+) {
+  await user.click(screen.getByRole("button", { name: triggerName }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
+
+describe("AuthoringRoute — Route Builder", () => {
+  beforeEach(() => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([
+      filterAgent,
+      routerAgent,
+      trendAgent,
+      riskAgent,
+      rangeAgent,
+    ]);
+  });
+
+  it("renders product-language Route Builder controls and saves router branches through setStrategyRoute", async () => {
+    const user = userEvent.setup();
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(routedStrategyWithoutRoute);
+    vi.mocked(strategyApi.setStrategyRoute).mockResolvedValue(routeSaveResult);
+
+    renderRoute();
+
+    expect(await screen.findByText(/route builder/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /router/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /branch targets/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /add graph route/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/pipelinekind/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/graph strategies are view-only here/i),
+    ).not.toBeInTheDocument();
+
+    await chooseRouteOption(user, /router/i, /router agent|router/i);
+    await user.click(screen.getByRole("button", { name: /branch targets/i }));
+    await user.click(await screen.findByRole("option", { name: /trend trader/i }));
+    await user.click(await screen.findByRole("option", { name: /range trader/i }));
+    await user.click(screen.getByRole("button", { name: /add graph route/i }));
+    await user.click(screen.getByRole("button", { name: /route source/i }));
+    expect(
+      await screen.findByRole("option", { name: /router agent|router/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /regime_filter|regime filter/i }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /router agent|router/i }));
+    await chooseRouteOption(user, /route target/i, /trend_trader|trend trader/i);
+    await user.type(
+      screen.getByRole("textbox", { name: /condition field/i }),
+      "regime",
+    );
+    await chooseRouteOption(user, /condition operator/i, /equals/i);
+    await user.type(
+      screen.getByRole("textbox", { name: /condition value/i }),
+      "trend",
+    );
+    await user.click(screen.getByRole("checkbox", { name: /market snapshot/i }));
+    await user.click(screen.getByRole("checkbox", { name: /tool state/i }));
+    expect(screen.getByText(/router cannot see/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save route/i }));
+
+    await waitFor(() =>
+      expect(strategyApi.setStrategyRoute).toHaveBeenCalledWith(
+        "01TEST",
+        expect.objectContaining({
+          router_role: "router",
+          branches: expect.arrayContaining([
+            expect.objectContaining({ target_role: "trend_trader" }),
+            expect.objectContaining({ target_role: "range_trader" }),
+          ]),
+          graph_edges: expect.arrayContaining([
+            expect.objectContaining({
+              from_role: "router",
+              to_role: "trend_trader",
+            }),
+          ]),
+          context_fields: expect.arrayContaining([
+            "market_snapshot",
+            "tool_state",
+          ]),
+        }),
+      ),
+    );
+  });
+
+  it("defaults guided graph route sources to the selected router before save", async () => {
+    const user = userEvent.setup();
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(routedStrategyWithoutRoute);
+    vi.mocked(strategyApi.setStrategyRoute).mockResolvedValue(routeSaveResult);
+
+    renderRoute();
+
+    expect(await screen.findByText(/route builder/i)).toBeInTheDocument();
+    await chooseRouteOption(user, /router/i, /router agent|router/i);
+    await user.click(screen.getByRole("button", { name: /branch targets/i }));
+    await user.click(await screen.findByRole("option", { name: /trend trader/i }));
+    await user.click(screen.getByRole("button", { name: /add graph route/i }));
+    await chooseRouteOption(user, /route target/i, /trend_trader|trend trader/i);
+    await user.type(
+      screen.getByRole("textbox", { name: /condition field/i }),
+      "regime",
+    );
+    await chooseRouteOption(user, /condition operator/i, /equals/i);
+    await user.type(
+      screen.getByRole("textbox", { name: /condition value/i }),
+      "trend",
+    );
+    await user.click(screen.getByRole("button", { name: /save route/i }));
+
+    await waitFor(() =>
+      expect(strategyApi.setStrategyRoute).toHaveBeenCalledWith(
+        "01TEST",
+        expect.objectContaining({
+          graph_edges: [
+            expect.objectContaining({
+              from_role: "router",
+              to_role: "trend_trader",
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(strategyApi.setStrategyRoute).not.toHaveBeenCalledWith(
+      "01TEST",
+      expect.objectContaining({
+        graph_edges: expect.arrayContaining([
+          expect.objectContaining({ from_role: "regime_filter" }),
+        ]),
+      }),
+    );
+  });
+
+  it.each([
+    {
+      name: "missing router and branch target",
+      strategy: { ...baseStrategy, agents: [], pipeline: { kind: "single" as const } },
+      copy:
+        "Attach a router and at least one downstream trader target before building a route.",
+    },
+    {
+      name: "one attached agent",
+      strategy: {
+        ...baseStrategy,
+        agents: [{ agent_id: "01ROUTER", role: "router", activates: "router" as const }],
+        pipeline: { kind: "sequential" as const },
+      },
+      copy: "Routing needs a router and at least one branch target.",
+    },
+    {
+      name: "missing router capability",
+      strategy: {
+        ...baseStrategy,
+        agents: [
+          { agent_id: "01TREND", role: "trend_trader", activates: "trader" as const },
+          { agent_id: "01RANGE", role: "range_trader", activates: "trader" as const },
+        ],
+        pipeline: { kind: "sequential" as const },
+      },
+      copy: "Choose an agent that can route, or mark this attached role as a Router.",
+    },
+    {
+      name: "missing downstream trader target",
+      strategy: {
+        ...baseStrategy,
+        agents: [
+          { agent_id: "01FILTER", role: "regime_filter", activates: "filter" as const },
+          { agent_id: "01ROUTER", role: "router", activates: "router" as const },
+        ],
+        pipeline: { kind: "graph" as const, route: null, edges: [] },
+      },
+      copy: "Every route must reach at least one trader target before it can launch.",
+    },
+    {
+      name: "unsupported graph shape",
+      strategy: {
+        ...routedStrategy,
+        pipeline: {
+          kind: "graph" as const,
+          route: null,
+          edges: [{ from_role: "trend_trader", to_role: "regime_filter" }],
+        },
+      },
+      copy:
+        "This graph is preserved and exportable. Route Builder can safely edit forward conditioned routes; use JSON import for this unsupported shape.",
+    },
+  ])("shows route readiness disabled copy for $name", async ({ strategy, copy }) => {
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(strategy);
+
+    renderRoute();
+
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save route/i })).toBeDisabled();
+  });
+
+  it("surfaces stale-save backend diagnostics without hiding guided controls", async () => {
+    const user = userEvent.setup();
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(routedStrategy);
+    vi.mocked(strategyApi.setStrategyRoute).mockRejectedValue(
+      new Error("ROUTE_STALE: Strategy route changed on the server. Reload and try again."),
+    );
+
+    renderRoute();
+
+    expect(await screen.findByText(/route builder/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save route/i }));
+
+    expect(
+      await screen.findByText(/strategy route changed on the server/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/reload and try again/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /router/i })).toBeInTheDocument();
+  });
+
+  it("validates pasted advanced JSON through route dry-run before saving and keeps guided controls as the default view", async () => {
+    const user = userEvent.setup();
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(routedStrategy);
+    vi.mocked(strategyApi.validateStrategyRoute).mockResolvedValue({
+      strategy: routedStrategy,
+      readiness: {
+        routed: true,
+        context_fields: ["market_snapshot", "tool_state", "available_targets"],
+        launchable: true,
+        reasons: [],
+      },
+    });
+    vi.mocked(strategyApi.setStrategyRoute).mockResolvedValue({
+      strategy: routedStrategy,
+      readiness: {
+        routed: true,
+        context_fields: ["market_snapshot", "tool_state", "available_targets"],
+        launchable: true,
+        reasons: [],
+      },
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText(/route builder/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /router/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /advanced json/i }));
+    expect(screen.getByRole("button", { name: /router/i })).toBeInTheDocument();
+    expect((screen.getByLabelText(/route json/i) as HTMLTextAreaElement).value).toContain(
+      "\"router_role\"",
+    );
+
+    fireEvent.change(screen.getByLabelText(/route json/i), {
+      target: { value: JSON.stringify(routeJsonWithGraphEdgeAndContext) },
+    });
+    await user.click(screen.getByRole("button", { name: /validate json/i }));
+
+    await waitFor(() =>
+      expect(strategyApi.validateStrategyRoute).toHaveBeenCalledWith(
+        "01TEST",
+        expect.objectContaining({ graph_edges: expect.any(Array) }),
+      ),
+    );
+    expect(await screen.findByText(/routed=true/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save json route/i }));
+
+    await waitFor(() =>
+      expect(strategyApi.setStrategyRoute).toHaveBeenCalledWith(
+        "01TEST",
+        expect.objectContaining({ graph_edges: expect.any(Array) }),
+      ),
+    );
+  });
+
+  it("previews actual downstream path semantics after a branch target", async () => {
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue(
+      routedStrategyWithDownstreamReviewer,
+    );
+
+    renderRoute();
+
+    expect(await screen.findByText(/selected path/i)).toBeInTheDocument();
+    expect(screen.getByText(/Router:\s*router/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Trend\s*→\s*trend_trader\s*→\s*risk_reviewer/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Range\s*→\s*range_trader/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/router\s*--\s*regime = trend\s*-->\s*trend_trader/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/router can see:\s*market snapshot,\s*tool state,\s*available targets/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/router cannot see:\s*credentials,\s*broker secrets/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/trace:\s*compact/i)).toBeInTheDocument();
+    expect(screen.getByText(/actual graph semantics/i)).toBeInTheDocument();
+    expect(screen.getByText(/forward test/i)).toBeInTheDocument();
+    expect(screen.getByText(/live trading/i)).toBeInTheDocument();
   });
 });

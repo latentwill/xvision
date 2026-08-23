@@ -17,7 +17,12 @@
 //! `canonical_role(&str)` (trim + ASCII lowercase) so the bugs above
 //! cannot recur.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::MockDispatch;
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::strategies::agent_ref::canonical_role;
@@ -71,9 +76,9 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
-            provider: None,
-            model: Some("mock".into()),
+            allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4-6".into()),
         },
         system_prompt: String::new(),
         max_tokens: None,
@@ -87,11 +92,46 @@ fn resolved_agent_slot(role: &str) -> ResolvedAgentSlot {
         nano: None,
     }
 }
+async fn spawn_mock_cline() -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let socket = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        br#"{"decisionJson":"{\"action\":\"hold\",\"conviction\":0.5,\"justification\":\"role normalization\"}"}"#,
+    )
+    .expect("write mock sidecar config");
+    let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js");
+    let client = AgentClient::spawn(&bin, &socket)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: ProviderEntry {
+                name: "anthropic".into(),
+                kind: ProviderKind::Anthropic,
+                base_url: String::new(),
+                api_key_env: "K".into(),
+                enabled_models: vec!["claude-sonnet-4-6".into()],
+            },
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
 
 /// QA #5 — attached `Trader` / `TRADER` / ` trader ` must populate
 /// `PipelineOutputs.trader`, not silently drop the result.
 #[tokio::test]
 async fn pipeline_output_assigned_for_role_variants() {
+    let (cline, _sidecar) = spawn_mock_cline().await;
     for variant in [" trader ", "Trader", "TRADER", "trader"] {
         let strategy = fixture_strategy_with_agents(
             vec![AgentRef {
@@ -106,6 +146,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             PipelineDef {
                 kind: PipelineKind::Single,
                 edges: Vec::new(),
+                route: None,
             },
         );
         let slots = vec![resolved_agent_slot(variant)];
@@ -135,8 +176,8 @@ async fn pipeline_output_assigned_for_role_variants() {
             filter_ctx: None,
             trace_attrs: None,
             recorder: None,
-            runtime: Default::default(),
-            cline: None,
+            runtime: AgentRuntime::Cline,
+            cline: Some(cline.clone()),
             model_call_span_id: None,
         })
         .await
@@ -185,6 +226,7 @@ fn graph_edge_validation_uses_canonical_form() {
                 to_role: " trader ".into(),
                 condition: None,
             }],
+            route: None,
         },
     );
 
@@ -211,6 +253,7 @@ fn whitespace_only_role_is_rejected() {
         PipelineDef {
             kind: PipelineKind::Single,
             edges: Vec::new(),
+            route: None,
         },
     );
     match validate_strategy(&strategy) {
@@ -247,6 +290,7 @@ fn duplicate_role_detected_across_variants() {
         PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
         },
     );
     match validate_strategy(&strategy) {

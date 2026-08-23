@@ -11,8 +11,13 @@
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::filter_dispatch::MultiFilterConfig;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, FilterPipelineCtx, PipelineInputs, ResolvedAgentSlot};
@@ -20,6 +25,53 @@ use xvision_engine::agent::signal_cache::SignalCache;
 use xvision_engine::agents::Capability;
 use xvision_engine::strategies::agent_ref::AgentRef;
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline() -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": {
+                "trader": r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
+            },
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, PipelineKind, Strategy};
@@ -80,7 +132,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: cadence,
             attested_with: vec!["mock".into()],
-            required_tools: vec![],
+            required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
@@ -94,6 +146,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,
@@ -109,12 +162,17 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
 }
 
 fn resolved(role: &str) -> ResolvedAgentSlot {
+    let allowed_tools = if role == "trader" {
+        vec!["ohlcv".into(), "submit_decision".into()]
+    } else {
+        vec!["ohlcv".into()]
+    };
     ResolvedAgentSlot {
         role: role.into(),
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools,
             provider: None,
             model: Some("mock".into()),
         },
@@ -138,6 +196,7 @@ async fn run_cycle(
     cache: &mut SignalCache,
     bar_period_minutes: u32,
     bar_ts: chrono::DateTime<chrono::Utc>,
+    cline: &ClineDispatchCtx,
 ) {
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     run_pipeline(PipelineInputs {
@@ -151,7 +210,7 @@ async fn run_cycle(
         scenario_start: None,
         source_window_start: None,
         source_window_end: None,
-        run_id: "r".into(),
+        run_id: format!("r-{}", bar_ts.timestamp()),
         scenario_id: "s".into(),
         cycle_idx: 0,
         provider_catalogs: std::collections::HashMap::new(),
@@ -165,8 +224,8 @@ async fn run_cycle(
         }),
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline.clone()),
         model_call_span_id: None,
     })
     .await
@@ -199,6 +258,7 @@ async fn bar_granularity_reevaluates_every_cycle() {
     ];
     let strategy = fixture_strategy(agents, 5);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let (cline, _agentd_dir) = spawn_mock_cline().await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#,
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
@@ -209,9 +269,9 @@ async fn bar_granularity_reevaluates_every_cycle() {
     let t1 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 35, 0).unwrap();
     let t2 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 40, 0).unwrap();
 
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t0).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t1).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t2).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t0, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t1, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t2, &cline).await;
 
     assert_eq!(
         dispatch.filter_calls(),
@@ -248,6 +308,7 @@ async fn minute_granularity_caches_within_same_minute() {
     // 1-minute bars so Minute-granularity does NOT trigger fallback.
     let strategy = fixture_strategy(agents, 1);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let (cline, _agentd_dir) = spawn_mock_cline().await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"minute"}"#,
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
@@ -258,9 +319,9 @@ async fn minute_granularity_caches_within_same_minute() {
     let t0b = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 45).unwrap();
     let t1 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 31, 0).unwrap();
 
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t0).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t0b).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t1).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t0, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t0b, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 1, t1, &cline).await;
 
     // Two evaluations: first call (cache miss) and the next-minute call.
     // The mid-minute call should re-fire the cached signal.
@@ -301,6 +362,7 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
     ];
     let strategy = fixture_strategy(agents, 60);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let (cline, _agentd_dir) = spawn_mock_cline().await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"decision"}"#,
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
@@ -310,8 +372,8 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
     let t0 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
     let t1 = Utc.with_ymd_and_hms(2026, 5, 22, 10, 30, 0).unwrap();
 
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t0).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t1).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t0, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t1, &cline).await;
 
     assert_eq!(
         dispatch.filter_calls(),
@@ -338,9 +400,8 @@ async fn decision_granularity_reevaluates_only_when_trader_reachable() {
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
     ));
     let mut cache = SignalCache::new();
-
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t0).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t1).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t0, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 60, t1, &cline).await;
 
     assert_eq!(
         dispatch.filter_calls(),
@@ -383,6 +444,7 @@ async fn minute_filter_on_multi_minute_bar_degrades_to_bar_and_emits_fallback() 
     ];
     let strategy = fixture_strategy(agents, 5);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let (cline, _agentd_dir) = spawn_mock_cline().await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"minute"}"#,
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
@@ -392,8 +454,8 @@ async fn minute_filter_on_multi_minute_bar_degrades_to_bar_and_emits_fallback() 
     let t0 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
     let t1 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 35, 0).unwrap();
 
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t0).await;
-    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t1).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t0, &cline).await;
+    run_cycle(&strategy, &slots, dispatch.clone(), &mut cache, 5, t1, &cline).await;
 
     assert_eq!(
         dispatch.filter_calls(),

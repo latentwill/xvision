@@ -6,13 +6,64 @@
 //! on the payload gates Trader invocation correctly.
 
 use async_trait::async_trait;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::agents::Capability;
 use xvision_engine::strategies::agent_ref::{AgentRef, EdgePredicate};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline(trader_json: &str, record_path: &Path) -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": {"trader": trader_json},
+            "recordStepsPath": record_path,
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, PipelineEdge, PipelineKind, Strategy};
@@ -84,7 +135,7 @@ fn fixture_strategy_with_pipeline(
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
             attested_with: vec!["mock".into()],
-            required_tools: vec![],
+            required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
@@ -95,7 +146,11 @@ fn fixture_strategy_with_pipeline(
         },
         hypothesis: None,
         agents,
-        pipeline: PipelineDef { kind, edges },
+        pipeline: PipelineDef {
+            kind,
+            edges,
+            route: None,
+        },
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
@@ -110,12 +165,17 @@ fn fixture_strategy_with_pipeline(
 }
 
 fn resolved(role: &str) -> ResolvedAgentSlot {
+    let allowed_tools = if role == "trader" {
+        vec!["ohlcv".into(), "submit_decision".into()]
+    } else {
+        vec!["ohlcv".into()]
+    };
     ResolvedAgentSlot {
         role: role.into(),
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools,
             provider: None,
             model: Some("mock".into()),
         },
@@ -156,7 +216,13 @@ async fn filter_signal_flows_into_trader_briefing() {
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
-
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+        &record_path,
+    )
+    .await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#,
         r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
@@ -181,8 +247,8 @@ async fn filter_signal_flows_into_trader_briefing() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
@@ -190,17 +256,11 @@ async fn filter_signal_flows_into_trader_briefing() {
 
     assert!(outs.trader.is_some(), "trader output populated");
 
-    // Two LLM dispatches: one for the Filter, one for the Trader.
+    // Filter remains on the explicit LlmDispatch seam; the Trader call is
+    // recorded by the mock sidecar.
     let requests = dispatch.requests();
-    assert_eq!(requests.len(), 2, "expected Filter + Trader dispatches");
-
-    // The Trader's request body must carry `filter_signals.regime_filter`
-    // populated from the Filter's parsed payload.
-    let trader_req = requests
-        .iter()
-        .find(|r| !r.system_prompt.contains("You are a Filter"))
-        .expect("trader request present");
-    let body = serde_json::to_string(&trader_req.messages).unwrap();
+    assert_eq!(requests.len(), 1, "expected one explicit Filter dispatch");
+    let body = std::fs::read_to_string(&record_path).expect("recorded Trader step");
     assert!(
         body.contains("filter_signals"),
         "Trader briefing must include `filter_signals` map: {body}"
@@ -213,8 +273,8 @@ async fn filter_signal_flows_into_trader_briefing() {
         body.contains("trend"),
         "Trader briefing must include the Filter payload value: {body}"
     );
-    assert_eq!(outs.total_input_tokens, 6, "Filter + Trader token accounting");
-    assert_eq!(outs.total_output_tokens, 10, "Filter + Trader token accounting");
+    assert_eq!(outs.total_input_tokens, 14, "Filter + Trader token accounting");
+    assert_eq!(outs.total_output_tokens, 12, "Filter + Trader token accounting");
 }
 
 #[tokio::test]
@@ -246,6 +306,13 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
+        &record_path,
+    )
+    .await;
 
     let dispatch = Arc::new(RoleAwareDispatch::new(
         "this is not json",
@@ -253,7 +320,7 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
     ));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
 
-    let outs = run_pipeline(PipelineInputs {
+    let err = run_pipeline(PipelineInputs {
         strategy: &strategy,
         agent_slots: &slots,
         seed_inputs: serde_json::json!({}),
@@ -271,16 +338,16 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
-    .expect("pipeline runs even with malformed Filter");
+    .expect_err("malformed Filter output must abort the pipeline");
 
     assert!(
-        outs.trader.is_some(),
-        "Trader still runs with a null-payload Filter signal"
+        err.to_string().contains("filter output parse failed"),
+        "malformed Filter output must surface a typed parse error: {err}",
     );
 }
 
@@ -319,6 +386,13 @@ async fn graph_predicate_true_invokes_trader() {
         }],
     );
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+        &record_path,
+    )
+    .await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"trend"},"granularity":"bar"}"#,
         r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
@@ -342,15 +416,15 @@ async fn graph_predicate_true_invokes_trader() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("graph pipeline runs");
 
     assert!(outs.trader.is_some(), "matching predicate should invoke Trader");
-    assert_eq!(dispatch.requests().len(), 2, "Filter + Trader dispatches");
+    assert_eq!(dispatch.requests().len(), 1, "Filter dispatches via LlmDispatch");
 }
 
 #[tokio::test]
@@ -388,6 +462,11 @@ async fn graph_predicate_false_skips_trader() {
         }],
     );
     let slots = vec![resolved("regime_filter"), resolved("trader")];
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
+        &TempDir::new().expect("record dir").path().join("steps.jsonl"),
+    )
+    .await;
     let dispatch = Arc::new(RoleAwareDispatch::new(
         r#"{"name":"regime_filter","payload":{"regime":"range"},"granularity":"bar"}"#,
         r#"{"action":"long_open","conviction":0.6,"justification":"r"}"#,
@@ -411,8 +490,8 @@ async fn graph_predicate_false_skips_trader() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await

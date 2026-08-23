@@ -255,12 +255,13 @@ clients but is not on the hot path. See
 [CLI non-surfaced](/docs?slug=cli-non-surfaced) for the full footgun inventory.
 
 
-## Running the optimizer from an agent
+## Starting and monitoring the automated optimizer
 
-The optimizer flywheel (autooptimizer) has a convenience HTTP endpoint
-designed for agents. It accepts a minimal JSON body and synthesizes
-defaults so the caller does not need flywheel internals like embeddings,
-namespaces, or pattern text.
+The optimizer flywheel (autooptimizer) has one stable HTTP launch endpoint for
+agents and the dashboard. It accepts the same launch payload shape the dashboard
+uses and starts the real automated optimizer cycle; the agent's role after launch
+is to monitor progress/results, not to perform manual optimization. It is not the
+memory-distillation endpoint.
 
 ### Quick launch
 
@@ -268,35 +269,35 @@ namespaces, or pattern text.
 POST /api/optimize/run
 Content-Type: application/json
 
-{"agent_id": "<agent_ulid>"}
+{"strategy_id": "<strategy_ulid>"}
 ```
 
-Returns an `AutoOptimizerRunDto` JSON object with the run id, namespace,
-pattern_id, and promotion state. The endpoint is an exception to the
-"don't use the dashboard API" rule — it carries the same stability
-promise as the chat rail endpoints.
+Returns `202 Accepted` with a `StartCycleResponse` body. Progress is reported
+through the optimizer event stream and cycle/status endpoints, so agents monitor
+the automated job through the stable route instead of improvising optimizer
+steps. The endpoint is an exception to the "don't use the dashboard API" rule.
 
 ### Full fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `agent_id` | string | required | Agent ULID whose flywheel namespace will be optimized. |
-| `pattern_text` | string | `"Auto-optimized pattern for agent <id>"` | The pattern/prompt text to optimize. |
-| `active` | bool | `true` | Whether the resulting Pattern is immediately recall-active. |
-| `limit` | int | `50` | Max Observation rows to distill into the pattern. |
-| `min_observations` | int | `2` | Minimum Observation count required to produce a Pattern. |
+| `strategy_id` | string | required | Strategy/agent id to optimize. |
+| `mutator_provider` | string or null | `autooptimizer.toml` mutator provider | Experiment-writer provider override. |
+| `mutator_model` | string or null | `autooptimizer.toml` mutator model | Experiment-writer model override. |
+| `judge_provider` | string or null | mutator provider | Reviewer provider override. |
+| `judge_model` | string or null | mutator model | Reviewer model override. |
+| `budget_usd` | number or null | none | Per-run optimizer budget cap. |
+| `day_start` / `day_end` | date string or null | config window | Primary evaluation window override. |
+| `baseline_start` / `baseline_end` | date string or null | config window | Holdout evaluation window override. |
+| `experiments_per_cycle` | int or null | config value | Candidate experiments per parent. |
 
 ### CLI equivalent
 
 The same workflow is available via the CLI:
 
 ```bash
-# Strategy-level optimization (cycle optimizer):
 xvn optimize run --strategy <strategy-id> --mock
 xvn optimize run --strategy <strategy-id> --provider ollama  # cross-provider
-
-# Flywheel (memory distillation) optimization:
-xvn optimize memory-demos --target-agent-id <agent-id> --json
 ```
 
 Both CLI and HTTP paths are **offline-only** — they never trade live.

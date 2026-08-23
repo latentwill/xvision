@@ -112,6 +112,7 @@ fn hold_decision_for_asset(run_id: &str, asset: &str) -> DecisionRow {
         fill_size: None,
         fee: None,
         pnl_realized: None,
+        delayed: Some(false),
     }
 }
 
@@ -265,23 +266,20 @@ async fn build_scenario_payload_loads_cached_bars_and_indicators() {
 async fn build_scenario_payload_uses_requested_granularity_cache_key() {
     use xvision_engine::api::chart::{build_scenario_payload_with_granularity, CacheStatus};
     use xvision_engine::api::scenario as api_scenario;
-    use xvision_engine::eval::scenario::BarGranularity;
 
     let ctx = test_ctx().await;
     let scenario = api_scenario::get(&ctx, "crypto-bull-q1-2025").await.unwrap();
-    let override_key = xvision_engine::eval::bars::compute_cache_key(
-        "BTC/USD",
-        BarGranularity::Hour4,
-        scenario.time_window.start,
-        scenario.time_window.end,
-        "alpaca-historical-v1",
-    );
-
     let payload = build_scenario_payload_with_granularity(&ctx, &scenario.id, Some("4h"), None)
         .await
         .unwrap();
 
-    assert_eq!(payload.scenario.bar_cache_policy.cache_key, override_key);
+    // Scenarios are asset-free/timeframe-free: `payload.scenario` echoes the
+    // STORED asset-free cache key; the derived 4h key is used only for the
+    // bars lookup (observable via cache_status — nothing is cached here).
+    assert_eq!(
+        payload.scenario.bar_cache_policy.cache_key,
+        scenario.bar_cache_policy.cache_key
+    );
     assert!(
         matches!(payload.cache_status, CacheStatus::NotCached { .. }),
         "expected alternate timeframe to check its own cache row"
@@ -303,10 +301,10 @@ async fn build_scenario_payload_defaults_to_btc_preview_asset() {
 }
 
 /// Requesting `asset=ETH/USD` computes an ETH-specific cache key (distinct
-/// from the BTC default) and reports ETH as the resolved preview asset.
+/// from the BTC default) for the bars lookup.
 #[tokio::test]
 async fn build_scenario_payload_uses_requested_asset_cache_key() {
-    use xvision_engine::api::chart::build_scenario_payload_with_granularity;
+    use xvision_engine::api::chart::{build_scenario_payload_with_granularity, CacheStatus};
     use xvision_engine::api::scenario as api_scenario;
 
     let ctx = test_ctx().await;
@@ -333,13 +331,16 @@ async fn build_scenario_payload_uses_requested_asset_cache_key() {
         .unwrap();
 
     assert_eq!(payload.preview_asset, "ETH");
+    // Scenarios are asset-free: `payload.scenario` echoes the STORED
+    // asset-free cache key regardless of the requested preview asset; the
+    // derived ETH key drives only the bars lookup (cache_status).
     assert_eq!(
-        payload.scenario.bar_cache_policy.cache_key, eth_key,
-        "ETH request must use the ETH-specific cache key"
+        payload.scenario.bar_cache_policy.cache_key,
+        scenario.bar_cache_policy.cache_key
     );
-    assert_ne!(
-        payload.scenario.bar_cache_policy.cache_key, btc_key,
-        "ETH request must not reuse the BTC cache key"
+    assert!(
+        matches!(payload.cache_status, CacheStatus::NotCached { .. }),
+        "ETH lookup must check the ETH-specific cache row (empty here)"
     );
 }
 

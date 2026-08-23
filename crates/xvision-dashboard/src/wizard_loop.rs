@@ -3142,7 +3142,6 @@ fn normalize_create_scenario_input(obj: &mut serde_json::Map<String, serde_json:
         "quote_currency",
         &[("usd", "Usd"), ("usdt", "Usdt"), ("usdc", "Usdc")],
     );
-    ensure_string(obj, "granularity", "4h");
     ensure_string(obj, "timezone", "UTC");
     ensure_array(obj, "tags");
     ensure_null(obj, "notes");
@@ -3574,7 +3573,6 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                     "quote_currency": {"type": "string"},
                     "time_window": {"type": "object"},
                     "capital": {"type": "object"},
-                    "granularity": {"type": "string"},
                     "timezone": {"type": "string"},
                     "calendar": {"type": "object"},
                     "venue": {"type": "object"},
@@ -3592,7 +3590,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 // retry loop on `missing field venue`.
                 "required": [
                     "display_name", "description", "asset_class",
-                    "quote_currency", "time_window", "capital", "granularity",
+                    "quote_currency", "time_window", "capital",
                     "timezone", "calendar", "data_source",
                     "replay_mode", "tags", "source"
                 ]
@@ -3972,7 +3970,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
             description: "Stateless read-only selector: filter the scenario library \
                           by timeframe, regime, and decision-count proximity. \
                           Use this to find a comparable set of scenarios for A/B evaluation \
-                          without needing to hand-pick ids. Returns [{id, name, timeframe, decision_count}]. \
+                          without needing to hand-pick ids. Returns [{id, name, decision_count}]. \
                           Mode A: set target_decisions=N to find scenarios within ±10% of N. \
                           Mode B: set same_decisions=true and max_decisions=N to find \
                           the largest common decision count ≤ N in the candidate set.".into(),
@@ -4762,8 +4760,7 @@ mod tests {
                 serde_json::json!({
                     "create_scenario": {
                         "display_name": "BTC Range",
-                        "asset": "BTC",
-                        "granularity": "4h"
+                        "asset": "BTC"
                     }
                 }),
             )
@@ -4799,8 +4796,7 @@ mod tests {
                     "create_scenario": {
                         "display_name": "BTC Repair",
                         "asset": "BTC",
-                        "granularity": "4h",
-                        "capital": {"amount": 50000}
+                                                "capital": {"amount": 50000}
                     }
                 }),
             )
@@ -4827,8 +4823,7 @@ mod tests {
                     "create_scenario": {
                         "display_name": "BTC Calendar",
                         "asset": "BTC",
-                        "granularity": "4h",
-                        "calendar": {"type": "Continuous24x7"}
+                                                "calendar": {"type": "Continuous24x7"}
                     }
                 }),
             )
@@ -5030,8 +5025,7 @@ mod tests {
                 serde_json::json!({
                     "create_scenario": {
                         "display_name": "SOL Q1 2026",
-                        "asset": "SOL",
-                        "granularity": "4h"
+                        "asset": "SOL"
                     }
                 }),
             )
@@ -7172,8 +7166,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .run_tool(
                 "create_scenario",
                 serde_json::json!({
-                    "display_name": "W10 Test Scenario",
-                    "granularity": "4h"
+                    "display_name": "W10 Test Scenario"
                 }),
             )
             .await
@@ -7294,10 +7287,6 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .find(|r| r["id"].as_str() == Some(sc_id.as_str()))
             .unwrap_or_else(|| panic!("no-mode select must include the created scenario; got: {all}"));
         assert!(row["name"].as_str().is_some(), "row must have name: {row}");
-        assert!(
-            row["timeframe"].as_str().is_some(),
-            "row must have timeframe: {row}"
-        );
         let dc = row["decision_count"]
             .as_u64()
             .unwrap_or_else(|| panic!("row must have decision_count: {row}"));

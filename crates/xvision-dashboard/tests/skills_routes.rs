@@ -25,13 +25,16 @@ fn sample_body(name: &str) -> Value {
 }
 
 #[tokio::test]
-async fn skills_list_empty_on_fresh_db() {
+async fn skills_list_contains_default_seed_rows() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/skills").await;
     response.assert_status_ok();
     let body: Value = response.json();
     assert!(body["items"].is_array());
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().any(|item| item["name"] == "ohlcv"));
+    assert!(items.iter().any(|item| item["name"] == "indicator_panel"));
 }
 
 #[tokio::test]
@@ -81,11 +84,11 @@ async fn archive_then_list_excludes() {
 
     let list_res = server.get("/api/skills").await;
     let len = list_res.json::<Value>()["items"].as_array().unwrap().len();
-    assert_eq!(len, 0);
+    assert_eq!(len, 2);
 
     let with_archived = server.get("/api/skills?include_archived=true").await;
     let len_all = with_archived.json::<Value>()["items"].as_array().unwrap().len();
-    assert_eq!(len_all, 1);
+    assert_eq!(len_all, 3);
 }
 
 #[tokio::test]

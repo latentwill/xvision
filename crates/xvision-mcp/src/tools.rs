@@ -3058,7 +3058,7 @@ mod tests {
                 fill_size: Some(0.1),
                 fee: Some(1.0),
                 pnl_realized: None,
-                delayed: false,
+                delayed: Some(false),
             })
             .await
             .unwrap();
@@ -3517,7 +3517,6 @@ mod tests {
         let card = v["card"].as_str().unwrap();
         assert!(card.contains("id:"), "card missing id field: {card}");
         assert!(card.contains("name:"), "card missing name field: {card}");
-        assert!(card.contains("timeframe:"), "card missing timeframe: {card}");
         assert!(
             card.contains("decision_bars:"),
             "card missing decision_bars: {card}"
@@ -3641,7 +3640,6 @@ mod tests {
             asset_class: AssetClass::Crypto,
             quote_currency: QuoteCurrency::Usd,
             time_window: TimeWindow { start, end },
-            granularity: gran,
             timezone: "UTC".to_string(),
             calendar: CalendarRef::Continuous24x7,
             data_source: DataSource::AlpacaHistorical {
@@ -3670,7 +3668,7 @@ mod tests {
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
             bar_cache_policy: BarCachePolicy {
-                cache_key: id.to_string(),
+                cache_key: format!("{id}-{}", gran.canonical()),
                 refresh_policy: RefreshPolicy::NeverRefresh,
                 data_fetched_at: None,
             },

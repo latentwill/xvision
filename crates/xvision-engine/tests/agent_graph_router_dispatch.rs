@@ -7,9 +7,15 @@
 //!   instructed; backward target rejected at validate time.
 
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use xvision_engine::agent::dispatch_capability::{dispatch_capability, AgentOutput, DispatchInput};
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::{
+    dispatch_capability, AgentOutput, ClineDispatchCtx, DispatchInput,
+};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, PipelineInputs, ResolvedAgentSlot};
 use xvision_engine::agents::Capability;
@@ -17,6 +23,54 @@ use xvision_engine::strategies::agent_ref::{AgentRef, EdgePredicate};
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline(router_json: &str) -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": {
+                "router": router_json,
+                "trader": r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
+            },
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
 use xvision_engine::strategies::validate::{validate_strategy, ValidationError};
 use xvision_engine::strategies::{PipelineDef, PipelineEdge, PipelineKind, Strategy};
 use xvision_engine::tools::ToolRegistry;
@@ -67,7 +121,11 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools: if role == "trader" {
+                vec!["ohlcv".into(), "submit_decision".into()]
+            } else {
+                vec!["ohlcv".into()]
+            },
             provider: None,
             model: Some("mock".into()),
         },
@@ -96,7 +154,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 15,
             attested_with: vec!["mock".into()],
-            required_tools: vec![],
+            required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
@@ -107,7 +165,11 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
         },
         hypothesis: None,
         agents,
-        pipeline: PipelineDef { kind, edges },
+        pipeline: PipelineDef {
+            kind,
+            edges,
+            route: None,
+        },
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
@@ -166,6 +228,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         text_response(r#"{"action":"hold","conviction":0.1,"justification":"r"}"#),
     ]));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let (cline, _agentd_dir) = spawn_mock_cline(r#"{"target_agent_ref_index":2}"#).await;
 
     let outs = run_pipeline(PipelineInputs {
         strategy: &strategy,
@@ -185,22 +248,15 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         filter_ctx: None,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
-
-    // Exactly two LLM calls: one for Router, one for Trader. The
-    // middle agent was skipped because the Router jumped to index 2.
-    let requests = dispatch.requests();
-    assert_eq!(
-        requests.len(),
-        2,
-        "expected Router + Trader dispatches; got {}",
-        requests.len(),
-    );
+    // Router and Trader both execute through the Cline sidecar under WU-6;
+    // the legacy QueueDispatch is intentionally untouched.
+    assert_eq!(dispatch.requests().len(), 0);
     assert!(outs.trader.is_some(), "trader must have run after Router jump");
 }
 
@@ -214,7 +270,7 @@ async fn dispatch_capability_router_returns_route_selection() {
         r#"{"target_agent_ref_index": 3}"#,
     )]));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
-
+    let (cline, _agentd_dir) = spawn_mock_cline(r#"{"target_agent_ref_index":3}"#).await;
     let outcome = dispatch_capability(DispatchInput {
         resolved: &resolved_slot,
         slot: &slot,
@@ -242,11 +298,18 @@ async fn dispatch_capability_router_returns_route_selection() {
         trace_name: None,
         current_index: 1,
         total_agents: 5,
+        agent_roles: &[
+            "router".to_string(),
+            "nano".to_string(),
+            "analyst".to_string(),
+            "trader".to_string(),
+            "risk".to_string(),
+        ],
         activates: Capability::Router,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
@@ -268,7 +331,7 @@ async fn dispatch_capability_router_rejects_backward_target() {
         r#"{"target_agent_ref_index": 0}"#,
     )]));
     let tools = Arc::new(ToolRegistry::default_with_builtins());
-
+    let (cline, _agentd_dir) = spawn_mock_cline(r#"{"target_agent_ref_index":0}"#).await;
     let err = dispatch_capability(DispatchInput {
         resolved: &resolved_slot,
         slot: &slot,
@@ -296,11 +359,18 @@ async fn dispatch_capability_router_rejects_backward_target() {
         trace_name: None,
         current_index: 2, // Router at index 2; target=0 is backward.
         total_agents: 5,
+        agent_roles: &[
+            "nano".to_string(),
+            "analyst".to_string(),
+            "router".to_string(),
+            "trader".to_string(),
+            "risk".to_string(),
+        ],
         activates: Capability::Router,
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await

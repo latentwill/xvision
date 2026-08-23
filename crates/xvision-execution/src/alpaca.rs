@@ -68,9 +68,15 @@ fn asset_symbol_from_alpaca(sym: &str) -> Option<AssetSymbol> {
 pub trait AlpacaApi: Send + Sync {
     /// POST /v2/orders
     async fn create_order(&self, req: OrderRequest) -> Result<AlpacaOrder, ExecutorError>;
-
     /// GET /v2/orders/{id}
     async fn get_order(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError>;
+
+    /// DELETE /v2/orders/{id}. Used as a best-effort timeout cleanup.
+    async fn cancel_order(&self, _order_id: &str) -> Result<(), ExecutorError> {
+        Err(ExecutorError::Internal(
+            "Alpaca cancellation is not implemented by this API".to_string(),
+        ))
+    }
 
     /// GET /v2/account
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError>;
@@ -102,13 +108,13 @@ pub enum OrderSide {
     Buy,
     Sell,
 }
-
 /// Alpaca order representation returned from the API layer.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AlpacaOrder {
     pub id: String,
     pub client_order_id: String,
     pub status: String,
+    /// Filled base-asset quantity reported by Alpaca.
     pub filled_qty: f64,
     pub avg_fill_price: Option<f64>,
     pub submitted_at: Option<chrono::DateTime<Utc>>,
@@ -269,6 +275,14 @@ impl AlpacaApi for ApacClientApi {
 
         Ok(apca_order_to_plain(&order))
     }
+    async fn cancel_order(&self, order_id: &str) -> Result<(), ExecutorError> {
+        use apca::api::v2::order::{Delete, Id};
+        use uuid::Uuid;
+
+        let uuid = Uuid::parse_str(order_id)
+            .map_err(|e| ExecutorError::Internal(format!("invalid order id: {e}")))?;
+        self.client.issue::<Delete>(&Id(uuid)).await.map_err(map_apca_err)
+    }
 
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
         use apca::api::v2::account::Get;
@@ -383,7 +397,6 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
     }
 
     /// Poll an order until it reaches a terminal state.
-    /// 5 retries × 200 ms; aborts with `Timeout` if still pending after that.
     async fn await_fill(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
         const MAX_POLLS: u32 = 5;
         const POLL_DELAY_MS: u64 = 200;
@@ -397,11 +410,20 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
                         order_id
                     )));
                 }
+                if order.filled_qty <= 0.0 {
+                    return Err(ExecutorError::NotFilled {
+                        status: order.status,
+                        filled_qty: order.filled_qty,
+                    });
+                }
                 return Ok(order);
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(POLL_DELAY_MS)).await;
         }
 
+        if let Err(e) = self.api.cancel_order(order_id).await {
+            tracing::warn!(target: "xvision::alpaca", order_id, "timed-out order cancellation failed: {e}");
+        }
         Err(ExecutorError::Timeout(format!(
             "order {order_id} did not fill within {} polls",
             MAX_POLLS
@@ -433,6 +455,11 @@ impl<A: AlpacaApi> AlpacaExecutor<A> {
             filled_at: order.filled_at,
             note: None,
         }
+    }
+    fn partial_fill_note(order: &AlpacaOrder, requested_qty: Option<f64>) -> Option<String> {
+        let requested = requested_qty?;
+        (order.filled_qty > 0.0 && order.filled_qty < requested)
+            .then(|| format!("partial fill {}/{}", order.filled_qty, requested))
     }
 }
 
@@ -511,7 +538,10 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         // 7. Wait for fill.
         let filled = self.await_fill(&order_id).await?;
 
-        Ok(Self::build_receipt(td.cycle_id, asset, &filled, account.equity))
+        let mut receipt = Self::build_receipt(td.cycle_id, asset, &filled, account.equity);
+        let requested_qty = (mid_price > 0.0).then(|| notional / mid_price);
+        receipt.note = Self::partial_fill_note(&filled, requested_qty);
+        Ok(receipt)
     }
 
     async fn close_position(&self, asset: AssetSymbol) -> Result<ExecutionReceipt, ExecutorError> {
@@ -559,7 +589,9 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
         let order_id = order.id.clone();
         let filled = self.await_fill(&order_id).await?;
 
-        Ok(Self::build_receipt(Uuid::nil(), asset, &filled, account.equity))
+        let mut receipt = Self::build_receipt(Uuid::nil(), asset, &filled, account.equity);
+        receipt.note = Self::partial_fill_note(&filled, Some(pos.qty));
+        Ok(receipt)
     }
 
     async fn portfolio(&self) -> Result<PortfolioState, ExecutorError> {
@@ -897,6 +929,36 @@ mod tests {
         assert_eq!(
             req.symbol, "ETH/USD",
             "submit must route to the asset named on the TraderDecision"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_cancelled_without_fill_is_not_filled() {
+        let mut cancelled = fixture_pending_order();
+        cancelled.status = "canceled".into();
+        let executor = AlpacaExecutor::with_api(MockAlpacaApi::new(
+            fixture_account(),
+            vec![],
+            None,
+            Some(cancelled),
+        ));
+        let err = executor.await_fill("cancelled-order").await.unwrap_err();
+        assert!(matches!(
+            err,
+            ExecutorError::NotFilled {
+                status,
+                filled_qty
+            } if status == "canceled" && filled_qty == 0.0
+        ));
+    }
+
+    #[test]
+    fn partial_fill_note_reports_actual_quantity() {
+        let mut order = fixture_filled_order("filled", "client");
+        order.filled_qty = 0.25;
+        assert_eq!(
+            AlpacaExecutor::<MockAlpacaApi>::partial_fill_note(&order, Some(0.5)).as_deref(),
+            Some("partial fill 0.25/0.5")
         );
     }
 

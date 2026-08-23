@@ -1,8 +1,8 @@
 //! Cycle runs — a first-class "historic run" view over the lineage graph.
 //!
-//! F13/F19 (QA 2026-06-04): a completed `run-cycle` writes its candidates to
-//! `lineage_nodes` (keyed by `cycle_id`) but never to the memory-distillation
-//! `autooptimizer_runs` ledger that `xvn optimizer ls`/`inspect` and
+//! F13/F19 (QA 2026-06-04): a completed `xvn optimize run` writes its candidates
+//! to `lineage_nodes` (keyed by `cycle_id`) but never to the memory-distillation
+//! `autooptimizer_runs` ledger that `xvn optimize ls`/`inspect` and
 //! `GET /api/autooptimizer` read. So after a real cycle those run-oriented
 //! surfaces were empty/404 even though the genealogy surface showed the cycle.
 //!
@@ -159,6 +159,31 @@ pub struct CycleRunDetail {
     pub summary: CycleRunSummary,
     pub nodes: Vec<CycleNodeDetail>,
     pub honesty_check: Option<HonestyCheckRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CycleEvidenceCounts {
+    pub kept: i64,
+    pub suspect: i64,
+    pub dropped: i64,
+    pub no_candidate: i64,
+    pub candidate_error: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CycleEvidenceReasons {
+    pub no_candidate: Vec<String>,
+    pub candidate_error: Vec<String>,
+    pub mutation_gated: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CycleEvidenceBundle {
+    pub cycle_id: String,
+    pub cost: CycleCost,
+    pub counts: CycleEvidenceCounts,
+    pub event_reasons: CycleEvidenceReasons,
+    pub nodes: Vec<CycleNodeDetail>,
 }
 
 /// List completed cycles, most-recent first, paginated. Cycles with a NULL
@@ -323,6 +348,10 @@ fn add_optional_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
     }
 }
 
+fn mutation_gated_kind_predicate() -> &'static str {
+    "kind LIKE 'mutation_gated%'"
+}
+
 fn u64_to_i64_saturating(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -353,10 +382,11 @@ async fn load_cycles_eval_usage(
         .take(cycle_ids.len())
         .collect::<Vec<_>>()
         .join(", ");
+    let kind_predicate = mutation_gated_kind_predicate();
     let sql = format!(
         "SELECT DISTINCT cycle_id, json_extract(payload_json, '$.eval_run_id') AS eval_run_id \
          FROM autooptimizer_events \
-         WHERE kind = 'mutation_gated' \
+         WHERE {kind_predicate} \
            AND cycle_id IN ({placeholders}) \
            AND json_valid(payload_json) \
            AND json_extract(payload_json, '$.eval_run_id') IS NOT NULL"
@@ -494,6 +524,123 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         nodes: detailed,
         honesty_check,
     }))
+}
+
+pub async fn get_cycle_evidence_bundle(
+    pool: &SqlitePool,
+    cycle_id: &str,
+) -> Result<Option<CycleEvidenceBundle>> {
+    let detail = get_cycle_run(pool, cycle_id).await?;
+    let cost = get_cycle_cost(pool, cycle_id).await;
+    let (event_counts, event_reasons, saw_events) = load_cycle_event_evidence(pool, cycle_id).await;
+
+    let mut counts = detail
+        .as_ref()
+        .map(|d| CycleEvidenceCounts {
+            kept: d.summary.active_count,
+            suspect: d.summary.suspect_count,
+            dropped: d.summary.rejected_count,
+            no_candidate: 0,
+            candidate_error: 0,
+        })
+        .unwrap_or_default();
+    counts.no_candidate = event_counts.no_candidate;
+    counts.candidate_error = event_counts.candidate_error;
+    counts.dropped += event_counts.dropped;
+    counts.suspect += event_counts.suspect;
+    counts.kept += event_counts.kept;
+
+    let nodes = detail.map(|d| d.nodes).unwrap_or_default();
+    if nodes.is_empty() && !cost.recorded && !saw_events {
+        return Ok(None);
+    }
+
+    Ok(Some(CycleEvidenceBundle {
+        cycle_id: cycle_id.to_string(),
+        cost,
+        counts,
+        event_reasons,
+        nodes,
+    }))
+}
+
+async fn load_cycle_event_evidence(
+    pool: &SqlitePool,
+    cycle_id: &str,
+) -> (CycleEvidenceCounts, CycleEvidenceReasons, bool) {
+    let rows = match sqlx::query(
+        "SELECT kind, payload_json FROM autooptimizer_events \
+         WHERE cycle_id = ? \
+           AND (kind IN ('no_candidate', 'candidate_error') OR kind LIKE 'mutation_gated%') \
+         ORDER BY seq ASC",
+    )
+    .bind(cycle_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => {
+            return (
+                CycleEvidenceCounts::default(),
+                CycleEvidenceReasons::default(),
+                false,
+            )
+        }
+    };
+
+    let mut counts = CycleEvidenceCounts::default();
+    let mut reasons = CycleEvidenceReasons::default();
+    for row in &rows {
+        let kind: String = match row.try_get("kind") {
+            Ok(kind) => kind,
+            Err(_) => continue,
+        };
+        let payload_json: String = match row.try_get("payload_json") {
+            Ok(payload_json) => payload_json,
+            Err(_) => continue,
+        };
+        let payload: serde_json::Value = match serde_json::from_str(&payload_json) {
+            Ok(payload) => payload,
+            Err(_) => continue,
+        };
+        match kind.as_str() {
+            "no_candidate" => {
+                counts.no_candidate += 1;
+                if let Some(reason) = payload.get("reason").and_then(|v| v.as_str()) {
+                    reasons.no_candidate.push(reason.to_string());
+                }
+            }
+            "candidate_error" => {
+                counts.candidate_error += 1;
+                if let Some(reason) = payload.get("reason").and_then(|v| v.as_str()) {
+                    reasons.candidate_error.push(reason.to_string());
+                }
+            }
+            k if k.starts_with("mutation_gated") => {
+                let outcome = payload
+                    .get("outcome")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| match k {
+                        "mutation_gated_passed" => Some("kept"),
+                        "mutation_gated_suspect" => Some("suspect"),
+                        "mutation_gated_dropped" => Some("dropped"),
+                        _ => None,
+                    });
+                match outcome {
+                    Some("kept") => counts.kept += 1,
+                    Some("suspect") => counts.suspect += 1,
+                    Some("dropped") => counts.dropped += 1,
+                    _ => {}
+                }
+                if let Some(reason) = payload.get("gate_reason").and_then(|v| v.as_str()) {
+                    reasons.mutation_gated.push(reason.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (counts, reasons, !rows.is_empty())
 }
 
 async fn load_node_metrics(
@@ -887,5 +1034,289 @@ mod tests {
         assert!(!no_cost.recorded);
         assert_eq!(no_cost.input_tokens, Some(7));
         assert_eq!(no_cost.output_tokens, Some(8));
+    }
+
+    async fn ensure_autooptimizer_events_schema(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE autooptimizer_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                cycle_id TEXT,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                ts TEXT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("create events");
+    }
+
+    async fn insert_optimizer_event(
+        pool: &sqlx::SqlitePool,
+        cycle_id: &str,
+        kind: &str,
+        payload: serde_json::Value,
+    ) {
+        sqlx::query(
+            "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts) \
+             VALUES ('sess-evidence', ?, ?, ?, '2026-01-01T00:00:00Z')",
+        )
+        .bind(cycle_id)
+        .bind(kind)
+        .bind(payload.to_string())
+        .execute(pool)
+        .await
+        .expect("insert optimizer event");
+    }
+
+    async fn insert_cycle_cost_row(
+        pool: &sqlx::SqlitePool,
+        cycle_id: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cost_usd: f64,
+        unpriced_calls: i64,
+    ) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO cycle_cost \
+             (cycle_id, input_tokens, output_tokens, cost_usd, unpriced_calls, created_at) \
+             VALUES (?, ?, ?, ?, ?, '2026-01-01T00:00:00Z')",
+        )
+        .bind(cycle_id)
+        .bind(input_tokens)
+        .bind(output_tokens)
+        .bind(cost_usd)
+        .bind(unpriced_calls)
+        .execute(pool)
+        .await
+        .expect("insert cycle cost");
+    }
+
+    async fn insert_lineage_node_for_evidence(
+        pool: &sqlx::SqlitePool,
+        cycle_id: &str,
+        seed: &[u8],
+        status: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO lineage_nodes \
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
+             VALUES (?, NULL, 'pass', ?, ?, '2026-01-01T00:00:00Z')",
+        )
+        .bind(ContentHash::of_bytes(seed).to_hex())
+        .bind(status)
+        .bind(cycle_id)
+        .execute(pool)
+        .await
+        .expect("insert lineage node");
+    }
+
+    #[tokio::test]
+    async fn evidence_surface_token_totals_include_dashboard_split_mutation_gated_kinds() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
+        ensure_autooptimizer_events_schema(&pool).await;
+        sqlx::query(
+            "CREATE TABLE eval_runs (
+                id TEXT PRIMARY KEY,
+                actual_input_tokens INTEGER,
+                actual_output_tokens INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create eval_runs");
+
+        let cycle_id = "cycle-dashboard-token-kinds";
+        for (run_id, input, output) in [
+            ("legacy-mutation-gated", 1_i64, 2_i64),
+            ("dashboard-kept", 300_i64, 30_i64),
+            ("dashboard-dropped", 700_i64, 70_i64),
+        ] {
+            sqlx::query(
+                "INSERT INTO eval_runs (id, actual_input_tokens, actual_output_tokens) \
+                 VALUES (?, ?, ?)",
+            )
+            .bind(run_id)
+            .bind(input)
+            .bind(output)
+            .execute(&pool)
+            .await
+            .expect("insert eval run");
+        }
+
+        for (kind, run_id, passed, outcome) in [
+            ("mutation_gated", "legacy-mutation-gated", true, "kept"),
+            ("mutation_gated_passed", "dashboard-kept", true, "kept"),
+            ("mutation_gated_dropped", "dashboard-dropped", false, "dropped"),
+        ] {
+            insert_optimizer_event(
+                &pool,
+                cycle_id,
+                kind,
+                serde_json::json!({
+                    "type": "mutation_gated",
+                    "cycle_id": cycle_id,
+                    "child_hash": run_id,
+                    "passed": passed,
+                    "outcome": outcome,
+                    "eval_run_id": run_id
+                }),
+            )
+            .await;
+        }
+
+        let cost = get_cycle_cost(&pool, cycle_id).await;
+        assert_eq!(
+            cost.input_tokens,
+            Some(1_001),
+            "eval token enrichment must count both legacy mutation_gated rows and dashboard split mutation_gated_passed/mutation_gated_dropped rows"
+        );
+        assert_eq!(
+            cost.output_tokens,
+            Some(102),
+            "dashboard split mutation-gate kinds carry output-token usage too"
+        );
+    }
+
+    #[tokio::test]
+    async fn evidence_surface_node_less_cycle_summarizes_cost_and_event_reasons_without_lineage_nodes() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
+        ensure_autooptimizer_events_schema(&pool).await;
+
+        let cycle_id = "cycle-node-less-evidence";
+        insert_cycle_cost_row(&pool, cycle_id, 2_000, 150, 0.73, 2).await;
+        insert_optimizer_event(
+            &pool,
+            cycle_id,
+            "no_candidate",
+            serde_json::json!({
+                "type": "no_candidate",
+                "cycle_id": cycle_id,
+                "parent_hash": "parent-a",
+                "reason": "experiment writer produced no usable candidate: empty diff"
+            }),
+        )
+        .await;
+        insert_optimizer_event(
+            &pool,
+            cycle_id,
+            "candidate_error",
+            serde_json::json!({
+                "type": "candidate_error",
+                "cycle_id": cycle_id,
+                "parent_hash": "parent-b",
+                "reason": "candidate eval failed: invalid action HOLD_ALL"
+            }),
+        )
+        .await;
+        insert_optimizer_event(
+            &pool,
+            cycle_id,
+            "mutation_gated_dropped",
+            serde_json::json!({
+                "type": "mutation_gated",
+                "cycle_id": cycle_id,
+                "child_hash": "child-drop",
+                "passed": false,
+                "outcome": "dropped",
+                "gate_reason": "min trades below floor"
+            }),
+        )
+        .await;
+
+        let evidence = get_cycle_evidence_bundle(&pool, cycle_id)
+            .await
+            .expect("load evidence bundle")
+            .expect("cost and events make a node-less cycle visible");
+
+        assert_eq!(evidence.cycle_id, cycle_id);
+        assert!(
+            evidence.nodes.is_empty(),
+            "node-less cycles must still produce evidence without fabricating lineage nodes"
+        );
+        assert_eq!(evidence.cost.cost_usd, Some(0.73));
+        assert_eq!(evidence.cost.input_tokens, Some(2_000));
+        assert_eq!(evidence.cost.output_tokens, Some(150));
+        assert_eq!(evidence.cost.unpriced_calls, Some(2));
+        assert_eq!(evidence.counts.no_candidate, 1);
+        assert_eq!(evidence.counts.candidate_error, 1);
+        assert_eq!(evidence.counts.dropped, 1);
+        assert_eq!(
+            evidence.event_reasons.no_candidate,
+            vec!["experiment writer produced no usable candidate: empty diff".to_string()]
+        );
+        assert_eq!(
+            evidence.event_reasons.candidate_error,
+            vec!["candidate eval failed: invalid action HOLD_ALL".to_string()]
+        );
+        assert_eq!(
+            evidence.event_reasons.mutation_gated,
+            vec!["min trades below floor".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn evidence_surface_counts_distinguish_kept_suspect_dropped_no_candidate_and_candidate_error() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
+        ensure_autooptimizer_events_schema(&pool).await;
+
+        let cycle_id = "cycle-five-outcome-buckets";
+        insert_lineage_node_for_evidence(&pool, cycle_id, b"kept", "active").await;
+        insert_lineage_node_for_evidence(&pool, cycle_id, b"suspect", "quarantined").await;
+        insert_lineage_node_for_evidence(&pool, cycle_id, b"dropped", "rejected").await;
+        insert_optimizer_event(
+            &pool,
+            cycle_id,
+            "no_candidate",
+            serde_json::json!({
+                "type": "no_candidate",
+                "cycle_id": cycle_id,
+                "parent_hash": "parent-no-candidate",
+                "reason": "all retries were identity diffs"
+            }),
+        )
+        .await;
+        insert_optimizer_event(
+            &pool,
+            cycle_id,
+            "candidate_error",
+            serde_json::json!({
+                "type": "candidate_error",
+                "cycle_id": cycle_id,
+                "parent_hash": "parent-error",
+                "reason": "backtest crashed while evaluating candidate"
+            }),
+        )
+        .await;
+
+        let evidence = get_cycle_evidence_bundle(&pool, cycle_id)
+            .await
+            .expect("load evidence bundle")
+            .expect("lineage and event evidence make the cycle visible");
+
+        assert_eq!(evidence.counts.kept, 1, "active lineage nodes are kept");
+        assert_eq!(
+            evidence.counts.suspect, 1,
+            "quarantined lineage nodes are suspect, not dropped"
+        );
+        assert_eq!(evidence.counts.dropped, 1, "rejected lineage nodes are dropped");
+        assert_eq!(
+            evidence.counts.no_candidate, 1,
+            "writer/no-op failures get their own no_candidate bucket"
+        );
+        assert_eq!(
+            evidence.counts.candidate_error, 1,
+            "candidate eval failures get their own candidate_error bucket"
+        );
     }
 }

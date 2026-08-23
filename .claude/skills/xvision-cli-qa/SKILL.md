@@ -234,11 +234,10 @@ Watch for:
 > `xvn optimizer` is **deprecated** and delegates to `xvn optimize`. QA the `xvn optimize` surface directly.
 
 CLI surface:
-- `xvn optimize run --strategy <id> [--cycles N] [--mock]`
-- `xvn optimize run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]`
-- `xvn optimize mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]`
-- `xvn optimize demo [--fixture PATH] [-v]`
-- `xvn optimize inspect <run-id> [--json]`
+- `xvn optimize run --strategy <id> [--cycles N] [--mock] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]`
+- `xvn optimize ls|show|inspect|diff|export|lineage`
+- `xvn optimize cancel|unlock`
+- `xvn optimize explain-missing-data`
 
 Watch for:
 - **`xvn optimizer` not printing a deprecation warning** — every `xvn optimizer` sub-command must emit a deprecation notice before delegating

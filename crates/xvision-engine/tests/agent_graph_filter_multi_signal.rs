@@ -13,8 +13,13 @@
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use tempfile::TempDir;
+use xvision_agent_client::AgentClient;
+use xvision_core::config::{AgentRuntime, ProviderEntry, ProviderKind};
+use xvision_engine::agent::dispatch_capability::ClineDispatchCtx;
 use xvision_engine::agent::filter_dispatch::MultiFilterConfig;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::pipeline::{run_pipeline, FilterPipelineCtx, PipelineInputs, ResolvedAgentSlot};
@@ -22,6 +27,63 @@ use xvision_engine::agent::signal_cache::SignalCache;
 use xvision_engine::agents::Capability;
 use xvision_engine::strategies::agent_ref::AgentRef;
 use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+fn mock_agentd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mock_agentd.js")
+}
+
+fn anthropic_entry() -> ProviderEntry {
+    ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    }
+}
+
+async fn spawn_mock_cline(
+    trader_decisions: serde_json::Value,
+    record_path: &Path,
+) -> (ClineDispatchCtx, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let sock = dir.path().join("agentd.sock");
+    std::fs::write(
+        dir.path().join("agentd.sock.cfg"),
+        serde_json::to_vec(&serde_json::json!({
+            "decisionJsonByRole": {"trader": trader_decisions},
+            "recordStepsPath": record_path,
+        }))
+        .unwrap(),
+    )
+    .expect("write mock agentd cfg");
+    let client = AgentClient::spawn(&mock_agentd_bin(), &sock)
+        .await
+        .expect("spawn mock sidecar");
+    (
+        ClineDispatchCtx {
+            client: Arc::new(client),
+            provider_entry: anthropic_entry(),
+            api_key: Some("test-key".into()),
+            recording_slot_role: None,
+            tool_asset_guard: None,
+            as_of_guard: None,
+            run_mode: xvision_engine::eval::run::RunMode::Backtest,
+        },
+        dir,
+    )
+}
+
+fn recorded_trader_calls(path: &Path) -> usize {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains("::trader::"))
+        .count()
+}
+
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::{PipelineDef, PipelineKind, Strategy};
@@ -152,7 +214,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: cadence,
             attested_with: vec!["mock".into()],
-            required_tools: vec![],
+            required_tools: vec!["ohlcv".into()],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
             min_warmup_bars: None,
@@ -166,6 +228,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,
@@ -181,12 +244,17 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
 }
 
 fn resolved(role: &str) -> ResolvedAgentSlot {
+    let allowed_tools = if role == "trader" {
+        vec!["ohlcv".into(), "submit_decision".into()]
+    } else {
+        vec!["ohlcv".into()]
+    };
     ResolvedAgentSlot {
         role: role.into(),
         slot: LLMSlot {
             role: role.into(),
             attested_with: "mock".into(),
-            allowed_tools: Vec::new(),
+            allowed_tools,
             provider: None,
             model: Some("mock".into()),
         },
@@ -249,6 +317,13 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
     let dispatch = Arc::new(ThreeRoleDispatch::new(
         r#"{"action":"hold","conviction":0.1,"justification":"r"}"#,
     ));
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        serde_json::json!(r#"{"action":"hold","conviction":0.1,"justification":"r"}"#),
+        &record_path,
+    )
+    .await;
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let mut cache = SignalCache::new();
     let t0 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
@@ -278,27 +353,19 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
         }),
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
 
     assert_eq!(
-        dispatch.trader_calls(),
+        recorded_trader_calls(&record_path),
         1,
         "Short-bar regime (5m < 30m threshold) must coalesce: Trader runs ONCE"
     );
-
-    // Find that single Trader request and assert it sees BOTH filter
-    // signal keys in its briefing.
-    let trader_req = dispatch
-        .requests()
-        .into_iter()
-        .find(|r| !is_filter_request(r))
-        .expect("trader request present");
-    let body = serde_json::to_string(&trader_req.messages).unwrap();
+    let body = std::fs::read_to_string(&record_path).expect("recorded Trader prompt");
     assert!(
         body.contains("regime_filter"),
         "Trader briefing must include regime_filter: {body}"
@@ -320,6 +387,17 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let mut cache = SignalCache::new();
     let t0 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        serde_json::json!([
+            r#"{"action":"hold","conviction":0.1,"justification":"both"}"#,
+            r#"{"action":"hold","conviction":0.1,"justification":"regime_only"}"#,
+            r#"{"action":"hold","conviction":0.1,"justification":"vol_only"}"#,
+        ]),
+        &record_path,
+    )
+    .await;
 
     let outs = run_pipeline(PipelineInputs {
         strategy: &strategy,
@@ -346,8 +424,8 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
         }),
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
@@ -357,7 +435,7 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
     // briefing; multi-fire adds one call per emitting Filter
     // afterwards. 1 coalesced + 2 multi-fire = 3 total Trader calls.
     assert_eq!(
-        dispatch.trader_calls(),
+        recorded_trader_calls(&record_path),
         3,
         "Long-bar regime (1h >= 30m threshold) must multi-fire: 1 coalesced + 2 per-Filter = 3"
     );
@@ -383,6 +461,17 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
     let tools = Arc::new(ToolRegistry::default_with_builtins());
     let mut cache = SignalCache::new();
     let t0 = Utc.with_ymd_and_hms(2026, 5, 22, 9, 30, 0).unwrap();
+    let record_dir = TempDir::new().expect("record dir");
+    let record_path = record_dir.path().join("steps.jsonl");
+    let (cline, _agentd_dir) = spawn_mock_cline(
+        serde_json::json!([
+            r#"{"action":"hold","conviction":0.1,"justification":"both"}"#,
+            r#"{"action":"hold","conviction":0.1,"justification":"regime_only"}"#,
+            r#"{"action":"hold","conviction":0.1,"justification":"vol_only"}"#,
+        ]),
+        &record_path,
+    )
+    .await;
 
     run_pipeline(PipelineInputs {
         strategy: &strategy,
@@ -411,15 +500,15 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
         }),
         trace_attrs: None,
         recorder: None,
-        runtime: Default::default(),
-        cline: None,
+        runtime: AgentRuntime::Cline,
+        cline: Some(cline),
         model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
 
     assert_eq!(
-        dispatch.trader_calls(),
+        recorded_trader_calls(&record_path),
         3,
         "Threshold=0 forces multi-fire even on a 5m bar: 1 coalesced + 2 per-Filter = 3"
     );

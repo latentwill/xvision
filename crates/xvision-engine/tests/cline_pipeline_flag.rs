@@ -82,6 +82,7 @@ fn trader_strategy() -> Strategy {
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
+            route: None,
         },
         regime_slot: None,
         trader_slot: None,

@@ -247,22 +247,32 @@ mod tests {
     /// Spec G.2 (v1 gaps Track G): a fresh `xvn_home` with the migrations
     /// applied passes every probe — `data_dir` exists (we just created it),
     /// `db` answers `SELECT 1`, `strategies` is absent and that's reported as
-    /// the empty-but-ok shape. The aggregate rolls up to `Ok`.
+    /// the empty-but-ok shape. The `agent_sidecar` probe degrades on a fresh
+    /// home because `XVN_AGENTD_BIN` is unset in tests (WU-6: eval runs
+    /// require the Cline sidecar), so the aggregate rolls up to `Degraded`.
     #[tokio::test]
-    async fn check_returns_ok_on_fresh_xvn_home() {
+    async fn check_reports_degraded_without_sidecar_on_fresh_xvn_home() {
         let (ctx, _dir) = fresh_ctx().await;
         let report = check(&ctx).await.unwrap();
-        assert_eq!(report.status, HealthStatus::Ok);
-        assert_eq!(report.probes.len(), 3);
+        assert_eq!(report.status, HealthStatus::Degraded);
+        assert_eq!(report.probes.len(), 5);
         for p in &report.probes {
-            assert_eq!(
-                p.status,
-                HealthStatus::Ok,
-                "probe {} should be Ok, got {:?} ({:?})",
-                p.name,
-                p.status,
-                p.detail,
-            );
+            match p.name.as_str() {
+                "agent_sidecar" => {
+                    assert_eq!(p.status, HealthStatus::Degraded);
+                    assert!(p.detail.as_deref().unwrap_or("").contains("XVN_AGENTD_BIN"));
+                }
+                // Fresh home has no configured provider.
+                "providers" => assert_eq!(p.status, HealthStatus::Degraded),
+                _ => assert_eq!(
+                    p.status,
+                    HealthStatus::Ok,
+                    "probe {} should be Ok, got {:?} ({:?})",
+                    p.name,
+                    p.status,
+                    p.detail,
+                ),
+            }
         }
     }
 

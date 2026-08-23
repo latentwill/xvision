@@ -57,6 +57,9 @@ pub enum ExecutorError {
     /// (e.g. a Vetoed decision was forwarded by mistake).
     #[error("decision not actionable: {0}")]
     NotActionable(String),
+    /// The venue reached a terminal state without executing any quantity.
+    #[error("not filled: status={status}, filled_qty={filled_qty}")]
+    NotFilled { status: String, filled_qty: f64 },
     /// Venue timeout / unavailable; caller may retry.
     #[error("timeout: {0}")]
     Timeout(String),

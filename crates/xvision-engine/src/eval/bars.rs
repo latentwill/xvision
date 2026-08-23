@@ -432,12 +432,30 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
     let lock = ctx.bars_singleflight_lock(&args.cache_key).await;
     let _guard = lock.lock().await;
 
-    // 2. Cache lookup inside the guard. A previous caller that just
-    //    finished a fetch has already written the blob, so a second
-    //    concurrent caller hits the cache instead of re-fetching.
     if let Some(bars) = read_bars_cache(ctx, &args.cache_key).await? {
-        return Ok(bars);
+        match validate_candle_integrity(&bars, args) {
+            Ok(gaps) => {
+                log_candle_gaps(&args.asset_pair, &gaps);
+                return Ok(bars);
+            }
+            Err(error) => {
+                tracing::error!(
+                    cache_key = %args.cache_key,
+                    error = %error,
+                    "rejecting structurally invalid cached bars; evicting cache row"
+                );
+                sqlx::query("DELETE FROM bars_cache WHERE cache_key = ?")
+                    .bind(&args.cache_key)
+                    .execute(&ctx.db)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("evict invalid bars_cache row: {e}")))?;
+            }
+        }
     }
+
+    // A cache row that fails integrity validation is evicted above, so the
+    // normal miss path below can fetch a clean replacement and validate it
+    // before persistence.
 
     // 3. Cache miss — check whether the requested window is covered by
     //    OTHER cache entries (same asset, granularity, data_source) that
@@ -471,23 +489,18 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
 
     // 4. Candle integrity pre-pass: hard-fail on structural corruption,
     //    warn on gaps.
-    {
-        let ohlcv_check: Vec<Ohlcv> = bars.iter().map(|b| market_bar_to_ohlcv(b.clone())).collect();
-        let gap_findings = crate::eval::candle_integrity::validate_bar_series(
-            &ohlcv_check,
-            Some(args.granularity.seconds()),
-        )
-        .map_err(|e| ApiError::Validation(format!("candle integrity: {e}")))?;
-        for gap in &gap_findings {
-            tracing::warn!(
-                asset = %args.asset_pair,
-                gap_start = %gap.gap_start_ts,
-                gap_end = %gap.gap_end_ts,
-                missing = gap.expected_bars,
-                "bar series gap detected",
+    let gap_findings = match validate_candle_integrity(&bars, args) {
+        Ok(gaps) => gaps,
+        Err(error) => {
+            tracing::error!(
+                cache_key = %args.cache_key,
+                error = %error,
+                "rejecting structurally invalid bars"
             );
+            return Err(error);
         }
-    }
+    };
+    log_candle_gaps(&args.asset_pair, &gap_findings);
 
     // 5. Persist — uncompressed for small windows, gzip above threshold.
     let raw = serialise_bars(&bars);
@@ -549,6 +562,27 @@ async fn load_and_merge_cached_bars(
         .unwrap_or_else(|i| i);
 
     Ok(all_bars[start_idx..end_idx].to_vec())
+}
+
+fn validate_candle_integrity(
+    bars: &[MarketBar],
+    args: &BarCacheArgs,
+) -> Result<Vec<crate::eval::candle_integrity::GapFinding>, ApiError> {
+    let ohlcv_check: Vec<Ohlcv> = bars.iter().map(|b| market_bar_to_ohlcv(b.clone())).collect();
+    crate::eval::candle_integrity::validate_bar_series(&ohlcv_check, Some(args.granularity.seconds()))
+        .map_err(|e| ApiError::Validation(format!("candle integrity: {e}")))
+}
+
+fn log_candle_gaps(asset: &str, gaps: &[crate::eval::candle_integrity::GapFinding]) {
+    for gap in gaps {
+        tracing::warn!(
+            asset = %asset,
+            gap_start = %gap.gap_start_ts,
+            gap_end = %gap.gap_end_ts,
+            missing = gap.expected_bars,
+            "bar series gap detected",
+        );
+    }
 }
 
 /// Load cached bars from covered segments, fetch only the uncovered gaps from

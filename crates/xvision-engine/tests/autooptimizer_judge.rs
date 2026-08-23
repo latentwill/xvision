@@ -153,7 +153,10 @@ async fn run_judge_prompt_does_not_contain_metric_values() {
         })
         .expect("first message must be user text");
 
-    let lower = user_text.to_lowercase();
+    let lower = user_text
+        .to_lowercase()
+        .replace("max_drawdown_usd", "")
+        .replace("max_drawdown_pct", "");
     for token in &["sharpe", "drawdown", "pnl", "win_rate", "profit_factor"] {
         assert!(
             !lower.contains(token),

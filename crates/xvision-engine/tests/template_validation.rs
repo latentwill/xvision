@@ -62,7 +62,11 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
         },
         hypothesis: None,
         agents,
-        pipeline: PipelineDef { kind, edges: vec![] },
+        pipeline: PipelineDef {
+            kind,
+            edges: vec![],
+            route: None,
+        },
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),

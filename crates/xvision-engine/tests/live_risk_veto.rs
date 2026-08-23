@@ -133,6 +133,7 @@ impl BrokerSurface for RecordingBroker {
             fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
+            note: None,
         })
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {

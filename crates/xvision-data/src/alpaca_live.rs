@@ -29,11 +29,10 @@
 //! ## Gap detection
 //!
 //! Every yielded bar is compared against the previously-delivered
-//! bar's timestamp. If the delta exceeds one granularity tick the
-//! client emits a [`BarStreamEvent::GapDetected`] *before* the bar
-//! that triggered the gap. The check is skipped for the first bar
-//! after subscription startup or after a successful reconnect (no
-//! sensible "previous" reference exists in those cases).
+//! bar's timestamp. Duplicate and out-of-order bars are skipped. If
+//! the delta exceeds one granularity tick the client emits a
+//! [`BarStreamEvent::GapDetected`] *before* the bar that triggered the gap.
+//! The first bar has no previous timestamp to compare against.
 //!
 //! ## Reconnect budget
 //!
@@ -259,6 +258,12 @@ impl Drop for BarSubscription {
     }
 }
 
+impl BarSubscription {
+    /// Receive the next event from the subscription.
+    pub async fn recv(&mut self) -> Option<BarStreamEvent> {
+        self.rx.recv().await
+    }
+}
 impl Stream for BarSubscription {
     type Item = BarStreamEvent;
     fn poll_next(
@@ -281,7 +286,6 @@ async fn run_apca_subscription_task(
     let mut last_ts: Option<DateTime<Utc>> = None;
     let mut consecutive_disconnects: u32 = 0;
     let mut last_disconnect_reason = String::new();
-    let mut suppress_next_gap_check = true;
 
     loop {
         let api_info =
@@ -289,12 +293,16 @@ async fn run_apca_subscription_task(
                 Ok(api_info) => api_info,
                 Err(e) => {
                     last_disconnect_reason = format!("alpaca api info: {e}");
-                    if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                        .await
+                    if !handle_disconnect_with_backoff(
+                        &tx,
+                        &mut consecutive_disconnects,
+                        &last_disconnect_reason,
+                        budget,
+                    )
+                    .await
                     {
                         return;
                     }
-                    suppress_next_gap_check = true;
                     continue;
                 }
             };
@@ -307,12 +315,16 @@ async fn run_apca_subscription_task(
             Ok(pair) => pair,
             Err(e) => {
                 last_disconnect_reason = format!("alpaca live connect: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                )
+                .await
                 {
                     return;
                 }
-                suppress_next_gap_check = true;
                 continue;
             }
         };
@@ -324,32 +336,44 @@ async fn run_apca_subscription_task(
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(e))) => {
                 last_disconnect_reason = format!("alpaca live subscribe rejected: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                )
+                .await
                 {
                     return;
                 }
-                suppress_next_gap_check = true;
                 continue;
             }
             Ok(Err(e)) => {
                 last_disconnect_reason = format!("alpaca live subscribe transport: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                )
+                .await
                 {
                     return;
                 }
-                suppress_next_gap_check = true;
                 continue;
             }
             Err(e) => {
                 last_disconnect_reason = format!("alpaca live subscribe stream: {e:?}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                )
+                .await
                 {
                     return;
                 }
-                suppress_next_gap_check = true;
                 continue;
             }
         }
@@ -378,15 +402,7 @@ async fn run_apca_subscription_task(
                     }
                     consecutive_disconnects = 0;
                     last_disconnect_reason.clear();
-                    if !send_bar_with_gap_detection(
-                        &tx,
-                        bar,
-                        &mut last_ts,
-                        &mut suppress_next_gap_check,
-                        granularity_secs,
-                    )
-                    .await
-                    {
+                    if !send_bar_with_gap_detection(&tx, bar, &mut last_ts, granularity_secs).await {
                         return;
                     }
                 }
@@ -405,11 +421,25 @@ async fn run_apca_subscription_task(
         if last_disconnect_reason.is_empty() {
             last_disconnect_reason = "alpaca live stream closed".to_string();
         }
-        if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget).await {
+        if !handle_disconnect_with_backoff(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
+            .await
+        {
             return;
         }
-        suppress_next_gap_check = true;
     }
+}
+
+async fn handle_disconnect_with_backoff(
+    tx: &mpsc::Sender<BarStreamEvent>,
+    consecutive_disconnects: &mut u32,
+    reason: &str,
+    budget: u32,
+) -> bool {
+    if !handle_disconnect(tx, consecutive_disconnects, reason, budget).await {
+        return false;
+    }
+    tokio::time::sleep(compute_backoff(*consecutive_disconnects)).await;
+    true
 }
 
 async fn run_subscription_task<S>(
@@ -424,22 +454,13 @@ async fn run_subscription_task<S>(
     let mut last_ts: Option<DateTime<Utc>> = None;
     let mut consecutive_disconnects: u32 = 0;
     let mut last_disconnect_reason = String::new();
-    let mut suppress_next_gap_check = true;
 
     while let Some(item) = stream.next().await {
         match item {
             LiveBarItem::Bar(bar) => {
                 consecutive_disconnects = 0;
                 last_disconnect_reason.clear();
-                if !send_bar_with_gap_detection(
-                    &tx,
-                    bar,
-                    &mut last_ts,
-                    &mut suppress_next_gap_check,
-                    granularity_secs,
-                )
-                .await
-                {
+                if !send_bar_with_gap_detection(&tx, bar, &mut last_ts, granularity_secs).await {
                     return;
                 }
             }
@@ -452,10 +473,6 @@ async fn run_subscription_task<S>(
                     let backoff = compute_backoff(consecutive_disconnects);
                     tokio::time::sleep(backoff).await;
                 }
-                // On reconnect the next bar's gap check is suppressed
-                // — we have no meaningful "previous" because the
-                // server may resume mid-stream.
-                suppress_next_gap_check = true;
             }
         }
     }
@@ -465,35 +482,41 @@ async fn send_bar_with_gap_detection(
     tx: &mpsc::Sender<BarStreamEvent>,
     bar: MarketBar,
     last_ts: &mut Option<DateTime<Utc>>,
-    suppress_next_gap_check: &mut bool,
     granularity_secs: i64,
 ) -> bool {
-    if !*suppress_next_gap_check {
-        if let Some(prev) = *last_ts {
-            let expected_next = prev + chrono::Duration::seconds(granularity_secs);
-            if bar.timestamp > expected_next {
-                tracing::warn!(
-                    target: "xvision_data::alpaca_live",
-                    expected_next = %expected_next,
-                    observed = %bar.timestamp,
-                    "gap detected"
-                );
-                if tx
-                    .send(BarStreamEvent::GapDetected {
-                        expected_next,
-                        observed: bar.timestamp,
-                    })
-                    .await
-                    .is_err()
-                {
-                    return false;
-                }
+    if let Some(prev) = *last_ts {
+        if bar.timestamp <= prev {
+            tracing::warn!(
+                target: "xvision_data::alpaca_live",
+                previous = %prev,
+                observed = %bar.timestamp,
+                "skipping duplicate or out-of-order live bar"
+            );
+            return true;
+        }
+
+        let expected_next = prev + chrono::Duration::seconds(granularity_secs);
+        if bar.timestamp > expected_next {
+            tracing::warn!(
+                target: "xvision_data::alpaca_live",
+                expected_next = %expected_next,
+                observed = %bar.timestamp,
+                "gap detected"
+            );
+            if tx
+                .send(BarStreamEvent::GapDetected {
+                    expected_next,
+                    observed: bar.timestamp,
+                })
+                .await
+                .is_err()
+            {
+                return false;
             }
         }
     }
 
     *last_ts = Some(bar.timestamp);
-    *suppress_next_gap_check = false;
     tx.send(BarStreamEvent::Bar(bar)).await.is_ok()
 }
 
@@ -589,5 +612,42 @@ mod backoff_tests {
                 d
             );
         }
+    }
+
+    #[test]
+    fn backoff_follows_exponential_schedule_and_cap() {
+        for attempt in 0..20 {
+            let d = compute_backoff(attempt).as_millis() as f64;
+            let exp = 2u64.saturating_pow(attempt.min(16));
+            let base = (RECONNECT_BACKOFF_BASE_MS.saturating_mul(exp)).min(RECONNECT_BACKOFF_CAP_MS) as f64;
+            let lower = (base * 0.7).floor() - 1.0;
+            let upper = (base * 1.3).ceil() + 1.0;
+
+            assert!(
+                d >= lower && d <= upper,
+                "attempt {attempt} backoff {d}ms is outside [{lower}, {upper}]ms"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn production_reconnect_waits_before_retry() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut attempts = 0;
+        let mut retry = Box::pin(handle_disconnect_with_backoff(
+            &tx,
+            &mut attempts,
+            "test disconnect",
+            5,
+        ));
+
+        tokio::select! {
+            _ = &mut retry => panic!("reconnect completed without waiting"),
+            _ = tokio::task::yield_now() => {}
+        }
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(retry.await);
+        assert_eq!(attempts, 1);
     }
 }

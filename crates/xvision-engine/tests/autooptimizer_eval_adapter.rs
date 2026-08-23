@@ -36,6 +36,7 @@ async fn fresh_store() -> RunStore {
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
         include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+        include_str!("../migrations/071_decisions_delayed.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -177,8 +178,8 @@ async fn backtest_paper_tester_is_deterministic() {
 /// applies and optimized winners would not transfer. This test fails the moment
 /// the two paths diverge.
 ///
-/// F26 (2026-06-04): the dashboard run-cycle route is now ON this same path. It
-/// builds the production `CachedBacktestPaperTester`, which constructs its
+/// F26 (2026-06-04): the dashboard optimizer launch route is now ON this same
+/// path. It builds the production `CachedBacktestPaperTester`, which constructs its
 /// `Executor` via `build_cached_backtest_executor` and resolves agent slots
 /// through the identical `resolve_agent_slots_for_strategy` used here and by the
 /// eval HTTP path — replacing the old `StubPaperTester` that always tied and

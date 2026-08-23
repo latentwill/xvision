@@ -2,12 +2,47 @@ import { useBlob, type StrategyBlob } from "../api";
 
 type Row = { key: string; before: unknown; after: unknown; changed: boolean };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function agentLabel(agent: Record<string, unknown>, index: number): string {
+  const role = typeof agent.role === "string" ? agent.role.trim() : "";
+  if (role) return role;
+  const agentId = typeof agent.agent_id === "string" ? agent.agent_id.trim() : "";
+  if (agentId) return agentId;
+  return `#${index + 1}`;
+}
+
+function flattenAgents(agents: unknown[], prefix: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const seen = new Map<string, number>();
+  agents.forEach((agent, index) => {
+    if (!isRecord(agent)) {
+      out[`${prefix}.${index + 1}`] = agent;
+      return;
+    }
+    const label = agentLabel(agent, index);
+    const priorUses = seen.get(label) ?? 0;
+    seen.set(label, priorUses + 1);
+    const base = `${prefix}.${priorUses === 0 ? label : `${label}#${priorUses + 1}`}`;
+    for (const [field, value] of Object.entries(agent)) {
+      if (field === "role") continue;
+      const key = `${base}.${field}`;
+      if (isRecord(value)) Object.assign(out, flatten(value, key));
+      else out[key] = value;
+    }
+  });
+  return out;
+}
+
 function flatten(obj: unknown, prefix = ""): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+  if (isRecord(obj)) {
+    for (const [k, v] of Object.entries(obj)) {
       const key = prefix ? `${prefix}.${k}` : k;
-      if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(out, flatten(v, key));
+      if (k === "agents" && Array.isArray(v)) Object.assign(out, flattenAgents(v, key));
+      else if (isRecord(v)) Object.assign(out, flatten(v, key));
       else out[key] = v;
     }
   }

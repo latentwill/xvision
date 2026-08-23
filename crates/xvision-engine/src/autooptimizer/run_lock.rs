@@ -1,9 +1,10 @@
 //! F34: a cross-process advisory lock so only one optimizer cycle runs against a
 //! workspace at a time. The CLI cycle and the dashboard cycle share the same
 //! `$XVN_HOME/xvn.db`; running both at once starved each other (the QA's CLI
-//! cycle was timeout-killed at 9.7 min while a dashboard cycle ran). Both the CLI
-//! `run-cycle` and the dashboard launch acquire this lock first and get a clear
-//! "a cycle is already running" response instead of silently degrading.
+//! cycle was timeout-killed at 9.7 min while a dashboard cycle ran). Both
+//! `xvn optimize run` and the dashboard/API optimizer launch acquire this lock
+//! first and get a clear "a cycle is already running" response instead of
+//! silently degrading.
 //!
 //! The lock is a single-row table; acquire is one atomic upsert that succeeds
 //! only when the row is absent or stale (a previous holder that died without
@@ -305,7 +306,7 @@ async fn upsert_lock(
 
 /// B10: unconditionally clear the workspace cycle lock, whatever holds it.
 /// Returns the `cycle_id` that was cleared (if any) so the caller can report it.
-/// Used by `xvn optimizer unlock` as the manual escape hatch when an orphaned
+/// Used by `xvn optimize unlock` as the manual escape hatch when an orphaned
 /// lock is wedged on a foreign host (where dead-PID detection can't help) and
 /// the operator does not want to wait out the 2h stale window.
 pub async fn force_clear(pool: &SqlitePool) -> Result<Option<String>> {
