@@ -2869,4 +2869,15 @@ mod tests {
             assert!(e.value(r).is_some(), "{} should have a value after 200 bars", r);
         }
     }
+    #[test]
+    fn rvol_uses_prior_same_slot_bars() {
+        let mut state = RvolState::new(3);
+        for (day, volume) in [1.0, 2.0, 3.0].into_iter().enumerate() {
+            let ts = Utc.with_ymd_and_hms(2025, 1, day as u32 + 1, 0, 0, 0).unwrap();
+            state.push(volume, Some(ts));
+        }
+        let ts = Utc.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap();
+        state.push(4.0, Some(ts));
+        assert_eq!(state.value(), Some(2.0));
+    }
 }
