@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use chrono::{DateTime, Timelike, Utc};
 use serde_json::Value;
 
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
@@ -71,6 +72,8 @@ struct TradeContext {
     entry_price: Option<f64>,
     bars_held: Option<u32>,
     equity: Option<f64>,
+    timestamp: Option<DateTime<Utc>>,
+    trend_long: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +188,10 @@ impl LlmDispatch for MechanisticDispatch {
             let Some(price) = price else {
                 return Ok(response("hold", 0.5, "mechanistic: missing current price"));
             };
-            let Some(entry_rule) = self.config.entry_rules.first() else {
+            if !entry_session_open(self.config.entry_session_utc.as_deref(), context.timestamp) {
+                return Ok(response("hold", 0.5, "mechanistic: outside entry session"));
+            }
+            let Some(entry_rule) = selected_entry_rule(&self.config, context.trend_long) else {
                 return Ok(response("hold", 0.5, "mechanistic: no entry rule"));
             };
             let side = match entry_rule.direction {
@@ -236,6 +242,50 @@ impl LlmDispatch for MechanisticDispatch {
 
         state.positions.insert(asset, position);
         Ok(response("hold", 0.5, "mechanistic hold"))
+    }
+}
+
+fn selected_entry_rule(
+    config: &MechanisticConfig,
+    trend_long: Option<bool>,
+) -> Option<&crate::strategies::EntryRule> {
+    if config.entry_rules.len() <= 1 {
+        return config.entry_rules.first();
+    }
+    let desired = trend_long.map(|long| {
+        if long {
+            EntryDirection::Long
+        } else {
+            EntryDirection::Short
+        }
+    });
+    desired
+        .and_then(|direction| config.entry_rules.iter().find(|rule| rule.direction == direction))
+        .or_else(|| config.entry_rules.first())
+}
+
+fn entry_session_open(spec: Option<&str>, timestamp: Option<DateTime<Utc>>) -> bool {
+    let (Some(spec), Some(timestamp)) = (spec, timestamp) else {
+        return true;
+    };
+    let mut parts = spec.split('-');
+    let (Ok(start), Ok(end)) = (
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+    ) else {
+        return true;
+    };
+    if parts.next().is_some() || start > 24 || end > 24 {
+        return true;
+    }
+    if start == end {
+        return true;
+    }
+    let hour = timestamp.hour();
+    if start < end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
     }
 }
 
@@ -379,6 +429,9 @@ fn parse_trade_context(text: &str) -> anyhow::Result<TradeContext> {
             )
         })
         .or_else(|| object_number(root, "current_bar", &["close", "price"]));
+    context.timestamp =
+        first_string(root, &["timestamp", "ts"]).and_then(|value| value.parse::<DateTime<Utc>>().ok());
+    context.trend_long = infer_trend(root, context.price);
     context.position_size = first_number(root, &["position_size", "position_qty", "quantity"])
         .or_else(|| {
             object_number(
@@ -441,6 +494,37 @@ fn parse_trade_context(text: &str) -> anyhow::Result<TradeContext> {
             })
             .unwrap_or(false);
     Ok(context)
+}
+fn infer_trend(root: &Value, current_price: Option<f64>) -> Option<bool> {
+    let filter = root.get("filter_context");
+    let close = filter
+        .and_then(|value| filter_number(value, "close"))
+        .or(current_price)?;
+    if let Some(ema) = filter.and_then(|value| filter_number(value, "ema_21")) {
+        return Some(close > ema);
+    }
+    let bars = root
+        .get("market_data")
+        .and_then(|value| value.get("bar_history"))
+        .and_then(Value::as_array)?;
+    let mut ema = None;
+    for bar in bars {
+        let close_value = bar.get("close").and_then(number)?;
+        ema = Some(match ema {
+            None => close_value,
+            Some(previous) => previous + (2.0 / 22.0) * (close_value - previous),
+        });
+    }
+    let ema = ema?;
+    Some(close > ema)
+}
+
+fn filter_number(filter: &Value, key: &str) -> Option<f64> {
+    number(
+        filter
+            .get(key)
+            .or_else(|| filter.get("context").and_then(|value| value.get(key)))?,
+    )
 }
 
 fn has_position_fields(root: &Value, key: &str) -> bool {
@@ -577,6 +661,7 @@ mod tests {
                 signal_name: "gate".into(),
                 direction: EntryDirection::Long,
             }],
+            entry_session_utc: None,
             close_policies: vec![policy],
         }
     }
@@ -619,6 +704,7 @@ mod tests {
                 signal_name: "gate".into(),
                 direction: EntryDirection::Short,
             }],
+            entry_session_utc: None,
             close_policies: vec![],
         });
         assert_eq!(
@@ -687,6 +773,78 @@ mod tests {
             action(&dispatch, request("BTC/USD", 100.0, Some((1.0, 100.0, 3)))).await,
             "flat"
         );
+    }
+    #[tokio::test]
+    async fn dual_entry_rules_follow_filter_trend() {
+        let dispatch = MechanisticDispatch::new(MechanisticConfig {
+            entry_rules: vec![
+                crate::strategies::EntryRule {
+                    signal_name: "long_gate".into(),
+                    direction: EntryDirection::Long,
+                },
+                crate::strategies::EntryRule {
+                    signal_name: "short_gate".into(),
+                    direction: EntryDirection::Short,
+                },
+            ],
+            entry_session_utc: None,
+            close_policies: vec![],
+        });
+        let mut req = request("BTC/USD", 110.0, None);
+        req.messages = vec![Message::user_text(
+            serde_json::json!({
+                "asset": "BTC/USD",
+                "current_price": 110.0,
+                "position_size": 0.0,
+                "filter_context": {"close": 110.0, "ema_21": 100.0}
+            })
+            .to_string(),
+        )];
+        assert_eq!(action(&dispatch, req).await, "long_open");
+
+        let mut req = request("ETH/USD", 90.0, None);
+        req.messages = vec![Message::user_text(
+            serde_json::json!({
+                "asset": "ETH/USD",
+                "current_price": 90.0,
+                "position_size": 0.0,
+                "filter_context": {"close": 90.0, "ema_21": 100.0}
+            })
+            .to_string(),
+        )];
+        assert_eq!(action(&dispatch, req).await, "short_open");
+    }
+
+    #[tokio::test]
+    async fn entry_session_blocks_flat_entries_but_not_exits() {
+        let mut cfg = config(ClosePolicy::TakeProfit { pct: 2.0 });
+        cfg.entry_session_utc = Some("18-24".into());
+        let dispatch = MechanisticDispatch::new(cfg);
+        let mut req = request("BTC/USD", 100.0, None);
+        req.messages = vec![Message::user_text(
+            serde_json::json!({
+                "asset": "BTC/USD",
+                "timestamp": "2025-01-01T17:00:00Z",
+                "current_price": 100.0,
+                "position_size": 0.0
+            })
+            .to_string(),
+        )];
+        assert_eq!(action(&dispatch, req).await, "hold");
+
+        let mut req = request("BTC/USD", 103.0, Some((1.0, 100.0, 1)));
+        req.messages = vec![Message::user_text(
+            serde_json::json!({
+                "asset": "BTC/USD",
+                "timestamp": "2025-01-01T17:00:00Z",
+                "current_price": 103.0,
+                "position_size": 1.0,
+                "entry_price": 100.0,
+                "bars_held": 1
+            })
+            .to_string(),
+        )];
+        assert_eq!(action(&dispatch, req).await, "flat");
     }
 
     #[tokio::test]

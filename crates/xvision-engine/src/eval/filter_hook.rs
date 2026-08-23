@@ -41,14 +41,16 @@ pub struct FilterHook {
     /// read `filter.display_name` through the borrow.
     display_name: String,
     bar_index: u64,
+    /// Optional higher-timeframe aggregation state. Filter expressions are
+    /// evaluated on completed bars at the filter's declared timeframe, not
+    /// on period-scaled lower-timeframe approximations.
+    target_timeframe_secs: Option<i64>,
+    input_interval_secs: Option<i64>,
+    last_input_ts: Option<DateTime<Utc>>,
+    pending_bucket: Option<i64>,
+    pending_bar: Option<Ohlcv>,
     /// Observability emitter for the eval run, threaded in via
-    /// [`FilterHook::with_obs`]. `None` for the CLI / unit-test path
-    /// where the bus isn't wired — then `record` is a no-op on the obs
-    /// side and only writes the `eval_filter_evaluations` ledger row +
-    /// the `ProgressEvent::FilterEvaluated`. When `Some`, a *trip* (the
-    /// FIRE/wake event) additionally emits a `filter_fired` engine event
-    /// so the trace dock can render filter firings alongside the rest of
-    /// the per-decision actions.
+    /// [`FilterHook::with_obs`].
     obs: Option<ObsEmitter>,
 }
 
@@ -59,6 +61,25 @@ pub struct FilterEvaluationRecord {
     pub outcome: FilterEvalOutcome,
     pub event: FilterEventV1,
     pub trigger_context: Option<serde_json::Value>,
+}
+
+fn parse_timeframe_secs(value: &str) -> Option<i64> {
+    let value = value.trim().to_ascii_lowercase();
+    let (number, unit) = value.split_at(value.len().saturating_sub(1));
+    let amount = number.parse::<i64>().ok()?;
+    match unit {
+        "m" => Some(amount * 60),
+        "h" => Some(amount * 3_600),
+        "d" => Some(amount * 86_400),
+        _ => None,
+    }
+}
+
+fn aggregate_bar(target: &mut Ohlcv, next: &Ohlcv) {
+    target.high = target.high.max(next.high);
+    target.low = target.low.min(next.low);
+    target.close = next.close;
+    target.volume += next.volume;
 }
 
 impl FilterHook {
@@ -91,6 +112,11 @@ impl FilterHook {
                     state,
                     display_name,
                     bar_index: 0,
+                    last_input_ts: None,
+                    input_interval_secs: None,
+                    target_timeframe_secs: parse_timeframe_secs(filter.timeframe.as_str()),
+                    pending_bucket: None,
+                    pending_bar: None,
                     obs: None,
                 }))
             }
@@ -103,6 +129,48 @@ impl FilterHook {
     /// time. Passing `None` (or never calling this) keeps the hook on
     /// the legacy table-only path. Builder style mirrors the rest of
     /// the obs surface (`with_observability`, `with_retention`).
+    /// Evaluate a base-timeframe bar, aggregating into the filter timeframe
+    /// when the filter declares a higher timeframe. Returns `None` until a
+    /// complete target bar is available.
+    pub fn evaluate_resampled(&mut self, bar: &Ohlcv, in_position: bool) -> Option<FilterEvaluationRecord> {
+        let Some(target_secs) = self.target_timeframe_secs else {
+            return Some(self.evaluate(bar, in_position));
+        };
+        if let Some(previous) = self.last_input_ts {
+            let delta = bar.timestamp.timestamp() - previous.timestamp();
+            if delta > 0 {
+                self.input_interval_secs = Some(delta);
+            }
+        }
+        self.last_input_ts = Some(bar.timestamp);
+        let Some(input_secs) = self.input_interval_secs else {
+            self.pending_bucket = Some(bar.timestamp.timestamp());
+            self.pending_bar = Some(bar.clone());
+            return None;
+        };
+        if target_secs <= input_secs {
+            return Some(self.evaluate(bar, in_position));
+        }
+        let bucket = bar.timestamp.timestamp().div_euclid(target_secs);
+        match (self.pending_bucket, self.pending_bar.as_mut()) {
+            (Some(pending_bucket), Some(pending)) if pending_bucket == bucket => {
+                aggregate_bar(pending, bar);
+                None
+            }
+            (Some(_), Some(_)) => {
+                let completed = self.pending_bar.take().expect("pending bar");
+                self.pending_bucket = Some(bucket);
+                self.pending_bar = Some(bar.clone());
+                Some(self.evaluate(&completed, in_position))
+            }
+            _ => {
+                self.pending_bucket = Some(bucket);
+                self.pending_bar = Some(bar.clone());
+                None
+            }
+        }
+    }
+
     pub fn with_obs(mut self, obs: Option<ObsEmitter>) -> Self {
         self.obs = obs;
         self
@@ -142,19 +210,34 @@ impl FilterHook {
         &self,
         indicator_snapshot: &std::collections::BTreeMap<String, f64>,
     ) -> Option<serde_json::Value> {
-        let fire = self.filter.fire.as_ref()?;
-        let mut values = serde_json::Map::new();
-        for indicator in &fire.context {
-            let token = indicator.to_string();
-            if let Some(value) = indicator_snapshot.get(&token) {
-                values.insert(token, serde_json::json!(value));
-            }
-        }
+        let context = self
+            .filter
+            .fire
+            .as_ref()
+            .map(|fire| {
+                fire.context
+                    .iter()
+                    .filter_map(|indicator| {
+                        let token = indicator.to_string();
+                        indicator_snapshot
+                            .get(&token)
+                            .map(|value| (token, serde_json::json!(value)))
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .filter(|values| !values.is_empty())
+            .unwrap_or_else(|| {
+                indicator_snapshot
+                    .iter()
+                    .map(|(key, value)| (key.clone(), serde_json::json!(value)))
+                    .collect()
+            });
+        let fire = self.filter.fire.as_ref();
         Some(serde_json::json!({
-            "reason": fire.reason,
-            "priority": fire.priority,
-            "tags": fire.tags,
-            "context": values,
+            "reason": fire.map(|value| value.reason.clone()),
+            "priority": fire.map(|value| value.priority),
+            "tags": fire.map(|value| value.tags.clone()).unwrap_or_default(),
+            "context": context,
         }))
     }
 
@@ -254,5 +337,40 @@ impl FilterHook {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn bar(minute: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> Ohlcv {
+        Ohlcv {
+            timestamp: Utc.timestamp_opt(minute * 60, 0).single().unwrap(),
+            open,
+            high,
+            low,
+            close,
+            volume,
+        }
+    }
+
+    #[test]
+    fn timeframe_parser_supports_target_units() {
+        assert_eq!(parse_timeframe_secs("1h"), Some(3_600));
+        assert_eq!(parse_timeframe_secs("5m"), Some(300));
+        assert_eq!(parse_timeframe_secs("bad"), None);
+    }
+
+    #[test]
+    fn aggregate_bar_preserves_ohlcv_semantics() {
+        let mut aggregate = bar(0, 100.0, 105.0, 99.0, 103.0, 10.0);
+        aggregate_bar(&mut aggregate, &bar(5, 103.0, 108.0, 101.0, 106.0, 12.0));
+        assert_eq!(aggregate.open, 100.0);
+        assert_eq!(aggregate.high, 108.0);
+        assert_eq!(aggregate.low, 99.0);
+        assert_eq!(aggregate.close, 106.0);
+        assert_eq!(aggregate.volume, 22.0);
     }
 }

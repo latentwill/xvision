@@ -956,6 +956,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
         let cfg = MechanisticConfig {
             entry_rules,
             close_policies,
+            entry_session_utc: None,
         };
         (
             DecisionMode::Mechanistic,

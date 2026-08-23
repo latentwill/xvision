@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{Timelike, Utc};
 use ulid::Ulid;
 use xvision_core::market::Ohlcv;
 use xvision_core::providers::Catalog;
@@ -1149,29 +1149,27 @@ impl Executor {
                 if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
                     let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
                     let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
-                    let evaluation = hook.evaluate(gate_bar, in_position);
-                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
-                        .await?;
-                    if !evaluation.outcome.decision.is_active() {
-                        filter_gated = true;
-                        // U11: surface the specific "blocked because a position
-                        // is open" case on the live progress stream so operators
-                        // can tell it apart from "filter simply didn't fire". The
-                        // suppressed_in_position reason is already recorded in the
-                        // persisted FilterEventV1 ledger via `hook.record`; this
-                        // additional event rides the same ProgressTx for live
-                        // CLI/dashboard consumers.
-                        if matches!(
-                            evaluation.outcome.decision,
-                            xvision_filters::runtime::ActivationDecision::SuppressedInPosition
-                        ) {
-                            self.emit(ProgressEvent::FilterBlocked {
-                                run_id: run.id.clone(),
-                                reason: "in_position".to_string(),
-                            });
+                    if let Some(evaluation) = hook.evaluate_resampled(gate_bar, in_position) {
+                        hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
+                            .await?;
+                        if !evaluation.outcome.decision.is_active() {
+                            filter_gated = true;
+                            if matches!(
+                                evaluation.outcome.decision,
+                                xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                            ) {
+                                self.emit(ProgressEvent::FilterBlocked {
+                                    run_id: run.id.clone(),
+                                    reason: "in_position".to_string(),
+                                });
+                            }
+                        } else {
+                            filter_trigger_context = evaluation.trigger_context.clone();
                         }
                     } else {
-                        filter_trigger_context = evaluation.trigger_context.clone();
+                        // A higher-timeframe filter has not closed its
+                        // aggregate bar yet, so it cannot admit an entry.
+                        filter_gated = true;
                     }
                 }
             }
@@ -1200,13 +1198,11 @@ impl Executor {
 
                 let filter_gated_position_sltp_check = filter_gated
                     && book.position(asset_sym).abs() > f64::EPSILON
-                    && sltp_state.contains_key(&asset_sym);
+                    && (sltp_state.contains_key(&asset_sym)
+                        || strategy.decision_mode == DecisionMode::Mechanistic);
                 if filter_gated && !filter_gated_position_sltp_check {
                     // Strategy filter gated this timestamp: skip the agent
-                    // pipeline for this asset. No decision row is written
-                    // (matches the single-asset filter-gate behavior, which
-                    // recorded only the filter evaluation + dense equity).
-                    // Equity is recorded once per timestamp below.
+                    // pipeline for this asset. No decision row is written.
                     continue 'asset;
                 }
 
@@ -1579,7 +1575,7 @@ impl Executor {
                     }
                 }
 
-                if filter_gated_position_sltp_check {
+                if filter_gated_position_sltp_check && strategy.decision_mode != DecisionMode::Mechanistic {
                     // PF-17: filter-gated in-position bars still need the
                     // deterministic SL/TP check above, but a non-triggering
                     // bar must continue to skip the agent pipeline.
@@ -1866,6 +1862,10 @@ impl Executor {
                         book.position(asset_sym),
                         book.entry_price(asset_sym),
                         bar.close,
+                        seed_bars_held,
+                        filter_trigger_context.as_ref(),
+                        history_slice,
+                        bar.timestamp,
                     )
                 } else {
                     let seed_for_repair = seed.clone();
@@ -3726,7 +3726,7 @@ impl Executor {
                 // consumes `bars`.
                 if let Some(hook) = filter_hook.as_mut() {
                     for bar in &bars {
-                        hook.evaluate(bar, false);
+                        hook.evaluate_resampled(bar, false);
                     }
                 }
                 // Seed per-asset history for the LLM seed context.
@@ -4611,28 +4611,31 @@ impl Executor {
         let mut filter_trigger_context: Option<serde_json::Value> = None;
         if let Some(hook) = filter_hook.as_mut() {
             let in_position = book.position(asset_sym).abs() > f64::EPSILON;
-            let evaluation = hook.evaluate(bar, in_position);
-            hook.record(
-                store.pool(),
-                self.progress.as_ref(),
-                &run.id,
-                decision_ts,
-                &evaluation,
-            )
-            .await?;
-            if !evaluation.outcome.decision.is_active() {
-                filter_gated = true;
-                if matches!(
-                    evaluation.outcome.decision,
-                    xvision_filters::runtime::ActivationDecision::SuppressedInPosition
-                ) {
-                    self.emit(ProgressEvent::FilterBlocked {
-                        run_id: run.id.clone(),
-                        reason: "in_position".to_string(),
-                    });
+            if let Some(evaluation) = hook.evaluate_resampled(bar, in_position) {
+                hook.record(
+                    store.pool(),
+                    self.progress.as_ref(),
+                    &run.id,
+                    decision_ts,
+                    &evaluation,
+                )
+                .await?;
+                if !evaluation.outcome.decision.is_active() {
+                    filter_gated = true;
+                    if matches!(
+                        evaluation.outcome.decision,
+                        xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                    ) {
+                        self.emit(ProgressEvent::FilterBlocked {
+                            run_id: run.id.clone(),
+                            reason: "in_position".to_string(),
+                        });
+                    }
+                } else {
+                    filter_trigger_context = evaluation.trigger_context.clone();
                 }
             } else {
-                filter_trigger_context = evaluation.trigger_context.clone();
+                filter_gated = true;
             }
         }
 
@@ -4685,11 +4688,15 @@ impl Executor {
         let filter_gated_position_sltp_check = filter_gated
             && book.position(asset_sym).abs() > f64::EPSILON
             && sltp_state.contains_key(&asset_sym);
-        if live_filter_gate_should_short_circuit(
-            filter_gated,
-            book.position(asset_sym).abs() > f64::EPSILON,
-            sltp_state.contains_key(&asset_sym),
-        ) {
+        let mechanistic_in_position = strategy.decision_mode == DecisionMode::Mechanistic
+            && book.position(asset_sym).abs() > f64::EPSILON;
+        if !mechanistic_in_position
+            && live_filter_gate_should_short_circuit(
+                filter_gated,
+                book.position(asset_sym).abs() > f64::EPSILON,
+                sltp_state.contains_key(&asset_sym),
+            )
+        {
             return Ok(LiveDecisionOutcome {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -4846,7 +4853,7 @@ impl Executor {
             }
         }
 
-        if filter_gated_position_sltp_check {
+        if filter_gated_position_sltp_check && !mechanistic_in_position {
             return Ok(LiveDecisionOutcome {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -4921,7 +4928,19 @@ impl Executor {
                     .mechanistic_config
                     .as_ref()
                     .expect("validate_strategy ensures mechanistic_config");
-                let parsed = mechanistic_action(cfg, pre_fill_position, pre_fill_entry, bar.close);
+                let parsed = mechanistic_action(
+                    cfg,
+                    pre_fill_position,
+                    pre_fill_entry,
+                    bar.close,
+                    sltp_state
+                        .get(&asset_sym)
+                        .map(|state| state.bars_held)
+                        .unwrap_or(0),
+                    filter_trigger_context.as_ref(),
+                    &history_slice,
+                    bar.timestamp,
+                );
                 (0u64, 0u64, parsed)
             } else {
                 // WS-17: open decision span for live observability.
@@ -6243,30 +6262,63 @@ pub fn classify_aggressor_side(
             if fill_price <= bar_open + half_spread {
                 return AggressorSide::Maker;
             }
-        } else {
-            // Passive sell: fill at or above open - half_spread (resting offer).
-            if fill_price >= bar_open - half_spread {
-                return AggressorSide::Maker;
-            }
         }
     }
     AggressorSide::Taker
 }
 
-/// Apply mechanistic close policies to produce a `TraderOutput` without any LLM
-/// call. Returns `flat` when a StopLoss or TakeProfit threshold is breached;
-/// returns `hold` when flat or no policy triggers.
+/// Apply mechanistic entry and close policies without an LLM call. `bars_held`
+/// counts executor decision cycles (for a 5m strategy, one unit is one 5m
+/// cycle), not wall-clock hours.
 fn mechanistic_action(
     cfg: &MechanisticConfig,
     position: f64,
     entry_price: f64,
     mark_price: f64,
+    bars_held: u32,
+    filter_context: Option<&serde_json::Value>,
+    history: &[&Ohlcv],
+    timestamp: chrono::DateTime<Utc>,
 ) -> TraderOutput {
     if position.abs() < f64::EPSILON || entry_price <= 0.0 {
+        if !mechanistic_session_open(cfg.entry_session_utc.as_deref(), timestamp) {
+            return TraderOutput {
+                action: "hold".into(),
+                conviction: 0.5,
+                justification: "mechanistic: outside entry session".into(),
+                ..Default::default()
+            };
+        }
+        let trend_long = mechanistic_trend(filter_context, history, mark_price);
+        let rule = cfg
+            .entry_rules
+            .iter()
+            .find(|rule| {
+                trend_long.map_or(true, |long| {
+                    matches!(
+                        (&rule.direction, long),
+                        (crate::strategies::EntryDirection::Long, true)
+                            | (crate::strategies::EntryDirection::Short, false)
+                    )
+                })
+            })
+            .or_else(|| cfg.entry_rules.first());
+        let Some(rule) = rule else {
+            return TraderOutput {
+                action: "hold".into(),
+                conviction: 0.5,
+                justification: "mechanistic: no entry rule".into(),
+                ..Default::default()
+            };
+        };
         return TraderOutput {
-            action: "hold".into(),
-            conviction: 0.0,
-            justification: "mechanistic: no open position".into(),
+            action: match rule.direction {
+                crate::strategies::EntryDirection::Long => "long_open",
+                crate::strategies::EntryDirection::Short => "short_open",
+            }
+            .into(),
+            conviction: 1.0,
+            justification: "mechanistic entry".into(),
             ..Default::default()
         };
     }
@@ -6275,33 +6327,103 @@ fn mechanistic_action(
     } else {
         (entry_price - mark_price) / entry_price * 100.0
     };
+    let peak = if position > 0.0 {
+        history
+            .iter()
+            .map(|bar| bar.high)
+            .fold(mark_price.max(entry_price), f64::max)
+    } else {
+        history
+            .iter()
+            .map(|bar| bar.low)
+            .fold(mark_price.min(entry_price), f64::min)
+    };
     for policy in &cfg.close_policies {
-        match policy {
-            ClosePolicy::StopLoss { pct } if pnl_pct <= -*pct => {
-                return TraderOutput {
-                    action: "flat".into(),
-                    conviction: 1.0,
-                    justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
-                    ..Default::default()
+        let (hit, label) = match policy {
+            ClosePolicy::StopLoss { pct } => (pnl_pct <= -*pct, "stop_loss"),
+            ClosePolicy::TakeProfit { pct } => (pnl_pct >= *pct, "take_profit"),
+            ClosePolicy::TrailingStop { pct } => {
+                let distance = *pct / 100.0;
+                let hit = if position > 0.0 {
+                    mark_price <= peak * (1.0 - distance)
+                } else {
+                    mark_price >= peak * (1.0 + distance)
                 };
+                (hit, "trailing_stop")
             }
-            ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
-                return TraderOutput {
-                    action: "flat".into(),
-                    conviction: 1.0,
-                    justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
-                    ..Default::default()
+            ClosePolicy::TimeExit { bars } => (bars_held >= *bars, "time_exit"),
+            ClosePolicy::TargetPnl { usd } => {
+                let pnl = if position > 0.0 {
+                    (mark_price - entry_price) * position.abs()
+                } else {
+                    (entry_price - mark_price) * position.abs()
                 };
+                (pnl >= *usd, "target_pnl")
             }
-            _ => {}
+        };
+        if hit {
+            return TraderOutput {
+                action: "flat".into(),
+                conviction: 1.0,
+                justification: format!("mechanistic {label}"),
+                ..Default::default()
+            };
         }
     }
     TraderOutput {
         action: "hold".into(),
-        conviction: 0.0,
-        justification: "mechanistic: no close policy triggered".into(),
+        conviction: 0.5,
+        justification: "mechanistic hold".into(),
         ..Default::default()
     }
+}
+
+fn mechanistic_session_open(spec: Option<&str>, timestamp: chrono::DateTime<Utc>) -> bool {
+    let Some(spec) = spec else { return true };
+    let mut parts = spec.split('-');
+    let (Ok(start), Ok(end)) = (
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+    ) else {
+        return true;
+    };
+    if parts.next().is_some() || start > 24 || end > 24 || start == end {
+        return true;
+    }
+    let hour = timestamp.hour();
+    if start < end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
+    }
+}
+
+fn mechanistic_trend(
+    filter_context: Option<&serde_json::Value>,
+    history: &[&Ohlcv],
+    current_price: f64,
+) -> Option<bool> {
+    let get = |key: &str| {
+        filter_context
+            .and_then(|value| {
+                value
+                    .get("context")
+                    .and_then(|context| context.get(key))
+                    .or_else(|| value.get(key))
+            })
+            .and_then(|value| value.as_f64())
+    };
+    if let Some(ema) = get("ema_21") {
+        return Some(current_price > ema);
+    }
+    let mut ema = None;
+    for bar in history {
+        ema = Some(match ema {
+            None => bar.close,
+            Some(previous) => previous + (2.0 / 22.0) * (bar.close - previous),
+        });
+    }
+    ema.map(|value| current_price > value)
 }
 
 /// Find the trader slot's repair context — system prompt, model id,

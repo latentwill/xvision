@@ -1392,6 +1392,7 @@ mod preflight_tests {
                 direction: EntryDirection::Long,
             }],
             close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+            entry_session_utc: None,
         });
         s.agents.clear();
         s.trader_slot = None;
@@ -1406,6 +1407,7 @@ mod preflight_tests {
         s.mechanistic_config = Some(MechanisticConfig {
             entry_rules: vec![],
             close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+            entry_session_utc: None,
         });
         s.agents.clear();
         s.trader_slot = None;
