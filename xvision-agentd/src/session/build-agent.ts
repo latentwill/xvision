@@ -87,6 +87,9 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
       model: wrapped,
       systemPrompt: config.system_prompt,
       tools,
+      ...(config.max_tokens_per_turn !== undefined
+        ? { maxTokensPerTurn: config.max_tokens_per_turn }
+        : {}),
     })
   }
 
@@ -104,6 +107,9 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
       model: wrapped,
       systemPrompt: config.system_prompt,
       tools,
+      ...(config.max_tokens_per_turn !== undefined
+        ? { maxTokensPerTurn: config.max_tokens_per_turn }
+        : {}),
     })
   }
 
@@ -134,5 +140,8 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
     model: wrapped,
     systemPrompt: config.system_prompt,
     tools,
+    ...(config.max_tokens_per_turn !== undefined
+      ? { maxTokensPerTurn: config.max_tokens_per_turn }
+      : {}),
   })
 }

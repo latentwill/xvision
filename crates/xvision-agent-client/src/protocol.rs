@@ -94,10 +94,15 @@ pub struct StartRunParams {
     pub system_prompt: String,
     pub allowed_tools: Vec<String>,
     pub budget_limits: BudgetLimits,
+    /// Maximum output tokens for each provider API call. This is distinct
+    /// from `budget_limits.max_output_tokens`, which is cumulative across the
+    /// complete sidecar run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_turn: Option<u32>,
     /// JSON schema for the structured decision the agent submits via the
-    /// built-in `submit_decision` lifecycle tool. Required by the sidecar
-    /// whenever `allowed_tools` contains `submit_decision`. Additive: omitted
-    /// for runs that don't use the lifecycle tool.
+    /// `submit_decision` lifecycle tool. Required by the sidecar whenever
+    /// `allowed_tools` contains `submit_decision`. Additive: omitted for runs
+    /// that don't use the lifecycle tool.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_schema: Option<serde_json::Value>,
     /// When `true`, the sidecar records a `TrajectoryFrame` for every model
@@ -332,6 +337,7 @@ mod tests {
                 max_output_tokens: 1,
                 max_wall_ms: 1,
             },
+            max_tokens_per_turn: None,
             decision_schema: Some(serde_json::json!({"type": "object"})),
             record: false,
             slot_role: None,
@@ -359,6 +365,7 @@ mod tests {
                 max_output_tokens: 1,
                 max_wall_ms: 1,
             },
+            max_tokens_per_turn: None,
             decision_schema: None,
             record: false,
             slot_role: None,

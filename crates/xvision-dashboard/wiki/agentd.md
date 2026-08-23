@@ -136,9 +136,14 @@ Begins a model-driven session. Params (validated; bad values →
     "max_input_tokens":  <positive int>,
     "max_output_tokens": <positive int>,
     "max_wall_ms":       <positive int>
-  }
+  },
+  "max_tokens_per_turn": <positive int> // optional provider-call cap
 }
 ```
+
+`budget_limits.max_output_tokens` is cumulative across the complete agent/tool
+run. `max_tokens_per_turn`, when present, limits each provider API call
+separately; it is not used as the cumulative run cap.
 
 Result:
 

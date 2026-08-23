@@ -61,6 +61,7 @@ interface StartRunParams {
   system_prompt?: unknown
   allowed_tools?: unknown
   budget_limits?: unknown
+  max_tokens_per_turn?: unknown
   decision_schema?: unknown
   /** Optional — enables trajectory frame recording for this run. */
   record?: unknown
@@ -175,6 +176,13 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     throw new TypeError("params.api_key must be a string when present")
   if (p.base_url !== undefined && typeof p.base_url !== "string")
     throw new TypeError("params.base_url must be a string when present")
+  if (
+    p.max_tokens_per_turn !== undefined &&
+    (typeof p.max_tokens_per_turn !== "number" ||
+      !Number.isInteger(p.max_tokens_per_turn) ||
+      p.max_tokens_per_turn <= 0)
+  )
+    throw new TypeError("params.max_tokens_per_turn must be a positive integer when present")
   if (p.record !== undefined && typeof p.record !== "boolean")
     throw new TypeError("params.record must be a boolean when present")
   if (p.slot_role !== undefined && (typeof p.slot_role !== "string" || p.slot_role.length === 0))
@@ -189,6 +197,9 @@ function validateStartRun(p: StartRunParams): StartRunConfig {
     system_prompt: p.system_prompt,
     allowed_tools: p.allowed_tools as string[],
     budget_limits: limits,
+    ...(typeof p.max_tokens_per_turn === "number"
+      ? { max_tokens_per_turn: p.max_tokens_per_turn }
+      : {}),
     ...(decisionSchemaOk ? { decision_schema: p.decision_schema as Record<string, unknown> } : {}),
     ...(typeof p.record === "boolean" ? { record: p.record } : {}),
     ...(typeof p.slot_role === "string" && p.slot_role.length > 0 ? { slot_role: p.slot_role } : {}),

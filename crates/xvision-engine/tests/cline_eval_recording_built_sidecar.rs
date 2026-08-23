@@ -304,6 +304,7 @@ async fn built_sidecar_records_real_emit_frames_then_replays_from_store() {
                 max_output_tokens: 4096,
                 max_wall_ms: 30_000,
             },
+            max_tokens_per_turn: Some(4096),
             decision_schema: Some(ResponseSchema::trader_output().schema),
             record: true,
             slot_role: Some(SLOT_ROLE.into()),
