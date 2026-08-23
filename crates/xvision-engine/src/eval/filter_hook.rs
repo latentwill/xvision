@@ -81,6 +81,9 @@ fn aggregate_bar(target: &mut Ohlcv, next: &Ohlcv) {
     target.close = next.close;
     target.volume += next.volume;
 }
+fn timeframe_bucket(timestamp: DateTime<Utc>, target_secs: i64) -> i64 {
+    timestamp.timestamp().div_euclid(target_secs)
+}
 
 impl FilterHook {
     /// Returns `Some` only when `strategy.activation_mode == FilterGated`
@@ -144,16 +147,20 @@ impl FilterHook {
         }
         self.last_input_ts = Some(bar.timestamp);
         let Some(input_secs) = self.input_interval_secs else {
-            self.pending_bucket = Some(bar.timestamp.timestamp());
             self.pending_bar = Some(bar.clone());
             return None;
         };
         if target_secs <= input_secs {
             return Some(self.evaluate(bar, in_position));
         }
-        let bucket = bar.timestamp.timestamp().div_euclid(target_secs);
+        let bucket = timeframe_bucket(bar.timestamp, target_secs);
         match (self.pending_bucket, self.pending_bar.as_mut()) {
             (Some(pending_bucket), Some(pending)) if pending_bucket == bucket => {
+                aggregate_bar(pending, bar);
+                None
+            }
+            (None, Some(pending)) => {
+                self.pending_bucket = Some(bucket);
                 aggregate_bar(pending, bar);
                 None
             }
@@ -380,5 +387,16 @@ mod tests {
         assert_eq!(aggregate.low, 99.0);
         assert_eq!(aggregate.close, 106.0);
         assert_eq!(aggregate.volume, 22.0);
+    }
+
+    #[test]
+    fn hourly_buckets_are_utc_clock_anchored() {
+        let hour = 3_600;
+        let at_midnight = Utc.timestamp_opt(0, 0).single().unwrap();
+        let before_one = Utc.timestamp_opt(55 * 60, 0).single().unwrap();
+        let at_one = Utc.timestamp_opt(3_600, 0).single().unwrap();
+        assert_eq!(timeframe_bucket(at_midnight, hour), 0);
+        assert_eq!(timeframe_bucket(before_one, hour), 0);
+        assert_eq!(timeframe_bucket(at_one, hour), 1);
     }
 }
