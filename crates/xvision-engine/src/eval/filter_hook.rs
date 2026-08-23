@@ -170,6 +170,14 @@ impl FilterHook {
             }
         }
     }
+    /// Seed indicator and higher-timeframe aggregation state with bars that
+    /// precede the tradable decision window. Warmup evaluations are not
+    /// persisted or emitted; they only establish the causal filter state.
+    pub fn seed_warmup(&mut self, bars: &[Ohlcv]) {
+        for bar in bars {
+            let _ = self.evaluate_resampled(bar, false);
+        }
+    }
 
     pub fn with_obs(mut self, obs: Option<ObsEmitter>) -> Self {
         self.obs = obs;
