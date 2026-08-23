@@ -180,7 +180,7 @@ describe("EvalCapsule", () => {
     expect(label).toHaveStyle({ color: "var(--gold)" });
   });
 
-  test("kind=live focused row's short tag routes to /live/runs/<id>", () => {
+  test("kind=live focused row's short tag routes to /fwd/runs/<id>", () => {
     renderCapsule(
       <EvalCapsule
         focused={focused({ id: "run_live1", kind: "live" })}
@@ -188,7 +188,7 @@ describe("EvalCapsule", () => {
       />,
     );
     const link = screen.getByRole("link", { name: /open eval run mr·flash/i });
-    expect(link).toHaveAttribute("href", "/live/runs/run_live1");
+    expect(link).toHaveAttribute("href", "/fwd/runs/run_live1");
   });
 
   test("renders an N ERR chip on the collapsed toggle when siblings have errors", () => {

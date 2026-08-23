@@ -12,10 +12,12 @@ function routerWrapper(initial: string) {
 }
 
 describe("scopeForPath", () => {
-  test("live surfaces map to the live scope", () => {
+  test("forward-test surfaces map to the live scope", () => {
+    expect(scopeForPath("/fwd")).toBe("live");
+    expect(scopeForPath("/fwd/runs/01ABC")).toBe("live");
+    expect(scopeForPath("/fwd/01ABC")).toBe("live");
     expect(scopeForPath("/live")).toBe("live");
     expect(scopeForPath("/live/runs/01ABC")).toBe("live");
-    expect(scopeForPath("/live/01ABC")).toBe("live");
   });
 
   test("eval surfaces map to the eval scope", () => {
@@ -46,7 +48,7 @@ describe("useCurrentTraceScope", () => {
   test("derives the scope from the current router location", () => {
     expect(
       renderHook(() => useCurrentTraceScope(), {
-        wrapper: routerWrapper("/live/runs/01ABC"),
+        wrapper: routerWrapper("/fwd/runs/01ABC"),
       }).result.current,
     ).toBe("live");
     expect(

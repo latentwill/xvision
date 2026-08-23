@@ -216,7 +216,7 @@ pub fn build_review_payload(
 fn run_mode_str(mode: RunMode) -> &'static str {
     match mode {
         RunMode::Backtest => "backtest",
-        RunMode::Forward => "live",
+        RunMode::Forward => "fwd",
     }
 }
 
@@ -370,6 +370,17 @@ mod tests {
         assert_eq!(payload.equity_curve.len(), 2);
         assert_eq!(payload.agent_profile.id, "reasoning-agent");
         assert!(!payload.is_sparse);
+    }
+
+    #[test]
+    fn payload_serializes_forward_mode_as_fwd() {
+        let profile = sample_profile();
+        let mut run = sample_run();
+        run.mode = RunMode::Forward;
+
+        let payload = build_review_payload(&run, vec![], vec![], None, &profile);
+
+        assert_eq!(payload.mode, "fwd");
     }
 
     #[test]

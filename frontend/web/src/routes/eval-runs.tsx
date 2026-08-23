@@ -91,7 +91,7 @@ const MODE_FILTER: FilterDef = {
   options: [
     { value: "all", label: "All modes" },
     { value: "backtest", label: "Backtest" },
-    { value: "live", label: "Forward test" },
+    { value: "fwd", label: "Forward test" },
   ],
 };
 
@@ -816,7 +816,7 @@ function StartEvalPanel({
       setPreflightError("Pick a scenario before starting Backtest.");
       return;
     }
-    if (mode === "live") {
+    if (mode === "fwd") {
       const capital = Number(liveCapital);
       const barLimit = parseOptionalPositiveInt(liveBarLimit, "bar limit");
       const decisionLimit = parseOptionalPositiveInt(liveDecisionLimit, "decision limit");
@@ -838,11 +838,11 @@ function StartEvalPanel({
         return;
       }
       if (!Number.isFinite(capital) || capital <= 0) {
-        setPreflightError("Enter a positive live capital amount.");
+        setPreflightError("Enter a positive forward-test capital amount.");
         return;
       }
       if (!Number.isFinite(warmupBars) || warmupBars < 0) {
-        setPreflightError("Enter a non-negative live warmup bar count.");
+        setPreflightError("Enter a non-negative forward-test warmup bar count.");
         return;
       }
       if (brokers.data?.alpaca.configured !== true) {
@@ -869,7 +869,7 @@ function StartEvalPanel({
     const tradeLimit = parseOptionalPositiveInt(liveTradeLimit, "trade limit");
     const warmupBarsNum = Number(liveWarmupBars);
     const liveConfig: LiveConfig | null =
-      mode === "live"
+      mode === "fwd"
         ? {
             strategy_id: agentId,
             assets: [
@@ -901,7 +901,7 @@ function StartEvalPanel({
         : null;
     const request: StartRunReq = {
       agent_id: agentId,
-      scenario_id: mode === "live" ? "" : scenarioId,
+      scenario_id: mode === "fwd" ? "" : scenarioId,
       mode,
       params_override: null,
       auto_fire_review: autoFireReview,
@@ -1005,10 +1005,10 @@ function StartEvalPanel({
                 <input
                   type="radio"
                   name="mode"
-                  value="live"
-                  checked={mode === "live"}
+                  value="fwd"
+                  checked={mode === "fwd"}
                   onChange={() => {
-                    setMode("live");
+                    setMode("fwd");
                     setPreflightError(null);
                   }}
                   className="accent-gold"
@@ -1023,7 +1023,7 @@ function StartEvalPanel({
             </p>
           </fieldset>
 
-          {mode === "live" ? (
+          {mode === "fwd" ? (
             <fieldset className="grid grid-cols-2 gap-3">
               <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
                 Forward test

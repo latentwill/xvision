@@ -367,7 +367,7 @@ export function StripDockSlot() {
         brokerSpans={brokerCallSpans}
         retentionMode={summary.retention_mode}
         onExpandDock={() => setHeight("working")}
-        onPopOut={() => navigate(`/live/runs/${activeRunId}`)}
+        onPopOut={() => navigate(`/fwd/runs/${activeRunId}`)}
       />
     );
   }
@@ -382,7 +382,7 @@ export function StripDockSlot() {
       onPopOut={() =>
         navigate(
           isLiveMoney
-            ? `/live/runs/${activeRunId}`
+            ? `/fwd/runs/${activeRunId}`
             : `/agent-runs/${activeRunId}`,
         )
       }

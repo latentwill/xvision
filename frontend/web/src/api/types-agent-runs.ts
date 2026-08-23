@@ -219,7 +219,7 @@ export type ToolCall = {
 export type AgentRunAccounting = {
   source: "agent_model_calls" | "eval_model_calls" | "eval_actuals" | "none";
   eval_run_id: string | null;
-  eval_mode: "backtest" | "live" | string | null;
+  eval_mode: "backtest" | "fwd" | string | null;
   eval_status: string | null;
   eval_actual_input_tokens: number | null;
   eval_actual_output_tokens: number | null;
@@ -356,11 +356,12 @@ export type AgentRunSummary = {
   paused_at?: string | null;
   /**
    * Mode of the parent eval run, normalized server-side to
-   * `"backtest" | "live"` (legacy `'paper'` rows read back as
-   * `"backtest"`). `null`/absent when the agent run has no parent eval
-   * run. Served by `GET /api/agent-runs` (LEFT JOIN onto `eval_runs`).
+   * `"backtest" | "fwd"` (legacy `'paper'` rows read back as
+   * `"backtest"` and legacy `'live'` rows read back as `"fwd"`). `null`/absent
+   * when the agent run has no parent eval run. Served by `GET /api/agent-runs`
+   * (LEFT JOIN onto `eval_runs`).
    */
-  eval_mode?: "backtest" | "live" | null;
+  eval_mode?: "backtest" | "fwd" | null;
   /**
    * Raw status of the parent eval run
    * (`queued|running|completed|failed|cancelled`). `null`/absent without

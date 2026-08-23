@@ -1159,7 +1159,7 @@ describe("EvalRunsRoute", () => {
         id: "01LIVE",
         agent_id: "01TEST",
         scenario_id: "",
-        mode: "live",
+        mode: "fwd",
         status: "queued",
         started_at: null,
         completed_at: null,
@@ -1187,9 +1187,7 @@ describe("EvalRunsRoute", () => {
     fireEvent.change(screen.getByLabelText("Forward-test trade limit"), {
       target: { value: "3" },
     });
-    fireEvent.change(screen.getByLabelText("Forward-test timeframe"), {
-      target: { value: "5m" },
-    });
+    expect(screen.getByLabelText("Forward-test timeframe")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
@@ -1197,10 +1195,10 @@ describe("EvalRunsRoute", () => {
     expect(vi.mocked(evalApi.startRun).mock.calls[0]?.[0]).toMatchObject({
       agent_id: "01TEST",
       scenario_id: "",
-      mode: "live",
+      mode: "fwd",
       live_config: {
         broker_creds_ref: "alpaca",
-        granularity: "5m",
+        granularity: "1m",
         stop_policy: {
           bar_limit: null,
           decision_limit: 7,
@@ -1223,6 +1221,32 @@ describe("EvalRunsRoute", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
     expect(await screen.findByText(/Set at least one duration limit/)).toBeInTheDocument();
+    expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  it("uses forward-test wording for launch validation errors", async () => {
+    mockReady();
+    vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("button", { name: "Scenario" });
+    fireEvent.click(screen.getByLabelText("forward test"));
+    expect(screen.getByLabelText("forward test")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Forward-test capital"), {
+      target: { value: "0" },
+    });
+    fireEvent.change(screen.getByLabelText("Forward-test decision limit"), {
+      target: { value: "1" },
+    });
+    const startButton = screen.getByRole("button", { name: "Start" });
+    await waitFor(() => expect(startButton).toBeEnabled());
+    const form = startButton.closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+
+    expect(await screen.findByText("Enter a positive forward-test capital amount.")).toBeInTheDocument();
+    expect(screen.queryByText(/positive live capital/i)).not.toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
   });
 });

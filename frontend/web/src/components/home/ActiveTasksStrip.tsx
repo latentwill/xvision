@@ -268,10 +268,10 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
         {dep.mode}
       </span>
 
-      {/* Strategy name links to the live run inspector. `deployment_id` is the
-          eval_runs.id (CT5 §2.1), so the detail route is /live/runs/:runId. */}
+      {/* Strategy name links to the forward-test run inspector. `deployment_id` is the
+          eval_runs.id (CT5 §2.1), so the detail route is /fwd/runs/:runId. */}
       <Link
-        to={`/live/runs/${dep.deployment_id}`}
+        to={`/fwd/runs/${dep.deployment_id}`}
         className="text-[13px] font-medium text-text hover:underline truncate min-w-0 flex-1"
       >
         {strategyName}
@@ -456,12 +456,12 @@ export function ActiveTasksStrip({ deployments }: ActiveTasksStripProps = {}) {
         </span>
       </div>
 
-      {/* n0k/awm: live & paper deployment group — a distinct labeled section,
+      {/* n0k/awm: forward-test deployment group — a distinct labeled section,
           rendered only when there is at least one deployment. */}
       {showLive && (
         <div data-testid="live-deployments-group">
           <div className="px-5 pt-1 pb-0.5">
-            <span className="caps text-text-4">Live &amp; paper</span>
+            <span className="caps text-text-4">Forward Test · Paper</span>
           </div>
           <div className="divide-y divide-border-soft/60 px-2 pb-1.5">
             {liveDeployments.map((dep) => (

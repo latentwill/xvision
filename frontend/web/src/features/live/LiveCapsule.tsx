@@ -29,7 +29,7 @@ export type LiveCapsuleProps = {
   /**
    * The focused live run. Same shape the eval capsule's focused row uses;
    * callers should pass `kind: "live"` so the row reads LIVE and the short
-   * tag routes to the live inspector (`/live/runs/:id`).
+   * tag routes to the forward-test inspector (`/fwd/runs/:id`).
    */
   run: EvalCapsuleFocused;
   /**

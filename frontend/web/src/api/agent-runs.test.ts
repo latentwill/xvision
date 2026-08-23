@@ -173,7 +173,7 @@ describe("validateAgentRunDetail", () => {
       accounting: {
         source: "eval_actuals",
         eval_run_id: "eval_run_1",
-        eval_mode: "live",
+        eval_mode: "fwd",
         eval_status: "completed",
         eval_actual_input_tokens: 46473,
         eval_actual_output_tokens: 991,
@@ -189,8 +189,8 @@ describe("validateAgentRunDetail", () => {
     expect(detail.summary.financial_eval_id).toBe("eval_run_1");
     expect(detail.summary.total_input_tokens).toBe(46473);
     expect(detail.summary.total_output_tokens).toBe(991);
-    expect((detail.summary as any).accounting?.source).toBe("eval_actuals");
-    expect((detail.summary as any).accounting?.eval_mode).toBe("live");
+    expect(detail.summary.accounting?.source).toBe("eval_actuals");
+    expect(detail.summary.accounting?.eval_mode).toBe("fwd");
   });
 
   test("projects model_calls.provider/model/hashes onto the matching span", () => {

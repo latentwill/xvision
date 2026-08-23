@@ -34,7 +34,7 @@ const TABS: Tab[] = ["SUMMARY", "DECISIONS", "TRACE", "REVIEW"];
 const STRIP: Record<StripState, { dot: string; label: string; ring: string; bg: string; bd: string }> = {
   blue: {
     dot: "var(--info)",
-    label: "LIVE",
+    label: "RUNNING",
     ring: "0 0 0 3px rgba(111,143,184,0.25)",
     bg: "rgba(111,143,184,0.06)",
     bd: "rgba(111,143,184,0.25)",
@@ -178,6 +178,7 @@ function LiveStrip({
   cancelling: boolean;
 }) {
   const conf = STRIP[state];
+  const label = isLive && summary.mode === "fwd" ? "FORWARD TEST" : conf.label;
   const totalDur = totalDurationLabel(summary, liveDuration);
   return (
     <div
@@ -199,7 +200,7 @@ function LiveStrip({
         className={`${MONO_TINY} flex-shrink-0`}
         style={{ color: conf.dot }}
       >
-        {conf.label}
+        {label}
       </span>
       <span className="font-mono text-[11px] text-text-3 tabular-nums flex-shrink-0">
         {totalDur}
@@ -518,7 +519,7 @@ function ActivityCard({
       <div className="font-mono text-[11px] text-text-3">
         {tokensIn != null ? `${tokensIn.toLocaleString()} tok in` : "streaming"}
         <span className="mx-1">·</span>
-        <span className="text-info">live</span>
+        <span className="text-info">fwd</span>
       </div>
       <div
         className="mt-2 h-[3px] rounded-sm overflow-hidden"

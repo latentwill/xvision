@@ -2,7 +2,7 @@
 //
 // "Live" means LIVE MONEY (xvision-9pi): an agent run only counts as live
 // when the backend's `is_live_money` discriminator is set — i.e. its parent
-// eval run has `mode = live` AND that eval run is non-terminal. Agent runs
+// eval run has `mode = fwd` AND that eval run is non-terminal. Agent runs
 // stuck in `running` whose parent eval run already finished are STALE
 // orphans (dead recorder rows), never live.
 
@@ -68,19 +68,19 @@ export function isLiveRun(run: AgentRunSummary): boolean {
 }
 
 /**
- * True when a run belongs to a LIVE deployment lineage (its parent eval run
- * was started in `mode = live`), regardless of its current state. This is the
- * gate for what may appear ANYWHERE on the Live Trading page: active, paused,
- * stopped, and stale-orphan live runs all qualify; backtest/paper eval runs
+ * True when a run belongs to a forward-test deployment lineage (its parent
+ * eval run was started in `mode = fwd`), regardless of its current state. This is the
+ * gate for what may appear ANYWHERE on the Forward Test page: active, paused,
+ * stopped, and stale-orphan forward-test runs all qualify; backtest/paper eval runs
  * and parentless runs do NOT. It exists so the strip never lists the dozens of
- * finished backtest evals as "STOPPED live strategies" — those have a home on
+ * finished backtest evals as "STOPPED forward-test strategies" — those have a home on
  * the eval-runs page, not here.
  *
  * `eval_mode` is populated by the agent-runs list endpoint from the parent
- * eval run's mode ("live" | "backtest"); absent ⇒ not a live deployment.
+ * eval run's mode ("fwd" | "backtest"); absent ⇒ not a forward-test deployment.
  */
 export function isLiveLineage(run: AgentRunSummary): boolean {
-  return run.eval_mode === "live";
+  return run.eval_mode === "fwd";
 }
 
 /**
@@ -168,13 +168,13 @@ export const STRIP_FILTERS: readonly StripFilter[] = [
 /**
  * Bucket a run for the strip's status filter chips.
  *
- *   LIVE    — live money and not paused (`isLiveRun` && ACTIVE). The ONLY
- *             bucket allowed to present a run as live.
- *   PAUSED  — live money but per-run paused.
+ *   LIVE    — active forward-test lineage and not paused. Real-money runs also
+ *             satisfy this, but the chip label is "Forward Test" so paper/testnet
+ *             runs are not presented as live money.
+ *   PAUSED  — forward-test lineage paused via the per-run pause flag.
  *   STOPPED — everything else: terminal runs, stale orphans (parent eval
- *             run already terminal), and non-live (backtest/paper or
- *             parentless) children. None of these are moving real money,
- *             so on the live page they all read as "not live".
+ *             run already terminal), backtests/paper evals from non-fwd modes,
+ *             and parentless children.
  *
  * STALE deliberately folds into STOPPED (no separate chip): an orphaned
  * recorder row is operationally a dead run, and the pill's own status
@@ -183,10 +183,10 @@ export const STRIP_FILTERS: readonly StripFilter[] = [
 export function stripFilterBucket(
   run: AgentRunSummary,
 ): Exclude<StripFilter, "ALL"> {
-  if (isLiveRun(run)) {
-    return run.paused === true ? "PAUSED" : "LIVE";
+  if (TERMINAL_STATUSES.has(run.status) || isStaleRun(run) || !isLiveLineage(run)) {
+    return "STOPPED";
   }
-  return "STOPPED";
+  return run.paused === true ? "PAUSED" : "LIVE";
 }
 
 /** Runs matching a filter chip. `ALL` returns the input unchanged. */
@@ -235,6 +235,22 @@ export function pickDefaultRun(runs: AgentRunSummary[]): AgentRunSummary | null 
     .sort(byStartedDesc);
   if (paper.length > 0) return paper[0]!;
   return [...runs].sort(byStartedDesc)[0]!;
+}
+
+/**
+ * Pick the run the forward-test page should auto-select when no `:id` is
+ * supplied: the most recently started run whose parent eval is `mode = fwd`.
+ * This deliberately includes paper/testnet fwd runs and excludes unrelated
+ * backtests. Returns null when the list has no forward-test lineage.
+ */
+export function pickDefaultForwardTestRun(
+  runs: AgentRunSummary[],
+): AgentRunSummary | null {
+  const forward = runs.filter(isLiveLineage);
+  if (forward.length === 0) return null;
+  return [...forward].sort(
+    (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+  )[0]!;
 }
 
 /**
