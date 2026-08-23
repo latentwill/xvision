@@ -436,14 +436,38 @@ impl CliJobStore {
             return Ok(());
         }
 
-        let mut tx = self.pool.begin().await.context("begin cli chunk tx")?;
+        // Acquire a dedicated connection and open the write transaction with
+        // `BEGIN IMMEDIATE`. sqlx's `pool.begin()` issues a *deferred* BEGIN;
+        // this method is read-modify-write (SELECT byte counters → SELECT
+        // MAX(chunk_index) → INSERT → UPDATE), and under a deferred
+        // transaction the INSERT must upgrade from the read snapshot to a
+        // writer. Under WAL, a concurrent writer — most notably the spawned
+        // CLI child itself running its startup migrations against the same
+        // database — can take the write lock inside that window, so the
+        // upgrade fails with SQLITE_BUSY immediately (`wait_ms=0`), which
+        // `busy_timeout` cannot rescue because waiting can never resolve the
+        // stale snapshot. That aborted eval jobs ~23ms after their first
+        // stderr chunk ("insert cli output chunk"). `BEGIN IMMEDIATE` takes
+        // the write lock up front so `busy_timeout` governs the wait; mirrors
+        // the chat-session append and `SearchIndex::upsert_once` (intake
+        // #344).
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .context("acquire connection for cli chunk append")?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .context("begin immediate tx for cli chunk append")?;
+
         let row = sqlx::query(
             "SELECT stdout_bytes, stderr_bytes, stdout_truncated, stderr_truncated
              FROM cli_jobs
              WHERE job_id = ?1",
         )
         .bind(job_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *conn)
         .await
         .context("load cli job byte counters")?
         .ok_or_else(|| anyhow!("cli job '{job_id}' not found"))?;
@@ -475,7 +499,7 @@ impl CliJobStore {
             )
             .bind(job_id)
             .bind(stream)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *conn)
             .await
             .context("load next cli output chunk index")?;
 
@@ -490,7 +514,7 @@ impl CliJobStore {
             .bind(i64::try_from(current_bytes).context("byte offset overflow")?)
             .bind(retained)
             .bind(Utc::now().to_rfc3339())
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await
             .context("insert cli output chunk")?;
         }
@@ -515,11 +539,13 @@ impl CliJobStore {
             .bind(job_id)
             .bind(i64::try_from(next_bytes).context("stream byte count overflow")?)
             .bind(if truncated_now { 1 } else { 0 })
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await
             .context("update cli output counters")?;
-
-        tx.commit().await.context("commit cli chunk tx")?;
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .context("commit cli chunk tx")?;
         Ok(())
     }
 }
