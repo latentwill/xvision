@@ -358,7 +358,10 @@ impl ClineSlotInput<'_> {
     fn budget_limits(&self) -> BudgetLimits {
         BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            max_output_tokens: self.max_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
+            // This is a cumulative run cap. Do not reuse the per-provider-call
+            // max_tokens here: an agent turn may contain multiple model/tool
+            // iterations and must have room to reach submit_decision.
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_wall_ms: self.max_wall_ms.unwrap_or(DEFAULT_MAX_WALL_MS),
         }
     }
@@ -427,6 +430,7 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         system_prompt: input.system_prompt.clone(),
         allowed_tools: input.allowed_tools_plus_submit_decision(),
         budget_limits: input.budget_limits(),
+        max_tokens_per_turn: input.max_tokens,
         decision_schema: Some(input.response_schema.schema.clone()),
         // §2-B: recording is enabled when the caller minted a recording for
         // this run and passed its `slot_role`. The sidecar then emits
@@ -1202,20 +1206,13 @@ mod tests {
     }
 
     #[test]
-    fn budget_uses_max_tokens_then_default() {
-        let with = BudgetLimits {
+    fn budget_uses_cumulative_default_independent_of_turn_limit() {
+        let cumulative = BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            max_output_tokens: Some(4096u32).unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_wall_ms: DEFAULT_MAX_WALL_MS,
         };
-        assert_eq!(with.max_output_tokens, 4096);
-
-        let without = BudgetLimits {
-            max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            max_output_tokens: None.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
-            max_wall_ms: DEFAULT_MAX_WALL_MS,
-        };
-        assert_eq!(without.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
-        assert!(without.max_wall_ms > 0);
+        assert_eq!(cumulative.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
+        assert!(cumulative.max_wall_ms > 0)
     }
 }
