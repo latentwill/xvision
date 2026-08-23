@@ -370,7 +370,7 @@ fn run_entry(run: &Run) -> IndexEntry {
 
 fn mode_label(m: RunMode) -> &'static str {
     match m {
-        RunMode::Forward => "live",
+        RunMode::Forward => "fwd",
         RunMode::Backtest => "backtest",
     }
 }
@@ -537,6 +537,58 @@ mod tests {
             1,
             "upsert_run must be idempotent (no duplicate rows), got {matching:#?}",
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_run_indexes_forward_mode_as_fwd() {
+        use crate::eval::run::{Run, RunMode, RunStatus};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        let run = Run {
+            id: "01KS09WVDZH1F01TW8527RXYFW".into(),
+            agent_id: "agent_x".into(),
+            agents_agent_id: None,
+            scenario_id: "btc-momentum".into(),
+            params_override: None,
+            mode: RunMode::Forward,
+            status: RunStatus::Running,
+            started_at: now,
+            completed_at: None,
+            metrics: None,
+            error: None,
+            estimated_total_tokens: None,
+            actual_input_tokens: None,
+            actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: None,
+            live_config: None,
+            paused: false,
+            paused_at: None,
+            flatten_requested: false,
+            source: Default::default(),
+            unrealized_pnl_usd: None,
+        };
+
+        upsert_run(&ctx, &run).await.unwrap();
+
+        let hits = search(
+            &ctx,
+            "fwd",
+            &SearchQuery {
+                kind: Some(SearchKind::Run),
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(hits.iter().any(|h| h.artifact_id == run.id));
+        assert!(hits.iter().all(|h| !h.summary.contains("live")));
     }
 
     #[tokio::test]

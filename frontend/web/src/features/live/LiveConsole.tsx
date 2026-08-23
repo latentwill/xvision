@@ -1,4 +1,4 @@
-// Live Trading shell (spec §2.3–§2.6).
+// Forward Test console shell (spec §2.3–§2.6).
 //
 // Layout (top → bottom, full width, single center column — NO right-side
 // box; the chat rail owns the right edge per the repo layout rule):
@@ -8,8 +8,8 @@
 //   [ viewport ]                  ← LiveChartV2Container for the selected run
 //   [ B-II slot ]                 ← account stat strip + positions table
 //
-// Rendered by BOTH `/live` (no preselection → auto-select most recently
-// started live run) and `/live/:id` (preselect `:id`). The old
+// Rendered by BOTH `/fwd` (no preselection → auto-select most recently
+// started forward-test run) and `/fwd/:id` (preselect `:id`). The old
 // `live-list.tsx` run list is absorbed here — its `listAgentRuns` polling
 // is reused to populate the strip.
 //
@@ -36,11 +36,11 @@ import { LivePositionsTable } from "./LivePositionsTable";
 import { VenueAccountPanel } from "./VenueAccountPanel";
 import { StrategyStrip } from "./StrategyStrip";
 import { WalletBanner } from "./WalletBanner";
-import { pickDefaultLiveRun } from "./strip-status";
+import { pickDefaultForwardTestRun } from "./strip-status";
 import { useTransport } from "./useTransport";
 
 export interface LiveConsoleProps {
-  /** From `/live/:id`. When set, this run is preselected. */
+  /** From `/fwd/:id`. When set, this run is preselected. */
   runId?: string;
 }
 
@@ -68,7 +68,7 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
   const strategies = strategiesQuery.data ?? [];
 
   // Selection: explicit `:id` wins; otherwise auto-select the most recently
-  // started live run. `userPicked` lets a click on `/live` override the
+  // started forward-test run. `userPicked` lets a click on `/fwd` override the
   // auto-selection without being clobbered by the 10 s poll.
   const [userPicked, setUserPicked] = useState<string | null>(null);
 
@@ -77,16 +77,14 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
     if (userPicked && runs.some((r) => r.run_id === userPicked)) {
       return userPicked;
     }
-    // Bare `/live`: only auto-load a genuinely-live run. With nothing trading
-    // live we leave the viewport empty (→ "No active live deployments")
-    // instead of auto-selecting a stale backtest and rendering its equity
-    // curve / chart as if it were live. Deep links + row clicks still view any
-    // run (handled above via `runId` / `userPicked`).
-    return pickDefaultLiveRun(runs)?.run_id ?? null;
+    // Bare `/fwd`: auto-load the newest forward-test run so paper/testnet
+    // operators land on the active viewport immediately. Deep links + row
+    // clicks still view any run (handled above via `runId` / `userPicked`).
+    return pickDefaultForwardTestRun(runs)?.run_id ?? null;
   }, [runId, userPicked, runs]);
 
   // Keep the trace dock pointed at the selected run (parity with the old
-  // /live/:id route).
+  // /fwd/:id route).
   useEffect(() => {
     useTraceDock
       .getState()

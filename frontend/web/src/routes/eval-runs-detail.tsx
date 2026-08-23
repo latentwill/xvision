@@ -344,9 +344,9 @@ export function EvalRunDetailRoute() {
                 label="Scenario"
                 value={labels.scenarioName}
                 tone="neutral"
-                ariaLabel={detail.summary.mode === 'live' ? 'Forward Test' : `Open Scenario ${labels.scenarioName}`}
+                ariaLabel={detail.summary.mode === 'fwd' ? 'Forward Test' : `Open Scenario ${labels.scenarioName}`}
                 onClick={
-                  detail.summary.mode === 'live'
+                  detail.summary.mode === 'fwd'
                     ? undefined
                     : () => navigate(`/scenarios/${encodeURIComponent(detail.summary.scenario_id)}`)
                 }
@@ -1026,7 +1026,7 @@ function MetaCard({
         ))}
       </div>
 
-      {summary.mode === 'live' && summary.skipped_dispatches > 0 && (
+      {summary.mode === 'fwd' && summary.skipped_dispatches > 0 && (
         <p className="text-[11px] text-text-3 mt-1 px-4 pb-3">
           {summary.skipped_dispatches} bar{summary.skipped_dispatches !== 1 ? 's' : ''} skipped while agent was processing prior decision.
         </p>

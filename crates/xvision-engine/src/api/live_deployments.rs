@@ -312,11 +312,11 @@ pub fn project_deployment(run: Run, truth: ExecutionTruth) -> LiveDeploymentSumm
     }
 }
 
-/// List live/paper deployments — the poll-path projection over
-/// `eval_runs WHERE mode='live'`.
+/// List forward-test deployments — the poll-path projection over
+/// `eval_runs WHERE mode='fwd'`.
 ///
-/// Membership: only runs with `mode == RunMode::Live` are deployments; backtest
-/// runs are filtered out entirely. For each, the per-run execution truth is
+/// Membership: only runs with `mode == RunMode::Forward` are deployments;
+/// backtest runs are filtered out entirely. For each, execution truth is
 /// joined from persisted state:
 ///
 /// * `last_decision_at` ← `MAX(eval_decisions.timestamp)` (`None` if no decision).

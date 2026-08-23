@@ -69,6 +69,16 @@ function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   });
 }
 
+/** A paper/testnet forward-test run: fwd lineage, but not real money. */
+function mkForwardTestRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
+  return mkRun({
+    is_live_money: false,
+    eval_mode: "fwd",
+    eval_run_status: "running",
+    ...over,
+  });
+}
+
 function renderConsole(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -109,12 +119,12 @@ describe("LiveConsole", () => {
 
   test("/fwd auto-selects most recently started forward-test run into viewport", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([
-      mkLiveRun({ run_id: "old", started_at: "2026-06-09T08:00:00Z" }),
-      mkLiveRun({ run_id: "newest", started_at: "2026-06-09T12:00:00Z" }),
+      mkLiveRun({ run_id: "old-live", started_at: "2026-06-09T08:00:00Z" }),
+      mkForwardTestRun({ run_id: "newest-paper", started_at: "2026-06-09T12:00:00Z" }),
     ]);
     renderConsole("/fwd");
     await waitFor(() =>
-      expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest"),
+      expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest-paper"),
     );
   });
 

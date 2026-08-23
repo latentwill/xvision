@@ -77,7 +77,7 @@ pub struct AgentRunSummary {
     pub finished_at: Option<DateTime<Utc>>,
     pub sidecar_version: Option<String>,
     pub error: Option<String>,
-    /// Mode of the parent eval run, normalized to `"backtest" | "live"`
+    /// Mode of the parent eval run, normalized to `"backtest" | "fwd"`
     /// (legacy `'paper'` rows read back as `"backtest"`, mirroring
     /// `RunMode::parse`). `None` when the agent run has no parent eval run
     /// or the parent row is missing/unparseable.

@@ -125,12 +125,12 @@ describe("LiveChartV2Container", () => {
     );
   });
 
-  it("defaults to following live, and toggling freezes then resumes", () => {
+  it("defaults to following the feed, and toggling freezes then resumes", () => {
     setStream(runPayload(), "streaming");
     render(<LiveChartV2Container runId="run-1" />);
 
-    // Default: following live.
-    expect(screen.getByText("Following live")).toBeInTheDocument();
+    // Default: following the forward-test feed.
+    expect(screen.getByText("Following feed")).toBeInTheDocument();
     expect(screen.getByTestId("live-chart-v2")).toHaveAttribute(
       "data-follow",
       "true",
@@ -140,7 +140,7 @@ describe("LiveChartV2Container", () => {
     fireEvent.click(screen.getByRole("checkbox"));
     expect(screen.getByText("Frozen")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Resume live" }),
+      screen.getByRole("button", { name: "Resume feed" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("live-chart-v2")).toHaveAttribute(
       "data-follow",
@@ -148,8 +148,8 @@ describe("LiveChartV2Container", () => {
     );
 
     // Resume → following again.
-    fireEvent.click(screen.getByRole("button", { name: "Resume live" }));
-    expect(screen.getByText("Following live")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume feed" }));
+    expect(screen.getByText("Following feed")).toBeInTheDocument();
     expect(screen.getByTestId("live-chart-v2")).toHaveAttribute(
       "data-follow",
       "true",
@@ -179,14 +179,14 @@ describe("LiveChartV2Container", () => {
     );
   });
 
-  it("shows a truthful empty state for an empty live chart snapshot", () => {
+  it("shows a truthful empty state for an empty forward-test chart snapshot", () => {
     setStream({ ...runPayload(), bars: [], equity: [] }, "streaming");
     render(<LiveChartV2Container runId="run-1" />);
 
-    expect(screen.getByText("No live chart data yet")).toBeInTheDocument();
+    expect(screen.getByText("No forward-test chart data yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This run is wired to the live chart feed, but no bars, equity points, or trade markers have arrived yet.",
+        "This run is wired to the forward-test chart feed, but no bars, equity points, or trade markers have arrived yet.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("live-chart-v2")).not.toBeInTheDocument();

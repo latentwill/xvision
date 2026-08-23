@@ -1399,9 +1399,8 @@ pub struct EvalRunRequest {
     /// Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
     pub scenario_id: String,
     /// Run mode. `Backtest` replays the scenario's parquet fixture in-process
-    /// without any broker. `Live` is routed to `Executor::live(...)`, which
-    /// currently returns a not-implemented error pending the
-    /// `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
+    /// without any broker. `Forward` (`"fwd"`, deprecated alias `"live"`) runs
+    /// the forward-test executor against paper/test venue configuration.
     pub mode: RunMode,
     /// Optional free-form per-run config bag, persisted verbatim as
     /// `eval_runs.params_override_json`. Used as part of the run's dedup
@@ -5960,7 +5959,6 @@ mod tests {
         manifest::PublicManifest, risk::RiskPreset, slot::LLMSlot, AgentRef, PipelineDef, Strategy,
     };
 
-
     #[test]
     fn run_summary_normalizes_forward_mode_to_fwd() {
         let run = crate::eval::run::Run::new_queued(
@@ -6797,7 +6795,9 @@ struct LiveDeploymentRow {
 }
 
 /// Base SELECT joining `eval_runs` to `live_run_state`, filtered to
-/// `mode='live' AND venue_label != 'live'` (paper + testnet only).
+/// forward-test mode (`mode IN ('fwd', 'live')`) and excluding real-money venues
+/// (`venue_label != 'live'`). The legacy `'live'` mode value is read-only
+/// compatibility for pre-rename DB rows; new rows serialize as `'fwd'`.
 const LIVE_DEPLOYMENT_SELECT: &str = "\
     SELECT r.id AS deployment_id, r.venue_label AS venue_label, r.status AS status, \
            r.paused AS paused, r.started_at AS started_at, \

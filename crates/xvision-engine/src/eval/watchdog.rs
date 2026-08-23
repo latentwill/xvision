@@ -375,10 +375,10 @@ mod tests {
             let store = RunStore::new(pool.clone());
             let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
 
-            // 10 minutes old — far beyond the 60s budget — but mode=live.
-            let live_id = "01LIVE000000000000000000000A";
+            // 10 minutes old — far beyond the 60s budget — but mode=fwd.
+            let live_id = "01FWD000000000000000000000A";
             let started = Utc::now() - chrono::Duration::seconds(600);
-            insert_running(&pool, live_id, "live", started).await;
+            insert_running(&pool, live_id, "fwd", started).await;
 
             let n = sweep_once(&pool, &store, &config, Utc::now()).await.unwrap();
             assert_eq!(n, 0, "a stale live deployment must be exempt from the watchdog");

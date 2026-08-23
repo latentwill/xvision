@@ -26,7 +26,7 @@ const INSPECT: Action[] = [
 
 const LIVE: Action[] = [
   { label: "Deploy to paper", summary: "Paper surface pending", icon: "play", disabled: true },
-  { label: "Pause / resume", summary: "Live daemon pending", icon: "flame", disabled: true },
+  { label: "Pause / resume", summary: "Forward-test daemon pending", icon: "flame", disabled: true },
 ];
 
 export function MobileFunctionsSheet() {
@@ -72,7 +72,7 @@ export function MobileFunctionsSheet() {
         <div className="overflow-y-auto px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] flex flex-col gap-4">
           <ActionGrid label="Create" actions={CREATE} onAction={runAction} />
           <ActionList label="Inspect" actions={INSPECT} onAction={runAction} />
-          <ActionList label="Live" actions={LIVE} onAction={runAction} />
+          <ActionList label="Forward Test" actions={LIVE} onAction={runAction} />
         </div>
       </section>
     </div>

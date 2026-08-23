@@ -1,15 +1,15 @@
-// Live Trading run list (spec §2.4).
+// Forward-test run list (spec §2.4).
 //
 // Fixed horizontal strip, always visible (does not scroll with the body).
 // One horizontal band, left → right:
 //
-//   [ALL n] [LIVE n] [PAUSED n] [STOPPED n] | run list… | deploy
+//   [ALL n] [FORWARD TEST n] [PAUSED n] [STOPPED n] | run list… | deploy
 //
 // Status filter chips gate which runs render as rows. Default filter is
-// LIVE — only runs where `isLiveRun()` is true (real money moving now) may
-// appear there; backtests, orphans, and terminal runs land under their real
-// bucket (see `stripFilterBucket`). Zero live runs ⇒ a quiet empty state
-// with the deploy link instead of stale rows.
+// FORWARD TEST — only active forward-test runs may appear there; backtests,
+// orphans, and terminal runs land under their real bucket (see
+// `stripFilterBucket`). Zero active runs ⇒ a quiet empty state with the
+// deploy link instead of stale rows.
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -38,6 +38,13 @@ const STATUS_STYLE: Record<StripStatus, string> = {
   PAUSED: "bg-warn/15 text-warn",
   STOPPED: "bg-surface-elev text-text-3",
   STALE: "bg-surface-elev text-text-3",
+};
+
+const FILTER_LABEL: Record<StripFilter, string> = {
+  ALL: "ALL",
+  LIVE: "FORWARD TEST",
+  PAUSED: "PAUSED",
+  STOPPED: "STOPPED",
 };
 
 const METRIC_TONE: Record<"pos" | "neg" | "neutral", string> = {
@@ -69,12 +76,12 @@ export function StrategyStrip({
   strategies,
   transportFor,
 }: StrategyStripProps) {
-  // Status filter — LIVE by default so dead/backtest rows never greet
+  // Status filter — FORWARD TEST by default so dead/backtest rows never greet
   // the operator. Local state only; the chart selection is independent.
   const [filter, setFilter] = useState<StripFilter>("LIVE");
-  // Only LIVE-deployment-lineage runs may appear on the Live page. This drops
-  // the backtest/paper eval runs that would otherwise flood the STOPPED bucket
-  // as bogus "stopped live strategies" — they live on the eval-runs page.
+  // Only forward-test lineage runs may appear on this page. This drops
+  // backtest/paper eval runs that would otherwise flood the STOPPED bucket as
+  // bogus stopped forward tests — they live on the eval-runs page.
   const liveLineageRuns = runs.filter(isLiveLineage);
   const counts = stripFilterCounts(liveLineageRuns);
   const visible = filterRunsForStrip(liveLineageRuns, filter);
@@ -108,7 +115,7 @@ export function StrategyStrip({
                     : "border-border text-text-3 hover:text-text-2 hover:border-text-3",
                 ].join(" ")}
               >
-                {f} {counts[f]}
+                {FILTER_LABEL[f]} {counts[f]}
               </button>
             );
           })}
@@ -234,7 +241,7 @@ function LiveRunRow({
       role="button"
       tabIndex={0}
       aria-pressed={selected}
-      aria-label={`Live run ${name}`}
+      aria-label={`Forward-test run ${name}`}
       data-selected={selected || undefined}
       data-testid={`live-run-row-${run.run_id}`}
       onClick={onSelect}

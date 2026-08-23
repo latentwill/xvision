@@ -219,7 +219,7 @@ export type ToolCall = {
 export type AgentRunAccounting = {
   source: "agent_model_calls" | "eval_model_calls" | "eval_actuals" | "none";
   eval_run_id: string | null;
-  eval_mode: "backtest" | "live" | string | null;
+  eval_mode: "backtest" | "fwd" | string | null;
   eval_status: string | null;
   eval_actual_input_tokens: number | null;
   eval_actual_output_tokens: number | null;
