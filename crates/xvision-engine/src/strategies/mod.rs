@@ -67,7 +67,8 @@ pub use crate::strategies::agent_ref::{
 pub use crate::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use crate::strategies::manifest::PublicManifest;
 pub use crate::strategies::mechanistic::{
-    ClosePolicy, DecisionMode, EntryDirection, EntryRule, ExitReason, MechanisticConfig,
+    trend_from_filter_context, ClosePolicy, DecisionMode, EntryDirection, EntryRule, ExitReason,
+    MechanisticConfig,
 };
 use crate::strategies::risk::RiskConfig;
 use crate::strategies::slot::LLMSlot;

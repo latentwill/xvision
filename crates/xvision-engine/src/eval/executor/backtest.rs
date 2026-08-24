@@ -74,7 +74,7 @@ use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, 
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::risk::RiskConfig;
-use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
+use crate::strategies::{trend_from_filter_context, ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
@@ -6313,12 +6313,22 @@ fn mechanistic_action(
                 ..Default::default()
             };
         };
+        let action = match rule.direction {
+            crate::strategies::EntryDirection::Long => "long_open",
+            crate::strategies::EntryDirection::Short => "short_open",
+        };
+        tracing::debug!(
+            target = "xvision.mechanistic",
+            timestamp = %timestamp,
+            mark_price,
+            trend_long = ?trend_long,
+            context = ?filter_context,
+            direction = ?rule.direction,
+            action,
+            "mechanistic backtest entry"
+        );
         return TraderOutput {
-            action: match rule.direction {
-                crate::strategies::EntryDirection::Long => "long_open",
-                crate::strategies::EntryDirection::Short => "short_open",
-            }
-            .into(),
+            action: action.into(),
             conviction: 1.0,
             justification: "mechanistic entry".into(),
             ..Default::default()
@@ -6395,28 +6405,16 @@ fn mechanistic_trend(
     history: &[&Ohlcv],
     current_price: f64,
 ) -> Option<bool> {
-    let get = |key: &str| {
-        filter_context
-            .and_then(|value| {
-                value
-                    .get("context")
-                    .and_then(|context| context.get(key))
-                    .or_else(|| value.get(key))
-            })
-            .and_then(|value| value.as_f64())
-    };
-    let close = get("close").unwrap_or(current_price);
-    if let Some(ema) = get("ema_21") {
-        return Some(close > ema);
-    }
-    let mut ema = None;
-    for bar in history {
-        ema = Some(match ema {
-            None => bar.close,
-            Some(previous) => previous + (2.0 / 22.0) * (bar.close - previous),
-        });
-    }
-    ema.map(|value| close > value)
+    trend_from_filter_context(filter_context, current_price).or_else(|| {
+        let mut ema = None;
+        for bar in history {
+            ema = Some(match ema {
+                None => bar.close,
+                Some(previous) => previous + (2.0 / 22.0) * (bar.close - previous),
+            });
+        }
+        ema.map(|value| current_price > value)
+    })
 }
 
 /// Find the trader slot's repair context — system prompt, model id,
