@@ -319,6 +319,12 @@ rhs = -1e99
         }
         let snapshot = &evaluation.event.indicator_snapshot;
         let finite = |k: &str| snapshot.get(k).copied().unwrap_or(f64::NAN).is_finite();
+        let long_branch = snapshot["ema_9"] > snapshot["ema_21"]
+            && snapshot["ema_21"] > snapshot["ema_50"]
+            && snapshot["close"] > snapshot["ema_21"];
+        let short_branch = snapshot["ema_9"] < snapshot["ema_21"]
+            && snapshot["ema_21"] < snapshot["ema_50"]
+            && snapshot["close"] < snapshot["ema_21"];
         let gate = hook.mechanistic_ready()
             && finite("ema_9")
             && finite("adx_14")
@@ -326,13 +332,12 @@ rhs = -1e99
             && evaluation.event.bar_timestamp.hour() >= 18
             && snapshot["adx_14"] > 30.0
             && snapshot["rvol_tod_20"] > 1.3
-            && ((snapshot["ema_9"] > snapshot["ema_21"]
-                && snapshot["ema_21"] > snapshot["ema_50"]
-                && snapshot["close"] > snapshot["ema_21"])
-                || (snapshot["ema_9"] < snapshot["ema_21"]
-                    && snapshot["ema_21"] < snapshot["ema_50"]
-                    && snapshot["close"] < snapshot["ema_21"]));
+            && (long_branch || short_branch);
         let expected_gate = fields[11] == "1";
+        if evaluation.event.bar_timestamp == Utc.with_ymd_and_hms(2025, 1, 7, 18, 0, 0).unwrap() {
+            assert!(expected_gate);
+            assert!(short_branch, "golden short branch must select short direction");
+        }
         if gate != expected_gate {
             gate_mismatches.push((evaluation.event.bar_timestamp, gate, expected_gate));
         }
