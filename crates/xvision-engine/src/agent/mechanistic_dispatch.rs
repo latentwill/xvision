@@ -13,7 +13,9 @@ use chrono::{DateTime, Timelike, Utc};
 use serde_json::Value;
 
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
-use crate::strategies::{trend_from_filter_context, ClosePolicy, EntryDirection, MechanisticConfig};
+use crate::strategies::{
+    select_entry_rule, trend_from_filter_context, ClosePolicy, EntryDirection, MechanisticConfig,
+};
 
 const EPSILON: f64 = f64::EPSILON;
 
@@ -191,7 +193,7 @@ impl LlmDispatch for MechanisticDispatch {
             if !entry_session_open(self.config.entry_session_utc.as_deref(), context.timestamp) {
                 return Ok(response("hold", 0.5, "mechanistic: outside entry session"));
             }
-            let Some(entry_rule) = selected_entry_rule(&self.config, context.trend_long) else {
+            let Some(entry_rule) = select_entry_rule(&self.config, context.trend_long) else {
                 return Ok(response("hold", 0.5, "mechanistic: no entry rule"));
             };
             let side = match entry_rule.direction {
@@ -252,25 +254,6 @@ impl LlmDispatch for MechanisticDispatch {
         state.positions.insert(asset, position);
         Ok(response("hold", 0.5, "mechanistic hold"))
     }
-}
-
-fn selected_entry_rule(
-    config: &MechanisticConfig,
-    trend_long: Option<bool>,
-) -> Option<&crate::strategies::EntryRule> {
-    if config.entry_rules.len() <= 1 {
-        return config.entry_rules.first();
-    }
-    let desired = trend_long.map(|long| {
-        if long {
-            EntryDirection::Long
-        } else {
-            EntryDirection::Short
-        }
-    });
-    desired
-        .and_then(|direction| config.entry_rules.iter().find(|rule| rule.direction == direction))
-        .or_else(|| config.entry_rules.first())
 }
 
 fn entry_session_open(spec: Option<&str>, timestamp: Option<DateTime<Utc>>) -> bool {
@@ -524,14 +507,6 @@ fn infer_trend(root: &Value, current_price: Option<f64>) -> Option<bool> {
     }
     let ema = ema?;
     Some(current_price? > ema)
-}
-
-fn filter_number(filter: &Value, key: &str) -> Option<f64> {
-    number(
-        filter
-            .get(key)
-            .or_else(|| filter.get("context").and_then(|value| value.get(key)))?,
-    )
 }
 
 fn has_position_fields(root: &Value, key: &str) -> bool {

@@ -91,6 +91,23 @@ pub fn trend_from_filter_context(
     let ema_21 = number("ema_21")?;
     Some(close > ema_21)
 }
+/// Select an entry rule: a single rule pins direction; a long/short pair
+/// follows the trend inferred from the active filter context.
+pub fn select_entry_rule(config: &MechanisticConfig, trend_long: Option<bool>) -> Option<&EntryRule> {
+    if config.entry_rules.len() <= 1 {
+        return config.entry_rules.first();
+    }
+    trend_long
+        .map(|long| {
+            if long {
+                EntryDirection::Long
+            } else {
+                EntryDirection::Short
+            }
+        })
+        .and_then(|direction| config.entry_rules.iter().find(|rule| rule.direction == direction))
+        .or_else(|| config.entry_rules.first())
+}
 
 #[cfg(test)]
 mod tests {

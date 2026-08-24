@@ -74,7 +74,9 @@ use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, 
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::risk::RiskConfig;
-use crate::strategies::{trend_from_filter_context, ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
+use crate::strategies::{
+    select_entry_rule, trend_from_filter_context, ClosePolicy, DecisionMode, MechanisticConfig, Strategy,
+};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
@@ -6292,19 +6294,7 @@ fn mechanistic_action(
             };
         }
         let trend_long = mechanistic_trend(filter_context, history, mark_price);
-        let rule = cfg
-            .entry_rules
-            .iter()
-            .find(|rule| {
-                trend_long.map_or(true, |long| {
-                    matches!(
-                        (&rule.direction, long),
-                        (crate::strategies::EntryDirection::Long, true)
-                            | (crate::strategies::EntryDirection::Short, false)
-                    )
-                })
-            })
-            .or_else(|| cfg.entry_rules.first());
+        let rule = select_entry_rule(cfg, trend_long);
         let Some(rule) = rule else {
             return TraderOutput {
                 action: "hold".into(),
