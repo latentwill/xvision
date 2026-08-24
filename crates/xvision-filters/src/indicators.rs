@@ -627,10 +627,6 @@ impl SmaState {
 
 #[derive(Debug)]
 struct EmaState {
-    period: usize,
-    /// Seed window: accumulates the first `period` closes; once full,
-    /// produces the seed SMA and the EMA recurrence takes over.
-    seed_buf: Vec<f64>,
     value: Option<f64>,
     alpha: f64,
 }
@@ -638,8 +634,6 @@ struct EmaState {
 impl EmaState {
     fn new(period: usize) -> Self {
         Self {
-            period,
-            seed_buf: Vec::with_capacity(period),
             value: None,
             alpha: 2.0 / (period as f64 + 1.0),
         }
@@ -1099,9 +1093,6 @@ struct DmiState {
     prev_high: Option<f64>,
     prev_low: Option<f64>,
     prev_close: Option<f64>,
-    seed_tr: Vec<f64>,
-    seed_plus_dm: Vec<f64>,
-    seed_minus_dm: Vec<f64>,
     smoothed_tr: Option<f64>,
     smoothed_plus_dm: Option<f64>,
     smoothed_minus_dm: Option<f64>,
@@ -1117,9 +1108,6 @@ impl DmiState {
             prev_high: None,
             prev_low: None,
             prev_close: None,
-            seed_tr: Vec::with_capacity(period),
-            seed_plus_dm: Vec::with_capacity(period),
-            seed_minus_dm: Vec::with_capacity(period),
             smoothed_tr: None,
             smoothed_plus_dm: None,
             smoothed_minus_dm: None,
