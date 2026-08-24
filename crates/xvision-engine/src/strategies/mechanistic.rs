@@ -79,17 +79,31 @@ impl MechanisticConfig {
     }
 }
 /// Infer the trend branch from the same resampled filter context used by both
-/// executor paths. The filter context may be wrapped under `context` in a
-/// `filter_fired` payload or may already be the indicator map.
+/// executor paths. The payload may be wrapped under `context`,
+/// `filter_context`, or `indicator_snapshot`.
 pub fn trend_from_filter_context(
     filter_context: Option<&serde_json::Value>,
     current_price: f64,
 ) -> Option<bool> {
-    let indicators = filter_context.and_then(|value| value.get("context").or(Some(value)))?;
-    let number = |key: &str| indicators.get(key).and_then(serde_json::Value::as_f64);
+    let value = filter_context?;
+    let number = |key: &str| find_indicator_number(value, key);
     let close = number("close").or_else(|| current_price.is_finite().then_some(current_price))?;
     let ema_21 = number("ema_21")?;
     Some(close > ema_21)
+}
+
+fn find_indicator_number(value: &serde_json::Value, key: &str) -> Option<f64> {
+    if let Some(number) = value.get(key).and_then(serde_json::Value::as_f64) {
+        return Some(number);
+    }
+    for wrapper in ["context", "filter_context", "indicator_snapshot", "indicators"] {
+        if let Some(child) = value.get(wrapper) {
+            if let Some(number) = find_indicator_number(child, key) {
+                return Some(number);
+            }
+        }
+    }
+    None
 }
 /// Select an entry rule: a single rule pins direction; a long/short pair
 /// follows the trend inferred from the active filter context.
@@ -146,6 +160,32 @@ mod tests {
         assert_eq!(DecisionMode::default(), DecisionMode::Agentic);
         assert!(DecisionMode::Agentic.is_agentic());
         assert!(!DecisionMode::Mechanistic.is_agentic());
+    }
+    #[test]
+    fn paired_entry_rules_follow_wrapped_filter_context() {
+        let cfg = MechanisticConfig {
+            entry_rules: vec![
+                EntryRule {
+                    signal_name: "long".into(),
+                    direction: EntryDirection::Long,
+                },
+                EntryRule {
+                    signal_name: "short".into(),
+                    direction: EntryDirection::Short,
+                },
+            ],
+            close_policies: vec![],
+            entry_session_utc: None,
+        };
+        let context = serde_json::json!({
+            "filter_context": {"context": {"close": 90.0, "ema_21": 100.0}}
+        });
+        let trend = trend_from_filter_context(Some(&context), 999.0);
+        assert_eq!(trend, Some(false));
+        assert_eq!(
+            select_entry_rule(&cfg, trend).map(|rule| &rule.direction),
+            Some(&EntryDirection::Short)
+        );
     }
 
     #[test]
