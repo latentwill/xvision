@@ -828,6 +828,48 @@ mod tests {
         )];
         assert_eq!(action(&dispatch, req).await, "flat");
     }
+    #[tokio::test]
+    async fn cline_seed_filter_context_selects_long_branch() {
+        let dispatch = MechanisticDispatch::new(MechanisticConfig {
+            entry_rules: vec![
+                crate::strategies::EntryRule {
+                    signal_name: "trend_gate".into(),
+                    direction: EntryDirection::Long,
+                },
+                crate::strategies::EntryRule {
+                    signal_name: "trend_gate".into(),
+                    direction: EntryDirection::Short,
+                },
+            ],
+            entry_session_utc: Some("18-24".into()),
+            close_policies: vec![],
+        });
+        let seed = serde_json::json!({
+            "asset": "BTC/USD",
+            "timestamp": "2025-01-03T19:00:00Z",
+            "market_data": {
+                "asset": "BTC/USD",
+                "reference_price_usd": 96799.7,
+                "current_bar": {"close": 96799.7},
+                "bar_history": []
+            },
+            "portfolio_state": {
+                "position_size": 0.0,
+                "entry_price": 0.0,
+                "bars_held": 0,
+                "equity": 1000.0
+            },
+            "filter_context": {
+                "close": 96799.7,
+                "ema_21": 96500.0,
+                "ema_9": 96600.0,
+                "ema_50": 96000.0
+            }
+        });
+        let mut req = request("BTC/USD", 96799.7, None);
+        req.messages = vec![Message::user_text(format!("Inputs:\n{seed}\n\nFollow."))];
+        assert_eq!(action(&dispatch, req).await, "long_open");
+    }
 
     #[tokio::test]
     async fn target_pnl_uses_position_size() {
