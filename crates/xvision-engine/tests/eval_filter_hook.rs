@@ -6,9 +6,9 @@ use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::DecisionMode;
 use xvision_engine::strategies::Strategy;
 use xvision_filters::{parse_toml, ActivationMode, Filter};
-use xvision_engine::strategies::DecisionMode;
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -220,9 +220,11 @@ fn mechanistic_hook_matches_offline_window_indicators() {
         }
     }
     let raw = include_str!("../../xvision-filters/tests/fixtures/btc_5m.csv");
-    let mut rows = raw.lines().skip(1).map(parse).filter(|bar| {
-        bar.ts >= Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-    });
+    let mut rows = raw
+        .lines()
+        .skip(1)
+        .map(parse)
+        .filter(|bar| bar.ts >= Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap());
     let filter = parse_toml(
         r#"
 [filter]
@@ -252,12 +254,12 @@ rhs = -1e99
 [[filter.conditions.all]]
 lhs = "adx_14"
 op = ">"
-rhs = -1e99
+rhs = 0
 [[filter.conditions.all]]
 lhs = "rvol_tod_20"
 op = ">"
 rhs = -1e99
-"#,
+        "#,
     )
     .unwrap();
     let mut strategy = build_strategy(ActivationMode::FilterGated, Some(filter));
@@ -273,6 +275,7 @@ rhs = -1e99
         })
         .collect();
     let mut gate_mismatches = Vec::new();
+    let mut checked = 0usize;
     for bar in rows {
         let evaluation = hook.evaluate_resampled(
             &Ohlcv {
@@ -293,24 +296,42 @@ rhs = -1e99
             .into_iter()
             .enumerate()
         {
-            let expected_value: f64 = fields[idx + 6].parse().unwrap();
-            let actual = *evaluation.event.indicator_snapshot.get(key).unwrap();
-            assert!(
-                (actual - expected_value).abs() <= 1e-4 * expected_value.abs().max(1.0),
-                "{} {} engine={} offline={}",
-                evaluation.event.bar_timestamp,
-                key,
-                actual,
-                expected_value
-            );
+            let expected_value = fields[idx + 6].parse::<f64>().ok();
+            let actual = evaluation.event.indicator_snapshot.get(key).copied();
+            match (
+                actual.filter(|value| value.is_finite()),
+                expected_value.filter(|value| value.is_finite()),
+            ) {
+                (None, None) => {}
+                (Some(actual), Some(expected_value)) => assert!(
+                    (actual - expected_value).abs() <= 1e-4 * expected_value.abs().max(1.0),
+                    "{} {} engine={} offline={}",
+                    evaluation.event.bar_timestamp,
+                    key,
+                    actual,
+                    expected_value
+                ),
+                (actual, expected_value) => panic!(
+                    "{} {} engine={:?} offline={:?} (NaN-vs-finite mismatch)",
+                    evaluation.event.bar_timestamp, key, actual, expected_value
+                ),
+            }
         }
         let snapshot = &evaluation.event.indicator_snapshot;
-        let gate = evaluation.event.bar_timestamp.hour() >= 18
-            && snapshot["ema_9"] > snapshot["ema_21"]
-            && snapshot["ema_21"] > snapshot["ema_50"]
-            && snapshot["close"] > snapshot["ema_21"]
+        let finite = |k: &str| snapshot.get(k).copied().unwrap_or(f64::NAN).is_finite();
+        let gate = hook.mechanistic_ready()
+            && finite("ema_9")
+            && finite("adx_14")
+            && finite("rvol_tod_20")
+            && evaluation.event.bar_timestamp.hour() >= 18
             && snapshot["adx_14"] > 30.0
-            && snapshot["rvol_tod_20"] > 1.3;
+            && snapshot["rvol_tod_20"] > 1.3
+            && ((snapshot["ema_9"] > snapshot["ema_21"]
+                && snapshot["ema_21"] > snapshot["ema_50"]
+                && snapshot["close"] > snapshot["ema_21"])
+                || (snapshot["ema_9"] < snapshot["ema_21"]
+                    && snapshot["ema_21"] < snapshot["ema_50"]
+                    && snapshot["close"] < snapshot["ema_21"]));
         let expected_gate = fields[11] == "1";
         if gate != expected_gate {
             gate_mismatches.push((evaluation.event.bar_timestamp, gate, expected_gate));
@@ -322,5 +343,11 @@ rhs = -1e99
         "gate mismatches: {:?}",
         gate_mismatches
     );
-    assert_eq!(checked, 145, "all offline buckets must be checked");
+    // The final two golden buckets have no following source bar to complete
+    // the resampler's one-bucket-late emission.
+    assert_eq!(
+        checked,
+        expected.len() - 2,
+        "all complete offline buckets must be checked"
+    );
 }
