@@ -1,4 +1,4 @@
-use chrono::{TimeZone, Utc};
+use chrono::{TimeZone, Timelike, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::eval::filter_hook::FilterHook;
@@ -8,6 +8,7 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_filters::{parse_toml, ActivationMode, Filter};
+use xvision_engine::strategies::DecisionMode;
 
 async fn migrated_pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -194,4 +195,132 @@ fn active_filter_builds_fire_trigger_context() {
     assert_eq!(trigger["priority"], 0.8);
     assert_eq!(trigger["tags"], serde_json::json!(["breakout"]));
     assert_eq!(trigger["context"]["close"], 102.0);
+}
+
+#[test]
+fn mechanistic_hook_matches_offline_window_indicators() {
+    #[derive(Clone)]
+    struct CsvBar {
+        ts: chrono::DateTime<Utc>,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
+    }
+    fn parse(line: &str) -> CsvBar {
+        let f: Vec<&str> = line.split(',').collect();
+        CsvBar {
+            ts: f[0].parse().unwrap(),
+            open: f[1].parse().unwrap(),
+            high: f[2].parse().unwrap(),
+            low: f[3].parse().unwrap(),
+            close: f[4].parse().unwrap(),
+            volume: f[5].parse().unwrap(),
+        }
+    }
+    let raw = include_str!("../../xvision-filters/tests/fixtures/btc_5m.csv");
+    let mut rows = raw.lines().skip(1).map(parse).filter(|bar| {
+        bar.ts >= Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
+    });
+    let filter = parse_toml(
+        r#"
+[filter]
+id = "f_mech_golden"
+strategy_id = "01FILTERHOOKSTRATEGY000000000"
+display_name = "mechanistic golden"
+asset_scope = ["BTC/USD"]
+timeframe = "1h"
+scan_cadence = "bar_close"
+wake_when_in_position = "always"
+[[filter.conditions.all]]
+lhs = "close"
+op = ">"
+rhs = -1e99
+[[filter.conditions.all]]
+lhs = "ema_9"
+op = ">"
+rhs = -1e99
+[[filter.conditions.all]]
+lhs = "ema_21"
+op = ">"
+rhs = -1e99
+[[filter.conditions.all]]
+lhs = "ema_50"
+op = ">"
+rhs = -1e99
+[[filter.conditions.all]]
+lhs = "adx_14"
+op = ">"
+rhs = -1e99
+[[filter.conditions.all]]
+lhs = "rvol_tod_20"
+op = ">"
+rhs = -1e99
+"#,
+    )
+    .unwrap();
+    let mut strategy = build_strategy(ActivationMode::FilterGated, Some(filter));
+    strategy.decision_mode = DecisionMode::Mechanistic;
+    let mut hook = FilterHook::new(&strategy).unwrap().expect("filter hook");
+    let golden = include_str!("../../xvision-filters/tests/fixtures/golden-btc-1h.csv");
+    let expected: std::collections::BTreeMap<_, _> = golden
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let fields: Vec<&str> = line.split(',').collect();
+            (fields[0].parse::<chrono::DateTime<Utc>>().unwrap(), fields)
+        })
+        .collect();
+    let mut gate_mismatches = Vec::new();
+    for bar in rows {
+        let evaluation = hook.evaluate_resampled(
+            &Ohlcv {
+                timestamp: bar.ts,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                volume: bar.volume,
+            },
+            false,
+        );
+        let Some(evaluation) = evaluation else { continue };
+        let Some(fields) = expected.get(&evaluation.event.bar_timestamp) else {
+            continue;
+        };
+        for (idx, key) in ["ema_9", "ema_21", "ema_50", "adx_14", "rvol_tod_20"]
+            .into_iter()
+            .enumerate()
+        {
+            let expected_value: f64 = fields[idx + 6].parse().unwrap();
+            let actual = *evaluation.event.indicator_snapshot.get(key).unwrap();
+            assert!(
+                (actual - expected_value).abs() <= 1e-4 * expected_value.abs().max(1.0),
+                "{} {} engine={} offline={}",
+                evaluation.event.bar_timestamp,
+                key,
+                actual,
+                expected_value
+            );
+        }
+        let snapshot = &evaluation.event.indicator_snapshot;
+        let gate = evaluation.event.bar_timestamp.hour() >= 18
+            && snapshot["ema_9"] > snapshot["ema_21"]
+            && snapshot["ema_21"] > snapshot["ema_50"]
+            && snapshot["close"] > snapshot["ema_21"]
+            && snapshot["adx_14"] > 30.0
+            && snapshot["rvol_tod_20"] > 1.3;
+        let expected_gate = fields[11] == "1";
+        if gate != expected_gate {
+            gate_mismatches.push((evaluation.event.bar_timestamp, gate, expected_gate));
+        }
+        checked += 1;
+    }
+    assert!(
+        gate_mismatches.is_empty(),
+        "gate mismatches: {:?}",
+        gate_mismatches
+    );
+    assert_eq!(checked, 145, "all offline buckets must be checked");
 }
