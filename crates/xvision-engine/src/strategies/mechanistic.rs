@@ -78,6 +78,19 @@ impl MechanisticConfig {
         !self.entry_rules.is_empty() || !self.close_policies.is_empty()
     }
 }
+/// Infer the trend branch from the same resampled filter context used by both
+/// executor paths. The filter context may be wrapped under `context` in a
+/// `filter_fired` payload or may already be the indicator map.
+pub fn trend_from_filter_context(
+    filter_context: Option<&serde_json::Value>,
+    current_price: f64,
+) -> Option<bool> {
+    let indicators = filter_context.and_then(|value| value.get("context").or(Some(value)))?;
+    let number = |key: &str| indicators.get(key).and_then(serde_json::Value::as_f64);
+    let close = number("close").or_else(|| current_price.is_finite().then_some(current_price))?;
+    let ema_21 = number("ema_21")?;
+    Some(close > ema_21)
+}
 
 #[cfg(test)]
 mod tests {

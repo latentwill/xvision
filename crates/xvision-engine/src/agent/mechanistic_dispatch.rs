@@ -13,7 +13,7 @@ use chrono::{DateTime, Timelike, Utc};
 use serde_json::Value;
 
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
-use crate::strategies::{ClosePolicy, EntryDirection, MechanisticConfig};
+use crate::strategies::{trend_from_filter_context, ClosePolicy, EntryDirection, MechanisticConfig};
 
 const EPSILON: f64 = f64::EPSILON;
 
@@ -198,6 +198,15 @@ impl LlmDispatch for MechanisticDispatch {
                 EntryDirection::Long => Side::Long,
                 EntryDirection::Short => Side::Short,
             };
+            tracing::debug!(
+                target = "xvision.mechanistic",
+                timestamp = ?context.timestamp,
+                price,
+                trend_long = ?context.trend_long,
+                direction = ?entry_rule.direction,
+                side = ?side,
+                "mechanistic dispatch entry"
+            );
             state.positions.insert(
                 asset,
                 TrackedPosition {
@@ -496,12 +505,10 @@ fn parse_trade_context(text: &str) -> anyhow::Result<TradeContext> {
     Ok(context)
 }
 fn infer_trend(root: &Value, current_price: Option<f64>) -> Option<bool> {
-    let filter = root.get("filter_context");
-    let close = filter
-        .and_then(|value| filter_number(value, "close"))
-        .or(current_price)?;
-    if let Some(ema) = filter.and_then(|value| filter_number(value, "ema_21")) {
-        return Some(close > ema);
+    if let Some(trend) =
+        trend_from_filter_context(root.get("filter_context"), current_price.unwrap_or(f64::NAN))
+    {
+        return Some(trend);
     }
     let bars = root
         .get("market_data")
@@ -516,7 +523,7 @@ fn infer_trend(root: &Value, current_price: Option<f64>) -> Option<bool> {
         });
     }
     let ema = ema?;
-    Some(close > ema)
+    Some(current_price? > ema)
 }
 
 fn filter_number(filter: &Value, key: &str) -> Option<f64> {
