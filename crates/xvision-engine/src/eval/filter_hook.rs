@@ -186,6 +186,11 @@ impl FilterHook {
         }
     }
 
+    /// Mechanistic strategies use the offline optimizer's fixed 50-bucket
+    /// warmup, independent of indicator-specific runtime warmup.
+    pub fn mechanistic_ready(&self) -> bool {
+        self.bar_index >= 50
+    }
     pub fn with_obs(mut self, obs: Option<ObsEmitter>) -> Self {
         self.obs = obs;
         self

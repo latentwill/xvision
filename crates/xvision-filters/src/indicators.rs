@@ -627,10 +627,6 @@ impl SmaState {
 
 #[derive(Debug)]
 struct EmaState {
-    period: usize,
-    /// Seed window: accumulates the first `period` closes; once full,
-    /// produces the seed SMA and the EMA recurrence takes over.
-    seed_buf: Vec<f64>,
     value: Option<f64>,
     alpha: f64,
 }
@@ -638,8 +634,6 @@ struct EmaState {
 impl EmaState {
     fn new(period: usize) -> Self {
         Self {
-            period,
-            seed_buf: Vec::with_capacity(period),
             value: None,
             alpha: 2.0 / (period as f64 + 1.0),
         }
@@ -647,17 +641,13 @@ impl EmaState {
 
     fn push(&mut self, close: f64) {
         if self.value.is_none() {
-            self.seed_buf.push(close);
-            if self.seed_buf.len() == self.period {
-                let seed: f64 = self.seed_buf.iter().sum::<f64>() / self.period as f64;
-                self.value = Some(seed);
-                // free the seed buffer
-                self.seed_buf = Vec::new();
-            }
-        } else {
-            let prev = self.value.unwrap();
-            self.value = Some(self.alpha * close + (1.0 - self.alpha) * prev);
+            // Match pandas ewm(adjust=False, min_periods=1): the first close
+            // seeds the recursive EMA.
+            self.value = Some(close);
+            return;
         }
+        let prev = self.value.unwrap();
+        self.value = Some(self.alpha * close + (1.0 - self.alpha) * prev);
     }
 
     fn value(&self) -> Option<f64> {
@@ -1103,13 +1093,12 @@ struct DmiState {
     prev_high: Option<f64>,
     prev_low: Option<f64>,
     prev_close: Option<f64>,
-    seed_tr: Vec<f64>,
-    seed_plus_dm: Vec<f64>,
-    seed_minus_dm: Vec<f64>,
     smoothed_tr: Option<f64>,
     smoothed_plus_dm: Option<f64>,
     smoothed_minus_dm: Option<f64>,
-    seed_dx: Vec<f64>,
+    bar_count: usize,
+    dx_count: usize,
+    dx_ewm: Option<f64>,
     adx: Option<f64>,
 }
 
@@ -1120,27 +1109,35 @@ impl DmiState {
             prev_high: None,
             prev_low: None,
             prev_close: None,
-            seed_tr: Vec::with_capacity(period),
-            seed_plus_dm: Vec::with_capacity(period),
-            seed_minus_dm: Vec::with_capacity(period),
             smoothed_tr: None,
             smoothed_plus_dm: None,
             smoothed_minus_dm: None,
-            seed_dx: Vec::with_capacity(period),
+            bar_count: 0,
+            dx_count: 0,
+            dx_ewm: None,
             adx: None,
         }
     }
 
     fn push(&mut self, high: f64, low: f64, close: f64) {
-        let (Some(prev_high), Some(prev_low), Some(prev_close)) =
-            (self.prev_high, self.prev_low, self.prev_close)
+        let Some((prev_high, prev_low, prev_close)) = self
+            .prev_high
+            .zip(self.prev_low)
+            .zip(self.prev_close)
+            .map(|((h, l), c)| (h, l, c))
         else {
+            // pandas diff() yields NaN for the first row, while the
+            // conditional DM expressions replace it with zero. True range
+            // still uses the first bar's high-low range.
+            self.smoothed_tr = Some(high - low);
+            self.smoothed_plus_dm = Some(0.0);
+            self.smoothed_minus_dm = Some(0.0);
+            self.bar_count = 1;
             self.prev_high = Some(high);
             self.prev_low = Some(low);
             self.prev_close = Some(close);
             return;
         };
-
         let up_move = high - prev_high;
         let down_move = prev_low - low;
         let plus_dm = if up_move > down_move && up_move > 0.0 {
@@ -1154,31 +1151,17 @@ impl DmiState {
             0.0
         };
         let tr = true_range(high, low, prev_close);
-
-        match (self.smoothed_tr, self.smoothed_plus_dm, self.smoothed_minus_dm) {
-            (Some(tr_s), Some(plus_s), Some(minus_s)) => {
-                let p = self.period as f64;
-                self.smoothed_tr = Some(tr_s - tr_s / p + tr);
-                self.smoothed_plus_dm = Some(plus_s - plus_s / p + plus_dm);
-                self.smoothed_minus_dm = Some(minus_s - minus_s / p + minus_dm);
-                self.update_adx();
-            }
-            _ => {
-                self.seed_tr.push(tr);
-                self.seed_plus_dm.push(plus_dm);
-                self.seed_minus_dm.push(minus_dm);
-                if self.seed_tr.len() == self.period {
-                    self.smoothed_tr = Some(self.seed_tr.iter().sum());
-                    self.smoothed_plus_dm = Some(self.seed_plus_dm.iter().sum());
-                    self.smoothed_minus_dm = Some(self.seed_minus_dm.iter().sum());
-                    self.seed_tr.clear();
-                    self.seed_plus_dm.clear();
-                    self.seed_minus_dm.clear();
-                    self.update_adx();
-                }
-            }
+        let alpha = 1.0 / self.period as f64;
+        let tr_s = self.smoothed_tr.expect("DMI first bar seeds true range");
+        let plus_s = self.smoothed_plus_dm.expect("DMI first bar seeds +DM");
+        let minus_s = self.smoothed_minus_dm.expect("DMI first bar seeds -DM");
+        self.smoothed_tr = Some(tr_s + alpha * (tr - tr_s));
+        self.smoothed_plus_dm = Some(plus_s + alpha * (plus_dm - plus_s));
+        self.smoothed_minus_dm = Some(minus_s + alpha * (minus_dm - minus_s));
+        self.bar_count += 1;
+        if self.bar_count >= self.period {
+            self.update_adx();
         }
-
         self.prev_high = Some(high);
         self.prev_low = Some(low);
         self.prev_close = Some(close);
@@ -1188,20 +1171,23 @@ impl DmiState {
         let Some(dx) = self.dx() else {
             return;
         };
-        if self.adx.is_none() {
-            self.seed_dx.push(dx);
-            if self.seed_dx.len() == self.period {
-                self.adx = Some(self.seed_dx.iter().sum::<f64>() / self.period as f64);
-                self.seed_dx.clear();
+        self.dx_count += 1;
+        self.dx_ewm = Some(match self.dx_ewm {
+            Some(previous) => {
+                let alpha = 1.0 / self.period as f64;
+                previous + alpha * (dx - previous)
             }
-        } else {
-            let p = self.period as f64;
-            let prev = self.adx.unwrap();
-            self.adx = Some((prev * (p - 1.0) + dx) / p);
+            None => dx,
+        });
+        if self.dx_count >= self.period {
+            self.adx = self.dx_ewm;
         }
     }
 
     fn di_plus(&self) -> Option<f64> {
+        if self.bar_count < self.period {
+            return None;
+        }
         let tr = self.smoothed_tr?;
         if tr.abs() <= f64::EPSILON {
             return Some(0.0);
@@ -1210,6 +1196,9 @@ impl DmiState {
     }
 
     fn di_minus(&self) -> Option<f64> {
+        if self.bar_count < self.period {
+            return None;
+        }
         let tr = self.smoothed_tr?;
         if tr.abs() <= f64::EPSILON {
             return Some(0.0);
@@ -1638,7 +1627,8 @@ impl VwapState {
 struct RvolState {
     period: usize,
     by_slot: HashMap<u16, (VecDeque<f64>, f64)>,
-    rolling: SmaState,
+    rolling_window: VecDeque<f64>,
+    rolling_sum: f64,
     value: Option<f64>,
 }
 
@@ -1647,20 +1637,19 @@ impl RvolState {
         Self {
             period,
             by_slot: HashMap::new(),
-            rolling: SmaState::new(period),
+            rolling_window: VecDeque::with_capacity(period + 1),
+            rolling_sum: 0.0,
             value: None,
         }
     }
 
     fn push(&mut self, volume: f64, timestamp: Option<DateTime<Utc>>) {
-        // RVOL compares the current volume with prior observations only.
-        // This matches the offline pandas definition:
-        // `volume / volume.shift(1).rolling(period).mean()`.
-        let rolling_rvol = self
-            .rolling
-            .value()
-            .and_then(|avg| (avg.abs() > f64::EPSILON).then_some(volume / avg));
-
+        // Compare current volume with prior observations only.
+        let rolling_rvol = if self.rolling_window.is_empty() || self.rolling_sum.abs() <= f64::EPSILON {
+            None
+        } else {
+            Some(volume / (self.rolling_sum / self.rolling_window.len() as f64))
+        };
         if let Some(ts) = timestamp {
             let slot = (ts.hour() * 60 + ts.minute()) as u16;
             let entry = self
@@ -1681,7 +1670,11 @@ impl RvolState {
         } else {
             self.value = rolling_rvol;
         }
-        self.rolling.push(volume);
+        self.rolling_window.push_back(volume);
+        self.rolling_sum += volume;
+        if self.rolling_window.len() > self.period {
+            self.rolling_sum -= self.rolling_window.pop_front().unwrap_or(0.0);
+        }
     }
 
     fn value(&self) -> Option<f64> {
@@ -2200,15 +2193,14 @@ mod tests {
     fn ema_seed_then_recurrence() {
         let r = IndicatorRef::periodic(IndicatorName::Ema, 3);
         let mut e = IndicatorEngine::new([&r]);
-        // After 3 bars the seed is the SMA of {1,2,3} = 2.0.
+        // pandas ewm(adjust=False): first close seeds, alpha = 2/4 = 0.5.
         let bars = close_seq(&[1.0, 2.0, 3.0, 4.0]);
         for b in &bars[..3] {
             e.push(b);
         }
-        assert!((e.value(&r).unwrap() - 2.0).abs() < 1e-9);
-        // alpha = 2/4 = 0.5; ema_4 = 0.5*4 + 0.5*2 = 3.0
+        assert!((e.value(&r).unwrap() - 2.25).abs() < 1e-9);
         e.push(&bars[3]);
-        assert!((e.value(&r).unwrap() - 3.0).abs() < 1e-9);
+        assert!((e.value(&r).unwrap() - 3.125).abs() < 1e-9);
     }
 
     #[test]
