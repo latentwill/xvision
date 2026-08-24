@@ -3713,9 +3713,11 @@ impl Executor {
                 // indicator engine accumulates the bars it needs to exit
                 // the Warming state. Must run BEFORE hist.extend() which
                 // consumes `bars`.
-                if let Some(hook) = filter_hook.as_mut() {
-                    for bar in &bars {
-                        hook.evaluate_resampled(bar, false);
+                if strategy.decision_mode != DecisionMode::Mechanistic {
+                    if let Some(hook) = filter_hook.as_mut() {
+                        for bar in &bars {
+                            hook.evaluate_resampled(bar, false);
+                        }
                     }
                 }
                 // Seed per-asset history for the LLM seed context.
@@ -4626,6 +4628,12 @@ impl Executor {
             } else {
                 filter_gated = true;
             }
+        }
+        if strategy.decision_mode == DecisionMode::Mechanistic
+            && filter_hook.as_ref().is_some_and(|hook| !hook.mechanistic_ready())
+        {
+            filter_gated = true;
+            filter_trigger_context = None;
         }
 
         // Inject filter context into the seed (parity with backtest L1307-1311).
