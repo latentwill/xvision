@@ -986,9 +986,11 @@ impl Executor {
         // table-only path.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
-        if let (Some(hook), Some(asset)) = (filter_hook.as_mut(), active.first()) {
-            if let Some(warmup) = self.warmup_bars.get(asset) {
-                hook.seed_warmup(warmup);
+        if strategy.decision_mode != DecisionMode::Mechanistic {
+            if let (Some(hook), Some(asset)) = (filter_hook.as_mut(), active.first()) {
+                if let Some(warmup) = self.warmup_bars.get(asset) {
+                    hook.seed_warmup(warmup);
+                }
             }
         }
         // ERROR-1 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
@@ -1124,6 +1126,12 @@ impl Executor {
                         filter_gated = true;
                     }
                 }
+            }
+            if strategy.decision_mode == DecisionMode::Mechanistic
+                && filter_hook.as_ref().is_some_and(|hook| !hook.mechanistic_ready())
+            {
+                filter_gated = true;
+                filter_trigger_context = None;
             }
             // Cadence gate: only fire on timestamps whose minute-aligned
             // value is divisible by the strategy's cadence. Timestamp-level

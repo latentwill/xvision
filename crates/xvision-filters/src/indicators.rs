@@ -647,17 +647,13 @@ impl EmaState {
 
     fn push(&mut self, close: f64) {
         if self.value.is_none() {
-            self.seed_buf.push(close);
-            if self.seed_buf.len() == self.period {
-                let seed: f64 = self.seed_buf.iter().sum::<f64>() / self.period as f64;
-                self.value = Some(seed);
-                // free the seed buffer
-                self.seed_buf = Vec::new();
-            }
-        } else {
-            let prev = self.value.unwrap();
-            self.value = Some(self.alpha * close + (1.0 - self.alpha) * prev);
+            // Match pandas ewm(adjust=False, min_periods=1): the first close
+            // seeds the recursive EMA.
+            self.value = Some(close);
+            return;
         }
+        let prev = self.value.unwrap();
+        self.value = Some(self.alpha * close + (1.0 - self.alpha) * prev);
     }
 
     fn value(&self) -> Option<f64> {
@@ -1109,7 +1105,8 @@ struct DmiState {
     smoothed_tr: Option<f64>,
     smoothed_plus_dm: Option<f64>,
     smoothed_minus_dm: Option<f64>,
-    seed_dx: Vec<f64>,
+    dx_count: usize,
+    dx_ewm: Option<f64>,
     adx: Option<f64>,
 }
 
@@ -1126,7 +1123,8 @@ impl DmiState {
             smoothed_tr: None,
             smoothed_plus_dm: None,
             smoothed_minus_dm: None,
-            seed_dx: Vec::with_capacity(period),
+            dx_count: 0,
+            dx_ewm: None,
             adx: None,
         }
     }
@@ -1157,27 +1155,18 @@ impl DmiState {
 
         match (self.smoothed_tr, self.smoothed_plus_dm, self.smoothed_minus_dm) {
             (Some(tr_s), Some(plus_s), Some(minus_s)) => {
-                let p = self.period as f64;
-                self.smoothed_tr = Some(tr_s - tr_s / p + tr);
-                self.smoothed_plus_dm = Some(plus_s - plus_s / p + plus_dm);
-                self.smoothed_minus_dm = Some(minus_s - minus_s / p + minus_dm);
-                self.update_adx();
+                let alpha = 1.0 / self.period as f64;
+                self.smoothed_tr = Some(tr_s + alpha * (tr - tr_s));
+                self.smoothed_plus_dm = Some(plus_s + alpha * (plus_dm - plus_s));
+                self.smoothed_minus_dm = Some(minus_s + alpha * (minus_dm - minus_s));
             }
             _ => {
-                self.seed_tr.push(tr);
-                self.seed_plus_dm.push(plus_dm);
-                self.seed_minus_dm.push(minus_dm);
-                if self.seed_tr.len() == self.period {
-                    self.smoothed_tr = Some(self.seed_tr.iter().sum());
-                    self.smoothed_plus_dm = Some(self.seed_plus_dm.iter().sum());
-                    self.smoothed_minus_dm = Some(self.seed_minus_dm.iter().sum());
-                    self.seed_tr.clear();
-                    self.seed_plus_dm.clear();
-                    self.seed_minus_dm.clear();
-                    self.update_adx();
-                }
+                self.smoothed_tr = Some(tr);
+                self.smoothed_plus_dm = Some(plus_dm);
+                self.smoothed_minus_dm = Some(minus_dm);
             }
         }
+        self.update_adx();
 
         self.prev_high = Some(high);
         self.prev_low = Some(low);
@@ -1188,16 +1177,16 @@ impl DmiState {
         let Some(dx) = self.dx() else {
             return;
         };
-        if self.adx.is_none() {
-            self.seed_dx.push(dx);
-            if self.seed_dx.len() == self.period {
-                self.adx = Some(self.seed_dx.iter().sum::<f64>() / self.period as f64);
-                self.seed_dx.clear();
+        self.dx_count += 1;
+        self.dx_ewm = Some(match self.dx_ewm {
+            Some(previous) => {
+                let alpha = 1.0 / self.period as f64;
+                previous + alpha * (dx - previous)
             }
-        } else {
-            let p = self.period as f64;
-            let prev = self.adx.unwrap();
-            self.adx = Some((prev * (p - 1.0) + dx) / p);
+            None => dx,
+        });
+        if self.dx_count >= self.period {
+            self.adx = self.dx_ewm;
         }
     }
 
@@ -2200,15 +2189,14 @@ mod tests {
     fn ema_seed_then_recurrence() {
         let r = IndicatorRef::periodic(IndicatorName::Ema, 3);
         let mut e = IndicatorEngine::new([&r]);
-        // After 3 bars the seed is the SMA of {1,2,3} = 2.0.
+        // pandas ewm(adjust=False): first close seeds, alpha = 2/4 = 0.5.
         let bars = close_seq(&[1.0, 2.0, 3.0, 4.0]);
         for b in &bars[..3] {
             e.push(b);
         }
-        assert!((e.value(&r).unwrap() - 2.0).abs() < 1e-9);
-        // alpha = 2/4 = 0.5; ema_4 = 0.5*4 + 0.5*2 = 3.0
+        assert!((e.value(&r).unwrap() - 2.25).abs() < 1e-9);
         e.push(&bars[3]);
-        assert!((e.value(&r).unwrap() - 3.0).abs() < 1e-9);
+        assert!((e.value(&r).unwrap() - 3.125).abs() < 1e-9);
     }
 
     #[test]
