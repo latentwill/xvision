@@ -1,0 +1,42 @@
+--- a/crates/xvision-engine/src/eval/executor/sltp.rs
++++ b/crates/xvision-engine/src/eval/executor/sltp.rs
+@@ -18,6 +18,10 @@
+     pub take_profit_pct: f64,
+     /// High-water mark: max seen high (long) or min seen low (short).
+     pub hwm: f64,
++    /// Close-based trailing anchor: highest close (long) or lowest close
++    /// (short) since entry. Feeds mechanistic trailing stops so they mirror
++    /// the offline simulator, which never sees intrabar extremes.
++    pub close_hwm: f64,
+     pub bars_held: u32,
+     pub entry_atr: Option<f64>,
+     pub breakeven_activated: bool,
+@@ -68,6 +72,7 @@
+             stop_loss_pct,
+             take_profit_pct,
+             hwm: entry_price,
++            close_hwm: entry_price,
+             bars_held: 0,
+             entry_atr,
+             breakeven_activated: false,
+@@ -287,6 +292,20 @@
+ /// Priority: SL (all sources) → PartialTP1 → time-exit → TP2/basic-TP.
+ pub fn check_and_update(state: &mut PositionRiskState, bar: &Ohlcv) -> Option<SltpTrigger> {
+     update_hwm(state, bar);
++    // Close-only extreme for mechanistic trailing anchors.
++    match state.direction {
++        Direction::Long => {
++            if bar.close > state.close_hwm {
++                state.close_hwm = bar.close;
++            }
++        }
++        Direction::Short => {
++            if bar.close < state.close_hwm {
++                state.close_hwm = bar.close;
++            }
++        }
++        Direction::Flat => {}
++    }
+     maybe_activate_breakeven(state, bar);
+     state.bars_held = state.bars_held.saturating_add(1);
+ 

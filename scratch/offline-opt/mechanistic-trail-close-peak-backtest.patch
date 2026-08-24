@@ -1,0 +1,37 @@
+--- a/crates/xvision-engine/src/eval/executor/backtest.rs
++++ b/crates/xvision-engine/src/eval/executor/backtest.rs
+@@ -1852,7 +1852,7 @@
+                         seed_bars_held,
+                         sltp_state
+                             .get(&asset_sym)
+-                            .map(|state| state.hwm)
++                            .map(|state| state.close_hwm)
+                             .unwrap_or_else(|| book.entry_price(asset_sym)),
+                         filter_trigger_context.as_ref(),
+                         history_slice,
+@@ -4938,7 +4938,7 @@
+                         .unwrap_or(0),
+                     sltp_state
+                         .get(&asset_sym)
+-                        .map(|state| state.hwm)
++                        .map(|state| state.close_hwm)
+                         .unwrap_or(pre_fill_entry),
+                     filter_trigger_context.as_ref(),
+                     &history_slice,
+@@ -6329,7 +6329,15 @@
+     } else {
+         (entry_price - mark_price) / entry_price * 100.0
+     };
+-    let peak = peak_price.max(entry_price);
++    // Trailing anchor mirrors the validated offline contract: extreme CLOSE
++    // since entry, correct side per direction. The previous code collapsed
++    // both sides through `.max(entry_price)` over an intrabar high/low hwm,
++    // firing long trails early and short trails late (or never).
++    let peak = if position > 0.0 {
++        peak_price.max(entry_price)
++    } else {
++        peak_price.min(entry_price)
++    };
+     for policy in &cfg.close_policies {
+         let (hit, label) = match policy {
+             ClosePolicy::StopLoss { pct } => (pnl_pct <= -*pct, "stop_loss"),
