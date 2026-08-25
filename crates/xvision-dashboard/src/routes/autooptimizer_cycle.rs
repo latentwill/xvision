@@ -388,6 +388,7 @@ async fn start_cycle_inner(
         .and_then(|s| s.provider.as_deref())
         .unwrap_or(&cfg.mutator.provider)
         .to_string();
+    let gepa_strategy = strategy.clone();
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];
@@ -470,43 +471,9 @@ async fn start_cycle_inner(
     } else {
         None
     };
-    // DSPy in-loop bridge: when `dspy_enabled = true`, open the memory store
-    // and build a `DspyContext` with a `GepaBridge` before the spawn so
-    // the owned context can be moved into the task.  Mirrors the `cycle_memory`
-    // pattern above.  The bridge reuses `metered_mutator` (the
-    // `CostMeteringDispatch`-wrapped mutator dispatch) so DSPy reflection is
-    // priced through the shared per-cycle meter.
-    let cycle_dspy_ctx: Option<DspyContext> = if cfg.dspy_enabled {
-        match memory::open_default_store().await {
-            Ok(store) => Some(DspyContext {
-                store,
-                bridge: std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
-                    dispatch: std::sync::Arc::clone(&metered_mutator),
-                    model: cfg.mutator.model.clone(),
-                    provider: cfg.mutator.provider.clone(),
-                    candidates: cfg.gepa_candidates,
-                    generations: cfg.gepa_generations,
-                    reflection_dispatch: None,
-                    reflection_model: None,
-                    selection_strategy: xvision_engine::autooptimizer::gepa::GepaSelectionStrategy::Pareto,
-                    reflection_minibatch_size: 3,
-                    skip_perfect: true,
-                    use_merge: true,
-                    merge_frequency: 3,
-                    real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config(&cfg)
-                        .map_err(DashboardError::Internal)?,
-                }),
-                namespace: "autooptimizer:dspy".to_string(),
-                pool: pool.clone(),
-            }),
-            Err(e) => {
-                tracing::warn!(error = %e, "dspy_enabled but could not open memory store; skipping DSPy context");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // DSPy in-loop bridge: it is built inside the spawned task after the paper
+    // tester exists, so GEPA real evaluation shares that exact runner and its
+    // budget meter.
     // WU-6: the Cline sidecar is mandatory for the trader (LlmDispatch retired).
     // The sidecar dispatches TRADER LLM calls; mutator+judge use separate dispatch.
     // sidecar_provider was resolved from the strategy before it was moved.
@@ -544,11 +511,66 @@ async fn start_cycle_inner(
         // paper-test cost reaches `budget_cap`, the cycle stops before launching
         // another backtest (no cap → f64::INFINITY). This is the guard against the
         // runaway token spew an unbounded UI cycle could produce.
-        let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
+        let paper_tester: Arc<dyn PaperTestRunner> = Arc::new(BudgetCappedPaperTester::new_with_handle(
             Box::new(cached),
             budget_cap,
             Arc::clone(&meter),
         ));
+
+        let cycle_dspy_ctx: Option<DspyContext> = if cfg.dspy_enabled {
+            match memory::open_default_store().await {
+                Ok(store) => {
+                    let evaluator: Arc<
+                        dyn xvision_engine::autooptimizer::gepa_eval::BenchmarkEvaluator,
+                    > = Arc::new(
+                        xvision_engine::autooptimizer::gepa_eval::BacktestBenchmarkEvaluator::new(
+                            gepa_strategy.clone(),
+                            Arc::clone(&paper_tester),
+                        ),
+                    );
+                    let real_eval =
+                        match xvision_engine::autooptimizer::gepa::real_eval_options_from_config_with_evaluator(
+                            &cfg, evaluator,
+                        ) {
+                            Ok(options) => options,
+                            Err(e) => {
+                                tracing::error!(error = %e, "invalid GEPA real-eval configuration");
+                                None
+                            }
+                        };
+                    Some(DspyContext {
+                        store,
+                        bridge: Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                            dispatch: Arc::clone(&metered_mutator),
+                            model: cfg.mutator.model.clone(),
+                            provider: cfg.mutator.provider.clone(),
+                            candidates: cfg.gepa_candidates,
+                            generations: cfg.gepa_generations,
+                            reflection_dispatch: None,
+                            reflection_model: None,
+                            selection_strategy:
+                                xvision_engine::autooptimizer::gepa::GepaSelectionStrategy::Pareto,
+                            reflection_minibatch_size: 3,
+                            skip_perfect: true,
+                            use_merge: true,
+                            merge_frequency: 3,
+                            real_eval,
+                        }),
+                        namespace: "autooptimizer:dspy".to_string(),
+                        pool: pool.clone(),
+                    })
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "dspy_enabled but could not open memory store; skipping DSPy context"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // F35: incremental cost/token persistence. Every 10s, snapshot the shared
         // meter into `cycle_cost` under the known cycle id so the panel shows
@@ -570,14 +592,14 @@ async fn start_cycle_inner(
         // Persist cycle events best-effort via an unbounded channel so the
         // sync progress callback never blocks. The persister task drains the
         // receiver; dropping `persist_tx` (end of `run_cycle`) signals it to exit.
-        let (persist_tx, mut persist_rx) = tokio::sync::mpsc::unbounded_channel::<CycleProgressEvent>();
+        let (persist_tx, mut persist_rx) =
+            tokio::sync::mpsc::unbounded_channel::<CycleProgressEvent>();
         let persist_pool = pool.clone();
         tokio::spawn(async move {
             while let Some(ev) = persist_rx.recv().await {
                 persist_progress_event(&persist_pool, &ev).await;
             }
         });
-
         let result = run_cycle(
             &pool,
             &cycle_blob_store,

@@ -335,6 +335,9 @@ pub struct GridArgs {
     /// Emit combinations as JSON.
     #[arg(long)]
     pub json: bool,
+    /// Evaluate each combination through the optimizer gate and persist lineage.
+    #[arg(long)]
+    pub evaluate: bool,
 }
 
 // ── Cycle args (pub so autooptimizer.rs can delegate) ────────────────────────
@@ -532,13 +535,133 @@ pub async fn run_grid_cmd(args: GridArgs) -> CliResult<()> {
         Some(args.max_combos),
     )
     .map_err(|e| CliError::usage(anyhow::anyhow!("grid search: {e}")))?;
+    if !args.evaluate {
+        if args.json {
+            print_json(&combinations)?;
+        } else {
+            println!("strategy: {}", args.strategy);
+            println!("combinations: {}", combinations.len());
+            for (idx, combination) in combinations.iter().enumerate() {
+                println!("{idx}: {}", serde_json::to_string(&combination.values).unwrap_or_default());
+            }
+        }
+        return Ok(());
+    }
+
+    let cfg = load_ar_config(None)?;
+    cfg.validate()
+        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid optimizer config: {e}")))?;
+    let db_path = xvn_home.join("xvn.db");
+    let pool = open_and_migrate_db(&db_path).await?;
+    let lineage_store = LineageStore::new(pool.clone());
+    let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
+    let (bundle_hash, strategy) =
+        load_strategy_parent(&args.strategy, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+    let cadence_minutes = strategy.manifest.decision_cadence_minutes;
+    let day_scenario =
+        synthesize_optimizer_day_scenario(&cfg.day_window, cadence_minutes, "xvn-cli-grid");
+    let baseline_scenario =
+        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+
+    let meter: Arc<std::sync::Mutex<CycleMeter>> =
+        Arc::new(std::sync::Mutex::new(CycleMeter::default()));
+    let dispatch_binding = build_dispatch(
+        false,
+        Some(&xvn_home),
+        &cfg.mutator.provider,
+        &cfg.mutator.model,
+    )
+    .await?;
+    let catalogs = load_metering_catalogs(&xvn_home, &cfg.mutator.provider).await;
+    let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> =
+        Arc::new(CostMeteringDispatch::new(dispatch_binding.dispatch, catalogs, Arc::clone(&meter)));
+    let ctx = ApiContext::open(
+        &xvn_home,
+        Actor::Cli {
+            user: std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "operator".to_string()),
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
+        &ctx,
+        &cfg.mutator.provider,
+        Arc::clone(&tools),
+        xvision_engine::eval::run::RunMode::Backtest,
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("spawn optimizer Cline sidecar: {e}")))?
+    .ok_or_else(|| {
+        CliError::upstream(anyhow::anyhow!(
+            "grid evaluation requires the Cline sidecar: XVN_AGENTD_BIN is not configured"
+        ))
+    })?;
+    let paper_tester: Arc<dyn PaperTestRunner> = Arc::new(BudgetCappedPaperTester::new_with_handle(
+        Box::new(
+            CachedBacktestPaperTester::new(ctx, metered_dispatch, tools)
+                .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
+        ),
+        f64::INFINITY,
+        Arc::clone(&meter),
+    ));
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy.clone());
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: combinations.len(),
+        sabotage_seed: 42,
+        judge_provider: cfg.mutator.provider.clone(),
+        judge_model: cfg.mutator.model.clone(),
+        prompt_version: "grid-v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: vec![bundle_hash],
+        objective: cfg.objective,
+        regime_set: cfg.regime_set.clone(),
+        scenario_pool: Vec::new(),
+        max_output_tokens: None,
+        max_consecutive_errors: 1,
+    };
+    let cycle_id = Ulid::new().to_string();
+    let outcomes = xvision_engine::autooptimizer::run_grid_evaluation(
+        &pool,
+        &strategy_blob_store,
+        &cfg,
+        &cycle_config,
+        &lineage_store
+            .get(&bundle_hash)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("load grid parent lineage: {e}")))?
+            .ok_or_else(|| CliError::upstream(anyhow::anyhow!("grid parent lineage disappeared")))?,
+        &strategy,
+        &combinations,
+        paper_tester.as_ref(),
+        &cycle_id,
+        42,
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("grid evaluation failed: {e}")))?;
     if args.json {
-        print_json(&combinations)?;
+        print_json(&outcomes)?;
     } else {
         println!("strategy: {}", args.strategy);
-        println!("combinations: {}", combinations.len());
-        for (idx, combination) in combinations.iter().enumerate() {
-            println!("{idx}: {}", serde_json::to_string(&combination.values).unwrap_or_default());
+        println!("combinations: {}", outcomes.len());
+        for (idx, outcome) in outcomes.iter().enumerate() {
+            println!(
+                "{idx}: {} child={} objective={}",
+                outcome.gate_verdict,
+                outcome.child_hash.as_deref().unwrap_or("-"),
+                outcome
+                    .objective_metric
+                    .map(|v| format!("{v:.6}"))
+                    .unwrap_or_else(|| "-".to_string())
+            );
         }
     }
     Ok(())
@@ -961,7 +1084,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             .optimizer_enabled
         }
     };
-    let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
+    let paper_tester_inner: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {
                 sharpe: 0.9,
@@ -987,12 +1110,6 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             opt_mem = ctx.memory_recorder.clone();
         }
         let tools = Arc::new(ToolRegistry::default_with_builtins());
-        // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
-        // always returns Some on success and Err on failure — never Ok(None).
-        // The sidecar handles the paper-test TRADER's LLM calls. The mutator and
-        // judge use separate LlmDispatch instances, so the sidecar provider must
-        // be the trader's provider, not the mutator's. When --provider is set,
-        // use it explicitly; otherwise fall back to the mutator provider.
         let sidecar_provider = args.provider.as_deref().unwrap_or(effective_mutator_provider);
         let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
             &ctx,
@@ -1019,8 +1136,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     };
 
     let budget_cap = args.budget.unwrap_or(f64::INFINITY);
-    let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
-        paper_tester,
+    let paper_tester: Arc<dyn PaperTestRunner> = Arc::new(BudgetCappedPaperTester::new_with_handle(
+        paper_tester_inner,
         budget_cap,
         Arc::clone(&meter),
     ));
@@ -1060,6 +1177,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         // cycles auto-advance as the new parent.
     }
 
+    let gepa_strategy = parent_strategies.values().next().cloned();
     let cycle_config = CycleConfig {
         num_parents: if explicit_parent_hashes.is_empty() {
             2
@@ -1112,6 +1230,17 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let store = memory::open_default_store()
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
+        let evaluator: Arc<dyn xvision_engine::autooptimizer::gepa_eval::BenchmarkEvaluator> =
+            if let Some(strategy) = gepa_strategy.clone() {
+                Arc::new(xvision_engine::autooptimizer::gepa_eval::BacktestBenchmarkEvaluator::new(
+                    strategy,
+                    Arc::clone(&paper_tester),
+                ))
+            } else {
+                return Err(CliError::usage(anyhow::anyhow!(
+                    "GEPA bridge requires --strategy so a trader prompt can be backtested"
+                )));
+            };
         let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
             std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
                 dispatch: std::sync::Arc::clone(&metered_mutator),
@@ -1126,7 +1255,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 skip_perfect: true,
                 use_merge: true,
                 merge_frequency: 3,
-                real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config(&cfg)?,
+                real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config_with_evaluator(
+                    &cfg, evaluator,
+                )?,
             });
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
@@ -2886,6 +3017,10 @@ async fn load_strategy_parent(
                 cycle_id: None,
                 created_at: Utc::now(),
                 diversity_score: None,
+                mutation_diff_json: None,
+                seed: None,
+                data_window_json: None,
+                objective: None,
             };
             lineage.insert(&root_node).await.map_err(|e| {
                 CliError::upstream(anyhow::anyhow!("reseed lineage parent {strategy_id}: {e}"))
@@ -2901,6 +3036,10 @@ async fn load_strategy_parent(
                 cycle_id: None,
                 created_at: Utc::now(),
                 diversity_score: None,
+                mutation_diff_json: None,
+                seed: None,
+                data_window_json: None,
+                objective: None,
             };
             lineage
                 .insert(&root_node)
@@ -3695,6 +3834,10 @@ sqlite_url = "sqlite://x.db"
             cycle_id: Some("cycle-test".to_string()),
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         };
         LineageStore::new(pool.clone()).insert(&node).await.unwrap();
 

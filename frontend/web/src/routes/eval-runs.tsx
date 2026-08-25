@@ -180,8 +180,10 @@ export function EvalRunsRoute() {
   }, [q.data?.total, totalFromServer]);
   const navigate = useNavigate();
   const preselectedStrategy = strategyFilterUrl;
+  const preselectedScenario = searchParams.get("scenario")?.trim() ?? "";
+  const preselectedMode: RunMode =
+    searchParams.get("mode") === "live" ? "live" : "backtest";
   const startRequested = searchParams.get("start") === "1";
-  // Selection state for the Compare flow. Lifted here so the Topbar can
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(startRequested);
@@ -418,10 +420,14 @@ export function EvalRunsRoute() {
         <>
           <StartEvalPanel
             initialAgentId={preselectedStrategy}
+            initialScenarioId={preselectedScenario}
+            initialMode={preselectedMode}
             onClose={() => {
               setStartOpen(false);
               const next = new URLSearchParams(searchParams);
               next.delete("start");
+              next.delete("scenario");
+              next.delete("mode");
               setSearchParams(next);
             }}
           />
@@ -750,12 +756,15 @@ function DesktopRow({
     </tr>
   );
 }
-
 function StartEvalPanel({
   initialAgentId,
+  initialScenarioId,
+  initialMode,
   onClose,
 }: {
   initialAgentId: string;
+  initialScenarioId: string;
+  initialMode: RunMode;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -778,8 +787,8 @@ function StartEvalPanel({
   });
 
   const [agentId, setAgentId] = useState<string>(initialAgentId);
-  const [scenarioId, setScenarioId] = useState<string>("");
-  const [mode, setMode] = useState<RunMode>("backtest");
+  const [scenarioId, setScenarioId] = useState<string>(initialScenarioId);
+  const [mode, setMode] = useState<RunMode>(initialMode);
   const [liveAsset, setLiveAsset] = useState("BTC/USD");
   const [liveCapital, setLiveCapital] = useState("10000");
   const [liveBarLimit, setLiveBarLimit] = useState("");
@@ -796,7 +805,9 @@ function StartEvalPanel({
 
   useEffect(() => {
     setAgentId(initialAgentId);
-  }, [initialAgentId]);
+    setScenarioId(initialScenarioId);
+    setMode(initialMode);
+  }, [initialAgentId, initialMode, initialScenarioId]);
 
   const start = useMutation<RunDetail, unknown, StartRunReq>({
     mutationFn: startRun,

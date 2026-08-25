@@ -32,6 +32,146 @@ use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRo
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
+use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GridEvaluationOutcome {
+    pub combination: GridCombination,
+    pub child_hash: Option<String>,
+    pub gate_verdict: String,
+    pub lineage_status: Option<String>,
+    pub objective_metric: Option<f64>,
+}
+
+/// Evaluate every grid combination through the cycle's normal gate, paper-test,
+/// content-hash, and lineage persistence path. The caller owns scenario and
+/// paper-tester setup; this function deliberately does not truncate or swallow
+/// evaluation errors.
+pub async fn run_grid_evaluation(
+    pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
+    config: &AutoOptimizerConfig,
+    cycle_config: &CycleConfig,
+    parent_node: &LineageNode,
+    strategy: &Strategy,
+    combinations: &[GridCombination],
+    paper_tester: &dyn PaperTestRunner,
+    cycle_id: &str,
+    seed: u64,
+) -> Result<Vec<GridEvaluationOutcome>> {
+    let parent_day = paper_tester.run(strategy, &cycle_config.day_scenario).await?;
+    let parent_untouched = paper_tester
+        .run(strategy, &cycle_config.baseline_scenario)
+        .await?;
+    let parent_regime_metrics = if cycle_config.regime_set.is_empty() {
+        HashMap::new()
+    } else {
+        let mut metrics = HashMap::with_capacity(cycle_config.regime_set.len());
+        for regime in &cycle_config.regime_set {
+            let (day, baseline) = build_regime_scenario_pair(cycle_config, regime)?;
+            metrics.insert(
+                regime.label.clone(),
+                (
+                    paper_tester.run(strategy, &day).await?,
+                    paper_tester.run(strategy, &baseline).await?,
+                ),
+            );
+        }
+        metrics
+    };
+    let baseline_cache = tokio::sync::Mutex::new(HashMap::new());
+    let parent_hash = ContentHash::of_json(&serde_json::to_value(strategy)?);
+    let lineage = LineageStore::new(pool.clone());
+    let mut seen = HashSet::new();
+    let progress = |_event: CycleProgressEvent| {};
+    let mut outcomes = Vec::with_capacity(combinations.len());
+
+    for combination in combinations {
+        let diff = mutation_diff_for_combination(strategy, combination)?;
+        let candidate = diff.apply_to(strategy);
+        let child_hash = ContentHash::of_json(&serde_json::to_value(&candidate)?);
+        let child_hash_hex = child_hash.to_hex();
+        if child_hash == parent_hash {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: None,
+                gate_verdict: "identity".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+        if !seen.insert(child_hash) {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: Some(child_hash_hex),
+                gate_verdict: "deduplicated".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+        // A prior active/rejected node already represents this content hash. Do
+        // not spend another backtest on a content-addressed candidate.
+        if lineage.get(&child_hash).await?.is_some() {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: Some(child_hash_hex),
+                gate_verdict: "already_evaluated".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+
+        let outcome = gate_and_classify(
+            strategy,
+            diff,
+            cycle_config,
+            paper_tester,
+            config.baseline_direction,
+            &baseline_cache,
+            &parent_day,
+            &parent_untouched,
+            config.min_improvement,
+            config.holdout_min_improvement,
+            config.min_trade_retention_ratio,
+            config.min_realized_return_ratio,
+            &parent_regime_metrics,
+            &cycle_config.day_scenario,
+            &cycle_config.baseline_scenario,
+            &progress,
+            cycle_id,
+            &parent_node.bundle_hash.to_hex(),
+        )
+        .await?;
+        let objective_metric = cycle_config.objective.oriented_value(&outcome.child_day);
+        let (node, resolved_status) = build_and_insert_node(
+            pool,
+            strategy_blob_store,
+            &outcome,
+            parent_node,
+            cycle_id,
+            cycle_config.objective,
+            seed,
+        )
+        .await?;
+        outcomes.push(GridEvaluationOutcome {
+            combination: combination.clone(),
+            child_hash: Some(node.bundle_hash.to_hex()),
+            gate_verdict: outcome.verdict.as_str().to_string(),
+            lineage_status: Some(resolved_status.as_str().to_string()),
+            objective_metric: Some(objective_metric),
+        });
+    }
+    outcomes.sort_by(|a, b| {
+        b.objective_metric
+            .partial_cmp(&a.objective_metric)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(outcomes)
+}
+
 
 /// Per-cycle configuration.
 ///

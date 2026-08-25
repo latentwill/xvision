@@ -303,6 +303,7 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/scenarios/:id", get(scenarios::get))
         .route("/api/scenarios/:id/chart", get(scenarios::chart))
         .route("/api/eval/runs", get(eval_runs::list))
+        .route("/api/eval/runs/:id/receipt", get(eval_runs::receipt))
         .route("/api/eval/runs/compare/chart", get(eval_runs::compare_chart))
         .route("/api/eval/runs/:id", get(eval_runs::get))
         .route("/api/eval/runs/:id/export", get(eval_runs::export))
