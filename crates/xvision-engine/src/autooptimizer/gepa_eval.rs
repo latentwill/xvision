@@ -35,6 +35,24 @@ pub trait BenchmarkEvaluator: Send + Sync {
         benchmark: &GepaBenchmarkWindow,
     ) -> anyhow::Result<RealEvalOutcome>;
 }
+/// Fallback evaluator used by configuration-only callers. Runtime cycle
+/// construction should replace it with a backtest-backed implementation through
+/// [`crate::autooptimizer::gepa::real_eval_options_from_config_with_evaluator`].
+pub struct UnavailableBenchmarkEvaluator;
+
+#[async_trait]
+impl BenchmarkEvaluator for UnavailableBenchmarkEvaluator {
+    async fn evaluate(
+        &self,
+        _instruction: &str,
+        benchmark: &GepaBenchmarkWindow,
+    ) -> anyhow::Result<RealEvalOutcome> {
+        anyhow::bail!(
+            "benchmark evaluator context is required for GEPA window '{}'",
+            benchmark.label
+        )
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct RealEvalCache {

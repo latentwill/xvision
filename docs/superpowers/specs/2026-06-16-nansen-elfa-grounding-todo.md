@@ -2,11 +2,11 @@
 
 - **Date:** 2026-06-16
 - **Status:** Fully resolved 2026-08-25. §1 Nansen routes audited against live
-  docs and FIXED in `tools/nansen.rs`. §2 Elfa and §3 identity seed VERIFIED.
-  §4 secrets resolved via Settings → Tools API-key storage. Only §5 remains
-  deferred by design.
-  Original plan:
-  `docs/superpowers/plans/2026-06-14-nansen-elfa-forward-only-data-tools.md`.
+ docs and FIXED in `tools/nansen.rs`. §2 Elfa and §3 identity seed VERIFIED.
+ §4 secrets resolved via Settings -> Tools API-key storage. §5 replay trigger
+ IMPLEMENTED 2026-08-25 (see §5 below).
+Original plan:
+`docs/superpowers/plans/2026-06-14-nansen-elfa-forward-only-data-tools.md`.
 - **Why:** The implementation used endpoint paths + contract addresses taken from
   the spec, NOT verified against live vendor docs / a smoke call. Per the Byreal
   CLI-grounding precedent (invented flags shipped a broken surface), these MUST be
@@ -56,9 +56,15 @@ into the daemon env under `api_key_env`, re-hydrated at CLI/dashboard startup.
 GET surfaces only an `api_key_set` presence flag. Env vars remain the
 highest-priority source.
 
-## 5. Deferred (per G3) — re-confirmed still deferred 2026-08-25
+## 5. Production replay trigger — IMPLEMENTED 2026-08-25
 
-`RunTrajectoryMode` remains `{ Live, Record }` only (engine `api/eval.rs`);
-replay wiring comment unchanged in `eval.rs` (~line 2507). Still lands with
-engine-eval replay.
+`RunTrajectoryMode` gained `Replay { recording_id }` (engine `api/eval.rs`).
+`xvn eval run --replay-trajectory <RECORDING_ID>` (conflicts with
+`--record-trajectory`) validates the recording up front: must exist and be
+status `complete`, backtest mode only — otherwise a validation error before
+any sidecar spawn. Replay runs serve signal-tool responses from the
+recording's cached HTTP responses (miss = loud error, never a live
+re-fetch), consume no credit budget, and persist no new frames.
+Tests: `replay_trigger_*` + `run_trajectory_mode_replay_serde_round_trip`
+in `api::eval::tool_registry_dispatch_tests`.
 

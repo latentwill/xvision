@@ -44,6 +44,7 @@ pub enum ReviewStatus {
     Running,
     Completed,
     Failed,
+    Unavailable,
 }
 
 impl ReviewStatus {
@@ -53,6 +54,7 @@ impl ReviewStatus {
             ReviewStatus::Running => "running",
             ReviewStatus::Completed => "completed",
             ReviewStatus::Failed => "failed",
+            ReviewStatus::Unavailable => "unavailable",
         }
     }
 
@@ -62,12 +64,16 @@ impl ReviewStatus {
             "running" => Some(ReviewStatus::Running),
             "completed" => Some(ReviewStatus::Completed),
             "failed" => Some(ReviewStatus::Failed),
+            "unavailable" => Some(ReviewStatus::Unavailable),
             _ => None,
         }
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ReviewStatus::Completed | ReviewStatus::Failed)
+        matches!(
+            self,
+            ReviewStatus::Completed | ReviewStatus::Failed | ReviewStatus::Unavailable
+        )
     }
 }
 

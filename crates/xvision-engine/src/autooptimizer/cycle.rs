@@ -144,13 +144,10 @@ struct MutationOutcome {
     /// regime-matrix paths where no single day/holdout pair is definitive.
     gate_scores: Option<GateScores>,
     /// WS-11b: the persisted eval `Run.id` for this candidate's PRIMARY
-    /// day-window evaluation (the `paper_tester.run_with_run_id` call on the
-    /// legacy / scenario-pool path). `None` on the regime-matrix path (which
-    /// runs several evals and has no single definitive run) and for any
-    /// `PaperTestRunner` that doesn't surface a run id (test stubs). Threaded
-    /// onto `CycleProgressEvent::MutationGated` so the frontend can nest a
-    /// navigable eval-run node under the experiment row.
+    /// day-window evaluation.
     eval_run_id: Option<String>,
+    /// Exact window set used for this candidate's evaluation.
+    data_window_json: Option<String>,
 }
 
 /// Numeric gate inputs captured at gate-verdict time so they can be persisted
@@ -1294,7 +1291,16 @@ where
         // collision-guard preserves an existing active node).  Emit the SSE event
         // and route the result bucket from the resolved status, not outcome.status.
         let (node, resolved_status) =
-            build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+            build_and_insert_node(
+                pool,
+                strategy_blob_store,
+                &outcome,
+                parent_node,
+                cycle_id,
+                config.objective,
+                cycle_config.sabotage_seed,
+            )
+            .await?;
         let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
@@ -1742,11 +1748,11 @@ where
             child_day,
             child_untouched,
             regime_rows,
-            // Regime-matrix path: no single day/holdout pair is the gate gate.
             gate_scores: None,
             // Regime-matrix path runs several evals across windows — no single
             // definitive eval run to nest under the experiment (WS-11b).
             eval_run_id: None,
+            data_window_json: serde_json::to_string(&cycle_config.regime_set).ok(),
         });
     }
 
@@ -1933,11 +1939,26 @@ where
         regime_rows: vec![],
         gate_scores,
         eval_run_id,
+        data_window_json: scenario_window_json(sampled_day, sampled_baseline),
     })
 }
+/// Serialize the exact day and holdout scenarios used for a candidate.
+fn scenario_window_json(day: &Scenario, baseline: &Scenario) -> Option<String> {
+    serde_json::to_string(&serde_json::json!({
+        "day": {
+            "id": &day.id,
+            "start": day.time_window.start.to_rfc3339(),
+            "end": day.time_window.end.to_rfc3339(),
+        },
+        "baseline": {
+            "id": &baseline.id,
+            "start": baseline.time_window.start.to_rfc3339(),
+            "end": baseline.time_window.end.to_rfc3339(),
+        },
+    }))
+    .ok()
+}
 
-/// Build a (day, baseline) `Scenario` pair for a regime window, cloned and
-/// date-patched from the cycle's base `day_scenario`.
 fn build_regime_scenario_pair(cycle_config: &CycleConfig, rw: &RegimeWindow) -> Result<(Scenario, Scenario)> {
     use crate::eval::scenario::{BarCachePolicy, RefreshPolicy, TimeWindow};
     use chrono::{NaiveDate, TimeZone, Utc};
@@ -2011,23 +2032,16 @@ fn should_preserve_active_collision(new_status: &LineageStatus) -> bool {
 }
 
 /// Build and atomically persist a lineage node together with its per-regime
-/// audit rows (if any).  Returns the node that was actually written to the DB
-/// and its **resolved** [`LineageStatus`] — which may differ from
-/// `outcome.status` when the collision-guard preserves an existing Active node.
-///
-/// Fix 1 (MAJOR): node insert and regime-results insert are wrapped in a single
-/// SQLite transaction so a regime-insert failure cannot leave a node without its
-/// audit rows.
-///
-/// Fix 2 (MAJOR): the resolved status is returned so callers can route the SSE
-/// event and result buckets from what the DB actually persisted, not from the
-/// pre-persistence derived status.
+/// audit rows (if any). Returns the node actually written and its resolved
+/// status.
 async fn build_and_insert_node(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
+    objective: Objective,
+    seed: u64,
 ) -> Result<(LineageNode, LineageStatus)> {
     let store = LineageStore::new(pool.clone());
     // F33: record this cycle's evaluation edge to the candidate up-front (before
@@ -2073,6 +2087,10 @@ async fn build_and_insert_node(
         cycle_id: Some(cycle_id.to_string()),
         created_at: Utc::now(),
         diversity_score: None,
+        mutation_diff_json: serde_json::to_string(&outcome.diff).ok(),
+        seed: i64::try_from(seed).ok(),
+        data_window_json: outcome.data_window_json.clone(),
+        objective: Some(objective.label().to_string()),
     };
 
     // Fix 1: wrap node insert + regime rows in a single transaction so a
@@ -2082,8 +2100,9 @@ async fn build_and_insert_node(
         let mut tx = pool.begin().await.context("begin node+regime tx")?;
         sqlx::query(
             "INSERT OR REPLACE INTO lineage_nodes \
-             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, \
+              mutation_diff_json, seed, data_window_json, objective) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(node.bundle_hash.to_hex())
         .bind(node.parent_hash.as_ref().map(|h| h.to_hex()))
@@ -2091,6 +2110,10 @@ async fn build_and_insert_node(
         .bind(node.status.as_str())
         .bind(&node.cycle_id)
         .bind(node.created_at.to_rfc3339())
+        .bind(&node.mutation_diff_json)
+        .bind(node.seed)
+        .bind(&node.data_window_json)
+        .bind(&node.objective)
         .execute(&mut *tx)
         .await
         .context("insert lineage_node (tx)")?;
@@ -2315,6 +2338,10 @@ mod tests {
             cycle_id: Some("c".into()),
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         }
     }
 

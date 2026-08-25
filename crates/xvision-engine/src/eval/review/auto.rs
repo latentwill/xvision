@@ -120,12 +120,12 @@ pub enum AutoReviewOutcome {
 }
 
 /// Drive the rule-based review against a completed eval run. Reads
-/// `eval_findings`, computes verdict + score, persists one
-/// `eval_reviews` row. Safe to call multiple times for the same run —
-/// the second invocation returns `AlreadyExists` without writing.
+/// `eval_findings`, computes verdict + score, persists one `eval_reviews` row.
+/// Safe to call multiple times for the same run — the second invocation
+/// returns `AlreadyExists` without writing.
 ///
-/// **Best-effort by design.** Callers wrap this in a `warn!` log and
-/// never propagate failures up the finalize path (see [`fire_auto_review`]).
+/// Errors are returned to [`fire_auto_review`], which records an explicit
+/// `unavailable` review row before allowing the run to remain successful.
 pub async fn run_auto_review(
     store: &RunStore,
     run_id: &str,
@@ -210,10 +210,9 @@ pub async fn run_auto_review(
     })
 }
 
-/// Best-effort wrapper used by the finalize seam in
-/// `api::eval::run_inner` / the executor finalize-success path. Mirrors
-/// the `findings postprocess failed (run still ok)` pattern: log
-/// `warn!` on any error and swallow it; the run remains successful.
+/// Finalize seam wrapper. Review setup or execution failures are recorded as
+/// an `unavailable` `eval_reviews` row with the error reason; the run remains
+/// successful. A failure to write that audit row is logged as a second error.
 pub async fn fire_auto_review(store: &RunStore, run_id: &str) {
     match run_auto_review(store, run_id, AutoReviewOptions::default()).await {
         Ok(AutoReviewOutcome::Inserted {
@@ -232,14 +231,59 @@ pub async fn fire_auto_review(store: &RunStore, run_id: &str) {
         Ok(AutoReviewOutcome::AlreadyExists { review_id }) => {
             tracing::debug!(run_id, review_id, "auto-review skipped (pre-existing row)");
         }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                run_id,
-                "auto-review postprocess failed (run still ok)"
-            );
+        Err(error) => {
+            let reason = format!("auto-review unavailable: {error:#}");
+            match persist_unavailable_review(store, run_id, &reason).await {
+                Ok(review_id) => tracing::warn!(
+                    run_id,
+                    review_id,
+                    error = %error,
+                    "auto-review unavailable (run still ok)"
+                ),
+                Err(audit_error) => tracing::error!(
+                    run_id,
+                    error = %error,
+                    audit_error = %audit_error,
+                    "auto-review unavailable and audit row could not be persisted (run still ok)"
+                ),
+            }
         }
     }
+}
+
+async fn persist_unavailable_review(store: &RunStore, run_id: &str, reason: &str) -> Result<String> {
+    let existing = store
+        .list_reviews_for_run(run_id)
+        .await
+        .context("unavailable auto-review: list existing reviews")?;
+    if let Some(prior) = existing
+        .iter()
+        .find(|review| review.agent_profile_id == AUTO_AGENT_PROFILE_ID)
+    {
+        return Ok(prior.id.clone());
+    }
+
+    let now = Utc::now();
+    let id = Ulid::new().to_string();
+    store
+        .create_review(&EvalReview {
+            id: id.clone(),
+            eval_run_id: run_id.to_string(),
+            agent_profile_id: AUTO_AGENT_PROFILE_ID.to_string(),
+            status: ReviewStatus::Unavailable,
+            verdict: None,
+            confidence: None,
+            score: None,
+            summary: Some("Automatic review was unavailable.".to_string()),
+            raw_output_json: None,
+            annotations: Vec::new(),
+            error: Some(reason.to_string()),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .context("unavailable auto-review: create eval_reviews row")?;
+    Ok(id)
 }
 
 // ── Pure functions (unit-testable) ───────────────────────────────────

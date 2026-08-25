@@ -53,13 +53,30 @@ impl RealEvalOptions {
 pub fn real_eval_options_from_config(
     cfg: &crate::autooptimizer::config::AutoOptimizerConfig,
 ) -> anyhow::Result<Option<RealEvalOptions>> {
-    if cfg.gepa_real_eval {
-        anyhow::bail!(
-            "gepa_real_eval=true is not available until a production benchmark evaluator is wired; \
-             set gepa_real_eval=false to use the LLM scorer"
-        );
+    real_eval_options_from_config_with_evaluator(
+        cfg,
+        Arc::new(crate::autooptimizer::gepa_eval::UnavailableBenchmarkEvaluator),
+    )
+}
+
+/// Build real-eval options with the runtime backtest evaluator. The evaluator
+/// owns the database, strategy store, and paper-test runner context required by
+/// benchmark windows; keeping it injected makes GEPA deterministic in tests.
+pub fn real_eval_options_from_config_with_evaluator(
+    cfg: &crate::autooptimizer::config::AutoOptimizerConfig,
+    evaluator: Arc<dyn BenchmarkEvaluator>,
+) -> anyhow::Result<Option<RealEvalOptions>> {
+    if !cfg.gepa_real_eval {
+        return Ok(None);
     }
-    Ok(None)
+    if cfg.gepa_benchmark_pool.is_empty() {
+        anyhow::bail!("gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true");
+    }
+    Ok(Some(RealEvalOptions::new(
+        cfg.gepa_real_eval_min_llm_score,
+        cfg.gepa_benchmark_pool.clone(),
+        evaluator,
+    )))
 }
 
 pub struct GepaBridge {
@@ -776,21 +793,11 @@ mod tests {
     }
 
     #[test]
-    fn real_eval_options_from_config_rejects_enabled_without_production_evaluator() {
+    fn real_eval_options_from_config_rejects_enabled_without_benchmark_pool() {
         let mut cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
         cfg.gepa_real_eval = true;
-
-        let err = match real_eval_options_from_config(&cfg) {
-            Ok(_) => panic!("enabled config must not produce real eval options without an evaluator"),
-            Err(err) => err,
-        };
-        let msg = err.to_string();
-        assert!(
-            msg.contains("gepa_real_eval=true")
-                && msg.contains("production benchmark evaluator")
-                && msg.contains("gepa_real_eval=false"),
-            "enabled config must fail before constructing unusable real eval options; got: {msg}"
-        );
+        let err = real_eval_options_from_config(&cfg).unwrap_err();
+        assert!(err.to_string().contains("gepa_benchmark_pool"));
     }
 
     #[tokio::test]

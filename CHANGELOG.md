@@ -153,8 +153,9 @@ detail. PR references are representative, not exhaustive.
 - Live eval mode (`LiveConfig` + `--live-duration`); agentless **Mechanistic
   Strategies** via the `Algorithm` trait; Pine Script ingestion → optimizable
   `Strategy` (#998, #1014).
-- Intra-bar O→H→L→C fill ordering with maker/taker aggressor-side fees and
-  per-asset fee/slip overrides; lookahead-bias prober + `DataManifest` content
+- Next-bar-open market fills; gap-aware stop/target fills with slippage,
+  maker/taker aggressor-side fees, and per-asset fee/slip overrides. Limit
+  orders are not filled yet; lookahead-bias prober + `DataManifest` content
   hashing; net-of-inference-cost return metric.
 - Episodic memory (Cortex) across agent surfaces; broker-rule circuit-breaker that
   skips unsupported trades instead of aborting the run.

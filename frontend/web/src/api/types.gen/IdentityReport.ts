@@ -21,7 +21,7 @@ note: string,
  * Read from env `XVN_PLATFORM_AGENT_TOKEN_ID` (parse as u64).
  * `None` when the env var is absent or unparseable.
  */
-agent_token_id?: number, 
+agent_token_id: number, 
 /**
  * On-chain address of the identity registry contract.
  * Read from env `XVN_IDENTITY_REGISTRY` (hex address string).

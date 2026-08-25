@@ -39,6 +39,9 @@ use crate::api::{search as api_search, strategy as api_strategy, ApiContext, Api
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::cost::aggregate_eval_run_inference_cost;
+use crate::eval::determinism::{
+    canonical_bars_content_hash, persist_receipt, DeterminismReceipt, ReceiptInputs, ReceiptManifest,
+};
 use crate::eval::executor::{Executor, GatedBrokerSurface, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
 use crate::eval::live_config::LiveConfig;
@@ -64,6 +67,7 @@ use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
 use xvision_execution::{ByrealLiveSurface, DegenArenaSurface, HyperliquidSurface};
 use xvision_filters::{FilterEventV1, FilterSummary};
+use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // U13: agentd process registry for eval cancel
@@ -3824,15 +3828,26 @@ async fn run_inner(
         &findings_model,
     )
     .await;
-
-    // Rule-based auto-review. Reads the just-persisted findings and
-    // writes a single `eval_reviews` row with a verdict + score. No
-    // LLM call, no dispatch dependency. Best-effort by design —
-    // failures log warn! and the run stays successful.
+    // Rule-based auto-review. Reads the just-persisted findings and writes a
+    // single `eval_reviews` row with a verdict + score. Setup/execution
+    // failures persist an `unavailable` review row; the run stays successful.
     let store_for_auto = RunStore::new(ctx.db.clone());
     if finalized.auto_fire_review {
         crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;
     }
+    persist_determinism_receipt(
+        ctx,
+        &finalized,
+        &scenario,
+        &strategy,
+        &agent_slots,
+        from_db,
+        req.assets_subset.as_deref(),
+        &findings_model,
+        req.trajectory_mode.replay_recording_id(),
+    )
+    .await;
+
 
     // Guardrail rewrite summary (eval-guardrail-log-collapse). Reads
     // guard-role supervisor_notes, emits one tracing::warn! and one
@@ -3840,7 +3855,221 @@ async fn run_inner(
     let store_for_guard = RunStore::new(ctx.db.clone());
     crate::eval::guardrail_summary::fire_guardrail_summary(&store_for_guard, &finalized.id).await;
 
+
     Ok(finalized)
+}
+/// Persist the deterministic receipt after a successful backtest finalize.
+/// Bar bytes are represented by the canonical hash of the rows that were
+/// evaluated, never by a path or cache key. Receipt failures are audit errors
+/// and do not reopen a completed run.
+#[allow(clippy::too_many_arguments)]
+async fn persist_determinism_receipt(
+    ctx: &ApiContext,
+    run: &Run,
+    scenario: &Scenario,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+    from_db: bool,
+    assets_subset: Option<&[xvision_core::trading::AssetSymbol]>,
+    findings_model: &str,
+    tool_cache_recording_id: Option<&str>,
+) {
+    if run.mode != RunMode::Backtest {
+        return;
+    }
+
+    let active = match crate::eval::executor::asset_set::active_assets(
+        &strategy.manifest.asset_universe,
+        assets_subset,
+    ) {
+        Ok(active) => active,
+        Err(error) => {
+            tracing::warn!(run_id = %run.id, error = %error, "receipt: resolve active assets failed");
+            return;
+        }
+    };
+    let native_granularity =
+        crate::strategies::bar_granularity_for_cadence(strategy.manifest.decision_cadence_minutes);
+    let mut bars = Vec::new();
+    let mut bars_source = if from_db { "db_cache" } else { "legacy_fixture" };
+    let mut reload_failed = false;
+    let load_result = if from_db {
+        for asset in &active {
+            match load_bars_for_scenario(ctx, scenario, *asset, native_granularity).await {
+                Ok(asset_bars) => bars.extend(market_bars_to_ohlcv(asset_bars)),
+                Err(error) => {
+                    reload_failed = true;
+                    tracing::warn!(
+                        run_id = %run.id,
+                        asset = %asset.as_alpaca_pair(),
+                        error = %error,
+                        "receipt: reload evaluated bars failed"
+                    );
+                    break;
+                }
+            }
+        }
+        Ok(())
+    } else {
+        let Some(asset) = active.first() else {
+            tracing::warn!(run_id = %run.id, "receipt: no active asset");
+            return;
+        };
+        match xvision_data::fixtures::load_ohlcv_fixture_with_hash(
+            &scenario.bar_cache_policy.cache_key,
+            &asset.as_alpaca_pair(),
+            usize::MAX,
+        ) {
+            Ok((fixture_bars, _raw_fixture_hash)) => {
+                bars = fixture_bars;
+                Ok(())
+            }
+            Err(error) => Err(format!("{error:#}")),
+        }
+    };
+    if reload_failed {
+        bars.clear();
+        bars_source = "unavailable";
+    }
+    if let Err(error) = load_result {
+        tracing::warn!(run_id = %run.id, error = %error, "receipt: load evaluated fixture failed");
+    }
+    if bars.is_empty() {
+        if let Some(provided_hash) = run.bars_content_hash.as_deref().filter(|h| !h.is_empty()) {
+            bars_source = "unavailable";
+            let manifest = receipt_manifest_for(
+                provided_hash.to_string(),
+                0,
+                None,
+                None,
+                bars_source,
+                run,
+                scenario,
+                strategy,
+                agent_slots,
+                findings_model,
+                tool_cache_recording_id,
+                0,
+            );
+            persist_receipt_for_manifest(ctx, run, scenario, manifest).await;
+        } else {
+            tracing::warn!(run_id = %run.id, "receipt: evaluated bars unavailable; no receipt minted");
+        }
+        return;
+    }
+
+    let bars_content_hash = canonical_bars_content_hash(&bars);
+    let mut ordered_timestamps: Vec<_> = bars.iter().map(|bar| bar.timestamp).collect();
+    ordered_timestamps.sort_unstable();
+    let seed = match &scenario.data_source {
+        DataSource::SyntheticWalk { seed, .. } => *seed,
+        DataSource::AlpacaHistorical { .. } => 0,
+    };
+    let manifest = receipt_manifest_for(
+        bars_content_hash,
+        bars.len(),
+        ordered_timestamps.first().map(|ts| ts.to_rfc3339()),
+        ordered_timestamps.last().map(|ts| ts.to_rfc3339()),
+        bars_source,
+        run,
+        scenario,
+        strategy,
+        agent_slots,
+        findings_model,
+        tool_cache_recording_id,
+        seed,
+    );
+    persist_receipt_for_manifest(ctx, run, scenario, manifest).await;
+}
+
+fn receipt_manifest_for(
+    bars_content_hash: String,
+    bars_rows: usize,
+    bars_start: Option<String>,
+    bars_end: Option<String>,
+    bars_source: &str,
+    run: &Run,
+    scenario: &Scenario,
+    strategy: &crate::strategies::Strategy,
+    agent_slots: &[ResolvedAgentSlot],
+    findings_model: &str,
+    tool_cache_recording_id: Option<&str>,
+    seed: u64,
+) -> ReceiptManifest {
+    let trader = agent_slots
+        .iter()
+        .find(|slot| slot.role.trim().eq_ignore_ascii_case("trader"));
+    let provider = trader
+        .and_then(|slot| slot.slot.provider.clone())
+        .filter(|value| !value.trim().is_empty());
+    let model = trader
+        .map(|slot| slot.slot.effective_model())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| (!findings_model.trim().is_empty()).then(|| findings_model.to_string()));
+    let system_prompt_hash = trader
+        .map(|slot| Sha256::digest(slot.system_prompt.as_bytes()))
+        .map(hex::encode);
+    let strategy_source_hash = serde_json::to_vec(strategy)
+        .ok()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)));
+    ReceiptManifest {
+        bars_content_hash,
+        bars_rows,
+        bars_start,
+        bars_end,
+        bars_source: bars_source.to_string(),
+        scenario_id: scenario.id.clone(),
+        strategy_hash: run.agent_id.clone(),
+        strategy_source_hash,
+        provider,
+        model,
+        prompt_version: None,
+        system_prompt_hash,
+        tool_cache_recording_id: tool_cache_recording_id.map(str::to_string),
+        engine_version: env!("CARGO_PKG_VERSION").to_string(),
+        seed,
+    }
+}
+
+async fn persist_receipt_for_manifest(
+    ctx: &ApiContext,
+    run: &Run,
+    scenario: &Scenario,
+    manifest: ReceiptManifest,
+) {
+    let receipt = DeterminismReceipt::mint_with_manifest(
+        &ReceiptInputs {
+            run_id: run.id.clone(),
+            strategy_hash: run.agent_id.clone(),
+            scenario_id: scenario.id.clone(),
+            bars_content_hash: manifest.bars_content_hash.clone(),
+            seed: manifest.seed,
+            engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema_version: crate::eval::executor::DECISIONS_SCHEMA_VERSION.to_string(),
+        },
+        &manifest,
+    );
+    let store = RunStore::new(ctx.db.clone());
+    let data_manifest = scenario.data_manifest();
+    match serde_json::to_value(&data_manifest) {
+        Ok(value) => {
+            if let Err(error) = store
+                .set_bars_manifest(
+                    &run.id,
+                    &manifest.bars_content_hash,
+                    &data_manifest.canonical_hash(),
+                    &value,
+                )
+                .await
+            {
+                tracing::warn!(run_id = %run.id, error = %error, "receipt: persist eval run bars manifest failed");
+            }
+        }
+        Err(error) => tracing::warn!(run_id = %run.id, error = %error, "receipt: serialize data manifest failed"),
+    }
+    if let Err(error) = persist_receipt(&ctx.db, &receipt).await {
+        tracing::warn!(run_id = %run.id, error = %error, "receipt: persist determinism receipt failed");
+    }
 }
 
 /// Enrich a completed run's `MetricsSummary` with inference cost aggregate and
@@ -5295,6 +5524,9 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
             findings_model,
             tools,
             obs_emitter,
+            from_db,
+            req.assets_subset.clone(),
+            req.trajectory_mode.replay_recording_id().map(str::to_string),
         )
         .await;
     });
@@ -5373,8 +5605,6 @@ where
 /// Background-task body: transition Queued → Running, drive the
 /// executor, and on completion/failure persist the canonical state.
 /// Detached — failures here can't propagate to the spawning request, so
-/// every error path writes to the run row's `error` field and logs at
-/// the `xvision::eval` target.
 #[allow(clippy::too_many_arguments)]
 async fn execute_in_background(
     ctx: ApiContext,
@@ -5387,6 +5617,9 @@ async fn execute_in_background(
     findings_model: String,
     tools: Arc<ToolRegistry>,
     obs_emitter: Option<crate::agent::observability::ObsEmitter>,
+    from_db: bool,
+    assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
+    tool_cache_recording_id: Option<String>,
 ) {
     let store = RunStore::new(ctx.db.clone());
 
@@ -5522,9 +5755,22 @@ async fn execute_in_background(
         &findings_model,
     )
     .await;
+    persist_determinism_receipt(
+        &ctx,
+        &finalized,
+        &scenario,
+        &strategy,
+        &agent_slots,
+        from_db,
+        assets_subset.as_deref(),
+        &findings_model,
+        tool_cache_recording_id.as_deref(),
+    )
+    .await;
 
-    // Rule-based auto-review postprocess. Best-effort; reads the
-    // findings we just persisted and writes a single eval_reviews row.
+
+    // Rule-based auto-review postprocess. Setup/execution failures persist an
+    // `unavailable` eval_reviews row, while the run remains successful.
     let store_for_auto = RunStore::new(ctx.db.clone());
     if finalized.auto_fire_review {
         crate::eval::review::auto::fire_auto_review(&store_for_auto, &finalized.id).await;

@@ -9,7 +9,7 @@
 import { apiFetch } from "./client";
 import type { Finding } from "./types.gen";
 
-export type ReviewStatus = "queued" | "running" | "completed" | "failed";
+export type ReviewStatus = "queued" | "running" | "completed" | "failed" | "unavailable";
 export type ReviewVerdict = "promising" | "weak" | "failed" | "inconclusive";
 
 export type EvalReview = {

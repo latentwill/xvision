@@ -151,6 +151,8 @@ const MIGRATION_075_AUTOOPTIMIZER_GATE_TRADE_COUNTS: &str =
     include_str!("../../migrations/075_autooptimizer_gate_trade_counts.sql");
 const MIGRATION_076_AUTOOPTIMIZER_GATE_REALIZED_RETURN: &str =
     include_str!("../../migrations/076_autooptimizer_gate_realized_return.sql");
+const MIGRATION_078_AUTOOPTIMIZER_LINEAGE_PROVENANCE: &str =
+    include_str!("../../migrations/078_autooptimizer_lineage_provenance.sql");
 /// Migration 062: per-run (per-run) pause flag on `eval_runs`.
 /// Adds `paused` (BOOLEAN NOT NULL DEFAULT 0) and `paused_at` (nullable
 /// RFC3339 timestamp). The live executor honors `paused` as an ADDITIVE
@@ -531,6 +533,7 @@ impl ApiContext {
         // F8: the autooptimizer lineage tables now live in xvn.db (shared by
         // the dashboard panel read path and `xvn optimize run` writes).
         migrate_autooptimizer_lineage(&pool).await?;
+        migrate_autooptimizer_lineage_provenance(&pool).await?;
         // F8 one-time import of any pre-fix `lineage/lineage.db` (non-fatal).
         import_legacy_lineage_db(&pool, xvn_home).await;
         // Migration 069: nanochat filter agent tables.
@@ -1214,6 +1217,19 @@ async fn migrate_autooptimizer_lineage(pool: &SqlitePool) -> ApiResult<()> {
     crate::autooptimizer::lineage::ensure_lineage_schema(pool)
         .await
         .map_err(|e| ApiError::Internal(format!("autooptimizer lineage schema: {e}")))
+}
+/// Apply migration 078: additive lineage provenance columns. The lineage
+/// schema helper already converges these columns for CLI-only databases; this
+/// embedded migration keeps the dashboard migration path explicit.
+async fn migrate_autooptimizer_lineage_provenance(pool: &SqlitePool) -> ApiResult<()> {
+    if table_exists(pool, "lineage_nodes").await?
+        && !table_has_column(pool, "lineage_nodes", "mutation_diff_json").await?
+    {
+        for stmt in split_sql_statements(MIGRATION_078_AUTOOPTIMIZER_LINEAGE_PROVENANCE) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
 }
 
 /// F8 one-time import: copy lineage rows from a legacy

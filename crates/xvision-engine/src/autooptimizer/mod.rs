@@ -36,6 +36,7 @@ pub mod eval_adapter;
 pub mod events_store;
 pub mod evidence;
 pub mod gate;
+pub mod grid;
 pub mod gepa;
 pub mod gepa_eval;
 pub mod inversion;
@@ -81,6 +82,9 @@ pub use cycle_export::{
 pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
     NodeProvenance,
+};
+pub use grid::{
+    enumerate_combinations, mutation_diff_for_combination, GridCombination, DEFAULT_MAX_COMBINATIONS,
 };
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{

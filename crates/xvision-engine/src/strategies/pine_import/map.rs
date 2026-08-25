@@ -102,11 +102,13 @@ struct IndicatorBinding {
 // ── Mapping table: Pine ta.* → xvision IndicatorName ─────────────────────────
 
 /// Map a `ta.*` function name to an `IndicatorName`, plus extract the period
-/// from the args list.
-///
-/// Returns `None` when the function name is unknown (should be recorded as
-/// unmapped) or the period argument is not a literal integer.
-fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
+/// from the args list. Input identifiers are resolved from their declared
+/// default values; other non-literal expressions are rejected.
+fn map_ta_call(
+    ta_name: &str,
+    args: &[Expr],
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<IndicatorRef> {
     match ta_name {
         // Simple period-based indicators — first arg is the source (close/etc),
         // second arg is the period. Pine convention: ta.sma(source, length).
@@ -119,21 +121,21 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
                 "vwma" => IndicatorName::Vwma,
                 _ => unreachable!(),
             };
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(name, period)?;
             Some(IndicatorRef::periodic(name, period))
         }
 
         // RSI: ta.rsi(source, length)
         "rsi" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Rsi, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Rsi, period))
         }
 
         // ATR: ta.atr(length)
         "atr" => {
-            let period = extract_period_arg(args, 0)?;
+            let period = extract_period_arg(args, 0, period_defaults)?;
             validate_period(IndicatorName::Atr, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Atr, period))
         }
@@ -143,7 +145,7 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
         // length as the period. Only BbMiddle is mapped (the mean); upper/lower
         // require the multiplier which we drop here.
         "bb" | "bbands" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::BbMiddle, period)?;
             Some(IndicatorRef::periodic(IndicatorName::BbMiddle, period))
         }
@@ -158,47 +160,47 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
 
         // ADX and DI: ta.dmi(length, smoothing)
         "dmi" | "adx" => {
-            let period = extract_period_arg(args, 0)?;
+            let period = extract_period_arg(args, 0, period_defaults)?;
             validate_period(IndicatorName::Adx, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Adx, period))
         }
 
         // Stochastic: ta.stoch(close, high, low, length)
         "stoch" => {
-            let period = extract_period_arg(args, 3)?;
+            let period = extract_period_arg(args, 3, period_defaults)?;
             validate_period(IndicatorName::StochK, period)?;
             Some(IndicatorRef::periodic(IndicatorName::StochK, period))
         }
 
         // CCI: ta.cci(source, length)
         "cci" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Cci, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Cci, period))
         }
 
         // MFI: ta.mfi(source, length)
         "mfi" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Mfi, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Mfi, period))
         }
 
         // ROC: ta.roc(source, length)
         "roc" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Roc, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Roc, period))
         }
 
         // Highest/Lowest: ta.highest(source, length) / ta.lowest(source, length)
         "highest" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Highest, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Highest, period))
         }
         "lowest" => {
-            let period = extract_period_arg(args, 1)?;
+            let period = extract_period_arg(args, 1, period_defaults)?;
             validate_period(IndicatorName::Lowest, period)?;
             Some(IndicatorRef::periodic(IndicatorName::Lowest, period))
         }
@@ -206,7 +208,7 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
         // SuperTrend: ta.supertrend(factor, atr_period)
         // Packed: atr_period * 1000 + factor_times_10
         "supertrend" => {
-            let atr_period = extract_period_arg(args, 1)?;
+            let atr_period = extract_period_arg(args, 1, period_defaults)?;
             let factor_times_10 = extract_float_arg(args, 0)
                 .map(|f| (f * 10.0).round() as u32)
                 .unwrap_or(30);
@@ -219,8 +221,8 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
 
         // Pivot high/low: pivothigh(source, left, right) / pivotlow(source, left, right)
         "pivothigh" | "ta.pivothigh" => {
-            let left = extract_period_arg(args, 1)?;
-            let right = extract_period_arg(args, 2)?;
+            let left = extract_period_arg(args, 1, period_defaults)?;
+            let right = extract_period_arg(args, 2, period_defaults)?;
             let packed = left * 1000 + right;
             if !(1001..=100_100).contains(&packed) {
                 return None;
@@ -228,8 +230,8 @@ fn map_ta_call(ta_name: &str, args: &[Expr]) -> Option<IndicatorRef> {
             Some(IndicatorRef::periodic(IndicatorName::PivotHigh, packed))
         }
         "pivotlow" | "ta.pivotlow" => {
-            let left = extract_period_arg(args, 1)?;
-            let right = extract_period_arg(args, 2)?;
+            let left = extract_period_arg(args, 1, period_defaults)?;
+            let right = extract_period_arg(args, 2, period_defaults)?;
             let packed = left * 1000 + right;
             if !(1001..=100_100).contains(&packed) {
                 return None;
@@ -262,15 +264,18 @@ fn validate_period(name: IndicatorName, period: u32) -> Option<u32> {
 }
 
 /// Extract an integer period argument from a position in the args list.
-/// Returns `None` if the argument is missing, not a literal, or not in a
-/// valid range for a period (2..=500 sanity guard).
-fn extract_period_arg(args: &[Expr], pos: usize) -> Option<u32> {
+/// Input identifiers use their declared defaults; other expressions are
+/// rejected. All periods stay within the 2..=500 sanity guard.
+fn extract_period_arg(
+    args: &[Expr],
+    pos: usize,
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<u32> {
     let expr = args.get(pos)?;
     match expr {
         Expr::IntLit { value } if *value >= 2 && *value <= 500 => Some(*value as u32),
         Expr::FloatLit { value } if *value >= 2.0 && *value <= 500.0 => Some(*value as u32),
-        // Variable reference — period is dynamic (input knob); we cannot resolve it at import time.
-        // Return None so the caller can decide to harvest it as a briefing indicator instead.
+        Expr::Ident { name } => period_defaults.get(name).copied(),
         _ => None,
     }
 }
@@ -385,7 +390,11 @@ fn extract_entry_direction(args: &[(Option<String>, Expr)]) -> Option<EntryDirec
 ///
 /// Returns `Some(Condition)` on success. `None` means the expression is too
 /// complex to reduce to a single condition (goes to fuzzy / unmapped path).
-fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> Option<Condition> {
+fn map_expr_to_condition(
+    expr: &Expr,
+    indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<Condition> {
     match expr {
         Expr::BinOp { op, left, right } => {
             // Comparison operators that map to Operator variants.
@@ -398,12 +407,12 @@ fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> O
                 _ => None,
             };
             if let Some(op) = xvision_op {
-                let lhs = map_expr_to_operand(left, indicator_table)?;
+                let lhs = map_expr_to_operand(left, indicator_table, period_defaults)?;
                 // lhs must be an indicator for the filter validator
                 if !matches!(lhs, Operand::Indicator(_)) {
                     return None;
                 }
-                let rhs = map_expr_to_operand(right, indicator_table)?;
+                let rhs = map_expr_to_operand(right, indicator_table, period_defaults)?;
                 // rhs must be indicator or numeric (not range) for these ops
                 if matches!(rhs, Operand::Range(_, _)) {
                     return None;
@@ -417,11 +426,11 @@ fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> O
         Expr::TaCall { name, args } if name == "crossover" => {
             let lhs_expr = args.first()?;
             let rhs_expr = args.get(1)?;
-            let lhs = map_expr_to_operand(lhs_expr, indicator_table)?;
+            let lhs = map_expr_to_operand(lhs_expr, indicator_table, period_defaults)?;
             if !matches!(lhs, Operand::Indicator(_)) {
                 return None;
             }
-            let rhs = map_expr_to_operand(rhs_expr, indicator_table)?;
+            let rhs = map_expr_to_operand(rhs_expr, indicator_table, period_defaults)?;
             if matches!(rhs, Operand::Range(_, _)) {
                 return None;
             }
@@ -435,11 +444,11 @@ fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> O
         Expr::TaCall { name, args } if name == "crossunder" => {
             let lhs_expr = args.first()?;
             let rhs_expr = args.get(1)?;
-            let lhs = map_expr_to_operand(lhs_expr, indicator_table)?;
+            let lhs = map_expr_to_operand(lhs_expr, indicator_table, period_defaults)?;
             if !matches!(lhs, Operand::Indicator(_)) {
                 return None;
             }
-            let rhs = map_expr_to_operand(rhs_expr, indicator_table)?;
+            let rhs = map_expr_to_operand(rhs_expr, indicator_table, period_defaults)?;
             if matches!(rhs, Operand::Range(_, _)) {
                 return None;
             }
@@ -449,9 +458,123 @@ fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> O
                 rhs,
             })
         }
+        Expr::Paren { inner } => map_expr_to_condition(inner, indicator_table, period_defaults),
         _ => None,
     }
 }
+/// Lower a boolean Pine expression to the one-level condition tree supported
+/// by xvision-filters. Same-operator branches are flattened. An opposite
+/// operator may contain only direct leaves, because ConditionGroup is flat.
+fn map_expr_to_condition_tree(
+    expr: &Expr,
+    indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<ConditionTree> {
+    let root_op = match expr {
+        Expr::Paren { inner } => {
+            return map_expr_to_condition_tree(inner, indicator_table, period_defaults);
+        }
+        Expr::BinOp { op, .. } if op == "and" || op == "or" => op.as_str(),
+        _ => {
+            return map_expr_to_condition(expr, indicator_table, period_defaults)
+                .map(|condition| ConditionTree::All(vec![ConditionItem::Leaf(condition)]));
+        }
+    };
+    let mut items = Vec::new();
+    collect_boolean_items(
+        expr,
+        root_op,
+        indicator_table,
+        period_defaults,
+        &mut items,
+    )?;
+    Some(if root_op == "and" {
+        ConditionTree::All(items)
+    } else {
+        ConditionTree::Any(items)
+    })
+}
+
+
+fn collect_boolean_items(
+    expr: &Expr,
+    root_op: &str,
+    indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
+    items: &mut Vec<ConditionItem>,
+) -> Option<()> {
+    if let Expr::Paren { inner } = expr {
+        return collect_boolean_items(
+            inner,
+            root_op,
+            indicator_table,
+            period_defaults,
+            items,
+        );
+    }
+    if let Expr::BinOp { op, left, right } = expr {
+        if op == root_op {
+            collect_boolean_items(left, root_op, indicator_table, period_defaults, items)?;
+            collect_boolean_items(right, root_op, indicator_table, period_defaults, items)?;
+            return Some(());
+        }
+        if (root_op == "and" && op == "or") || (root_op == "or" && op == "and") {
+            let mut leaves = Vec::new();
+            collect_direct_boolean_leaves(
+                expr,
+                op,
+                indicator_table,
+                period_defaults,
+                &mut leaves,
+            )?;
+            let group = if op == "and" {
+                xvision_filters::ConditionGroup::All(leaves)
+            } else {
+                xvision_filters::ConditionGroup::Any(leaves)
+            };
+            items.push(ConditionItem::Group(group));
+            return Some(());
+        }
+    }
+    items.push(ConditionItem::Leaf(map_expr_to_condition(
+        expr,
+        indicator_table,
+        period_defaults,
+    )?));
+    Some(())
+}
+
+fn collect_direct_boolean_leaves(
+    expr: &Expr,
+    op: &str,
+    indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
+    leaves: &mut Vec<Condition>,
+) -> Option<()> {
+    if let Expr::Paren { inner } = expr {
+        return collect_direct_boolean_leaves(
+            inner,
+            op,
+            indicator_table,
+            period_defaults,
+            leaves,
+        );
+    }
+    if let Expr::BinOp { op: child_op, left, right } = expr {
+        if child_op == op {
+            collect_direct_boolean_leaves(left, op, indicator_table, period_defaults, leaves)?;
+            collect_direct_boolean_leaves(right, op, indicator_table, period_defaults, leaves)?;
+            return Some(());
+        }
+    }
+    leaves.push(map_expr_to_condition(
+        expr,
+        indicator_table,
+        period_defaults,
+    )?);
+    Some(())
+}
+
 
 /// Map a Pine expression to an `Operand`.
 ///
@@ -460,7 +583,11 @@ fn map_expr_to_condition(expr: &Expr, indicator_table: &[IndicatorBinding]) -> O
 /// - Inline `ta.*` calls → `Operand::Indicator` if they map cleanly
 /// - Ident `close` / `open` / `high` / `low` / `volume` → `Operand::Indicator`
 /// - Anything else → `None` (complex expression, cannot reduce)
-fn map_expr_to_operand(expr: &Expr, indicator_table: &[IndicatorBinding]) -> Option<Operand> {
+fn map_expr_to_operand(
+    expr: &Expr,
+    indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<Operand> {
     match expr {
         Expr::FloatLit { value } => Some(Operand::Numeric(*value)),
         Expr::IntLit { value } => Some(Operand::Numeric(*value as f64)),
@@ -497,10 +624,12 @@ fn map_expr_to_operand(expr: &Expr, indicator_table: &[IndicatorBinding]) -> Opt
             }
         }
 
-        Expr::Paren { inner } => map_expr_to_operand(inner, indicator_table),
+        Expr::Paren { inner } => map_expr_to_operand(inner, indicator_table, period_defaults),
 
         // Inline ta.* call — try to map it directly
-        Expr::TaCall { name, args } => map_ta_call(name, args).map(Operand::Indicator),
+        Expr::TaCall { name, args } => {
+            map_ta_call(name, args, period_defaults).map(Operand::Indicator)
+        }
 
         _ => None,
     }
@@ -584,20 +713,24 @@ fn make_scaffold_manifest(title: Option<&str>) -> PublicManifest {
 fn map_stmt(
     stmt: &Statement,
     indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
     input_var_names: &std::collections::HashSet<String>,
-    filter_conditions: &mut Vec<Condition>,
+    filter_conditions: &mut Vec<ConditionItem>,
     entry_rules: &mut Vec<EntryRule>,
     close_policies: &mut Vec<ClosePolicy>,
     fuzzy_indicators: &mut Vec<BriefingIndicator>,
     unmapped: &mut Vec<UnmappedNode>,
     condition_input_refs: &mut Vec<(String, usize)>,
     exit_input_refs: &mut Vec<(String, &'static str)>,
-    guard_condition: Option<Condition>,
+    guard_condition: Option<Vec<ConditionItem>>,
 ) {
     match stmt {
         Statement::Assignment { name, value, is_var } => {
-            if let Some(cond) = map_expr_to_condition(value, indicator_table) {
-                if validate_condition_ok(&cond) {
+            if let Some(tree) =
+                map_expr_to_condition_tree(value, indicator_table, period_defaults)
+            {
+                let valid = tree_items_valid(&tree);
+                if valid {
                     let cond_idx = filter_conditions.len();
                     if let Expr::BinOp { right, .. } = value {
                         if let Expr::Ident { name: rhs_name } = right.as_ref() {
@@ -606,19 +739,35 @@ fn map_stmt(
                             }
                         }
                     }
-                    filter_conditions.push(cond);
+                    append_condition_tree(filter_conditions, tree);
                 } else {
-                    harvest_condition_as_briefing(value, indicator_table, fuzzy_indicators, unmapped);
+                    harvest_condition_as_briefing(
+                        value,
+                        indicator_table,
+                        period_defaults,
+                        fuzzy_indicators,
+                        unmapped,
+                    );
                 }
             } else if *is_var {
-                harvest_expr_as_briefing(value, indicator_table, fuzzy_indicators);
+                harvest_expr_as_briefing(
+                    value,
+                    indicator_table,
+                    period_defaults,
+                    fuzzy_indicators,
+                );
                 unmapped.push(UnmappedNode {
                     reason: "var declaration with complex expression; mapped as briefing indicator"
                         .to_string(),
                     raw: format!("var {name} = ..."),
                 });
             } else {
-                harvest_expr_as_briefing(value, indicator_table, fuzzy_indicators);
+                harvest_expr_as_briefing(
+                    value,
+                    indicator_table,
+                    period_defaults,
+                    fuzzy_indicators,
+                );
                 if expr_references_indicator(value, indicator_table) {
                     unmapped.push(UnmappedNode {
                         reason: "Assignment expression too complex to reduce to a filter condition"
@@ -630,16 +779,11 @@ fn map_stmt(
         }
 
         Statement::StrategyEntry { args } => {
-            let signal_name = extract_str_arg(args, "id", 0).unwrap_or_else(|| "entry".to_string());
+            let signal_name =
+                extract_str_arg(args, "id", 0).unwrap_or_else(|| "entry".to_string());
             let direction = extract_entry_direction(args).unwrap_or(EntryDirection::Long);
-            // If a guard condition was passed in, add it to filter_conditions now.
             if let Some(guard) = guard_condition {
-                let cond_idx = filter_conditions.len();
-                // WU3: check if guard RHS was an input-variable reference.
-                // We don't have the original expr here, so we can't detect it.
-                // The guard binding is handled upstream in the If branch.
-                let _ = cond_idx;
-                filter_conditions.push(guard);
+                filter_conditions.extend(guard);
             }
             entry_rules.push(EntryRule {
                 signal_name,
@@ -664,38 +808,26 @@ fn map_stmt(
         }
 
         Statement::If { condition, body } => {
-            // Try to map the guard expression to a filter condition.
-            let guard = map_expr_to_condition(condition, indicator_table).filter(validate_condition_ok);
-
-            // WU3: if guard RHS references an input variable, record the binding.
-            // We check the condition expression for an input-var Ident on the RHS.
-            if let Some(ref g) = guard {
-                // If there's already a valid condition we'll push it per-entry below.
-                // Pre-check for input binding on RHS of the guard expression.
-                if let Expr::BinOp { right, .. } = condition {
-                    if let Expr::Ident { name: rhs_name } = right.as_ref() {
-                        if input_var_names.contains(rhs_name) {
-                            // The guard will be pushed to filter_conditions when the
-                            // entry is mapped; record the binding at the prospective index.
-                            // (Approximate: index = current filter_conditions.len())
-                            let prospective_idx = filter_conditions.len();
-                            condition_input_refs.push((rhs_name.clone(), prospective_idx));
-                        }
-                    }
-                }
-                let _ = g;
-            }
-
+            let guard = map_expr_to_condition_tree(condition, indicator_table, period_defaults)
+                .filter(|tree| tree_items_valid(tree))
+                .map(condition_tree_items);
             if guard.is_none() {
-                // Fuzzy guard — harvest any indicators from the condition for briefing.
-                harvest_expr_as_briefing(condition, indicator_table, fuzzy_indicators);
+                harvest_expr_as_briefing(
+                    condition,
+                    indicator_table,
+                    period_defaults,
+                    fuzzy_indicators,
+                );
+                unmapped.push(UnmappedNode {
+                    reason: "Boolean guard could not be lowered to filter conditions".to_string(),
+                    raw: "if (...)".to_string(),
+                });
             }
-
-            // Process body statements.
             for body_stmt in body {
                 map_stmt(
                     body_stmt,
                     indicator_table,
+                    period_defaults,
                     input_var_names,
                     filter_conditions,
                     entry_rules,
@@ -704,12 +836,68 @@ fn map_stmt(
                     unmapped,
                     condition_input_refs,
                     exit_input_refs,
-                    guard.clone(), // pass guard to each body statement
+                    guard.clone(),
                 );
             }
         }
 
         _ => {}
+    }
+}
+
+fn append_condition_tree(items: &mut Vec<ConditionItem>, tree: ConditionTree) {
+    match tree {
+        ConditionTree::All(children) => items.extend(children),
+        ConditionTree::Any(children) => {
+            let conditions: Vec<Condition> = children
+                .into_iter()
+                .filter_map(|item| match item {
+                    ConditionItem::Leaf(condition) => Some(condition),
+                    ConditionItem::Group(_) => None,
+                })
+                .collect();
+            if !conditions.is_empty() {
+                items.push(ConditionItem::Group(xvision_filters::ConditionGroup::Any(
+                    conditions,
+                )));
+            }
+        }
+    }
+}
+
+fn condition_tree_items(tree: ConditionTree) -> Vec<ConditionItem> {
+    match tree {
+        ConditionTree::All(items) => items,
+        ConditionTree::Any(items) => {
+            let conditions: Vec<Condition> = items
+                .into_iter()
+                .filter_map(|item| match item {
+                    ConditionItem::Leaf(condition) => Some(condition),
+                    ConditionItem::Group(_) => None,
+                })
+                .collect();
+            if conditions.is_empty() {
+                Vec::new()
+            } else {
+                vec![ConditionItem::Group(xvision_filters::ConditionGroup::Any(
+                    conditions,
+                ))]
+            }
+        }
+    }
+}
+
+fn tree_items_valid(tree: &ConditionTree) -> bool {
+    match tree {
+        ConditionTree::All(items) => items.iter().all(|item| match item {
+            ConditionItem::Leaf(condition) => validate_condition_ok(condition),
+            ConditionItem::Group(group) => group.conditions().iter().all(validate_condition_ok),
+        }),
+        // Root `any` can be represented as a nested group only when all its
+        // children are leaves. Mixed `any`/`all` trees are outside v1.
+        ConditionTree::Any(items) => items
+            .iter()
+            .all(|item| matches!(item, ConditionItem::Leaf(condition) if validate_condition_ok(condition))),
     }
 }
 
@@ -720,13 +908,14 @@ fn map_stmt(
 /// also added to the indicator table.
 fn collect_indicator_bindings_from_stmt(
     stmt: &Statement,
+    period_defaults: &std::collections::HashMap<String, u32>,
     indicator_table: &mut Vec<IndicatorBinding>,
     fuzzy_indicators: &mut Vec<BriefingIndicator>,
     unmapped: &mut Vec<UnmappedNode>,
 ) {
     match stmt {
         Statement::TaAssignment { name, ta_name, args } => {
-            if let Some(ind_ref) = map_ta_call(ta_name, args) {
+            if let Some(ind_ref) = map_ta_call(ta_name, args, period_defaults) {
                 indicator_table.push(IndicatorBinding {
                     var_name: name.clone(),
                     indicator_ref: ind_ref.clone(),
@@ -739,7 +928,7 @@ fn collect_indicator_bindings_from_stmt(
                     }
                     _ => {
                         if let Some(bi_name) = ta_name_to_indicator_name_lossy(ta_name) {
-                            let period = extract_period_arg_lossy(args);
+                            let period = extract_period_arg_lossy(args, period_defaults);
                             fuzzy_indicators.push(BriefingIndicator {
                                 name: bi_name,
                                 params: period.map(|p| vec![p as f64]).unwrap_or_default(),
@@ -759,7 +948,13 @@ fn collect_indicator_bindings_from_stmt(
             // Recurse into the body so ta.* assignments inside `if` blocks
             // are also added to the indicator table.
             for body_stmt in body {
-                collect_indicator_bindings_from_stmt(body_stmt, indicator_table, fuzzy_indicators, unmapped);
+                collect_indicator_bindings_from_stmt(
+                    body_stmt,
+                    period_defaults,
+                    indicator_table,
+                    fuzzy_indicators,
+                    unmapped,
+                );
             }
         }
         Statement::Unsupported { raw, .. } => {
@@ -774,6 +969,39 @@ fn collect_indicator_bindings_from_stmt(
 
 // ── Main mapper ───────────────────────────────────────────────────────────────
 
+fn collect_input_period_defaults(script: &PineScript) -> std::collections::HashMap<String, u32> {
+    script
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            let Statement::Input {
+                name,
+                input_type,
+                args,
+            } = stmt
+            else {
+                return None;
+            };
+            if input_type != "int" {
+                return None;
+            }
+            let default_expr = args
+                .iter()
+                .find(|(key, _)| key.as_deref() == Some("defval"))
+                .map(|(_, expr)| expr)
+                .or_else(|| args.first().map(|(_, expr)| expr))?;
+            let Expr::IntLit { value } = default_expr else {
+                return None;
+            };
+            if (2..=500).contains(value) {
+                Some((name.clone(), *value as u32))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Map a parsed `PineScript` AST to a valid xvision `Strategy`.
 ///
 /// See module-level docs for the full mapping strategy. The returned
@@ -784,6 +1012,8 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
 
     // Title from the header
     let title = script.header.as_ref().and_then(|h| h.title.as_deref());
+
+    let period_defaults = collect_input_period_defaults(script);
 
     // Build a set of all declared input variable names for provenance tracking.
     let input_var_names: std::collections::HashSet<String> = script
@@ -805,6 +1035,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     for stmt in &script.statements {
         collect_indicator_bindings_from_stmt(
             stmt,
+            &period_defaults,
             &mut indicator_table,
             &mut fuzzy_indicators,
             &mut unmapped,
@@ -812,7 +1043,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     }
 
     // ── Pass 2: collect conditions from assignments and strategy calls ─────
-    let mut filter_conditions: Vec<Condition> = Vec::new();
+    let mut filter_conditions: Vec<ConditionItem> = Vec::new();
     let mut entry_rules: Vec<EntryRule> = Vec::new();
     let mut close_policies: Vec<ClosePolicy> = Vec::new();
 
@@ -830,6 +1061,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
         map_stmt(
             stmt,
             &indicator_table,
+            &period_defaults,
             &input_var_names,
             &mut filter_conditions,
             &mut entry_rules,
@@ -894,7 +1126,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
             asset_scope: vec![Symbol::new("BTC/USD")],
             timeframe: Timeframe::new("1h"),
             scan_cadence: ScanCadence::BarClose,
-            conditions: ConditionTree::All(filter_conditions.into_iter().map(ConditionItem::Leaf).collect()),
+            conditions: ConditionTree::All(filter_conditions),
             fire: None,
             cooldown_bars: 0,
             max_wakeups_per_day: None,
@@ -1193,8 +1425,12 @@ fn ta_name_to_indicator_name_lossy(ta_name: &str) -> Option<IndicatorName> {
 }
 
 /// Lossy period extraction — tries position 0 then 1, falls back to None.
-fn extract_period_arg_lossy(args: &[Expr]) -> Option<u32> {
-    extract_period_arg(args, 1).or_else(|| extract_period_arg(args, 0))
+fn extract_period_arg_lossy(
+    args: &[Expr],
+    period_defaults: &std::collections::HashMap<String, u32>,
+) -> Option<u32> {
+    extract_period_arg(args, 1, period_defaults)
+        .or_else(|| extract_period_arg(args, 0, period_defaults))
 }
 
 /// Check whether a `Condition` is valid for the filter validator without
@@ -1239,6 +1475,7 @@ fn validate_condition_ok(cond: &Condition) -> bool {
 fn harvest_expr_as_briefing(
     expr: &Expr,
     indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
     briefing: &mut Vec<BriefingIndicator>,
 ) {
     match expr {
@@ -1255,7 +1492,7 @@ fn harvest_expr_as_briefing(
             }
         }
         Expr::TaCall { name, args } => {
-            if let Some(ind_ref) = map_ta_call(name, args) {
+            if let Some(ind_ref) = map_ta_call(name, args, period_defaults) {
                 let token = format!("ta.{name}");
                 let already = briefing.iter().any(|bi| bi.source_token == token);
                 if !already {
@@ -1266,7 +1503,7 @@ fn harvest_expr_as_briefing(
                     });
                 }
             } else if let Some(ind_name) = ta_name_to_indicator_name_lossy(name) {
-                let period = extract_period_arg_lossy(args);
+                let period = extract_period_arg_lossy(args, period_defaults);
                 let token = format!("ta.{name}");
                 let already = briefing.iter().any(|bi| bi.source_token == token);
                 if !already {
@@ -1279,16 +1516,20 @@ fn harvest_expr_as_briefing(
             }
         }
         Expr::BinOp { left, right, .. } => {
-            harvest_expr_as_briefing(left, indicator_table, briefing);
-            harvest_expr_as_briefing(right, indicator_table, briefing);
+            harvest_expr_as_briefing(left, indicator_table, period_defaults, briefing);
+            harvest_expr_as_briefing(right, indicator_table, period_defaults, briefing);
         }
         Expr::Ternary { cond, then_, else_ } => {
-            harvest_expr_as_briefing(cond, indicator_table, briefing);
-            harvest_expr_as_briefing(then_, indicator_table, briefing);
-            harvest_expr_as_briefing(else_, indicator_table, briefing);
+            harvest_expr_as_briefing(cond, indicator_table, period_defaults, briefing);
+            harvest_expr_as_briefing(then_, indicator_table, period_defaults, briefing);
+            harvest_expr_as_briefing(else_, indicator_table, period_defaults, briefing);
         }
-        Expr::Paren { inner } => harvest_expr_as_briefing(inner, indicator_table, briefing),
-        Expr::Not { expr } => harvest_expr_as_briefing(expr, indicator_table, briefing),
+        Expr::Paren { inner } => {
+            harvest_expr_as_briefing(inner, indicator_table, period_defaults, briefing)
+        }
+        Expr::Not { expr } => {
+            harvest_expr_as_briefing(expr, indicator_table, period_defaults, briefing)
+        }
         _ => {}
     }
 }
@@ -1297,12 +1538,14 @@ fn harvest_expr_as_briefing(
 fn harvest_condition_as_briefing(
     expr: &Expr,
     indicator_table: &[IndicatorBinding],
+    period_defaults: &std::collections::HashMap<String, u32>,
     briefing: &mut Vec<BriefingIndicator>,
     unmapped: &mut Vec<UnmappedNode>,
 ) {
-    harvest_expr_as_briefing(expr, indicator_table, briefing);
+    harvest_expr_as_briefing(expr, indicator_table, period_defaults, briefing);
     unmapped.push(UnmappedNode {
-        reason: "Condition expression failed filter validation; harvested as briefing indicator".to_string(),
+        reason: "Condition expression failed filter validation; harvested as briefing indicator"
+            .to_string(),
         raw: "condition expr".to_string(),
     });
 }
@@ -1342,7 +1585,7 @@ mod tests {
             },
             Expr::IntLit { value: 20 },
         ];
-        let result = map_ta_call("sma", &args);
+        let result = map_ta_call("sma", &args, &std::collections::HashMap::new());
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.name, IndicatorName::Sma);
@@ -1357,20 +1600,24 @@ mod tests {
             },
             Expr::IntLit { value: 14 },
         ];
-        let result = map_ta_call("rsi", &args);
+        let result = map_ta_call("rsi", &args, &std::collections::HashMap::new());
         assert_eq!(result.unwrap().name, IndicatorName::Rsi);
     }
 
     #[test]
     fn map_ta_call_unknown_returns_none() {
-        let result = map_ta_call("some_custom_func", &[]);
+        let result = map_ta_call(
+            "some_custom_func",
+            &[],
+            &std::collections::HashMap::new(),
+        );
         assert!(result.is_none());
     }
 
     #[test]
     fn map_ta_call_crossover_returns_none() {
         // crossover is handled as a condition operator, not an indicator value.
-        let result = map_ta_call("crossover", &[]);
+        let result = map_ta_call("crossover", &[], &std::collections::HashMap::new());
         assert!(result.is_none());
     }
 

@@ -513,13 +513,12 @@ enum StrategyAction {
     /// summary (captured / approximated / dropped counts + items + the cost model
     /// reference).
     ///
-    /// Anything outside the supported Pine v5 subset is recorded in the fidelity
-    /// report as "approximated" or "dropped" — the strategy is always a valid
-    /// starting point for the autooptimizer even when some constructs are lost.
+    /// Unsupported constructs are recorded in the fidelity report. Imports
+    /// whose source predicates collapse to the bare scaffold fail unless
+    /// `--allow-degenerate` is supplied.
     ///
-    /// Exits non-zero with a structured error when the file cannot be parsed at
-    /// all (structural syntax error). Unsupported constructs are recorded in the
-    /// fidelity report, not rejected.
+    /// Exits non-zero with a structured error when the file cannot be parsed
+    /// or when the import is degenerate without the explicit override.
     #[command(name = "import-pine")]
     ImportPine {
         /// Path to a Pine Script v5 file (`.pine`).
@@ -528,6 +527,9 @@ enum StrategyAction {
         /// If omitted, the name is taken from the `strategy("...")` header.
         #[arg(long)]
         name: Option<String>,
+        /// Persist a strategy even when predicates collapsed to the scaffold.
+        #[arg(long)]
+        allow_degenerate: bool,
     },
     /// Scan the on-disk strategy directory for bundles missing from the search
     /// index and backfill them. One-shot fix for existing index divergence.
@@ -739,9 +741,13 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             json,
         } => leaderboard(&sort, top, since_days, json).await,
         StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
+        StrategyAction::ImportPine {
+            file,
+            name,
+            allow_degenerate,
+        } => import_pine_cmd(&file, name.as_deref(), allow_degenerate).await,
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
-        StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
         StrategyAction::SetRisk {
             id,
             max_drawdown_usd,
@@ -835,14 +841,13 @@ async fn reindex() -> CliResult<()> {
 
 /// Handler for `xvn strategy import-pine <file> [--name <name>]`.
 ///
-/// 1. Reads the Pine Script source from `file`.
-/// 2. Calls `import_pine` (the WU1–WU4 engine entry-point).
-/// 3. On `Ok`: applies optional `name` override, persists the strategy via the
-///    same `FilesystemStore` as the other strategy commands, then prints a
-///    human-readable fidelity summary to stdout.
-/// 4. On `Err(PineImportError)`: prints the structured error to stderr and
-///    returns a non-zero exit code (`Usage` for parse errors).
-async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResult<()> {
+/// Reads the source, imports it, rejects a degenerate predicate mapping unless
+/// explicitly overridden, persists the strategy, and prints its fidelity report.
+async fn import_pine_cmd(
+    file: &PathBuf,
+    name_override: Option<&str>,
+    allow_degenerate: bool,
+) -> CliResult<()> {
     use xvision_engine::strategies::pine_import::{import_pine, PineImportError};
 
     // 1. Read source file.
@@ -861,6 +866,20 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
             return Err(CliError::usage(anyhow::anyhow!("Nothing mappable: {msg}")));
         }
     };
+    if outcome.fidelity.is_degenerate() && !allow_degenerate {
+        eprintln!(
+            "error: Pine import is degenerate: source predicates did not map to filter \
+             conditions; refusing to persist. Re-run with --allow-degenerate to persist \
+             the scaffold."
+        );
+        eprintln!("dropped items:");
+        for item in &outcome.fidelity.dropped {
+            eprintln!("  - {} — {}", item.item, item.reason);
+        }
+        return Err(CliError::usage(anyhow::anyhow!(
+            "degenerate Pine import; use --allow-degenerate to persist"
+        )));
+    }
 
     // 3. Apply optional name override.
     if let Some(name) = name_override {
@@ -900,6 +919,7 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
         "  commission: {} bps ({}) — {}",
         cm.commission_value_bps, cm.commission_type, "taker"
     );
+    println!("  profile:    {}", cm.profile_name);
     println!(
         "  slippage:   {} bps ({})",
         cm.slippage_value_bps, cm.slippage_model

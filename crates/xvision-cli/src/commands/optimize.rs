@@ -133,6 +133,8 @@ enum OptimizeAction {
     /// Run the optimizer (default action; --strategy is optional). One cycle by
     /// default; --max-cycles N for N, --max-cycles 0 to run until stopped.
     Run(RunCycleArgs),
+    /// Enumerate the strategy's full tunable-bound Cartesian grid.
+    Grid(GridArgs),
     /// List recent optimizer cycles from the lineage store.
     Ls(LsArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
@@ -322,6 +324,19 @@ struct LineageRow {
     gate_verdict: String,
 }
 
+#[derive(Args, Debug)]
+pub struct GridArgs {
+    /// Strategy manifest id to search.
+    #[arg(long)]
+    pub strategy: String,
+    /// Hard maximum number of combinations. Searches never truncate.
+    #[arg(long, default_value_t = xvision_engine::autooptimizer::DEFAULT_MAX_COMBINATIONS)]
+    pub max_combos: usize,
+    /// Emit combinations as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
 // ── Cycle args (pub so autooptimizer.rs can delegate) ────────────────────────
 
 #[derive(Args, Debug, Default)]
@@ -476,10 +491,7 @@ pub struct RunCycleArgs {
     pub max_consecutive_zero_keep: Option<u32>,
     /// WS-11c: directory to auto-write a cycle document into when each cycle of
     /// this run completes. Each completed cycle is exported as
-    /// `<DIR>/<cycle_id>.md` — the same high-fidelity, agent-feedable artifact
-    /// `xvn optimize export` produces — so a CLI-driven cycle leaves a feedback
-    /// document behind without a second command. Use `optimize export <cycle_id>`
-    /// to re-export any past cycle on demand.
+    /// `<DIR>/<cycle_id>.md`.
     #[arg(long, value_name = "DIR")]
     pub export: Option<PathBuf>,
 }
@@ -488,9 +500,9 @@ pub struct RunCycleArgs {
 
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
-        // `xvn optimize` with NO subcommand runs the optimizer (default action).
         None => run_cycle_cmd(RunCycleArgs::default()).await,
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
+        Some(OptimizeAction::Grid(args)) => run_grid_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
         Some(OptimizeAction::Inspect(args)) => run_show(args).await,
@@ -505,6 +517,31 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Unlock(args)) => run_unlock(args).await,
         Some(OptimizeAction::ExplainMissingData(args)) => run_explain_missing_data(args).await,
     }
+}
+
+pub async fn run_grid_cmd(args: GridArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    let store = FilesystemStore::new(strategy_store_dir(&xvn_home));
+    let strategy = store
+        .load(&args.strategy)
+        .await
+        .map_err(|e| CliError::not_found(anyhow::anyhow!("load strategy {}: {e}", args.strategy)))?;
+    let combinations = xvision_engine::autooptimizer::enumerate_combinations(
+        &strategy.tunable_bounds,
+        Some(args.max_combos),
+    )
+    .map_err(|e| CliError::usage(anyhow::anyhow!("grid search: {e}")))?;
+    if args.json {
+        print_json(&combinations)?;
+    } else {
+        println!("strategy: {}", args.strategy);
+        println!("combinations: {}", combinations.len());
+        for (idx, combination) in combinations.iter().enumerate() {
+            println!("{idx}: {}", serde_json::to_string(&combination.values).unwrap_or_default());
+        }
+    }
+    Ok(())
 }
 
 fn cycle_meter_delta(previous: CycleMeter, current: CycleMeter) -> CycleMeter {

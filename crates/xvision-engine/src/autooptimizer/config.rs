@@ -194,9 +194,8 @@ pub struct AutoOptimizerConfig {
     #[serde(default = "default_gepa_generations")]
     pub gepa_generations: usize,
 
-    /// Reserved opt-in for a GEPA scorer that uses benchmark backtests after the
-    /// cheap LLM cull. Validation rejects `true` until a production benchmark
-    /// evaluator is wired, so enabling this flag cannot fail mid-cycle.
+    /// Opt-in GEPA scorer that uses benchmark backtests after the cheap LLM
+    /// cull. Defaults off so existing DSPy compiles retain current behaviour.
     #[serde(default)]
     pub gepa_real_eval: bool,
 
@@ -205,9 +204,8 @@ pub struct AutoOptimizerConfig {
     #[serde(default = "default_gepa_real_eval_min_llm_score")]
     pub gepa_real_eval_min_llm_score: f64,
 
-    /// Fixed benchmark windows for the reserved GEPA real-eval scorer. The pool
-    /// is structurally validated even while `gepa_real_eval=false` so invalid
-    /// benchmark definitions fail during config preflight, not during scoring.
+    /// Fixed benchmark windows for the GEPA real-eval scorer. The pool must be
+    /// non-empty when `gepa_real_eval` is enabled.
     #[serde(default)]
     pub gepa_benchmark_pool: Vec<GepaBenchmarkWindow>,
 
@@ -928,12 +926,12 @@ impl AutoOptimizerConfig {
                 self.gepa_real_eval_min_llm_score
             );
         }
-        if self.gepa_real_eval {
+        if self.gepa_real_eval && self.gepa_benchmark_pool.is_empty() {
             bail!(
-                "gepa_real_eval=true is not available until a production benchmark evaluator is wired; \
-                 set gepa_real_eval=false to use the LLM scorer"
+                "gepa_benchmark_pool must contain at least one benchmark when gepa_real_eval=true"
             );
         }
+
         validate_gepa_benchmark_pool(&self.gepa_benchmark_pool, self.effective_max_window_days())?;
         if self.mutator.model.is_empty() {
             bail!("mutator model must not be empty");
@@ -1029,16 +1027,13 @@ mod tests {
     }
 
     #[test]
-    fn gepa_real_eval_is_rejected_until_production_evaluator_exists() {
+    fn gepa_real_eval_requires_benchmark_pool_when_enabled() {
         let mut cfg = AutoOptimizerConfig::default();
         cfg.gepa_real_eval = true;
         let err = cfg.validate().unwrap_err();
-        let msg = err.to_string();
         assert!(
-            msg.contains("gepa_real_eval=true")
-                && msg.contains("production benchmark evaluator")
-                && msg.contains("gepa_real_eval=false"),
-            "real eval must fail validation before constructing an unusable scorer; got: {msg}"
+            err.to_string().contains("gepa_benchmark_pool"),
+            "real eval without benchmarks must name gepa_benchmark_pool; got: {err}"
         );
     }
 

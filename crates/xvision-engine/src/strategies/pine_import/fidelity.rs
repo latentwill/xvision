@@ -48,77 +48,53 @@ impl FidelityItem {
 /// TradingView's numbers. Its purpose is to help users anticipate why their
 /// backtest P&L will differ from the TradingView Strategy Tester output.
 ///
-/// The values are sourced from xvision's DEFAULT `VenueSettings` (defined in
-/// `crates/xvision-engine/src/eval/scenario.rs`, `VenueSettings::default()`).
-/// When an import has no associated `Scenario` yet, these defaults are what
-/// the engine will apply.
+/// The values match the canonical `offline-reference` scenario default:
+/// 25 bps taker fee, 5 bps linear slippage per side, and next-bar-open fills.
 ///
 /// # TradingView ↔ xvision vocabulary mapping
 ///
 /// | TradingView Strategy Tester field | xvision internal name           | Default value         |
 /// |-----------------------------------|---------------------------------|-----------------------|
-/// | Commission (%)                    | `fees.taker_bps`                | 10 bps (0.10%)        |
+/// | Commission (%)                    | `fees.taker_bps`                | 25 bps (0.25%)        |
 /// | Commission type: "Percent of order value" | `commission_type`      | "Percent of order value" |
-/// | Slippage (ticks)                  | `SlippageModel::Linear { bps }` | 2 bps linear          |
+/// | Slippage (ticks)                  | `SlippageModel::Linear { bps }` | 5 bps linear          |
 /// | Fill orders on bar: "Open"        | `MarketOrderFill::NextBarOpen`  | "Next bar open"       |
 /// | Initial capital                   | `Capital.initial`               | per scenario          |
 /// | Order size                        | `RiskConfig`                    | per strategy          |
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CostModelReference {
+    /// Named scenario cost profile used for imported Pine backtests.
+    pub profile_name: String,
     /// TradingView calls this "Commission type".
     /// xvision applies fees as basis points of order notional value.
     /// TV equivalent: "Percent of order value".
     pub commission_type: String,
 
     /// Commission rate in basis points (1 bps = 0.01%).
-    /// Sourced from `VenueSettings::default().fees.taker_bps`.
-    /// TV equivalent: the "Commission (%)" field — divide by 100 to get percent.
     pub commission_value_bps: f64,
-
     /// xvision slippage model name.
-    /// Sourced from `VenueSettings::default().slippage`.
-    /// TV equivalent: "Slippage (ticks)".
     pub slippage_model: String,
-
     /// Slippage magnitude in basis points.
-    /// For `SlippageModel::Linear { bps }` this is the flat bps value.
-    /// Sourced from `VenueSettings::default().slippage` (Linear { bps: 2 }).
     pub slippage_value_bps: f64,
-
     /// When orders are filled relative to the decision bar.
-    /// Sourced from `VenueSettings::default().fill_model.market_order_fill`
-    /// (`MarketOrderFill::NextBarOpen`).
-    /// TV equivalent: "Fill orders on bar: Open" (next bar's open price).
     pub fill_timing: String,
-
-    /// Plain-language note explaining why xvision's P&L will differ from
-    /// TradingView's Strategy Tester output, and how to configure the scenario
-    /// to narrow the gap.
+    /// Plain-language note explaining the profile and how to select it.
     pub note: String,
 }
 
 impl Default for CostModelReference {
-    /// Construct a `CostModelReference` from xvision's DEFAULT `VenueSettings`.
-    ///
-    /// Default values sourced from
-    /// `crates/xvision-engine/src/eval/scenario.rs` — `VenueSettings::default()`:
-    ///   - `fees.maker_bps = 0`, `fees.taker_bps = 10`  (line ~515)
-    ///   - `slippage = SlippageModel::Linear { bps: 2 }` (line ~519)
-    ///   - `fill_model.market_order_fill = NextBarOpen`   (line ~522)
-    ///   - `latency.decision_to_fill_ms = 500`            (line ~521)
     fn default() -> Self {
         CostModelReference {
+            profile_name: "offline-reference".to_string(),
             commission_type: "Percent of order value".to_string(),
-            commission_value_bps: 10.0, // VenueSettings::default().fees.taker_bps = 10
+            commission_value_bps: 25.0,
             slippage_model: "Linear (flat basis points)".to_string(),
-            slippage_value_bps: 2.0, // VenueSettings::default().slippage = Linear { bps: 2 }
-            fill_timing: "Next bar open".to_string(), // MarketOrderFill::NextBarOpen
-            note: "These are xvision's DEFAULT backtest cost assumptions (configurable per \
-                   scenario). Commission = 10 bps taker (0.10%), slippage = 2 bps flat, \
-                   fills at next-bar open. TradingView Strategy Tester defaults differ \
-                   (commission 0%, slippage 1–2 ticks, intrabar fills) — expect P&L \
-                   divergence. Configure the scenario's VenueSettings to align with \
-                   the source's TradingView settings."
+            slippage_value_bps: 5.0,
+            fill_timing: "Next bar open".to_string(),
+            note: "The scenario default is named 'offline-reference': 25 bps taker fee \
+                   plus 5 bps slippage per side (30 bps per side total), with \
+                   next-bar-open fills. Select the scenario default to reproduce this \
+                   offline reference."
                 .to_string(),
         }
     }
@@ -147,9 +123,25 @@ pub struct FidelityReport {
     /// deserializes successfully.
     #[serde(default)]
     pub cost_model: CostModelReference,
+    /// Number of condition-bearing expressions present in the Pine source.
+    #[serde(default)]
+    pub source_condition_count: usize,
+    /// Number of filter predicate leaves emitted by the mapper.
+    #[serde(default)]
+    pub mapped_condition_count: usize,
+    /// True when the mapper emitted only the bare Long/Short scaffold rules.
+    #[serde(default)]
+    pub bare_entry_rules: bool,
 }
 
 impl FidelityReport {
+    /// Return `true` when import lost all source predicates or emitted only
+    /// the unfiltered Long/Short scaffold.
+    pub fn is_degenerate(&self) -> bool {
+        (self.source_condition_count > 0 && self.mapped_condition_count == 0)
+            || (self.bare_entry_rules && self.mapped_condition_count == 0)
+    }
+
     /// Return `true` when no items were lost (all captured or approximated).
     pub fn is_lossless(&self) -> bool {
         self.dropped.is_empty()
@@ -370,9 +362,7 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
                 .to_string(),
         ));
     }
-
     // ── Dropped: request.security / HTF references ────────────────────────────
-
     if script_has_htf(script) {
         dropped.push(FidelityItem::new(
             "request.security".to_string(),
@@ -382,20 +372,44 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
         ));
     }
 
-    // ── WU10: cost model reference ────────────────────────────────────────────
-    //
-    // Surface xvision's DEFAULT backtest cost assumptions in TV-aligned
-    // vocabulary. Since import has no Scenario yet, we always use the default
-    // model values sourced from `VenueSettings::default()` in
-    // `crates/xvision-engine/src/eval/scenario.rs`.
+
     let cost_model = CostModelReference::default();
+    let mapped_condition_count = strategy
+        .filter
+        .as_ref()
+        .map(|filter| count_conditions(&filter.conditions))
+        .unwrap_or(0);
+    let bare_entry_rules = strategy
+        .mechanistic_config
+        .as_ref()
+        .map(|cfg| {
+            cfg.entry_rules.len() == 2
+                && cfg
+                    .entry_rules
+                    .iter()
+                    .any(|rule| rule.direction == crate::strategies::mechanistic::EntryDirection::Long)
+                && cfg
+                    .entry_rules
+                    .iter()
+                    .any(|rule| rule.direction == crate::strategies::mechanistic::EntryDirection::Short)
+        })
+        .unwrap_or(false);
+    let source_condition_count = script
+        .statements
+        .iter()
+        .map(statement_condition_count)
+        .sum();
 
     FidelityReport {
         captured,
         approximated,
         dropped,
         cost_model,
+        source_condition_count,
+        mapped_condition_count,
+        bare_entry_rules,
     }
+
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -416,6 +430,36 @@ fn count_conditions(tree: &xvision_filters::ConditionTree) -> usize {
         }
     }
 }
+fn statement_condition_count(stmt: &Statement) -> usize {
+    match stmt {
+        Statement::Assignment { value, .. } => usize::from(expr_is_condition_bearing(value)),
+        Statement::If { condition, body } => {
+            usize::from(expr_is_condition_bearing(condition))
+                + body.iter().map(statement_condition_count).sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+fn expr_is_condition_bearing(expr: &Expr) -> bool {
+    match expr {
+        Expr::BinOp { op, left, right } => {
+            matches!(op.as_str(), ">" | "<" | ">=" | "<=" | "==" | "and" | "or")
+                || expr_is_condition_bearing(left)
+                || expr_is_condition_bearing(right)
+        }
+        Expr::TaCall { name, .. } => matches!(name.as_str(), "crossover" | "crossunder"),
+        Expr::Paren { inner } => expr_is_condition_bearing(inner),
+        Expr::Not { expr } => expr_is_condition_bearing(expr),
+        Expr::Ternary { cond, then_, else_ } => {
+            expr_is_condition_bearing(cond)
+                || expr_is_condition_bearing(then_)
+                || expr_is_condition_bearing(else_)
+        }
+        _ => false,
+    }
+}
+
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
@@ -511,6 +555,9 @@ if close > 100.0
             )],
             dropped: vec![FidelityItem::new("pyramiding", "dropped: pyramiding")],
             cost_model: CostModelReference::default(),
+            source_condition_count: 0,
+            mapped_condition_count: 0,
+            bare_entry_rules: false,
         };
         let json = serde_json::to_string_pretty(&report).expect("must serialize");
         let report2: FidelityReport = serde_json::from_str(&json).expect("must deserialize");
@@ -556,6 +603,9 @@ result = my_rsi < 30
             approximated: vec![],
             dropped: vec![],
             cost_model: CostModelReference::default(),
+            source_condition_count: 0,
+            mapped_condition_count: 0,
+            bare_entry_rules: false,
         };
         assert!(report.is_lossless());
     }
@@ -567,6 +617,9 @@ result = my_rsi < 30
             approximated: vec![],
             dropped: vec![FidelityItem::new("pyramiding", "dropped")],
             cost_model: CostModelReference::default(),
+            source_condition_count: 0,
+            mapped_condition_count: 0,
+            bare_entry_rules: false,
         };
         assert!(!report.is_lossless());
     }

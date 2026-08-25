@@ -61,6 +61,24 @@ pub(crate) struct TraderOutput {
 fn default_conviction() -> f64 {
     0.5
 }
+/// Convert an unambiguously fractional percentage emission to engine units.
+fn normalize_percent_fraction(field: &'static str, value: f32) -> f32 {
+    // Below the schema's 0.1% floor, a positive value is unambiguously a fraction.
+    if value > 0.0 && value < 0.1 {
+        let normalized = value * 100.0;
+        tracing::debug!(
+            target: "xvision::eval",
+            field,
+            original = value,
+            applied = normalized,
+            "trader_output_percent_normalized"
+        );
+        normalized
+    } else {
+        value
+    }
+}
+
 /// Outcome of mapping a raw trader `action` string onto the canonical
 /// vocabulary (`long_open` / `short_open` / `flat` / `hold`).
 enum ActionCoercion {
@@ -460,6 +478,14 @@ impl TraderOutput {
                     }
                     if parsed.take_profit_pct == Some(0.0) {
                         parsed.take_profit_pct = None;
+                    }
+                    if let Some(sl) = parsed.stop_loss_pct {
+                        parsed.stop_loss_pct =
+                            Some(normalize_percent_fraction("stop_loss_pct", sl));
+                    }
+                    if let Some(tp) = parsed.take_profit_pct {
+                        parsed.take_profit_pct =
+                            Some(normalize_percent_fraction("take_profit_pct", tp));
                     }
                     parsed.validate(run_id, decision_index, response, raw)?;
                     return Ok(parsed);
@@ -972,31 +998,44 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_out_of_range_stop_loss_pct_still_rejected() {
-        // The degenerate-bracket guard still rejects a genuinely invalid
-        // nonzero stop (e.g. 0.05% — below the 0.1 floor): only an exact 0
-        // means "no model stop". This keeps a churny micro-stop from slipping
-        // through while letting the "no stop" intent validate first-try.
+    fn percent_fractions_normalize_before_range_validation() {
+        for (raw, expected) in [
+            (0.017_f32, 1.7_f32),
+            (0.05_f32, 5.0_f32),
+            (0.5_f32, 0.5_f32),
+            (1.7_f32, 1.7_f32),
+        ] {
+            let json = format!(
+                r#"{{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":{raw}}}"#
+            );
+            let parsed = TraderOutput::parse_strict(&json, "01TEST", 0)
+                .expect("fractional and percent stop-loss values should parse");
+            let actual = parsed.stop_loss_pct.expect("stop-loss value");
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "expected stop-loss {expected}, got {actual}"
+            );
+        }
+
         let err = TraderOutput::parse_strict(
-            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.05}"#,
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":25.0}"#,
             "01TEST",
             0,
         )
-        .expect_err("nonzero out-of-range stop_loss_pct must still be rejected");
+        .expect_err("stop_loss_pct above 20 must be rejected");
         assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert!(err.to_string().contains("stop_loss_pct must be between"));
     }
 
     #[test]
-    fn nonzero_out_of_range_take_profit_pct_still_rejected() {
-        let err = TraderOutput::parse_strict(
+    fn fractional_take_profit_pct_normalizes_before_validation() {
+        let parsed = TraderOutput::parse_strict(
             r#"{"action":"long_open","conviction":0.7,"justification":"breakout","take_profit_pct":0.05}"#,
             "01TEST",
             0,
         )
-        .expect_err("nonzero out-of-range take_profit_pct must still be rejected");
-        assert_eq!(err.kind, TraderFailureKind::InvalidField);
-        assert!(err.to_string().contains("take_profit_pct must be between"));
+        .expect("fractional take-profit value should parse");
+        assert!((parsed.take_profit_pct.expect("take-profit value") - 5.0).abs() < 1e-5);
     }
 
     #[test]

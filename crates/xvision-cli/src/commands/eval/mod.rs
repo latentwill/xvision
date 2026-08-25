@@ -36,6 +36,7 @@ use xvision_engine::eval::report::{aggregate_run_token_totals, compute_run_repor
 use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, TimeWindow};
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::determinism::read_receipt;
 use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -959,6 +960,13 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
 
     println!();
     print_run_health_card(&run, None);
+    if let Ok(Some(receipt)) = read_receipt(&ctx.db, &run.id).await {
+        let prefix: String = receipt.receipt_hash.chars().take(8).collect();
+        println!(
+            "reproduce: xvn eval run --strategy {} --scenario {} (receipt {}, manifest recorded)",
+            run.agent_id, run.scenario_id, prefix
+        );
+    }
     Ok(())
 }
 

@@ -987,6 +987,10 @@ pub(super) async fn load_strategy_parent(
                 cycle_id: None,
                 created_at: Utc::now(),
                 diversity_score: None,
+                mutation_diff_json: None,
+                seed: None,
+                data_window_json: None,
+                objective: None,
             };
             lineage
                 .insert(&root_node)

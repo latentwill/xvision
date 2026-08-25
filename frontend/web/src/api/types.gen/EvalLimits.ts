@@ -16,16 +16,16 @@ max_decisions: number | null,
 /**
  * Max cumulative input tokens across all model calls in the run.
  */
-max_input_tokens?: number, 
+max_input_tokens: number, 
 /**
  * Max cumulative output tokens across all model calls in the run.
  */
-max_output_tokens?: number, 
+max_output_tokens: number, 
 /**
  * Max wall-clock seconds the run may take from start to terminal.
  * Serialized as seconds for wire stability across language clients.
  */
-max_wall_clock_secs?: number, 
+max_wall_clock_secs: number, 
 /**
  * When `true`, an `max_input_tokens` breach lands the run as
  * `Cancelled`; when `false`, that input-token breach is logged but
