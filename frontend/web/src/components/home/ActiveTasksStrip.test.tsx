@@ -351,7 +351,7 @@ describe("ActiveTasksStrip", () => {
 
     const group = await screen.findByTestId("live-deployments-group");
     // The group is a distinct, labeled section — not folded into the eval queue.
-    expect(group.textContent).toMatch(/live\s*&\s*paper/i);
+    expect(group.textContent).toMatch(/forward test.*paper/i);
     expect(screen.getByTestId("deployment-row-d1")).toBeInTheDocument();
     expect(screen.getByTestId("deployment-row-d2")).toBeInTheDocument();
     expect(screen.getByText("Momentum")).toBeInTheDocument();
@@ -580,7 +580,7 @@ describe("ActiveTasksStrip", () => {
     expect(row.textContent).toMatch(/unknown strategy/i);
   });
 
-  it("deployment row links to the live run inspector", async () => {
+  it("deployment row links to the forward-test run inspector", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     setStatus(null);
 
@@ -590,7 +590,7 @@ describe("ActiveTasksStrip", () => {
 
     await screen.findByTestId("deployment-row-dep-9");
     const link = screen.getByRole("link", { name: /linkme/i });
-    expect(link).toHaveAttribute("href", "/live/runs/dep-9");
+    expect(link).toHaveAttribute("href", "/fwd/runs/dep-9");
   });
 
   it("keeps the eval queue rows alongside the live group", async () => {

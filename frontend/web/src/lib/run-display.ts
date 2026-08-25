@@ -59,7 +59,7 @@ export function displayScenarioName(
   mode?: string,
   stopPolicy?: StopPolicy,
 ): string {
-  if (mode === 'live') {
+  if (mode === "fwd") {
     const parts: string[] = [];
     if (stopPolicy?.time_limit_secs) {
       const hours = Math.round(Number(stopPolicy.time_limit_secs) / 3600);
@@ -68,7 +68,7 @@ export function displayScenarioName(
     if (stopPolicy?.bar_limit) parts.push(`${stopPolicy.bar_limit} bars`);
     if (stopPolicy?.decision_limit) parts.push(`${stopPolicy.decision_limit} decisions`);
     if (stopPolicy?.trade_limit) parts.push(`${stopPolicy.trade_limit} trades`);
-    return parts.length > 0 ? `Forward Test · ${parts.join(' · ')}` : 'Forward Test';
+    return parts.length > 0 ? `Forward Test · ${parts.join(" · ")}` : "Forward Test";
   }
   const found = scenarios.find((s) => s.id === id);
   return found?.display_name?.trim() || fallbackName("Scenario", id);

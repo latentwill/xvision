@@ -49,7 +49,17 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
 function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   return mkRun({
     is_live_money: true,
-    eval_mode: "live",
+    eval_mode: "fwd",
+    eval_run_status: "running",
+    ...over,
+  });
+}
+
+/** Normal forward-test paper/testnet run: parent mode is fwd but no real-money signal. */
+function mkForwardTestRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
+  return mkRun({
+    is_live_money: false,
+    eval_mode: "fwd",
     eval_run_status: "running",
     ...over,
   });
@@ -87,7 +97,7 @@ describe("deriveStripStatus", () => {
           mkRun({
             status: "running",
             is_live_money: false,
-            eval_mode: "live",
+            eval_mode: "fwd",
             eval_run_status: parent,
           }),
         ),
@@ -163,7 +173,7 @@ describe("classifyRunLiveness", () => {
   test("orphaned running child of a terminal eval run -> stale", () => {
     expect(
       classifyRunLiveness(
-        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+        mkRun({ status: "running", eval_mode: "fwd", eval_run_status: "failed" }),
       ),
     ).toBe("stale");
   });
@@ -181,7 +191,7 @@ describe("livenessCounts", () => {
       mkRun({
         run_id: "stale",
         status: "running",
-        eval_mode: "live",
+        eval_mode: "fwd",
         eval_run_status: "failed",
       }),
       mkLiveRun({ run_id: "done", status: "completed" }),
@@ -205,12 +215,12 @@ describe("livenessCounts", () => {
 });
 
 describe("isLiveLineage", () => {
-  test("live-deployment run (eval_mode=live) qualifies in any state", () => {
+  test("forward-test deployment run (eval_mode=fwd) qualifies in any state", () => {
     expect(isLiveLineage(mkLiveRun({ status: "running" }))).toBe(true);
     expect(isLiveLineage(mkLiveRun({ status: "completed" }))).toBe(true);
     expect(
       isLiveLineage(
-        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+        mkRun({ status: "running", eval_mode: "fwd", eval_run_status: "failed" }),
       ),
     ).toBe(true); // stale orphan of a live run still belongs on the live page
   });
@@ -397,6 +407,12 @@ describe("strip filter chips (stripFilterBucket / filterRunsForStrip / stripFilt
   test("live + paused -> PAUSED bucket", () => {
     expect(stripFilterBucket(mkLiveRun({ paused: true }))).toBe("PAUSED");
   });
+  test("forward-test paper/testnet + not paused -> LIVE bucket", () => {
+    expect(stripFilterBucket(mkForwardTestRun())).toBe("LIVE");
+  });
+  test("forward-test paper/testnet + paused -> PAUSED bucket", () => {
+    expect(stripFilterBucket(mkForwardTestRun({ paused: true }))).toBe("PAUSED");
+  });
   test("terminal runs -> STOPPED bucket", () => {
     for (const s of [
       "completed",
@@ -417,12 +433,13 @@ describe("strip filter chips (stripFilterBucket / filterRunsForStrip / stripFilt
     expect(stripFilterBucket(paper)).toBe("STOPPED");
     // Parentless orphan with no live-money signal.
     expect(stripFilterBucket(mkRun({ status: "running" }))).toBe("STOPPED");
-    // is_live_money=false explicitly.
+    // Explicitly non-live forward-test runs stay on the Forward Test tab;
+    // explicit non-live parentless rows do not.
     expect(
       stripFilterBucket(mkRun({ status: "running", is_live_money: false })),
     ).toBe("STOPPED");
   });
-  test("paused flag on a NON-live run does not produce PAUSED", () => {
+  test("paused flag on a non-forward-test run does not produce PAUSED", () => {
     expect(stripFilterBucket(mkRun({ paused: true }))).toBe("STOPPED");
   });
 
@@ -430,16 +447,17 @@ describe("strip filter chips (stripFilterBucket / filterRunsForStrip / stripFilt
     const runs = [mkLiveRun({ run_id: "a" }), mkRun({ run_id: "b" })];
     expect(filterRunsForStrip(runs, "ALL")).toEqual(runs);
   });
-  test("filterRunsForStrip: LIVE keeps only genuinely-live active runs", () => {
-    const live = mkLiveRun({ run_id: "live" });
-    const paused = mkLiveRun({ run_id: "paused", paused: true });
+  test("filterRunsForStrip: LIVE keeps active forward-test runs", () => {
+    const liveMoney = mkLiveRun({ run_id: "live-money" });
+    const forwardPaper = mkForwardTestRun({ run_id: "fwd-paper" });
+    const paused = mkForwardTestRun({ run_id: "paused", paused: true });
     const backtest = mkRun({ run_id: "bt", eval_mode: "backtest" });
-    const dead = mkLiveRun({ run_id: "dead", status: "completed" });
+    const dead = mkForwardTestRun({ run_id: "dead", status: "completed" });
     expect(
-      filterRunsForStrip([live, paused, backtest, dead], "LIVE").map(
+      filterRunsForStrip([liveMoney, forwardPaper, paused, backtest, dead], "LIVE").map(
         (r) => r.run_id,
       ),
-    ).toEqual(["live"]);
+    ).toEqual(["live-money", "fwd-paper"]);
   });
   test("filterRunsForStrip: PAUSED / STOPPED buckets", () => {
     const live = mkLiveRun({ run_id: "live" });
@@ -459,10 +477,10 @@ describe("strip filter chips (stripFilterBucket / filterRunsForStrip / stripFilt
   test("stripFilterCounts: ALL is total; buckets partition it", () => {
     const runs = [
       mkLiveRun({ run_id: "a" }),
-      mkLiveRun({ run_id: "b" }),
-      mkLiveRun({ run_id: "c", paused: true }),
+      mkForwardTestRun({ run_id: "b" }),
+      mkForwardTestRun({ run_id: "c", paused: true }),
       mkRun({ run_id: "d", eval_mode: "backtest" }),
-      mkLiveRun({ run_id: "e", status: "completed" }),
+      mkForwardTestRun({ run_id: "e", status: "completed" }),
     ];
     const counts = stripFilterCounts(runs);
     expect(counts).toEqual({ ALL: 5, LIVE: 2, PAUSED: 1, STOPPED: 2 });

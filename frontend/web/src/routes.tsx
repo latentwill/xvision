@@ -118,6 +118,16 @@ export function LegacyDiffRedirect() {
   return <Navigate to={`/optimizer/experiment/${hash ?? ""}`} replace />;
 }
 
+export function LegacyLiveRunRedirect() {
+  const { runId } = useParams<{ runId: string }>();
+  return <Navigate to={`/fwd/runs/${encodeURIComponent(runId ?? "")}`} replace />;
+}
+
+export function LegacyLiveConsoleRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={id ? `/fwd/${encodeURIComponent(id)}` : "/fwd"} replace />;
+}
+
 function page(element: ReactNode) {
   // AppErrorBoundary wraps the Suspense boundary so chunk-load errors
   // (Vite-after-deploy: stale `index.html` referencing a hash that no
@@ -181,11 +191,15 @@ export const router = createBrowserRouter([
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       // Backward-compat alias: deep links to /memory continue to work.
       { path: "memory", element: <Navigate to="/agents/memory" replace /> },
-      { path: "live", element: page(<LiveRoute />) },
-      // Static "runs" segment outranks the `:id` param, so the live
-      // inspector wins over `/live/:id` for /live/runs/* deep links.
-      { path: "live/runs/:runId", element: page(<LiveRunDetailRoute />) },
-      { path: "live/:id", element: page(<LiveRoute />) },
+      { path: "fwd", element: page(<LiveRoute />) },
+      // Static "runs" segment outranks the `:id` param, so the forward-test
+      // inspector wins over `/fwd/:id` for /fwd/runs/* deep links.
+      { path: "fwd/runs/:runId", element: page(<LiveRunDetailRoute />) },
+      { path: "fwd/:id", element: page(<LiveRoute />) },
+      // Legacy /live deep links redirect to the renamed forward-test surface.
+      { path: "live", element: <Navigate to="/fwd" replace /> },
+      { path: "live/runs/:runId", element: <LegacyLiveRunRedirect /> },
+      { path: "live/:id", element: <LegacyLiveConsoleRedirect /> },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
       {

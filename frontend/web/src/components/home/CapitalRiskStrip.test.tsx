@@ -84,8 +84,9 @@ describe("CapitalRiskStrip", () => {
     const strip = screen.getByTestId("capital-risk-strip");
 
     expect(within(strip).getByTestId("capital-risk-empty")).toBeInTheDocument();
-    expect(strip.textContent).toMatch(/no live trading strategies have been launched/i);
-    // It must NOT fabricate a calm green zero metric grid in the floor state.
+    expect(strip.textContent).toMatch(/insufficient data/i);
+    expect(strip.textContent).toMatch(/no forward-test paper capital deployed/i);
+    // It must NOT fabricate a calm $0 metric grid in the floor state.
     expect(within(strip).queryByTestId("capital-risk-deployed")).toBeNull();
     expect(strip.textContent).not.toMatch(/\$0/);
   });
@@ -191,11 +192,11 @@ describe("CapitalRiskStrip", () => {
     expect(chip.textContent).not.toBe("—");
   });
 
-  it("routes to /live for per-deployment detail", () => {
+  it("routes to /fwd for per-deployment detail", () => {
     renderStrip(HEALTHY);
     const strip = screen.getByTestId("capital-risk-strip");
     const link = within(strip).getByRole("link");
-    expect(link).toHaveAttribute("href", "/live");
+    expect(link).toHaveAttribute("href", "/fwd");
   });
 
   it("never renders a focus-stealing dialog/overlay (no popups rule)", () => {

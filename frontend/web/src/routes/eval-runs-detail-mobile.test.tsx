@@ -347,13 +347,14 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(link).toHaveAttribute("href", "/agent-runs/01LIVE");
   });
 
-  it("shows HALT button + LIVE label while the run is active", async () => {
+  it("shows HALT button + Forward Test label while a forward-test run is active", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(
       detail({
         summary: {
           ...detail().summary,
           status: "running",
           completed_at: null,
+          mode: "fwd",
           sharpe: null,
           total_return_pct: null,
           max_drawdown_pct: null,
@@ -363,7 +364,7 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
 
     renderRoute();
 
-    expect(await screen.findByText("LIVE")).toBeInTheDocument();
+    expect(await screen.findByText("FORWARD TEST")).toBeInTheDocument();
     const halt = screen.getByRole("button", { name: /halt eval run 01LIVE/i });
     expect(halt).toHaveTextContent(/HALT/);
     fireEvent.click(halt);

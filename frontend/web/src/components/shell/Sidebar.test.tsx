@@ -65,14 +65,14 @@ describe("Sidebar Marketplace entry", () => {
   });
 });
 
-// Track B — Live Trading nav entry (reachability: the /live page
+// Track B — Forward Test nav entry (reachability: the /fwd page
 // must be discoverable from the persistent sidebar, not deep-link only).
-describe("Sidebar Live Trading entry", () => {
-  it("renders an unconditional Live Trading entry linking to /live", () => {
+describe("Sidebar Forward Test entry", () => {
+  it("renders an unconditional Forward Test entry linking to /fwd", () => {
     renderSidebar();
     expect(
-      screen.getByRole("link", { name: /^Live Trading$/ }),
-    ).toHaveAttribute("href", "/live");
+      screen.getByRole("link", { name: /^Forward Test$/ }),
+    ).toHaveAttribute("href", "/fwd");
   });
 });
 

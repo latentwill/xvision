@@ -33,6 +33,7 @@ const VALID_PARAMS = {
   system_prompt: "you are helpful",
   allowed_tools: ["echo"],
   budget_limits: { max_input_tokens: 10, max_output_tokens: 20, max_wall_ms: 30 },
+  max_tokens_per_turn: 20,
 }
 
 describe("session.start_run after budget enforcement", () => {
@@ -50,6 +51,7 @@ describe("session.start_run after budget enforcement", () => {
     const s = store.get("run-bgt")
     expect(s).toBeDefined()
     expect(s?.config.budget_limits).toEqual(VALID_PARAMS.budget_limits)
+    expect(s?.config.max_tokens_per_turn).toBe(VALID_PARAMS.max_tokens_per_turn)
     expect(s?.usage).toEqual({ input_tokens: 0, output_tokens: 0 })
     handleSessionEndRun({ run_id: "run-bgt" })
   })

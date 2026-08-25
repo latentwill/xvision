@@ -56,11 +56,11 @@ export const firstRunTourSteps: DriveStep[] = [
     },
   },
   {
-    element: 'a[href="/live"]',
+    element: 'a[href="/fwd"]',
     popover: {
-      title: "Deploy your winners",
+      title: "Forward-test your winners",
       description:
-        "Fund your agent and let it trade for real. Live trading is real money.",
+        "Paper-trade against live market data, risk-free. Forward Test uses simulated money.",
       side: "right",
       align: "start",
     },

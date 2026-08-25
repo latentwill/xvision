@@ -42,8 +42,8 @@ function makeSummary(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
     duration_ms: null,
     financial_eval_id: "eval_1",
     retention_mode: "hash_only",
-    is_live_money: true,
-    eval_mode: "live",
+    is_live_money: false,
+    eval_mode: "fwd",
     eval_run_status: "running",
     ...over,
   };
@@ -77,7 +77,7 @@ function makeEvalDetail(): RunDetail {
       scenario_id: "",
       strategy: null,
       scenario: { id: "", display_name: "BTC momentum (live)" },
-      mode: "live",
+      mode: "fwd",
       status: "running",
       source: "human",
       started_at: "2026-06-10T10:00:00Z",
@@ -120,7 +120,7 @@ function renderAt(path: string) {
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/live/runs/:runId" element={<LiveRunDetailRoute />} />
+          <Route path="/fwd/runs/:runId" element={<LiveRunDetailRoute />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -134,29 +134,30 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("LiveRunDetailRoute", () => {
-  test("renders the LIVE badge, deployment name, pnl, and timeline for a live run", async () => {
+  test("renders the Forward Test badge, Paper badge, deployment name, pnl, and timeline", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(makeDetail());
-    renderAt("/live/runs/run_live1");
+    renderAt("/fwd/runs/run_live1");
 
     await waitFor(() =>
-      expect(screen.getByTestId("live-run-header")).toBeInTheDocument(),
+      expect(screen.getByTestId("forward-test-run-header")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("live-badge")).toHaveTextContent("LIVE");
+    expect(screen.getByTestId("forward-test-badge")).toHaveTextContent("Forward Test");
+    expect(screen.getByTestId("paper-badge")).toHaveTextContent("Paper");
     // Deployment name comes from the linked eval's synthesized scenario
     // (live_config.display_name).
     await waitFor(() =>
       expect(screen.getByText("BTC momentum (live)")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("live-pnl")).toHaveTextContent("+1.42%");
+    expect(screen.getByTestId("forward-test-pnl")).toHaveTextContent("+1.42%");
     // Timeline pieces mounted.
     expect(screen.getAllByTestId(/^span-row-/).length).toBeGreaterThan(0);
   });
 
-  test("back link targets /live, not the eval-runs list", async () => {
+  test("back link targets /fwd, not the eval-runs list", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(makeDetail());
-    renderAt("/live/runs/run_live1");
+    renderAt("/fwd/runs/run_live1");
     await waitFor(() =>
-      expect(screen.getByTestId("topbar-back")).toHaveAttribute("href", "/live"),
+      expect(screen.getByTestId("topbar-back")).toHaveAttribute("href", "/fwd"),
     );
   });
 
@@ -164,26 +165,25 @@ describe("LiveRunDetailRoute", () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
       makeDetail({ paused: true, flatten_requested: true }),
     );
-    renderAt("/live/runs/run_live1");
+    renderAt("/fwd/runs/run_live1");
     await waitFor(() =>
-      expect(screen.getByTestId("live-paused-pill")).toBeInTheDocument(),
+      expect(screen.getByTestId("forward-test-paused-pill")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("live-flatten-pill")).toBeInTheDocument();
+    expect(screen.getByTestId("forward-test-flatten-pill")).toBeInTheDocument();
   });
 
-  test("a non-live agent run renders NOT LIVE instead of dressing up as live money", async () => {
+  test("a real-money agent run renders LIVE MONEY instead of paper forward-test", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
       makeDetail({
-        is_live_money: false,
-        eval_mode: "backtest",
-        financial_eval_id: null,
+        is_live_money: true,
+        eval_mode: "fwd",
       }),
     );
-    renderAt("/live/runs/run_live1");
+    renderAt("/fwd/runs/run_live1");
     await waitFor(() =>
-      expect(screen.getByTestId("not-live-badge")).toBeInTheDocument(),
+      expect(screen.getByTestId("live-money-badge")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("live-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("forward-test-badge")).not.toBeInTheDocument();
   });
 
   test("unknown id renders the not-found state", async () => {
@@ -191,7 +191,7 @@ describe("LiveRunDetailRoute", () => {
     vi.mocked(agentRunsApi.getAgentRun).mockRejectedValue(
       new ApiError(404, "not_found", "missing"),
     );
-    renderAt("/live/runs/missing");
+    renderAt("/fwd/runs/missing");
     await waitFor(() =>
       expect(screen.getByText(/not found/i)).toBeInTheDocument(),
     );

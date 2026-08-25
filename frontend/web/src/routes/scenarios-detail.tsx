@@ -603,7 +603,7 @@ const RUNS_MODE_FILTER: FilterDef = {
   options: [
     { value: "all", label: "All modes" },
     { value: "backtest", label: "Backtest" },
-    { value: "live", label: "Live" },
+    { value: "fwd", label: "Forward Test" },
   ],
 };
 

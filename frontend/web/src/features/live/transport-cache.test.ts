@@ -38,7 +38,7 @@ function mkEval(over: Partial<RunSummary> = {}): RunSummary {
     scenario_id: "scen_1",
     strategy: null,
     scenario: null,
-    mode: "live",
+    mode: "fwd",
     status: "running",
     started_at: "2026-06-09T10:00:00Z",
     completed_at: null,

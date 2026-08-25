@@ -342,12 +342,12 @@ pub async fn reconcile_run(
     Ok(Json(outcome))
 }
 
-/// `POST /api/eval/runs/:id/reconnect` — resume a disconnected live
-/// (forward-test) run by re-reading its last persisted bar index and
+/// `POST /api/eval/runs/:id/reconnect` — resume a disconnected forward-test
+/// run by re-reading its last persisted bar index and
 /// transitioning status back to `Running`.
 ///
 /// Rejected with `400 Validation` when the run is not `Disconnected`
-/// or its mode is not `Live`. Backtest runs that are `Disconnected`
+/// or its mode is not forward-test. Backtest runs that are `Disconnected`
 /// are intentionally NOT reconnected — only forward-test runs resume.
 ///
 /// The actual executor spawn from `bar_index + 1` is a follow-up; for

@@ -63,7 +63,17 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
 function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   return mkRun({
     is_live_money: true,
-    eval_mode: "live",
+    eval_mode: "fwd",
+    eval_run_status: "running",
+    ...over,
+  });
+}
+
+/** A paper/testnet forward-test run: fwd lineage, but not real money. */
+function mkForwardTestRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
+  return mkRun({
+    is_live_money: false,
+    eval_mode: "fwd",
     eval_run_status: "running",
     ...over,
   });
@@ -75,8 +85,8 @@ function renderConsole(path: string) {
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/live" element={<LiveConsole />} />
-          <Route path="/live/:id" element={<ConsoleWithParam />} />
+          <Route path="/fwd" element={<LiveConsole />} />
+          <Route path="/fwd/:id" element={<ConsoleWithParam />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -97,38 +107,38 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("LiveConsole", () => {
-  test("renders Live Trading title + strategy strip", async () => {
+  test("renders Forward Test title + strategy strip", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
-      expect(screen.getByText("Live Trading")).toBeInTheDocument(),
+      expect(screen.getByText("Forward Test")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("strategy-strip")).toBeInTheDocument();
     expect(screen.getByText("Launch eval →")).toBeInTheDocument();
   });
 
-  test("/live auto-selects most recently started live run into viewport", async () => {
+  test("/fwd auto-selects most recently started forward-test run into viewport", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([
-      mkLiveRun({ run_id: "old", started_at: "2026-06-09T08:00:00Z" }),
-      mkLiveRun({ run_id: "newest", started_at: "2026-06-09T12:00:00Z" }),
+      mkLiveRun({ run_id: "old-live", started_at: "2026-06-09T08:00:00Z" }),
+      mkForwardTestRun({ run_id: "newest-paper", started_at: "2026-06-09T12:00:00Z" }),
     ]);
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
-      expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest"),
+      expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest-paper"),
     );
   });
 
-  test("/live does NOT auto-select a non-live (backtest/paper) run", async () => {
-    // Regression: with no genuinely-live run, the bare /live viewport must
+  test("/fwd does NOT auto-select a non-forward-test (backtest/paper) run", async () => {
+    // Regression: with no forward-test run, the bare /fwd viewport must
     // stay on the empty state instead of loading a stale eval run's chart +
-    // equity as if it were live.
+    // equity as if it were a forward test.
     vi.mocked(listAgentRuns).mockResolvedValue([
       mkRun({ run_id: "paper", started_at: "2026-06-09T12:00:00Z" }),
     ]);
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
       expect(
-        screen.getByText(/No active live deployments/i),
+        screen.getByText(/No active forward-test deployments/i),
       ).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("live-chart-stub")).not.toBeInTheDocument();
@@ -137,12 +147,12 @@ describe("LiveConsole", () => {
     ).not.toBeInTheDocument();
   });
 
-  test("/live/:id preselects the given run", async () => {
+  test("/fwd/:id preselects the given run", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([
       mkRun({ run_id: "run_a", started_at: "2026-06-09T08:00:00Z" }),
       mkRun({ run_id: "run_b", started_at: "2026-06-09T12:00:00Z" }),
     ]);
-    renderConsole("/live/run_a");
+    renderConsole("/fwd/run_a");
     await waitFor(() =>
       expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("run_a"),
     );
@@ -151,7 +161,7 @@ describe("LiveConsole", () => {
   test("wallet banner shown only when address is null", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
     mockAddress = null;
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
       expect(screen.getByTestId("wallet-banner")).toBeInTheDocument(),
     );
@@ -163,7 +173,7 @@ describe("LiveConsole", () => {
   test("wallet banner hidden when connected", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
     mockAddress = "0xabc";
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
       expect(screen.getByTestId("strategy-strip")).toBeInTheDocument(),
     );
@@ -172,17 +182,17 @@ describe("LiveConsole", () => {
 
   test("empty list shows no-deployments state", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([]);
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
       expect(
-        screen.getByText(/No active live deployments/i),
+        screen.getByText(/No active forward-test deployments/i),
       ).toBeInTheDocument(),
     );
   });
 
   test("B-II slot seam is present under the chart", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkLiveRun()]);
-    renderConsole("/live");
+    renderConsole("/fwd");
     await waitFor(() =>
       expect(
         screen.getByTestId("live-stats-positions-slot"),

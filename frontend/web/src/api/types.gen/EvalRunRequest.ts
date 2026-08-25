@@ -17,9 +17,8 @@ agent_id: string,
 scenario_id: string, 
 /**
  * Run mode. `Backtest` replays the scenario's parquet fixture in-process
- * without any broker. `Live` is routed to `Executor::live(...)`, which
- * currently returns a not-implemented error pending the
- * `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
+ * without any broker. `Forward` (`"fwd"`, deprecated alias `"live"`) runs
+ * the forward-test executor against paper/test venue configuration.
  */
 mode: RunMode, 
 /**
@@ -29,7 +28,7 @@ mode: RunMode,
  */
 params_override: Record<string, unknown> | null, 
 /**
- * Required for `mode = live`. Backtest runs must leave this unset.
+ * Required for `mode = fwd`. Backtest runs must leave this unset.
  */
 live_config: LiveConfig | null, 
 /**

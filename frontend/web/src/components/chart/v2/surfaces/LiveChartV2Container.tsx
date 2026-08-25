@@ -58,22 +58,22 @@ export function LiveChartV2Container({ runId, stream }: LiveChartV2ContainerProp
           checked={effectiveFollow}
           onChange={(e) => setFollow(e.target.checked)}
         />
-        {effectiveFollow ? "Following live" : "Frozen"}
+        {effectiveFollow ? "Following feed" : "Frozen"}
         {!effectiveFollow && (
           <button
             type="button"
             onClick={() => setFollow(true)}
             className="ml-2 underline"
           >
-            Resume live
+            Resume feed
           </button>
         )}
       </label>
       {data ? (
         isEmptyLiveSnapshot(data) ? (
           <EmptyState
-            title="No live chart data yet"
-            message="This run is wired to the live chart feed, but no bars, equity points, or trade markers have arrived yet."
+            title="No forward-test chart data yet"
+            message="This run is wired to the forward-test chart feed, but no bars, equity points, or trade markers have arrived yet."
           />
         ) : (
           <LiveChartV2

@@ -23,7 +23,7 @@ export const PRIMARY_NAV: NavItem[] = [
   { to: "/scenarios", label: "Scenarios", icon: "list", summary: "Browse and create eval scenarios" },
   { to: "/charts", label: "Charts", icon: "chartPie", summary: "Market charts & chart lab" },
   { to: "/eval-runs", label: "Eval", icon: "bars", summary: "Backtests and paper-trade runs" },
-  { to: "/live", label: "Live Trading", icon: "play", summary: "Live trading console" },
+  { to: "/fwd", label: "Forward Test", icon: "play", summary: "Paper-trading forward-test console" },
   { to: "/marketplace", label: "Marketplace", icon: "bag", summary: "Buy and sell strategies as on-chain agents" },
   { to: "/optimizer", label: "Optimizer", icon: "pulse", summary: "Autonomous strategy optimization cycles" },
   { to: "/docs", label: "Docs", icon: "book", summary: "Product manual & guides" },

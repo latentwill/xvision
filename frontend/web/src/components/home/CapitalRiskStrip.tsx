@@ -137,13 +137,13 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
               {DASH}
             </span>
             <span className="text-text-3">
-              No live trading strategies have been launched.
+              Insufficient data — no forward-test paper capital deployed yet.
             </span>
             <Link
-              to="/live"
+              to="/fwd"
               className="ml-auto shrink-0 text-[12px] text-text-3 underline-offset-2 hover:text-text hover:underline"
             >
-              Live trading →
+              Forward Test →
             </Link>
           </div>
         ) : (
@@ -205,10 +205,10 @@ export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
             </div>
 
             <Link
-              to="/live"
+              to="/fwd"
               className="ml-auto shrink-0 text-[12px] text-text-3 underline-offset-2 hover:text-text hover:underline"
             >
-              Live trading →
+              Forward Test →
             </Link>
           </div>
         )}
