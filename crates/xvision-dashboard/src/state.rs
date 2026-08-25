@@ -396,6 +396,12 @@ impl AppState {
         {
             tracing::warn!(error = %e, "could not hydrate provider secrets into env");
         }
+        if let Err(e) =
+            xvision_engine::api::settings::data_tools::load_data_tools_secrets_into_env(&xvn_home)
+                .await
+        {
+            tracing::warn!(error = %e, "could not hydrate data-tool secrets into env");
+        }
 
         let cli_command = PathBuf::from("xvn");
         let cli_runner = Arc::new(CliJobRunner::new(pool.clone(), cli_command.clone()));

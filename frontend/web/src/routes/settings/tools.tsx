@@ -6,7 +6,7 @@ import {
   getDataTools,
   setDataTools,
 } from "@/api/dataTools";
-import type { DataToolEntry } from "@/api/dataTools";
+import type { DataToolEntry, SetDataToolEntry } from "@/api/dataTools";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,6 +21,22 @@ const KIND_LABELS: Record<DataToolEntry["kind"], string> = {
   elfa: "Elfa",
 };
 
+/** One editable row: the persisted entry plus an optional new key. */
+type ToolDraft = SetDataToolEntry;
+
+/** Strip an empty/whitespace-only key so "cleared the box" means "keep stored". */
+function normalizeDraft(entries: ToolDraft[]): ToolDraft[] {
+  return entries.map((e) => {
+    const { api_key, ...rest } = e;
+    return api_key && api_key.trim().length > 0 ? { ...rest, api_key } : rest;
+  });
+}
+
+function toDraft(row: DataToolEntry): ToolDraft {
+  const { kind, base_url, api_key_env, enabled, budget_credits_per_run, nansen_lookahead_lag_days } = row;
+  return { kind, base_url, api_key_env, enabled, budget_credits_per_run, nansen_lookahead_lag_days };
+}
+
 // ── Main route ───────────────────────────────────────────────────────────────
 
 export function SettingsToolsRoute() {
@@ -32,21 +48,20 @@ export function SettingsToolsRoute() {
   });
 
   const save = useMutation({
-    mutationFn: (entries: DataToolEntry[]) =>
-      setDataTools({ data_tools: entries }),
+    mutationFn: (entries: ToolDraft[]) => setDataTools({ data_tools: normalizeDraft(entries) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: dataToolsKeys.list() }),
   });
 
   // Local working copy: mirrors the server list; edits are batched and
   // sent on "Save changes" to match the PUT-the-whole-list API shape.
-  const [draft, setDraft] = useState<DataToolEntry[] | null>(null);
+  const [draft, setDraft] = useState<ToolDraft[] | null>(null);
 
   // If the server list changes (e.g. after a save) and we have no pending
   // draft, reset the draft to the new server data.
-  const serverList = query.data?.data_tools ?? [];
-  const workingList: DataToolEntry[] = draft ?? serverList;
+  const serverRows = query.data?.data_tools ?? [];
+  const workingList: ToolDraft[] = draft ?? serverRows.map(toDraft);
 
-  function patchEntry(index: number, patch: Partial<DataToolEntry>) {
+  function patchEntry(index: number, patch: Partial<ToolDraft>) {
     const next = workingList.map((e, i) =>
       i === index ? { ...e, ...patch } : e,
     );
@@ -55,7 +70,8 @@ export function SettingsToolsRoute() {
 
   const isDirty =
     draft !== null &&
-    JSON.stringify(draft) !== JSON.stringify(serverList);
+    JSON.stringify(normalizeDraft(draft)) !==
+      JSON.stringify(normalizeDraft(serverRows.map(toDraft)));
 
   function handleSave() {
     save.mutate(workingList, {
@@ -97,7 +113,7 @@ export function SettingsToolsRoute() {
 
   // ── Empty state ───────────────────────────────────────────────────────────
 
-  if (serverList.length === 0) {
+  if (serverRows.length === 0) {
     return (
       <div className="space-y-5">
         <PageHeader />
@@ -164,6 +180,9 @@ export function SettingsToolsRoute() {
               <th className="py-2 pr-3 text-left text-[11px] text-text-3 font-medium uppercase tracking-wider">
                 Env var
               </th>
+              <th className="py-2 pr-3 text-left text-[11px] text-text-3 font-medium uppercase tracking-wider">
+                API key
+              </th>
               <th className="py-2 pr-3 text-center text-[11px] text-text-3 font-medium uppercase tracking-wider">
                 Enabled
               </th>
@@ -180,6 +199,7 @@ export function SettingsToolsRoute() {
               <DataToolRow
                 key={`${entry.kind}-${idx}`}
                 entry={entry}
+                keySet={serverRows[idx]?.api_key_set ?? false}
                 onChange={(patch) => patchEntry(idx, patch)}
                 disabled={save.isPending}
               />
@@ -190,8 +210,10 @@ export function SettingsToolsRoute() {
 
       <p className="m-0 text-text-3 text-[11px] leading-snug">
         <code className="font-mono">api_key_env</code> is the environment
-        variable NAME — the secret is read from the environment at runtime and
-        never stored in the config or surfaced here.
+        variable NAME. Paste a key to store it in the daemon's owner-only
+        secrets file and export it for immediate use; leave the box blank to
+        keep the stored key. The value is never shown or written to the
+        workspace config.
       </p>
     </div>
   );
@@ -215,11 +237,14 @@ function PageHeader() {
 
 function DataToolRow({
   entry,
+  keySet,
   onChange,
   disabled,
 }: {
-  entry: DataToolEntry;
-  onChange: (patch: Partial<DataToolEntry>) => void;
+  entry: ToolDraft;
+  /** Server-reported presence of a stored/env key (blank box = keep it). */
+  keySet: boolean;
+  onChange: (patch: Partial<ToolDraft>) => void;
   disabled: boolean;
 }) {
   return (
@@ -243,6 +268,29 @@ function DataToolRow({
         <code className="font-mono text-[12px] text-text-2">
           {entry.api_key_env}
         </code>
+      </td>
+      <td className="py-3 pr-3">
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            aria-label={`${entry.kind} API key`}
+            placeholder={keySet ? "stored — leave blank to keep" : "paste key"}
+            value={entry.api_key ?? ""}
+            disabled={disabled}
+            onChange={(e) => onChange({ api_key: e.target.value })}
+            autoComplete="off"
+            className="w-44 rounded border border-border-soft bg-surface-elev/30 px-2 py-1 font-mono text-[12px] text-text placeholder:text-text-4 focus:border-gold disabled:opacity-50"
+          />
+          <span
+            className={
+              keySet
+                ? "text-[10px] text-success"
+                : "text-[10px] text-text-3"
+            }
+          >
+            {keySet ? "set" : "not set"}
+          </span>
+        </div>
       </td>
       <td className="py-3 pr-3 text-center">
         <label className="inline-flex items-center gap-1.5 cursor-pointer">

@@ -29,6 +29,8 @@ async fn main() -> ExitCode {
     // errors when they actually need the key.
     if let Ok(home) = xvision_cli::commands::home::resolve_xvn_home_env() {
         let _ = xvision_engine::api::settings::providers::load_providers_secrets_into_env(&home).await;
+        let _ =
+            xvision_engine::api::settings::data_tools::load_data_tools_secrets_into_env(&home).await;
     }
 
     let cli = Cli::parse();

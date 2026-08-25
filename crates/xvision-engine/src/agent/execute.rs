@@ -834,9 +834,25 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             let blocked = repeated_failures.is_blocked(&tu_name, &tu_input);
             let asset_mismatch =
                 market_data_tool_asset_mismatch(&tu_name, &tu_input, decision_asset.as_deref());
+            // im2r.12 / adversarial review: signal tools (Nansen/Elfa) MUST
+            // only fire through the gated dispatch (`ToolRegistryDispatch`),
+            // which enforces forward-only mode routing, strips/injects
+            // `as_of_date`, and meters per-run credit budgets. This legacy
+            // loop has none of those chokepoints, so a signal tool named in a
+            // slot allowlist would bypass them entirely. Degrade instead of
+            // invoking.
+            let signal_gated = crate::tools::signal_policy::signal_tool_policy(&tu_name).is_some();
             let (content, is_error) = if !allowed {
                 (
                     format!("tool error: tool '{tu_name}' is not allowed for this slot"),
+                    Some(true),
+                )
+            } else if signal_gated {
+                (
+                    format!(
+                        "tool error: signal tool '{tu_name}' requires the gated dispatch runtime \
+                         (forward-only gating + budget metering); it cannot run on this slot executor"
+                    ),
                     Some(true),
                 )
             } else if let Some(message) = asset_mismatch {

@@ -151,8 +151,9 @@ pub struct SignalAssetIdentity {
 /// Normalises the symbol by stripping everything after the first `/` (so
 /// "BTC/USD" → "BTC") and upper-casing before lookup.
 ///
-/// # GROUNDING (verify before mainnet, Task 6.4): confirm chain slugs +
-/// contract/mint addresses + native sentinel against live Nansen docs.
+/// # GROUNDING: chain slugs + contract/mint addresses VERIFIED against the
+/// live Nansen docs (2026-08-25) — see
+/// `docs/superpowers/specs/2026-06-16-nansen-elfa-grounding-todo.md` §3.
 ///
 /// SINGLE SOURCE OF TRUTH (decision bd xvision-im2r.10): this static seed is
 /// intentionally the only active source of on-chain identity for now. Reading

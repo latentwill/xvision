@@ -140,8 +140,7 @@ macro_rules! elfa_tool {
                     Ok(v) => v,
                     Err(e) => return Ok(signal_unavailable(format!("bad input: {e}"))),
                 };
-                // Derive bare ticker: strip /USD or /USDT suffix, take part before '/',
-                // uppercase.
+                // Derive bare ticker: take the part before '/', uppercase.
                 let ticker = parsed
                     .asset
                     .trim()
@@ -149,6 +148,17 @@ macro_rules! elfa_tool {
                     .next()
                     .unwrap_or(&parsed.asset)
                     .to_ascii_uppercase();
+                // D8 / im2r.12: only whitelisted assets reach the vendor — an
+                // unmapped ticker would burn Elfa budget on a junk query
+                // (mirrors the Nansen tools' identity gate). reqwest
+                // percent-encodes the query, so this is injection-safe either
+                // way; the check is about honest signals and budget hygiene.
+                if xvision_core::asset_registry::signal_asset_identity(&ticker).is_none() {
+                    return Ok(signal_unavailable(format!(
+                        "no on-chain identity mapped for {}",
+                        parsed.asset
+                    )));
+                }
                 Ok(elfa_invoke(&self.client, $endpoint, &[("ticker", &ticker)]).await)
             }
         }

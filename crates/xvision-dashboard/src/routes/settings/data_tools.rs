@@ -36,8 +36,11 @@ pub async fn get(State(state): State<AppState>) -> Result<Json<DataToolsReport>,
 }
 
 /// PUT `/api/settings/data-tools` — atomically replace the `[[data_tools]]`
-/// list. Sends `{ "data_tools": [...] }`. No secret is stored here;
-/// `api_key_env` is the env-var NAME only.
+/// list. Sends `{ "data_tools": [{ ...entry, "api_key"?: "..." }] }`. An
+/// optional plaintext `api_key` is persisted to
+/// `$XVN_HOME/secrets/data_tools.toml` (mode 0600) and exported into the
+/// daemon env under `api_key_env`; GET responses surface only an
+/// `api_key_set` presence flag, never the key.
 pub async fn put(
     State(state): State<AppState>,
     Json(req): Json<SetDataToolsRequest>,
