@@ -30,7 +30,7 @@
 //! ## Persistence
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
@@ -40,7 +40,10 @@ use xvision_core::market::Ohlcv;
 /// The fields that are not available at the receipt seam remain JSON `null`.
 /// `bars_content_hash` and `engine_version` are required because a receipt
 /// without either cannot identify the evaluated input or implementation.
-#[derive(Debug, Clone, Serialize)]
+///
+/// Replay-provenance fields are audit metadata only and do not affect
+/// `receipt_hash`, which remains the five-field input tuple documented above.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceiptManifest {
     pub bars_content_hash: String,
     pub bars_rows: usize,
@@ -57,6 +60,16 @@ pub struct ReceiptManifest {
     pub tool_cache_recording_id: Option<String>,
     pub engine_version: String,
     pub seed: u64,
+    /// Original run whose cached tool responses were replayed, when known.
+    #[serde(default)]
+    pub replay_of_run_id: Option<String>,
+    /// Whether replay inputs matched the original receipt; `None` means
+    /// verification was unavailable.
+    #[serde(default)]
+    pub replay_inputs_match: Option<bool>,
+    /// Reasons replay inputs differed, or why verification could not complete.
+    #[serde(default)]
+    pub replay_mismatches: Vec<String>,
 }
 
 impl ReceiptManifest {
@@ -373,6 +386,31 @@ mod tests {
                 ..first
             }])
         );
+    }
+
+    #[test]
+    fn manifest_replay_fields_default_when_absent() {
+        let old_manifest = r#"{
+            "bars_content_hash":"bars",
+            "bars_rows":1,
+            "bars_start":null,
+            "bars_end":null,
+            "bars_source":"db_cache",
+            "scenario_id":"scenario",
+            "strategy_hash":"strategy",
+            "strategy_source_hash":null,
+            "provider":null,
+            "model":null,
+            "prompt_version":null,
+            "system_prompt_hash":null,
+            "tool_cache_recording_id":null,
+            "engine_version":"engine",
+            "seed":0
+        }"#;
+        let manifest: ReceiptManifest = serde_json::from_str(old_manifest).unwrap();
+        assert_eq!(manifest.replay_of_run_id, None);
+        assert_eq!(manifest.replay_inputs_match, None);
+        assert!(manifest.replay_mismatches.is_empty());
     }
 
     #[test]

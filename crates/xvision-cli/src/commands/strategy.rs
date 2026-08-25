@@ -17,7 +17,8 @@ use xvision_engine::api::{
     agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError,
 };
 use xvision_engine::diagnostics::{self, assert_launchable, DiagnosticsError, StrategyDiagnostics};
-use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::review::ReviewStatus;
+use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
@@ -481,6 +482,9 @@ enum StrategyAction {
         /// Restrict to runs started within the last N days.
         #[arg(long)]
         since_days: Option<u32>,
+        /// Require every qualifying run to have a completed auto-review.
+        #[arg(long, default_value_t = false)]
+        require_review: bool,
         /// Emit as JSON.
         #[arg(long)]
         json: bool,
@@ -738,8 +742,9 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             sort,
             top,
             since_days,
+            require_review,
             json,
-        } => leaderboard(&sort, top, since_days, json).await,
+        } => leaderboard(&sort, top, since_days, require_review, json).await,
         StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
         StrategyAction::ImportPine {
             file,
@@ -3589,6 +3594,8 @@ struct LeaderboardRow {
     best_return_pct: Option<f64>,
     best_sharpe: Option<f64>,
     run_count: usize,
+    reviewed_runs: usize,
+    total_runs: usize,
     best_run_id: Option<String>,
 }
 
@@ -3609,10 +3616,17 @@ fn sort_leaderboard_rows(rows: &mut [LeaderboardRow], sort: &str) {
     }
 }
 
-async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool) -> CliResult<()> {
+async fn leaderboard(
+    sort: &str,
+    top: usize,
+    since_days: Option<u32>,
+    require_review: bool,
+    json: bool,
+) -> CliResult<()> {
     let ctx = open_ctx().await?;
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
 
+    let review_store = RunStore::new(ctx.db.clone());
     let cutoff = since_days.map(|d| chrono::Utc::now() - chrono::Duration::days(d as i64));
 
     let mut rows: Vec<LeaderboardRow> = Vec::new();
@@ -3640,6 +3654,23 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             .iter()
             .filter(|r| cutoff.map(|c| r.started_at >= c).unwrap_or(true))
             .collect();
+        let total_runs = filtered.len();
+        let mut reviewed_runs = 0usize;
+        for run in &filtered {
+            let has_completed_review = review_store
+                .list_reviews_for_run(&run.id)
+                .await
+                .unwrap_or_default()
+                .first()
+                .map(|review| review.status == ReviewStatus::Completed)
+                .unwrap_or(false);
+            if has_completed_review {
+                reviewed_runs += 1;
+            }
+        }
+        if require_review && (total_runs == 0 || reviewed_runs != total_runs) {
+            continue;
+        }
 
         let best_return = filtered
             .iter()
@@ -3704,6 +3735,8 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             best_return_pct: best_return,
             best_sharpe,
             run_count: filtered.len(),
+            reviewed_runs,
+            total_runs,
             best_run_id,
         });
     }
@@ -3726,8 +3759,8 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
     }
 
     println!(
-        "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
-        "RANK", "STRATEGY", "RETURN_%", "SHARPE", "RUNS", "BEST_RUN"
+        "{:<4}  {:<36}  {:>10}  {:>8}  {:>13}  {}",
+        "RANK", "STRATEGY", "RETURN_%", "SHARPE", "REVIEWED/TOTAL", "BEST_RUN"
     );
     for row in &rows {
         let name = if row.strategy_name.len() > 34 {
@@ -3736,14 +3769,14 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             row.strategy_name.clone()
         };
         println!(
-            "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
+            "{:<4}  {:<36}  {:>10}  {:>8}  {:>13}  {}",
             row.rank,
             name,
             row.best_return_pct
                 .map(|v| format!("{:.2}", v))
                 .unwrap_or("-".into()),
             row.best_sharpe.map(|v| format!("{:.3}", v)).unwrap_or("-".into()),
-            row.run_count,
+            format!("{}/{}", row.reviewed_runs, row.total_runs),
             row.best_run_id.as_deref().unwrap_or("-"),
         );
     }
@@ -4437,6 +4470,8 @@ pub mod leaderboard {
             best_return_pct,
             best_sharpe,
             run_count: 1,
+            reviewed_runs: 1,
+            total_runs: 1,
             best_run_id: Some("run-1".into()),
         }
     }
@@ -4507,6 +4542,8 @@ pub mod leaderboard {
             best_return_pct: Some(12.5),
             best_sharpe: Some(1.23),
             run_count: 3,
+            reviewed_runs: 2,
+            total_runs: 3,
             best_run_id: Some("run-xyz".into()),
         };
         let json = serde_json::to_value(&row).expect("serialize");
@@ -4516,6 +4553,8 @@ pub mod leaderboard {
         assert_eq!(json["best_return_pct"], 12.5f64);
         assert_eq!(json["best_sharpe"], 1.23f64);
         assert_eq!(json["run_count"], 3u64);
+        assert_eq!(json["reviewed_runs"], 2u64);
+        assert_eq!(json["total_runs"], 3u64);
         assert_eq!(json["best_run_id"], "run-xyz");
     }
 
@@ -4531,11 +4570,24 @@ pub mod leaderboard {
     fn leaderboard_subcommand_is_registered() {
         use clap::CommandFactory;
         let cmd = crate::Cli::command();
+
         let strategy = cmd.find_subcommand("strategy").expect("strategy subcommand");
         assert!(
             strategy.find_subcommand("leaderboard").is_some(),
             "expected `leaderboard` subcommand on `xvn strategy`",
         );
+    }
+    #[test]
+    fn leaderboard_require_review_flag_parses() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let result = cmd.try_get_matches_from([
+            "xvn",
+            "strategy",
+            "leaderboard",
+            "--require-review",
+        ]);
+        assert!(result.is_ok(), "--require-review must parse successfully");
     }
 
     #[test]

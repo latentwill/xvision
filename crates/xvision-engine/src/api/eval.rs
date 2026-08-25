@@ -40,7 +40,8 @@ use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::cost::aggregate_eval_run_inference_cost;
 use crate::eval::determinism::{
-    canonical_bars_content_hash, persist_receipt, DeterminismReceipt, ReceiptInputs, ReceiptManifest,
+    canonical_bars_content_hash, persist_receipt, read_receipt, DeterminismReceipt, ReceiptInputs,
+    ReceiptManifest,
 };
 use crate::eval::executor::{Executor, GatedBrokerSurface, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
@@ -4028,6 +4029,9 @@ fn receipt_manifest_for(
         tool_cache_recording_id: tool_cache_recording_id.map(str::to_string),
         engine_version: env!("CARGO_PKG_VERSION").to_string(),
         seed,
+        replay_of_run_id: None,
+        replay_inputs_match: None,
+        replay_mismatches: Vec::new(),
     }
 }
 
@@ -4035,8 +4039,84 @@ async fn persist_receipt_for_manifest(
     ctx: &ApiContext,
     run: &Run,
     scenario: &Scenario,
-    manifest: ReceiptManifest,
+    mut manifest: ReceiptManifest,
 ) {
+    if let Some(recording_id) = manifest.tool_cache_recording_id.as_deref() {
+        let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+        match crate::agent::cline_recording::open_store(ctx.db.clone(), blob_root).await {
+            Ok(store) => match store.get_recording(recording_id).await {
+                Ok(recording) => {
+                    if let Some(original_run_id) = recording.simulation_id {
+                        manifest.replay_of_run_id = Some(original_run_id.clone());
+                        match read_receipt(&ctx.db, &original_run_id).await {
+                            Ok(Some(original_receipt)) => {
+                                let mut mismatches = Vec::new();
+                                match original_receipt.manifest_canonical.as_deref() {
+                                    Some(canonical) => match serde_json::from_str::<ReceiptManifest>(canonical) {
+                                        Ok(original) => {
+                                            if manifest.scenario_id != original.scenario_id {
+                                                mismatches.push("scenario_id differs".to_string());
+                                            }
+                                            if manifest.bars_content_hash != original.bars_content_hash {
+                                                mismatches.push("bars_content_hash differs".to_string());
+                                            }
+                                            if manifest.engine_version != original.engine_version {
+                                                mismatches.push("engine_version differs".to_string());
+                                            }
+                                        }
+                                        Err(error) => mismatches.push(format!(
+                                            "original manifest is unparseable: {error}"
+                                        )),
+                                    },
+                                    None => mismatches.push("original manifest is missing".to_string()),
+                                }
+                                manifest.replay_inputs_match = Some(mismatches.is_empty());
+                                manifest.replay_mismatches = mismatches;
+                                if manifest.replay_inputs_match == Some(false) {
+                                    tracing::warn!(
+                                        run_id = %run.id,
+                                        replay_of_run_id = %original_run_id,
+                                        "replay served cached tool responses against DIFFERENT inputs — signals not comparable to the original run"
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    run_id = %run.id,
+                                    replay_of_run_id = %original_run_id,
+                                    "replay input verification impossible: original run has no determinism receipt"
+                                );
+                            }
+                            Err(error) => tracing::warn!(
+                                run_id = %run.id,
+                                replay_of_run_id = %original_run_id,
+                                error = %error,
+                                "replay input verification failed while reading original receipt"
+                            ),
+                        }
+                    } else {
+                        tracing::warn!(
+                            run_id = %run.id,
+                            recording_id = %recording_id,
+                            "replay input verification failed: recording has no simulation id"
+                        );
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    run_id = %run.id,
+                    recording_id = %recording_id,
+                    error = %error,
+                    "replay input verification failed: recording lookup failed"
+                ),
+            },
+            Err(error) => tracing::warn!(
+                run_id = %run.id,
+                recording_id = %recording_id,
+                error = %error,
+                "replay input verification failed: trajectory store unavailable"
+            ),
+        }
+    }
     let receipt = DeterminismReceipt::mint_with_manifest(
         &ReceiptInputs {
             run_id: run.id.clone(),
