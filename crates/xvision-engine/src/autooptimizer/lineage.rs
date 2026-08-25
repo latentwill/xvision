@@ -4,7 +4,21 @@ use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use super::content_hash::ContentHash;
-use super::gate::GateVerdict;
+use super::gate::{GateVerdict, Objective};
+use crate::eval::run::MetricsSummary;
+
+/// One row in the flat lineage experiment log.
+#[derive(Debug, Clone)]
+pub struct LineageLogRow {
+    pub bundle_hash: String,
+    pub parent_hash: Option<String>,
+    pub status: String,
+    pub verdict: String,
+    pub objective_metric: Option<f64>,
+    pub day_net_return_pct: Option<f64>,
+    pub day_total_return_pct: Option<f64>,
+    pub description: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageNode {
@@ -272,9 +286,102 @@ pub async fn record_cycle_node_eval(
     .bind(created_at)
     .execute(pool)
     .await
+
     .context("record cycle_node_evaluations")?;
     Ok(())
 }
+/// Read a flat experiment log for a cycle id or a lineage-root bundle hash.
+///
+/// A bundle hash selects that node and all descendants. Any other value is
+/// treated as a cycle id and selects the nodes attributed to that cycle.
+pub async fn read_lineage_log(pool: &SqlitePool, cycle_or_root: &str) -> Result<Vec<LineageLogRow>> {
+    let root_hash = sqlx::query(
+        "SELECT bundle_hash FROM lineage_nodes
+         WHERE bundle_hash = ? OR bundle_hash LIKE ?
+         ORDER BY length(bundle_hash), bundle_hash
+         LIMIT 1",
+    )
+    .bind(cycle_or_root)
+    .bind(format!("{cycle_or_root}%"))
+    .fetch_optional(pool)
+    .await
+    .context("resolve lineage log selector")?
+    .and_then(|row| row.try_get::<String, _>("bundle_hash").ok());
+    let is_root = root_hash.is_some();
+    let rows = if is_root {
+        sqlx::query(
+            "WITH RECURSIVE descendants(bundle_hash) AS (
+                 SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash = ?
+                 UNION ALL
+                 SELECT child.bundle_hash
+                 FROM lineage_nodes child
+                 JOIN descendants parent ON child.parent_hash = parent.bundle_hash
+             )
+             SELECT n.bundle_hash, n.parent_hash, n.status, n.gate_verdict,
+                    n.objective, n.mutation_diff_json, m.metrics_day_json
+             FROM lineage_nodes n
+             JOIN descendants d ON d.bundle_hash = n.bundle_hash
+             LEFT JOIN lineage_node_metrics m ON m.bundle_hash = n.bundle_hash
+             ORDER BY n.created_at, n.bundle_hash",
+        )
+        .bind(root_hash.as_deref().unwrap_or(cycle_or_root))
+        .fetch_all(pool)
+        .await
+        .context("read lineage descendants")?
+    } else {
+        sqlx::query(
+            "SELECT n.bundle_hash, n.parent_hash, n.status, n.gate_verdict,
+                    n.objective, n.mutation_diff_json, m.metrics_day_json
+             FROM lineage_nodes n
+             LEFT JOIN lineage_node_metrics m ON m.bundle_hash = n.bundle_hash
+             WHERE n.cycle_id = ?
+                OR EXISTS (
+                    SELECT 1 FROM cycle_node_evaluations e
+                    WHERE e.cycle_id = ? AND e.bundle_hash = n.bundle_hash
+                )
+             ORDER BY n.created_at, n.bundle_hash",
+        )
+        .bind(cycle_or_root)
+        .bind(cycle_or_root)
+        .fetch_all(pool)
+        .await
+        .context("read lineage cycle")?
+    };
+
+    rows.into_iter()
+        .map(|row| {
+            let metrics = row
+                .try_get::<Option<String>, _>("metrics_day_json")?
+                .and_then(|json| serde_json::from_str::<MetricsSummary>(&json).ok());
+            let objective = row.try_get::<Option<String>, _>("objective")?;
+            let objective_metric = objective
+                .as_deref()
+                .and_then(Objective::parse)
+                .zip(metrics.as_ref())
+                .map(|(objective, metrics)| objective.oriented_value(metrics));
+            let description = row
+                .try_get::<Option<String>, _>("mutation_diff_json")?
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .and_then(|value| {
+                    value
+                        .get("rationale")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|rationale| rationale.lines().next().unwrap_or_default().to_string())
+                });
+            Ok(LineageLogRow {
+                bundle_hash: row.try_get("bundle_hash")?,
+                parent_hash: row.try_get("parent_hash")?,
+                status: row.try_get("status")?,
+                verdict: row.try_get("gate_verdict")?,
+                objective_metric,
+                day_net_return_pct: metrics.as_ref().and_then(|m| m.net_return_pct),
+                day_total_return_pct: metrics.as_ref().map(|m| m.total_return_pct),
+                description,
+            })
+        })
+        .collect()
+}
+ 
 
 async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
     // `table` is a compile-time-constant identifier at every call site; assert

@@ -33,6 +33,7 @@ pub mod diversity;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
 pub mod eval_adapter;
+pub mod pool_eval;
 pub mod events_store;
 pub mod evidence;
 pub mod gate;

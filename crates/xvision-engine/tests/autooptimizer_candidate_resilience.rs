@@ -377,6 +377,10 @@ async fn single_candidate_error_records_errored_and_continues() {
         scenario_pool: vec![],
         max_output_tokens: None,
         max_consecutive_errors: 3,
+        min_pool_win_fraction: 0.5,
+        noise_floor_min_delta: 0.0,
+        simplicity_penalty: 0.0,
+        simplicity_equal_tolerance: 1e-9,
     };
 
     // ── 7. Run the cycle ──────────────────────────────────────────────────────
@@ -516,6 +520,10 @@ async fn consecutive_candidate_errors_halt_the_cycle() {
         scenario_pool: vec![],
         max_output_tokens: None,
         max_consecutive_errors: 3,
+        min_pool_win_fraction: 0.5,
+        noise_floor_min_delta: 0.0,
+        simplicity_penalty: 0.0,
+        simplicity_equal_tolerance: 1e-9,
     };
 
     // ── 7. Run the cycle ──────────────────────────────────────────────────────

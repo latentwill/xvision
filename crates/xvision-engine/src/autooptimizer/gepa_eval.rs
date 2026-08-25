@@ -187,10 +187,13 @@ impl RealEvalCache {
     }
 }
 
+/// Convert a parent/child metric delta to a bounded fitness score.
+///
+/// The unit scale avoids magnifying tiny parent metrics: a parent near zero
+/// still gets the same one-point scale as a normalised metric near one.
 pub fn normalized_delta_score(parent_metric: f64, child_metric: f64) -> f64 {
-    let denom = parent_metric.abs().max(0.01);
-    let normalized = (child_metric - parent_metric) / denom;
-    ((normalized + 1.0) / 2.0).clamp(0.0, 1.0)
+    let scale = parent_metric.abs().max(1.0);
+    (0.5 + (child_metric - parent_metric) / (2.0 * scale)).clamp(0.0, 1.0)
 }
 
 pub async fn score_real_eval_candidate(
@@ -384,11 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn normalized_delta_score_clamps_to_unit_interval() {
+    fn normalized_delta_score_uses_bounded_unit_scale() {
         assert_eq!(normalized_delta_score(1.0, 3.0), 1.0);
         assert_eq!(normalized_delta_score(1.0, -2.0), 0.0);
         assert_eq!(normalized_delta_score(1.0, 1.0), 0.5);
-        assert!(normalized_delta_score(0.0, 0.01) > 0.5);
+        assert!((normalized_delta_score(0.0, 0.01) - 0.505).abs() < 1e-12);
+        assert!((normalized_delta_score(0.0, 0.4) - 0.7).abs() < 1e-12);
     }
 
     #[test]

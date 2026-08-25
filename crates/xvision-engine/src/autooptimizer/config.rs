@@ -37,10 +37,21 @@ fn default_gepa_generations() -> usize {
     2
 }
 
-fn default_gepa_real_eval_min_llm_score() -> f64 {
-    0.30
+fn default_min_pool_win_fraction() -> f64 {
+    0.5
 }
 
+fn default_noise_floor_min_delta() -> f64 {
+    0.0
+}
+
+fn default_simplicity_penalty() -> f64 {
+    0.0
+}
+
+fn default_simplicity_equal_tolerance() -> f64 {
+    1e-9
+}
 /// Default holdout min-improvement threshold: 0.005 (0.5%).
 /// Small but strictly positive — a candidate must genuinely improve on
 /// out-of-sample data, but the bar is lower than the in-sample `min_improvement`.
@@ -105,6 +116,18 @@ pub struct AutoOptimizerConfig {
     /// for out-of-sample generalization than for in-sample training improvement.
     #[serde(default = "default_holdout_min_improvement")]
     pub holdout_min_improvement: f64,
+    /// Minimum fraction of pool windows where the child must beat the parent.
+    #[serde(default = "default_min_pool_win_fraction")]
+    pub min_pool_win_fraction: f64,
+    /// Minimum configured noise floor required for a pool mean delta.
+    #[serde(default = "default_noise_floor_min_delta")]
+    pub noise_floor_min_delta: f64,
+    /// Simplicity penalty λ; zero disables penalty scoring.
+    #[serde(default = "default_simplicity_penalty")]
+    pub simplicity_penalty: f64,
+    /// Tolerance for treating a simpler candidate as not worse.
+    #[serde(default = "default_simplicity_equal_tolerance")]
+    pub simplicity_equal_tolerance: f64,
     /// Minimum fraction of total return that must be realized (booked) profit.
     /// 0.25 means at least 25% of the strategy's gross return must come from
     /// closed positions. Set to 0.0 to disable.
@@ -198,11 +221,6 @@ pub struct AutoOptimizerConfig {
     /// cull. Defaults off so existing DSPy compiles retain current behaviour.
     #[serde(default)]
     pub gepa_real_eval: bool,
-
-    /// Minimum fast LLM score a candidate must achieve before the optimizer pays
-    /// for real benchmark evaluation. Range: 0.0..=1.0.
-    #[serde(default = "default_gepa_real_eval_min_llm_score")]
-    pub gepa_real_eval_min_llm_score: f64,
 
     /// Fixed benchmark windows for the GEPA real-eval scorer. The pool must be
     /// non-empty when `gepa_real_eval` is enabled.
@@ -357,10 +375,6 @@ fn default_rotation_num_windows() -> usize {
     10
 }
 
-fn default_rotation_stride_days() -> i64 {
-    30
-}
-
 impl Default for ScenarioRotationConfig {
     fn default() -> Self {
         Self {
@@ -380,6 +394,10 @@ impl Default for AutoOptimizerConfig {
         Self {
             min_improvement: 0.05,
             holdout_min_improvement: default_holdout_min_improvement(),
+            min_pool_win_fraction: default_min_pool_win_fraction(),
+            noise_floor_min_delta: default_noise_floor_min_delta(),
+            simplicity_penalty: default_simplicity_penalty(),
+            simplicity_equal_tolerance: default_simplicity_equal_tolerance(),
             min_trade_retention_ratio: default_min_trade_retention_ratio(),
             min_realized_return_ratio: default_min_realized_return_ratio(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
@@ -417,7 +435,6 @@ impl Default for AutoOptimizerConfig {
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
             gepa_real_eval: false,
-            gepa_real_eval_min_llm_score: default_gepa_real_eval_min_llm_score(),
             gepa_benchmark_pool: vec![],
             max_window_days: None,
             scenario_rotation: ScenarioRotationConfig::default(),
@@ -842,6 +859,32 @@ impl AutoOptimizerConfig {
                 self.min_realized_return_ratio
             );
         }
+        if !(0.0..=1.0).contains(&self.min_pool_win_fraction) {
+            bail!(
+                "min_pool_win_fraction must be in [0.0, 1.0] (got {})",
+                self.min_pool_win_fraction
+            );
+        }
+        if !self.noise_floor_min_delta.is_finite() || self.noise_floor_min_delta < 0.0 {
+            bail!(
+                "noise_floor_min_delta must be finite and non-negative (got {})",
+                self.noise_floor_min_delta
+            );
+        }
+        if !self.simplicity_penalty.is_finite() || self.simplicity_penalty < 0.0 {
+            bail!(
+                "simplicity_penalty must be finite and non-negative (got {})",
+                self.simplicity_penalty
+            );
+        }
+        if !self.simplicity_equal_tolerance.is_finite()
+            || self.simplicity_equal_tolerance < 0.0
+        {
+            bail!(
+                "simplicity_equal_tolerance must be finite and non-negative (got {})",
+                self.simplicity_equal_tolerance
+            );
+        }
         if let Some(cap) = self.max_window_days {
             if cap < 1 {
                 bail!(
@@ -918,12 +961,6 @@ impl AutoOptimizerConfig {
             bail!(
                 "experiments_per_cycle must be between 1 and 64 (got {})",
                 self.experiments_per_cycle,
-            );
-        }
-        if !(0.0..=1.0).contains(&self.gepa_real_eval_min_llm_score) {
-            bail!(
-                "gepa_real_eval_min_llm_score must be between 0.0 and 1.0 inclusive; got {}",
-                self.gepa_real_eval_min_llm_score
             );
         }
         if self.gepa_real_eval && self.gepa_benchmark_pool.is_empty() {
@@ -1021,7 +1058,6 @@ mod tests {
     fn gepa_real_eval_defaults_to_disabled_with_empty_pool() {
         let cfg = AutoOptimizerConfig::default();
         assert!(!cfg.gepa_real_eval);
-        assert_eq!(cfg.gepa_real_eval_min_llm_score, 0.30);
         assert!(cfg.gepa_benchmark_pool.is_empty());
         assert!(cfg.validate().is_ok());
     }
@@ -1037,23 +1073,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn gepa_real_eval_rejects_fast_score_threshold_outside_unit_interval() {
-        let mut cfg = AutoOptimizerConfig::default();
-        cfg.gepa_real_eval_min_llm_score = 1.1;
-        let err = cfg.validate().unwrap_err();
-        assert!(
-            err.to_string().contains("gepa_real_eval_min_llm_score"),
-            "threshold >1 must be rejected by name; got: {err}"
-        );
-
-        cfg.gepa_real_eval_min_llm_score = -0.01;
-        let err = cfg.validate().unwrap_err();
-        assert!(
-            err.to_string().contains("gepa_real_eval_min_llm_score"),
-            "threshold <0 must be rejected by name; got: {err}"
-        );
-    }
 
     #[test]
     fn gepa_benchmark_pool_rejects_overlong_day_window() {
@@ -1862,4 +1881,29 @@ max_retries = 2
         assert_eq!(cfg.scenario_rotation.day_window_span_days, 14);
         assert_eq!(cfg.scenario_rotation.num_windows, 10);
     }
+    #[test]
+    fn pool_and_simplicity_gate_defaults_and_validation() {
+        let mut cfg = AutoOptimizerConfig::default();
+        assert_eq!(cfg.min_pool_win_fraction, 0.5);
+        assert_eq!(cfg.noise_floor_min_delta, 0.0);
+        assert_eq!(cfg.simplicity_penalty, 0.0);
+        assert_eq!(cfg.simplicity_equal_tolerance, 1e-9);
+
+        cfg.min_pool_win_fraction = 1.1;
+        assert!(cfg.validate().unwrap_err().to_string().contains("min_pool_win_fraction"));
+        cfg.min_pool_win_fraction = 0.5;
+        cfg.noise_floor_min_delta = -0.1;
+        assert!(cfg.validate().unwrap_err().to_string().contains("noise_floor_min_delta"));
+        cfg.noise_floor_min_delta = 0.0;
+        cfg.simplicity_penalty = -0.1;
+        assert!(cfg.validate().unwrap_err().to_string().contains("simplicity_penalty"));
+        cfg.simplicity_penalty = 0.0;
+        cfg.simplicity_equal_tolerance = -0.1;
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("simplicity_equal_tolerance"));
+    }
+
 }

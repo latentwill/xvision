@@ -932,6 +932,10 @@ pub(super) fn build_cycle_config(
         // output-token cap; preserve prior behaviour (no cycle-level cap).
         max_output_tokens: None,
         max_consecutive_errors: 3,
+        min_pool_win_fraction: cfg.min_pool_win_fraction,
+        noise_floor_min_delta: cfg.noise_floor_min_delta,
+        simplicity_penalty: cfg.simplicity_penalty,
+        simplicity_equal_tolerance: cfg.simplicity_equal_tolerance,
     }
 }
 

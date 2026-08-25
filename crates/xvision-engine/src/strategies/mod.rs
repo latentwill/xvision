@@ -288,6 +288,19 @@ pub fn bar_granularity_for_cadence(cadence_minutes: u32) -> xvision_data::alpaca
 }
 
 impl Strategy {
+    /// Returns true when this strategy's decisions are fully deterministic.
+    ///
+    /// Mechanistic strategies are evaluated directly by the executor and do
+    /// not need an agent sidecar. Require the absence of both current
+    /// `AgentRef` bindings and legacy LLM slots so an accidentally mixed
+    /// strategy remains on the agent-backed path.
+    pub fn is_mechanistic(&self) -> bool {
+        self.decision_mode == DecisionMode::Mechanistic
+            && self.agents.is_empty()
+            && self.regime_slot.is_none()
+            && self.trader_slot.is_none()
+    }
+
     /// Minimum prior-bar context this strategy needs at decision t=0.
     ///
     /// Resolution order:
@@ -433,6 +446,24 @@ mod tests {
             briefing_indicators: Vec::new(),
             tunable_bounds: Vec::new(),
         }
+    }
+
+    #[test]
+    fn is_mechanistic_requires_deterministic_mode_without_agent_slots() {
+        let mut strategy = strategy_with_warmup(None);
+        assert!(!strategy.is_mechanistic());
+
+        strategy.decision_mode = DecisionMode::Mechanistic;
+        assert!(strategy.is_mechanistic());
+
+        strategy.trader_slot = Some(LLMSlot {
+            role: "trader".into(),
+            attested_with: "test-model".into(),
+            allowed_tools: Vec::new(),
+            provider: None,
+            model: None,
+        });
+        assert!(!strategy.is_mechanistic());
     }
 
     #[test]
