@@ -34,8 +34,8 @@ function obsReport(
     store_tool_inputs: true,
     store_tool_outputs: true,
     redact_secrets: true,
-    payload_ttl_days: 7n as unknown as bigint,
-    max_payload_bytes: 200_000n as unknown as bigint,
+    payload_ttl_days: 7,
+    max_payload_bytes: 200_000,
     persisted: false,
     ...overrides,
   };

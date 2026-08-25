@@ -51,6 +51,11 @@ function makeRun(
     skipped_dispatches: 0,
     delayed_decisions: 0,
     forced_cancels: 0,
+    source: "human",
+    n_decisions: null,
+    n_trades: null,
+    win_rate: null,
+    n_bars: null,
   };
 }
 
@@ -68,11 +73,10 @@ function makeFinding(
     severity,
     summary,
     evidence: {},
+    ...(strategyName ? { strategyName } : {}),
     extracted_at: "2026-01-01T01:00:00Z",
     schema_version: "2",
-    eval_review_id: "review-1",
     runId,
-    strategyName,
     created_at: "2026-01-01T01:00:00Z",
   };
 }

@@ -84,9 +84,8 @@ describe("CapitalRiskStrip", () => {
     const strip = screen.getByTestId("capital-risk-strip");
 
     expect(within(strip).getByTestId("capital-risk-empty")).toBeInTheDocument();
-    expect(strip.textContent).toMatch(/insufficient data/i);
-    expect(strip.textContent).toMatch(/no live capital deployed/i);
-    // It must NOT fabricate a calm $0 metric grid in the floor state.
+    expect(strip.textContent).toMatch(/no live trading strategies have been launched/i);
+    // It must NOT fabricate a calm green zero metric grid in the floor state.
     expect(within(strip).queryByTestId("capital-risk-deployed")).toBeNull();
     expect(strip.textContent).not.toMatch(/\$0/);
   });
@@ -96,7 +95,7 @@ describe("CapitalRiskStrip", () => {
     renderStrip(allNull);
     const strip = screen.getByTestId("capital-risk-strip");
     expect(within(strip).getByTestId("capital-risk-empty")).toBeInTheDocument();
-    expect(strip.textContent).toMatch(/insufficient data/i);
+    expect(strip.textContent).toMatch(/no live trading strategies have been launched/i);
   });
 
   it("renders '—' for an individual null field, never a fabricated $0", () => {

@@ -31,6 +31,14 @@ xtask = "run --quiet -p xtask --"
 XVISION_DISABLE_AGENT_SAVE_GATE = "1"
 
 [build]
+# Per-tree target dir on the shared XvisionCargoTarget volume. Worktrees
+# MUST NOT share one target dir: identical package versions with different
+# sources (e.g. protocol.rs gaining a field on another branch) make cargo
+# reuse stale artifacts and fail with ghost E0063 "missing field" errors.
+# `git worktree add` copies THIS file, so every worktree would point at
+# .../target/main — run `scripts/worktree-target.sh <name>` right after
+# creating one to write an overriding .cargo/config.toml in the worktree.
+target-dir = "/Volumes/XvisionCargoTarget/target/main"
 # Incremental compilation balloons the shared cargo target dir (it has spiked
 # to 30+ GB of target/debug/incremental across concurrent agent builds) for
 # little benefit in a multi-worktree workspace that rebuilds from many branches.

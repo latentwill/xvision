@@ -3,14 +3,14 @@ import type { ReviewAnnotation } from "./ReviewAnnotation";
 import type { ReviewStatus } from "./ReviewStatus";
 import type { ReviewVerdict } from "./ReviewVerdict";
 
-export type EvalReview = { id: string, eval_run_id: string, agent_profile_id: string, status: ReviewStatus, verdict: ReviewVerdict | null, confidence: number | null, score: number | null, summary: string | null,
+export type EvalReview = { id: string, eval_run_id: string, agent_profile_id: string, status: ReviewStatus, verdict: ReviewVerdict | null, confidence: number | null, score: number | null, summary: string | null, 
 /**
  * Raw strict-JSON reply preserved verbatim for audit. Engine track
  * is responsible for slicing the prose around the JSON before
  * persisting; the data layer just stores whatever string is handed
  * in.
  */
-raw_output_json: string | null,
+raw_output_json: string | null, 
 /**
  * Structured chart annotations produced by the review. Stored as JSON
  * on `eval_reviews.annotations_json` and consumed by `/charts/annotated`.

@@ -51,6 +51,7 @@ const ALL_SPAN_KINDS: SpanKind[] = [
   "broker.call",
   "recovery.attempt",
   "state.transition",
+  "risk.gate",
   "engine.event",
 ];
 

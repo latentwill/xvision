@@ -3,7 +3,11 @@ import type { ActivationMode } from "./ActivationMode";
 import type { ProviderModelPair } from "./ProviderModelPair";
 import type { StrategyOrigin } from "./StrategyOrigin";
 
-export type StrategySummary = { agent_id: string, display_name: string, template: string, decision_cadence_minutes: number, tags: Array<string>, 
+export type StrategySummary = { agent_id: string, display_name: string, template: string, 
+/**
+ * Manifest creator / author handle.
+ */
+creator: string, decision_cadence_minutes: number, tags: Array<string>, 
 /**
  * Optional per-strategy display color from the manifest. Chart surfaces
  * use it before falling back to the stable compare palette.
@@ -26,6 +30,10 @@ models: Array<string>,
  * Explicit provider-model pairs required by this strategy's executable slots.
  */
 provider_models: Array<ProviderModelPair>, 
+/**
+ * Capability classes activated by this strategy's agents/filters.
+ */
+capabilities: Array<string>, 
 /**
  * Number of attached strategy AgentRefs. Deterministic filters are not
  * agents and must not be counted here.

@@ -124,9 +124,13 @@ pub struct ComparisonRunSummary {
     /// or none of them recorded token counts. Appended 2026-05-22 for
     /// `cli-report-actions-and-tokens`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub input_tokens: Option<u64>,
     /// Sum of `model_calls.output_token_count`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub output_tokens: Option<u64>,
     /// Sum of `model_calls.cost_usd`. Not a recomputation — purely a
     /// rollup of the populated column. `None` when every contributing
@@ -143,6 +147,8 @@ pub struct ComparisonRunSummary {
     /// Wall-clock duration (`completed_at - started_at`) in milliseconds.
     /// `None` for runs that haven't terminated, or pre-migration rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub wall_clock_ms: Option<u64>,
 }
 

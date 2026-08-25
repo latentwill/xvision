@@ -55,6 +55,7 @@ pub enum SuppressedReason {
 pub struct FilterEventV1 {
     /// Schema version. Always `1` for v1; bumped when the shape
     /// changes incompatibly.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub schema_version: u32,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub bar_timestamp: DateTime<Utc>,
@@ -124,14 +125,20 @@ impl FilterEventV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilterSummary {
     pub filter_id: FilterId,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub bars_scanned: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub wakeups: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub suppressed_in_position: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub suppressed_cooldown: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub suppressed_daily_cap: u32,
     /// `bars_scanned - wakeups`. In FilterGated mode every non-wakeup
     /// bar is an LLM call that EveryBar would have paid for; this
     /// counts the savings.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub llm_calls_saved: u32,
     /// `llm_calls_saved * AVG_BRIEFING_TOKEN_COST`. v1 uses the global
     /// constant from `crate::AVG_BRIEFING_TOKEN_COST`; v1.5 will make

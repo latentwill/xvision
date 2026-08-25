@@ -83,6 +83,10 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "decision.reasoning",
   "model.call",
   "model.reasoning",
+  // WS-13 trace-obs-risk-gate: the engine's R3 risk-veto pass span. Must be
+  // known or `projectionToRunSpan` flattens it to `agent.run`, losing the
+  // RISK GATE pull-quote / color on the trace dock.
+  "risk.gate",
   "tool.call",
   "tool.validate_input",
   "tool.validate_output",

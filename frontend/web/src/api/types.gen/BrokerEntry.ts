@@ -3,11 +3,12 @@ import type { CredentialRef } from "./CredentialRef";
 
 export type BrokerEntry = { 
 /**
- * Display name ("Alpaca", "Orderly Network").
+ * Display name ("Alpaca", "Orderly Network", "Byreal").
  */
 name: string, 
 /**
- * Stable kind tag for the frontend ("alpaca" | "orderly").
+ * Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal" |
+ * "degen_arena" | "hyperliquid").
  */
 kind: string, 
 /**

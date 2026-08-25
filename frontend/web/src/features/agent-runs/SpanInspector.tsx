@@ -377,6 +377,18 @@ export function SpanInspector({
             glyph="!"
           />
         ) : null}
+        {span.status !== "error" && span.kind === "risk.gate" && span.error_message ? (
+          // Risk-gate verdict payload. Vetoes are correct policy behavior
+          // (2026-08-24 campaign postmortem), so they carry status ok —
+          // surface the verdict/reason here so operators still see why an
+          // open was rewritten to hold.
+          <PullQuote
+            label="RISK GATE"
+            body={span.error_message}
+            accent="var(--warn)"
+            glyph="i"
+          />
+        ) : null}
         {span.kind === "broker.call" && span.broker_call ? (
           // qa-trace-broker-spans: render the broker submit detail as
           // a key/value pull-quote. Operators look here for short-sale

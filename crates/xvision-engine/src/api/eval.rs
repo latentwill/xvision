@@ -319,14 +319,36 @@ pub struct RunSummary {
     /// Live/forward-test only: bars where dispatch was skipped because
     /// the agent was still processing a previous bar.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub skipped_dispatches: u64,
     /// Live/forward-test only: decisions accepted but flagged delayed
     /// because the bar was stale (age > stale-data-max-age-ms).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub delayed_decisions: u64,
     /// Live/forward-test only: agents force-cancelled via --max-agent-ms.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub forced_cancels: u64,
+    /// Count of LLM-pipeline decision slots recorded for this run. `None`
+    /// when the run has no metrics yet (still running / pre-metrics row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_decisions: Option<u32>,
+    /// Count of fill legs that crossed the book. `None` when the run has no
+    /// metrics yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_trades: Option<u32>,
+    /// Fraction of closed round-trips that realized positive PnL (0..1).
+    /// `None` when no round-trip closed (including runs whose only legs are
+    /// still open) or the run has no metrics yet. An all-loss run reports
+    /// `Some(0.0)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_rate: Option<f64>,
+    /// Count of bars the strategy saw. `None` on rows finalized before
+    /// `n_bars` was tracked (`MetricsSummary::n_bars == 0`) or when the run
+    /// has no metrics yet — surfaced as "—", never a faked 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_bars: Option<u32>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -360,6 +382,7 @@ pub struct RunDetail {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRowDto {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_index: u32,
     #[cfg_attr(feature = "ts-export", ts(type = "string"))]
     pub timestamp: DateTime<Utc>,
@@ -2672,7 +2695,19 @@ impl ToolDispatch for ToolRegistryDispatch {
                         return Err(e);
                     }
                 };
-                if !is_degrade(&result) {
+                // im2r.12: a degrade means this call produced NO usable
+                // vendor signal — either it never reached the network
+                // (unmapped asset, backtest-unavailable route) or the vendor
+                // refused it (rate limit, exhausted credits). Refund the
+                // credit so a model cannot drain the per-run budget with
+                // repeated degrade-producing calls.
+                if is_degrade(&result) {
+                    if credit_consumed {
+                        if let Some(budget) = &budget_arc {
+                            budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                } else {
                     let _ = cache
                         .store
                         .cache_tool_response(&cache.recording_id, name, &hash, as_of_date.as_deref(), &result)
@@ -2684,7 +2719,17 @@ impl ToolDispatch for ToolRegistryDispatch {
 
         // Uncached path (live run or non-signal tool).
         match self.dispatch_inner(name, input).await {
-            Ok(v) => Ok(v),
+            Ok(v) => {
+                // im2r.12: refund on degrades — see the record-path comment.
+                if is_degrade(&v) {
+                    if credit_consumed {
+                        if let Some(budget) = &budget_arc {
+                            budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+                Ok(v)
+            }
             Err(e) => {
                 // im2r.5: refund on error (no wasted credit for transient failures).
                 if credit_consumed {
@@ -5676,6 +5721,21 @@ fn summarise(run: Run) -> RunSummary {
         Some(m) => (m.skipped_dispatches, m.delayed_decisions, m.forced_cancels),
         None => (0, 0, 0),
     };
+    let (n_decisions, n_trades, win_rate, n_bars) = match &run.metrics {
+        Some(m) => (
+            Some(m.n_decisions),
+            Some(m.n_trades),
+            // Gate on trade activity, not the rate: an all-loss run has
+            // win_rate == 0.0 with real closed round-trips, and "0.0%" is the
+            // honest cell. Only "no metrics / no closed trips" stays None.
+            // n_trades counts FILL LEGS (an open+close trip is 2), so a run
+            // still holding its first position has n_trades == 1 and zero
+            // closed round-trips — win_rate would be a fake 0.0 there.
+            if m.n_trades >= 2 { Some(m.win_rate) } else { None },
+            if m.n_bars > 0 { Some(m.n_bars) } else { None },
+        ),
+        None => (None, None, None, None),
+    };
     RunSummary {
         id: run.id,
         agent_id: run.agent_id,
@@ -5710,6 +5770,10 @@ fn summarise(run: Run) -> RunSummary {
         skipped_dispatches,
         delayed_decisions,
         forced_cancels,
+        n_decisions,
+        n_trades,
+        win_rate,
+        n_bars,
     }
 }
 

@@ -12,7 +12,8 @@
 //!
 //!   * `"vetoed"`   — the risk-config block rewrote a NEW open to
 //!                    `hold` (`daily_loss_kill` / `max_concurrent_positions`).
-//!                    Span status `error`, `error_json` carries the reason.
+//!                    Span status `ok` (a veto is correct policy behavior,
+//!                    not a failure); `error_json` carries the reason.
 //!   * `"modified"` — the guardrail rewrote the trader's action (and it
 //!                    was NOT a risk-config veto). Span status `ok`,
 //!                    `error_json` carries `verdict:"modified"`.
@@ -292,14 +293,19 @@ async fn approved_decisions_emit_risk_gate_span() {
         approved > 0,
         "at least one risk.gate span must report verdict approved (ok + no error_json)"
     );
-    // No vetoes when the cap doesn't bind.
-    let vetoed = spans.iter().filter(|s| s.status == SpanStatus::Error).count();
+    // No vetoes when the cap doesn't bind. The verdict lives in the
+    // `error_json` payload, NOT the span status — a veto is expected
+    // policy behavior and must not pollute status-based error metrics.
+    let vetoed = spans
+        .iter()
+        .filter(|s| s.error_json.as_deref().is_some_and(|j| j.contains("\"vetoed\"")))
+        .count();
     assert_eq!(vetoed, 0, "cap=3 must not veto any open");
 }
 
 /// (b) A `max_concurrent_positions` veto surfaces as a `risk.gate` span
-/// with verdict `"vetoed"` (status error, reason carried) AND the
-/// existing `risk_veto` engine event still fires AND the trade is still
+/// with verdict `"vetoed"` (status ok, reason carried in `error_json`) AND
+/// the existing `risk_veto` engine event still fires AND the trade is still
 /// rewritten to hold (n_trades unchanged at 2).
 #[tokio::test]
 async fn vetoed_open_emits_risk_gate_vetoed_span_and_keeps_event() {
@@ -332,7 +338,10 @@ async fn vetoed_open_emits_risk_gate_vetoed_span_and_keeps_event() {
     // At least one risk.gate span reports the vetoed verdict, carrying
     // the max_concurrent_positions reason.
     let spans = risk_gate_spans(&events);
-    let vetoed: Vec<&RiskGateSpan> = spans.iter().filter(|s| s.status == SpanStatus::Error).collect();
+    let vetoed: Vec<&RiskGateSpan> = spans
+        .iter()
+        .filter(|s| s.error_json.as_deref().is_some_and(|j| j.contains("\"vetoed\"")))
+        .collect();
     assert!(
         !vetoed.is_empty(),
         "a binding cap must produce at least one vetoed risk.gate span"

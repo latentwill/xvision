@@ -25,7 +25,7 @@ skill_ids: Array<string>,
  * for `None`; the store layer maps between the sentinel and the
  * Rust-side `Option`.
  */
-max_tokens: number | null,
+max_tokens: number | null, 
 /**
  * QA30 follow-on: optional operator override for the per-step
  * wall-clock budget (Cline runtime). `None` means "no enforcement"
@@ -38,7 +38,7 @@ max_tokens: number | null,
  * for `None` (migration 047), matching the `max_tokens` shape so
  * the store-layer 0-as-unset projection can be reused.
  */
-max_wall_ms: number | null,
+max_wall_ms: number | null, 
 /**
  * Optional operator override for the sampling temperature
  * forwarded to the provider. `None` lets the provider's default
@@ -142,6 +142,11 @@ memory_mode: MemoryMode,
  * `Some(true)`.
  */
 noop_skip: boolean | null, 
+/**
+ * Tool names this slot is allowed to invoke. Empty means callers may
+ * fall back to a strategy-level required tool list for legacy strategy
+ * slots; persisted as JSON on `agent_slots.allowed_tools_json`.
+ */
 allowed_tools: Array<string>, 
 /**
  * Per-slot opt-in for **delta-briefing mode** (F41 token-efficiency

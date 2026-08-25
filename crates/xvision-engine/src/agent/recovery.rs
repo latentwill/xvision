@@ -111,6 +111,11 @@ pub enum FailureClass {
     /// called `submit_decision`. The no-decision recovery policy issues a
     /// single repair step prompt before surfacing the hard failure.
     NoDecision,
+    /// Cline sidecar rejected or failed the step with an identity/session
+    /// error (observed 2026-08-23 campaign: `User not found.` at cycle0).
+    /// Transient sidecar state — `execute_slot_cline` retries the step once
+    /// before surfacing this class.
+    SidecarAuth,
 
     Unclassified,
 }
@@ -145,6 +150,7 @@ impl FailureClass {
             Self::RepeatedToolFailure { .. } => "repeated_tool_failure",
             Self::BudgetExceeded { .. } => "budget_exceeded",
             Self::NoDecision => "no_decision",
+            Self::SidecarAuth => "sidecar_auth",
             Self::Unclassified => "unclassified",
         }
     }
@@ -186,8 +192,11 @@ impl FailureClass {
                 RecoveryFamily::RepeatedToolFailure
             }
 
-            // NoDecision: Cline run ended without submit_decision call.
-            Self::NoDecision => RecoveryFamily::NoDecision,
+            // NoDecision / SidecarAuth: Cline-side clean failures. NoDecision
+            // ended without submit_decision; SidecarAuth is a transient
+            // identity/session rejection that `execute_slot_cline` already
+            // retried once before this class surfaces.
+            Self::NoDecision | Self::SidecarAuth => RecoveryFamily::NoDecision,
 
             // Everything else is unrecoverable from this module's
             // vantage point: provider HTTP/decode/rate-limit are
@@ -329,6 +338,13 @@ fn classify_from_string(s: &str) -> FailureClass {
     // Cline no-decision: match before any broker/timeout fallbacks.
     if s.contains("run completed without calling submit_decision") {
         return FailureClass::NoDecision;
+    }
+    // Cline sidecar identity/session failure (2026-08-23 campaign:
+    // `User not found.` aborted a run at cycle0 with tag `[unclassified]`).
+    // Match before broker/timeout fallbacks so the prose never lands in a
+    // transport class.
+    if s.contains("user not found") {
+        return FailureClass::SidecarAuth;
     }
     // Loop-control class — match BEFORE broker fallbacks so the abort
     // message (which embeds e.g. `broker_min_order_size`) doesn't get

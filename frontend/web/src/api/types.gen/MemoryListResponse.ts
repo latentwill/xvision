@@ -5,4 +5,4 @@ export type MemoryListResponse = { items: Array<MemoryItemDto>,
 /**
  * Total matching rows before LIMIT/OFFSET.
  */
-total: bigint, };
+total: number, };

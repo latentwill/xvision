@@ -81,6 +81,8 @@ const STATUS_TONE: Record<string, "gold" | "warn" | "danger" | "default" | "info
 const SORT_OPTIONS: SortOption[] = [
   { value: "started", label: "Recently started" },
   { value: "completed", label: "Recently completed" },
+  { value: "return", label: "Best return" },
+  { value: "sharpe", label: "Best Sharpe" },
   { value: "strategy", label: "Strategy A → Z" },
   { value: "status", label: "Status" },
 ];
@@ -288,6 +290,10 @@ export function EvalRunsRoute() {
               displayStrategyName(b.agent_id, strategies),
             ),
           );
+        case "return":
+          return rows.sort((a, b) => (b.total_return_pct ?? -Infinity) - (a.total_return_pct ?? -Infinity));
+        case "sharpe":
+          return rows.sort((a, b) => (b.sharpe ?? -Infinity) - (a.sharpe ?? -Infinity));
         case "status":
           return rows.sort((a, b) => a.status.localeCompare(b.status));
         case "started":
@@ -378,6 +384,10 @@ export function EvalRunsRoute() {
     { key: "drawdown", label: "Max DD",  align: "right" as const, priority: 4, estWidth: 90 },
     { key: "mode",     label: "Mode",                    priority: 3,      estWidth: 90 },
     { key: "tokens",   label: "Tokens",  align: "right" as const, priority: 2, estWidth: 80 },
+    { key: "decisions", label: "Decisions", align: "right" as const, defaultOff: true, estWidth: 80 },
+    { key: "trades",   label: "Trades",  align: "right" as const, defaultOff: true, estWidth: 70 },
+    { key: "winrate",  label: "Win %",   align: "right" as const, defaultOff: true, estWidth: 70 },
+    { key: "bars",     label: "Bars",    align: "right" as const, defaultOff: true, estWidth: 70 },
     { key: "duration", label: "Duration",align: "right" as const, priority: 1, estWidth: 90 },
     { key: "started",  label: "Started",                 priority: 0,      estWidth: 130 },
     { key: "actions",  label: "",                        essential: true,  estWidth: 80 },
@@ -681,6 +691,26 @@ function DesktopRow({
       {visibleKeys.has("tokens") ? (
         <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
       ) : null}
+      {visibleKeys.has("decisions") ? (
+        <td className="px-3 py-3 text-right font-mono text-text-2">
+          {row.n_decisions ?? "—"}
+        </td>
+      ) : null}
+      {visibleKeys.has("trades") ? (
+        <td className="px-3 py-3 text-right font-mono text-text-2">
+          {row.n_trades ?? "—"}
+        </td>
+      ) : null}
+      {visibleKeys.has("winrate") ? (
+        <td className="px-3 py-3 text-right font-mono text-text-2">
+          {row.win_rate != null ? `${(row.win_rate * 100).toFixed(1)}%` : "—"}
+        </td>
+      ) : null}
+      {visibleKeys.has("bars") ? (
+        <td className="px-3 py-3 text-right font-mono text-text-2">
+          {row.n_bars ?? "—"}
+        </td>
+      ) : null}
       {visibleKeys.has("duration") ? (
         <td className="px-3 py-3 text-right font-mono">
           {fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
@@ -882,10 +912,14 @@ function StartEvalPanel({
             capital: { initial: capitalNum, currency: "USD" },
             broker_creds_ref: brokerCredsRef,
             stop_policy: {
-              time_limit_secs: timeLimitSecs as unknown as bigint | null,
-              bar_limit: barLimit as number | null,
-              decision_limit: decisionLimit as number | null,
-              trade_limit: tradeLimit as number | null,
+              // Wire omits unset limits (skip_serializing_if), so the TS
+              // fields are optional — undefined, never null.
+              time_limit_secs: typeof timeLimitSecs === "number" ? timeLimitSecs : undefined,
+              // bar/decision/trade limits serialize null when unset (no
+              // skip_serializing_if on the Rust side) — required-nullable.
+              bar_limit: typeof barLimit === "number" ? barLimit : null,
+              decision_limit: typeof decisionLimit === "number" ? decisionLimit : null,
+              trade_limit: typeof tradeLimit === "number" ? tradeLimit : null,
             },
             granularity: liveGranularity,
             // Coarse safety label; v1 only accepts "paper". The actual venue is

@@ -47,11 +47,17 @@ use crate::eval::store::DecisionRow;
 )]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionCounts {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub long_open: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub short_open: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub flat: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub hold: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub long_close: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub short_close: u32,
 }
 
@@ -85,15 +91,19 @@ pub struct BehaviorSummary {
     /// Fraction of all decisions that are `flat` or `hold` (0.0–1.0).
     pub flat_rate: f64,
     /// Count of `long_open` + `short_open` decisions.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub trades_opened: u32,
     /// Consecutive open-direction flips without a flat between them.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub direct_flips: u32,
     /// Mean bars between an `open` and the next `flat` for the same asset.
     /// `None` when there are no completed round-trips.
     pub avg_bars_held: Option<f64>,
     /// Opens immediately following a `flat` with `pnl_realized < 0`.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub reentries_after_loss: u32,
     /// `flat` decisions with `pnl_realized < 0` (closed at a loss).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub exits_on_invalidation: u32,
     /// Heuristic label for the most likely failure mode.
     pub primary_failure_mode: String,
@@ -107,6 +117,7 @@ pub struct BehaviorSummary {
     /// Number of same-direction "stacking" opens on the same asset without
     /// an intervening close (see module doc).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub repeated_opens: u32,
 }
 

@@ -1065,6 +1065,7 @@ impl Executor {
                     total_input_tokens,
                     total_output_tokens,
                     book.realized(),
+                    decision_bars.len() as u32,
                 )
                 .await;
                 anyhow::bail!("eval run stopped");
@@ -1084,6 +1085,7 @@ impl Executor {
                     total_input_tokens,
                     total_output_tokens,
                     book.realized(),
+                    decision_bars.len() as u32,
                 )
                 .await;
                 last_partial_persist = Instant::now();
@@ -1852,6 +1854,7 @@ impl Executor {
                             total_input_tokens,
                             total_output_tokens,
                             book.realized(),
+                            decision_bars.len() as u32,
                         )
                         .await;
                         finish_decision_span_error!("eval run stopped");
@@ -2005,6 +2008,7 @@ impl Executor {
                             total_input_tokens,
                             total_output_tokens,
                             book.realized(),
+                            decision_bars.len() as u32,
                         )
                         .await;
                         finish_decision_span_error!("eval run stopped");
@@ -2125,6 +2129,7 @@ impl Executor {
                         total_input_tokens,
                         total_output_tokens,
                         book.realized(),
+                        decision_bars.len() as u32,
                     )
                     .await;
                     finish_decision_span_error!("eval run stopped");
@@ -3271,7 +3276,7 @@ impl Executor {
 
         if store.is_terminal(&run.id).await? {
             // F36: capture the (now near-complete) accumulators before bailing.
-            let partial = compute_run_metrics(
+            let mut partial = compute_run_metrics(
                 &equity_curve,
                 initial,
                 equity,
@@ -3283,6 +3288,7 @@ impl Executor {
                 None,
                 book.realized(),
             );
+            partial.n_bars = decision_bars.len() as u32;
             let _ = store
                 .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                 .await;
@@ -3313,7 +3319,7 @@ impl Executor {
 
         // inference_cost_quote_total + net_return_pct populated post-finalize by
         // api::eval::enrich_with_inference_cost.
-        let metrics = compute_run_metrics(
+        let mut metrics = compute_run_metrics(
             &equity_curve,
             initial,
             equity,
@@ -3325,6 +3331,7 @@ impl Executor {
             Some(baselines),
             book.realized(),
         );
+        metrics.n_bars = decision_bars.len() as u32;
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -3786,7 +3793,7 @@ impl Executor {
                     equity = book.equity(&std::collections::BTreeMap::new());
                     equity_curve.push(equity);
                 }
-                let partial = compute_run_metrics(
+                let mut partial = compute_run_metrics(
                     &equity_curve,
                     initial,
                     equity,
@@ -3798,6 +3805,10 @@ impl Executor {
                     None,
                     book.realized(),
                 );
+                // Bars column parity with the periodic/terminal partial sites:
+                // a cancelled run still received bars; without this the
+                // persisted metrics carry n_bars = 0 and the list renders "—".
+                partial.n_bars = live_bar_count;
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                     .await;
@@ -3858,7 +3869,7 @@ impl Executor {
             }
 
             if last_partial_persist.elapsed() >= PARTIAL_PERSIST_INTERVAL {
-                let partial = compute_run_metrics(
+                let mut partial = compute_run_metrics(
                     &equity_curve,
                     initial,
                     equity,
@@ -3870,6 +3881,7 @@ impl Executor {
                     None,
                     book.realized(),
                 );
+                partial.n_bars = live_bar_count;
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                     .await;
@@ -4421,7 +4433,7 @@ impl Executor {
         let _ = store.set_unrealized_pnl(&run.id, latest_unrealized_pnl).await;
 
         if store.is_terminal(&run.id).await? {
-            let partial = compute_run_metrics(
+            let mut partial = compute_run_metrics(
                 &equity_curve,
                 initial,
                 equity,
@@ -4433,6 +4445,7 @@ impl Executor {
                 None,
                 book.realized(),
             );
+            partial.n_bars = live_bar_count;
             let _ = store
                 .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                 .await;
@@ -4457,6 +4470,7 @@ impl Executor {
         metrics.skipped_dispatches = skipped_dispatches;
         metrics.delayed_decisions = delayed_decisions;
         metrics.forced_cancels = forced_cancels;
+        metrics.n_bars = live_bar_count;
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -6942,8 +6956,9 @@ async fn persist_partial_snapshot(
     input_tokens: u64,
     output_tokens: u64,
     realized_pnl: f64,
+    bars: u32,
 ) {
-    let metrics = compute_run_metrics(
+    let mut metrics = compute_run_metrics(
         equity_curve,
         initial,
         equity,
@@ -6955,6 +6970,7 @@ async fn persist_partial_snapshot(
         None,
         realized_pnl,
     );
+    metrics.n_bars = bars;
     let _ = store
         .persist_partial(run_id, &metrics, input_tokens, output_tokens)
         .await;

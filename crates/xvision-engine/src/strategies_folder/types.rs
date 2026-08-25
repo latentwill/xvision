@@ -52,6 +52,7 @@ pub struct FolderEntry {
     /// Path relative to `folder_root()`, forward-slash separated.
     pub rel_path: String,
     pub kind: FileKind,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub size_bytes: u64,
     /// RFC3339 UTC timestamp of the file's last-modified mtime. Empty
     /// string when the mtime is unavailable on the host filesystem.

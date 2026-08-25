@@ -127,6 +127,7 @@ const scenario = {
       volume_constraints: null,
     },
     overrides: [],
+    borrow_bps_per_day: 5.0,
   },
   replay_mode: { mode: "Continuous" },
   capital: { initial: 10000, currency: "USD" },
@@ -410,7 +411,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     await waitFor(() => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
         scenario.id,
-        "4h",
+        "1h",
         "BTC/USD",
       );
     });
@@ -425,7 +426,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     await waitFor(() => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
         scenario.id,
-        "4h",
+        "1h",
         "ETH/USD",
       );
     });
@@ -473,7 +474,7 @@ describe("ScenariosDetailRoute bars cache actions", () => {
     // The v2 candle pane must NOT render while there are no bars.
     expect(screen.queryByTestId("kline-candle-pane")).not.toBeInTheDocument();
     // The route-level asset · granularity label uses the preview defaults.
-    expect(screen.getByText("BTC/USD · 4h")).toBeInTheDocument();
+    expect(screen.getByText("BTC/USD · 1h")).toBeInTheDocument();
   });
 
   it("renders ScenarioChartV2 when bars are present", async () => {

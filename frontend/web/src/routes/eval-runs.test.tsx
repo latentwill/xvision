@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import userEvent from "@testing-library/user-event";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import { EvalRunsRoute } from "./eval-runs";
@@ -21,6 +21,7 @@ import type {
   BrokerEntry,
   ProviderRow,
   Scenario,
+  RunSummary,
 } from "@/api/types.gen";
 import type * as EvalApiModule from "@/api/eval";
 import type * as ScenariosApiModule from "@/api/scenarios";
@@ -332,6 +333,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T07:30:00Z",
         sharpe: 0.8,
@@ -352,7 +354,11 @@ describe("EvalRunsRoute", () => {
     unrealized_pnl_usd: null,
     skipped_dispatches: 0,
     delayed_decisions: 0,
-    forced_cancels: 0
+        forced_cancels: 0,
+        n_decisions: null,
+        n_trades: null,
+        win_rate: null,
+        n_bars: null,
       },
     ]);
 
@@ -377,6 +383,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T08:15:00Z",
         sharpe: 1.2,
@@ -397,7 +404,11 @@ describe("EvalRunsRoute", () => {
     unrealized_pnl_usd: null,
     skipped_dispatches: 0,
     delayed_decisions: 0,
-    forced_cancels: 0
+        forced_cancels: 0,
+        n_decisions: null,
+        n_trades: null,
+        win_rate: null,
+        n_bars: null,
       },
     ]);
 
@@ -580,6 +591,7 @@ describe("EvalRunsRoute", () => {
       scenario: null,
       mode: "backtest",
       status: "cancelled",
+      source: "human",
       started_at: "2026-05-13T07:00:00Z",
       completed_at: "2026-05-13T07:05:00Z",
       sharpe: null,
@@ -600,7 +612,11 @@ describe("EvalRunsRoute", () => {
     unrealized_pnl_usd: null,
     skipped_dispatches: 0,
     delayed_decisions: 0,
-    forced_cancels: 0
+    forced_cancels: 0,
+    n_decisions: null,
+    n_trades: null,
+    win_rate: null,
+    n_bars: null,
     });
 
     renderRoute();
@@ -938,6 +954,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T08:15:00Z",
         sharpe: 1.2,
@@ -958,7 +975,11 @@ describe("EvalRunsRoute", () => {
     unrealized_pnl_usd: null,
     skipped_dispatches: 0,
     delayed_decisions: 0,
-    forced_cancels: 0
+        forced_cancels: 0,
+        n_decisions: null,
+        n_trades: null,
+        win_rate: null,
+        n_bars: null,
       },
     ]);
 
@@ -992,6 +1013,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T08:15:00Z",
         sharpe: 1.2,
@@ -1012,6 +1034,10 @@ describe("EvalRunsRoute", () => {
         skipped_dispatches: 0,
         delayed_decisions: 0,
         forced_cancels: 0,
+        n_decisions: null,
+        n_trades: null,
+        win_rate: null,
+        n_bars: null,
         flatten_requested: false,
       },
     ]);
@@ -1041,6 +1067,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T08:15:00Z",
         sharpe: 1.2,
@@ -1061,6 +1088,10 @@ describe("EvalRunsRoute", () => {
         skipped_dispatches: 0,
         delayed_decisions: 0,
         forced_cancels: 0,
+        n_decisions: null,
+        n_trades: null,
+        win_rate: null,
+        n_bars: null,
         flatten_requested: false,
       },
     ]);
@@ -1093,6 +1124,7 @@ describe("EvalRunsRoute", () => {
         scenario: null,
         mode: "backtest",
         status: "completed",
+        source: "human",
         started_at: "2026-05-13T07:00:00Z",
         completed_at: "2026-05-13T08:15:00Z",
         sharpe: 1.2,
@@ -1113,7 +1145,11 @@ describe("EvalRunsRoute", () => {
     unrealized_pnl_usd: null,
     skipped_dispatches: 0,
     delayed_decisions: 0,
-    forced_cancels: 0
+    forced_cancels: 0,
+    n_decisions: null,
+    n_trades: null,
+    win_rate: null,
+    n_bars: null,
       },
     ]);
 
@@ -1187,9 +1223,13 @@ describe("EvalRunsRoute", () => {
     fireEvent.change(screen.getByLabelText("Forward-test trade limit"), {
       target: { value: "3" },
     });
-    fireEvent.change(screen.getByLabelText("Forward-test timeframe"), {
-      target: { value: "5m" },
-    });
+    // Timeframe is a SignalSelectMenu (custom dropdown), not a native
+    // <select> — fireEvent.change silently no-ops on it. Open the menu and
+    // click the option.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Forward-test timeframe" }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "5 minutes" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
@@ -1224,5 +1264,135 @@ describe("EvalRunsRoute", () => {
 
     expect(await screen.findByText(/Set at least one duration limit/)).toBeInTheDocument();
     expect(evalApi.startRun).not.toHaveBeenCalled();
+  });
+
+  // ── Metric sorting + optional columns ──────────────────────────────────
+
+  function makeMetricRun(
+    id: string,
+    over: Partial<RunSummary> = {},
+  ): RunSummary {
+    return {
+      id,
+      agent_id: "01TEST",
+      scenario_id: "crypto-bull-q1-2025",
+      strategy: null,
+      scenario: null,
+      mode: "backtest",
+      status: "completed",
+      started_at: "2026-05-13T07:00:00Z",
+      completed_at: "2026-05-13T07:30:00Z",
+      sharpe: 1.0,
+      max_drawdown_pct: 4.5,
+      total_return_pct: 5.0,
+      error: null,
+      actual_input_tokens: 100,
+      actual_output_tokens: 50,
+      inference_cost_quote_total: null,
+      net_return_pct: null,
+      filter_summaries: [],
+      auto_fire_review: false,
+      review_model: null,
+      max_annotations_per_review: 8,
+      paused: false,
+      paused_at: null,
+      flatten_requested: false,
+      unrealized_pnl_usd: null,
+      skipped_dispatches: 0,
+      delayed_decisions: 0,
+      forced_cancels: 0,
+      ...over,
+      source: over.source ?? "human",
+      n_decisions: over.n_decisions ?? null,
+      n_trades: over.n_trades ?? null,
+      win_rate: over.win_rate ?? null,
+      n_bars: over.n_bars ?? null,
+    };
+  }
+
+  async function pickSort(user: UserEvent, label: string | RegExp) {
+    await user.click(await screen.findByRole("button", { name: /Sort/ }));
+    await user.click(await screen.findByRole("option", { name: label }));
+  }
+
+  function runIdOrder(): string[] {
+    return Array.from(document.querySelectorAll('[aria-label^="Run id "]')).map(
+      (el) => el.getAttribute("aria-label")!.replace("Run id ", ""),
+    );
+  }
+
+  it("sorts by Best return with nulls last", async () => {
+    const user = userEvent.setup();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeMetricRun("01RUN_AAAAAAAAAAAAAAAAAAAAAAA", { total_return_pct: 2.1 }),
+      makeMetricRun("01RUN_BBBBBBBBBBBBBBBBBBBBBBB", {
+        status: "running",
+        completed_at: null,
+        total_return_pct: null,
+      }),
+      makeMetricRun("01RUN_CCCCCCCCCCCCCCCCCCCCCCC", { total_return_pct: 8.1 }),
+    ]);
+    renderRoute();
+
+    await pickSort(user, "Best return");
+
+    expect(runIdOrder()).toEqual([
+      "01RUN_CCCCCCCCCCCCCCCCCCCCCCC",
+      "01RUN_AAAAAAAAAAAAAAAAAAAAAAA",
+      "01RUN_BBBBBBBBBBBBBBBBBBBBBBB",
+    ]);
+  });
+
+  it("sorts by Best Sharpe", async () => {
+    const user = userEvent.setup();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeMetricRun("01RUN_AAAAAAAAAAAAAAAAAAAAAAA", { sharpe: 0.8 }),
+      makeMetricRun("01RUN_BBBBBBBBBBBBBBBBBBBBBBB", { sharpe: 2.4 }),
+    ]);
+    renderRoute();
+
+    await pickSort(user, "Best Sharpe");
+
+    expect(runIdOrder()).toEqual([
+      "01RUN_BBBBBBBBBBBBBBBBBBBBBBB",
+      "01RUN_AAAAAAAAAAAAAAAAAAAAAAA",
+    ]);
+  });
+
+  it("shows Decisions / Trades / Win % / Bars columns after enabling them", async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem("xvn:list:eval-runs:columns");
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeMetricRun("01RUN_AAAAAAAAAAAAAAAAAAAAAAA", {
+        n_decisions: 42,
+        n_trades: 11,
+        win_rate: 0.636,
+        n_bars: 1262,
+      }),
+    ]);
+    renderRoute();
+
+    await screen.findByText("01RUN_AAAAAAAAAAAAAAAAAAAAAAA");
+    await user.click(await screen.findByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Decisions" }));
+    await user.click(screen.getByRole("checkbox", { name: "Trades" }));
+    await user.click(screen.getByRole("checkbox", { name: "Win %" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bars" }));
+
+    // Assert per-column alignment, not just presence: each value must sit
+    // in the body cell directly under its header (guards against the
+    // desktopColumns array and DesktopRow cell order drifting apart).
+    const headers = Array.from(document.querySelectorAll("thead th")).map(
+      (th) => th.textContent!.trim(),
+    );
+    const cells = Array.from(document.querySelector("tbody tr")!.children).map(
+      (td) => td.textContent!.trim(),
+    );
+    expect(headers).toEqual(expect.arrayContaining(["Decisions", "Trades", "Win %", "Bars"]));
+    expect(headers).toHaveLength(cells.length);
+    expect(cells[headers.indexOf("Decisions")]).toBe("42");
+    expect(cells[headers.indexOf("Trades")]).toBe("11");
+    expect(cells[headers.indexOf("Win %")]).toBe("63.6%");
+    expect(cells[headers.indexOf("Bars")]).toBe("1262");
   });
 });

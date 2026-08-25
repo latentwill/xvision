@@ -130,15 +130,19 @@ pub struct DecisionTrace {
     pub top_p: f32,
     /// Random seed, if deterministic sampling was requested.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub seed: u64,
     /// Input tokens consumed (prompt + system).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub tokens_in: u32,
     /// Output tokens generated (completion).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub tokens_out: u32,
     /// Wall-clock LLM round-trip time in milliseconds.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub latency_ms: u32,
     /// Tools invoked during this decision cycle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

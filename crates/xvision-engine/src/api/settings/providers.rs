@@ -257,9 +257,11 @@ pub struct ProviderModelsReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestConnectionReport {
     pub ok: bool,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub latency_ms: u32,
     /// Number of models the catalog returned. 0 on error or when the
     /// provider's catalog endpoint genuinely returned nothing.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub model_count: u32,
     /// Failure message when `ok` is false. None on success.
     #[serde(default, skip_serializing_if = "Option::is_none")]

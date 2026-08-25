@@ -32,6 +32,7 @@ pub struct IdentityReport {
     /// NFT token id for the platform agent on the Mantle registry.
     /// Read from env `XVN_PLATFORM_AGENT_TOKEN_ID` (parse as u64).
     /// `None` when the env var is absent or unparseable.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub agent_token_id: Option<u64>,
     /// On-chain address of the identity registry contract.
     /// Read from env `XVN_IDENTITY_REGISTRY` (hex address string).

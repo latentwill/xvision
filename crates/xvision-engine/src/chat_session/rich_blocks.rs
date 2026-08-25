@@ -247,6 +247,7 @@ impl ChatRunListPayload {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatRunListItem {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub rank: u32,
     pub run_id: String,
     pub strategy_id: Option<String>,
@@ -921,6 +922,10 @@ mod tests {
             delayed_decisions: 0,
             forced_cancels: 0,
             skipped_dispatches: 0,
+            n_decisions: None,
+            n_trades: None,
+            win_rate: None,
+            n_bars: None,
         }
     }
 

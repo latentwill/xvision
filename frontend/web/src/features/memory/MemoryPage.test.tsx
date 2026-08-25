@@ -430,7 +430,9 @@ describe("MemoryPage — Pattern lifecycle controls", () => {
 
     renderPage();
 
-    await user.selectOptions(await screen.findByLabelText(/Lifecycle/i), "staged");
+    const lifecycle = await screen.findByRole("button", { name: "Lifecycle" });
+    await user.click(lifecycle);
+    await user.click(screen.getByRole("option", { name: "staged" }));
     expect(await screen.findByText("staged wisdom")).toBeInTheDocument();
     await waitFor(() => {
       expect(memoryApi.listMemory).toHaveBeenCalledWith({

@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -122,16 +123,18 @@ describe("ServerPagerStrip - next / previous interactions", () => {
 });
 
 describe("ServerPagerStrip - page-size reset", () => {
-  it("calls onPageSizeChange then resets to page 1 when page-size select changes", () => {
+  it("calls onPageSizeChange then resets to page 1 when page-size select changes", async () => {
     const props = makePagerProps();
+    const user = userEvent.setup();
     render(
       <ServerPagerStrip
         {...props}
         page={3}
       />,
     );
-    const select = screen.getByLabelText(/per page/i);
-    fireEvent.change(select, { target: { value: "25" } });
+    const select = screen.getByRole("button", { name: /per page/i });
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "25" }));
     expect(props.onPageSizeChange).toHaveBeenCalledWith(25);
     expect(props.onPageChange).toHaveBeenCalledWith(1);
   });

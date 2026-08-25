@@ -19,4 +19,8 @@ max_leverage: number | null,
  * Maximum allowed drawdown from peak equity, as a percentage.
  * Breach triggers a circuit-breaker abort. `None` = no cap.
  */
-max_loss_pct: number | null, };
+max_loss_pct: number | null, 
+/**
+ * Maximum drawdown in USD from peak equity. `None` = no cap.
+ */
+max_drawdown_usd: number | null, };

@@ -21,8 +21,8 @@ writable: boolean,
  */
 embedder_present: boolean, 
 /**
- * The embedder id (`local:hash-v1`, `openai:text-embedding-3-small`)
- * when present.
+ * The embedder id (`local:hash-v1`, `openaicompat:<model>` e.g.
+ * `openaicompat:nomic-embed-text`) when present.
  */
 embedder_id: string | null, 
 /**
