@@ -1384,15 +1384,15 @@ pub struct ProviderOverride {
 /// * `Record` — mint a trajectory recording for the run's primary recorded
 ///   slot and bind the event sink so frames persist into the store.
 ///
-/// Replay through the engine eval path is intentionally NOT a variant here.
-/// Adding engine-eval replay would require threading a recording id + store
-/// into every slot dispatch — out of scope for §2-D.
+/// Replay re-runs a completed recording deterministically: signal-tool HTTP
+/// calls are served from the recording's cached responses and no new frames
+/// are persisted. Backtest-only — validated at run setup.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunTrajectoryMode {
     /// No recording (default — preserves byte-identity for non-record runs).
@@ -1400,12 +1400,26 @@ pub enum RunTrajectoryMode {
     Live,
     /// Mint a recording for this run and persist trajectory frames.
     Record,
+    /// Deterministically re-run against a completed recording's cached
+    /// signal-tool responses (§5; backtest only).
+    Replay {
+        /// Recording id of a prior `Record` run (must be status `complete`).
+        recording_id: String,
+    },
 }
 
 impl RunTrajectoryMode {
     /// True when this run should mint a trajectory recording.
-    pub fn records(self) -> bool {
+    pub fn records(&self) -> bool {
         matches!(self, RunTrajectoryMode::Record)
+    }
+
+    /// The recording id when this run replays a prior recording.
+    pub fn replay_recording_id(&self) -> Option<&str> {
+        match self {
+            RunTrajectoryMode::Replay { recording_id } => Some(recording_id),
+            _ => None,
+        }
     }
 }
 
@@ -2494,19 +2508,16 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> (AgentRuntime, &'static str)
     )
 }
 
-/// Tool-response cache handle. Enables deterministic backtest re-runs by
-/// serving cached external tool responses (Nansen/Elfa) from the trajectory
-/// store instead of hitting the live network.
+/// Tool-response cache handle for signal tools. `replay = true` serves from
+/// cache and errors loudly on a miss (never a silent live re-fetch).
+/// `replay = false` → record path: forward to live tool, then write to cache.
 ///
-/// `replay = true`  → serve from cache, return Err on miss (loud — never
-///                    silently re-fetches on a miss; missing cache = broken
-///                    recording).
-/// `replay = false` → record path: forward to live tool, then write to cache
-///                    (best-effort; a cache write failure does NOT fail the run).
-///
-/// Production replay wiring (engine-eval replay mode) is a follow-up that
-/// lands alongside `RunTrajectoryMode::Replay`; at present only `record`
-/// (`replay: false`) is built into the `spawn_cline_ctx` path.
+/// Both handles are built in `spawn_cline_ctx`: `RunTrajectoryMode::Record`
+/// mints a recording and caches fetched responses (replay: false);
+/// `RunTrajectoryMode::Replay` opens the referenced completed recording and
+/// serves its cached responses (replay: true).
+/// Best-effort cache writes on the record path; a write failure does NOT
+/// fail the run.
 #[derive(Clone)]
 struct ToolHttpCacheHandle {
     store: std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore>,
@@ -2828,6 +2839,10 @@ async fn spawn_cline_ctx(
     entry: ProviderEntry,
     tools: Arc<ToolRegistry>,
     recording_request: Option<RecordingRequest>,
+    replay: Option<(
+        std::sync::Arc<xvision_observability::trajectory::store::TrajectoryStore>,
+        String,
+    )>,
     run_mode: crate::eval::run::RunMode,
 ) -> ApiResult<(
     crate::agent::dispatch_capability::ClineDispatchCtx,
@@ -2891,15 +2906,24 @@ async fn spawn_cline_ctx(
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
     let as_of_guard: Arc<tokio::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>> =
         Arc::new(tokio::sync::RwLock::new(None));
-    // Build the record-mode cache handle from the minted recording (Task 3.3).
-    // Replay-mode wiring is intentionally deferred — production replay trigger
-    // (RunTrajectoryMode::Replay → replay: true) lands with the engine-eval
-    // replay follow-up; here we only wire the record path.
-    let tool_cache = recording.as_ref().map(|(store, rid, _)| ToolHttpCacheHandle {
-        store: store.clone(),
-        recording_id: rid.clone(),
-        replay: false,
-    });
+    // Tool-cache handle follows the run's trajectory mode (§5): Record
+    // mints a recording above and caches fetched responses (replay: false);
+    // Replay serves cached responses from the referenced completed recording
+    // (replay: true — a cache miss is a loud error, never a live re-fetch)
+    // and persists nothing new. No handle => live fetch every call.
+    let tool_cache = if let Some((store, rid)) = &replay {
+        Some(ToolHttpCacheHandle {
+            store: store.clone(),
+            recording_id: xvision_observability::trajectory::key::RecordingId(rid.clone()),
+            replay: true,
+        })
+    } else {
+        recording.as_ref().map(|(store, rid, _)| ToolHttpCacheHandle {
+            store: store.clone(),
+            recording_id: rid.clone(),
+            replay: false,
+        })
+    };
     // Read lag + budgets from the SignalToolConfig already embedded in the
     // registry by build_tool_registry — no second xvn.toml parse (im2r.6).
     let (nansen_lag_days, nansen_budget_arc, elfa_budget_arc) = {
@@ -3076,6 +3100,35 @@ fn primary_recorded_slot(
         }
     }
     None
+}
+
+/// §5: validate a replay request against the trajectory store. The
+/// recording must exist and be status `complete` — anything else is an
+/// operator-facing validation error, never a silent fallback to live
+/// fetches. Returns the confirmed recording id.
+async fn resolve_replay_recording(
+    store: &xvision_observability::trajectory::store::TrajectoryStore,
+    recording_id: &str,
+) -> ApiResult<String> {
+    use xvision_observability::trajectory::store::{STATUS_COMPLETE, StoreError};
+    let info = store
+        .get_recording(recording_id)
+        .await
+        .map_err(|e| match e {
+            StoreError::NotFound(_) => ApiError::Validation(format!(
+                "replay recording `{recording_id}` not found — record it first with \
+                 --record-trajectory, then replay its id"
+            )),
+            other => ApiError::Internal(format!("load replay recording: {other}")),
+        })?;
+    if info.status != STATUS_COMPLETE {
+        return Err(ApiError::Validation(format!(
+            "replay recording `{recording_id}` has status `{}` (must be `{STATUS_COMPLETE}` \
+             to be replay-eligible)",
+            info.status
+        )));
+    }
+    Ok(info.recording_id)
 }
 
 /// Read the spawned Cline client's latched frame-persist-failure flag
@@ -3502,6 +3555,31 @@ async fn run_inner(
                     u.hint
                 ))
             })?;
+        // §5: replay trigger — validate the referenced recording up front so
+        // a bad id or a non-backtest mode fails before any sidecar spawn.
+        // A replay run must never silently fall back to live fetches.
+        let replay = match (&req.trajectory_mode, req.mode) {
+            (
+                RunTrajectoryMode::Replay { recording_id },
+                crate::eval::run::RunMode::Backtest,
+            ) => {
+                let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
+                let store = crate::agent::cline_recording::open_store(ctx.db.clone(), blob_root)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("open trajectory store: {e}")))?;
+                let store = std::sync::Arc::new(store);
+                let id = resolve_replay_recording(&store, recording_id).await?;
+                Some((store, id))
+            }
+            (RunTrajectoryMode::Replay { .. }, _) => {
+                return Err(ApiError::Validation(
+                    "trajectory replay is backtest-only: live/forward runs always fetch live \
+                     signal data"
+                        .to_string(),
+                ));
+            }
+            _ => None,
+        };
         // §2-D: build the recording request when the run's per-run
         // `trajectory_mode` selects `Record` (the operator-chosen config
         // driver — replaces the §2-B env gate) and we can identify a primary
@@ -3518,7 +3596,8 @@ async fn run_inner(
         } else {
             None
         };
-        let (cctx, rec) = spawn_cline_ctx(ctx, entry, tools.clone(), recording_request, req.mode).await?;
+        let (cctx, rec) =
+            spawn_cline_ctx(ctx, entry, tools.clone(), recording_request, replay, req.mode).await?;
         (Some(cctx), rec)
     };
     // The recorder needs the spawned client's persist-failure flag at
@@ -5118,7 +5197,8 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                     u.hint
                 ))
             })?;
-        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None, req.mode).await?;
+        let (cctx, _no_recording) =
+            spawn_cline_ctx(ctx, entry, tools.clone(), None, None, req.mode).await?;
         Some(cctx)
     };
 
@@ -6017,7 +6097,7 @@ pub async fn spawn_optimizer_cline_ctx(
                 u.hint
             ))
         })?;
-    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None, run_mode).await?;
+    let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools, None, None, run_mode).await?;
     Ok(Some(cctx))
 }
 
@@ -7311,6 +7391,73 @@ mod tool_registry_dispatch_tests {
 
         let out = d.invoke("nansen_token_screener", input).await.unwrap();
         assert_eq!(out["cached"], true, "replay must serve the cached response");
+    }
+
+    /// §5: `resolve_replay_recording` accepts a `complete` recording.
+    #[tokio::test]
+    async fn replay_trigger_accepts_complete_recording() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = make_test_store(&tmp).await;
+        let rec = store.begin_recording(&make_test_key()).await.unwrap();
+        store.complete_recording(&rec).await.unwrap();
+
+        let id = super::resolve_replay_recording(&store, &rec.0).await.unwrap();
+        assert_eq!(id, rec.0);
+    }
+
+    /// §5: an unknown recording id is an operator-facing validation error
+    /// with a record-first hint — never a silent live-fetch fallback.
+    #[tokio::test]
+    async fn replay_trigger_rejects_unknown_recording() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = make_test_store(&tmp).await;
+
+        let err = super::resolve_replay_recording(&store, "nope").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "got: {msg}");
+        assert!(msg.contains("--record-trajectory"), "got: {msg}");
+    }
+
+    /// §5: an incomplete or corrupt recording is rejected — only `complete`
+    /// recordings are replay-eligible (a partial trajectory would produce a
+    /// mid-run cache miss and a loud tool error).
+    #[tokio::test]
+    async fn replay_trigger_rejects_non_complete_recording() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = make_test_store(&tmp).await;
+
+        let rec = store.begin_recording(&make_test_key()).await.unwrap();
+        store
+            .mark_incomplete(&rec, "test: never finished")
+            .await
+            .unwrap();
+        let err = super::resolve_replay_recording(&store, &rec.0).await.unwrap_err();
+        assert!(err.to_string().contains("incomplete"), "got: {err}");
+
+        let rec2_key = make_test_key();
+        let rec2 = store.begin_recording(&rec2_key).await.unwrap();
+        store.mark_corrupt(&rec2, "test").await.unwrap();
+        let err = super::resolve_replay_recording(&store, &rec2.0).await.unwrap_err();
+        assert!(err.to_string().contains("corrupt"), "got: {err}");
+    }
+
+    /// §5: serde round-trip for the new `Replay` variant.
+    #[test]
+    fn run_trajectory_mode_replay_serde_round_trip() {
+        use super::RunTrajectoryMode;
+
+        let mode = RunTrajectoryMode::Replay {
+            recording_id: "rec_123".to_string(),
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        assert!(json.contains("rec_123"));
+        let back: RunTrajectoryMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, mode);
+        // Live/Record round-trips unchanged.
+        assert_eq!(
+            serde_json::from_str::<RunTrajectoryMode>("\"live\"").unwrap(),
+            RunTrajectoryMode::Live
+        );
     }
 
     // FIX C — xvision-im2r.3: is_degrade helper

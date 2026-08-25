@@ -12,8 +12,12 @@
  * * `Record` — mint a trajectory recording for the run's primary recorded
  *   slot and bind the event sink so frames persist into the store.
  *
- * Replay through the engine eval path is intentionally NOT a variant here.
- * Adding engine-eval replay would require threading a recording id + store
- * into every slot dispatch — out of scope for §2-D.
+ * Replay re-runs a completed recording deterministically: signal-tool HTTP
+ * calls are served from the recording's cached responses and no new frames
+ * are persisted. Backtest-only — validated at run setup.
  */
-export type RunTrajectoryMode = "live" | "record";
+export type RunTrajectoryMode = "live" | "record" | { "replay": { 
+/**
+ * Recording id of a prior `Record` run (must be status `complete`).
+ */
+recording_id: string, } };

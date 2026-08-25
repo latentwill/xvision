@@ -301,6 +301,17 @@ pub struct RunArgs {
     /// byte-identical to a non-recorded run).
     #[arg(long)]
     pub record_trajectory: bool,
+    /// Replay a previously recorded trajectory instead of fetching live
+    /// signal data (§5). Takes the recording id from a prior
+    /// `--record-trajectory` run. Backtest only: signal-tool calls are
+    /// served from the recording's cached responses and nothing new is
+    /// persisted. Conflicts with --record-trajectory.
+    #[arg(
+        long = "replay-trajectory",
+        value_name = "RECORDING_ID",
+        conflicts_with = "record_trajectory"
+    )]
+    pub replay_trajectory: Option<String>,
     /// Evaluation profile: smoke (fast/cheap) or deep (thorough).
     /// Sets defaults for --provider, --model, --max-decisions. Explicit flags override.
     ///   smoke -> openrouter / google/gemini-flash-1.5 / 30 decisions
@@ -890,9 +901,12 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         auto_fire_review: args.auto_fire_review,
         review_model,
         max_annotations_per_review: Some(args.max_review_annotations),
-        // §2-D: `--record-trajectory` selects Record; default is Live (no
-        // recording — byte-identical to a non-recorded run).
-        trajectory_mode: if args.record_trajectory {
+        // §2-D/§5: `--record-trajectory` selects Record, `--replay-trajectory
+        // <id>` selects Replay; default is Live (no recording — byte-identical
+        // to a non-recorded run). Clap enforces the mutual exclusion.
+        trajectory_mode: if let Some(recording_id) = args.replay_trajectory.clone() {
+            RunTrajectoryMode::Replay { recording_id }
+        } else if args.record_trajectory {
             RunTrajectoryMode::Record
         } else {
             RunTrajectoryMode::Live
