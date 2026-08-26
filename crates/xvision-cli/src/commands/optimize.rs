@@ -1018,9 +1018,11 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         .await
         .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
         parent_strategies.insert(bundle_hash.to_hex(), strategy);
-        // F34: do NOT push to explicit_parent_hashes — let select_parents
-        // discover active leaves from lineage so kept children from prior
-        // cycles auto-advance as the new parent.
+        // Keep the seed strategy as the explicit cycle parent until auto-advance
+        // can hydrate Strategy payloads for every active lineage leaf. Selecting
+        // a lineage-only parent without a matching parent_strategies entry makes
+        // the cycle skip eval/mutation work entirely.
+        explicit_parent_hashes.push(bundle_hash);
     }
 
     let cycle_config = CycleConfig {

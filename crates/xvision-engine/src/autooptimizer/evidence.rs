@@ -283,7 +283,6 @@ pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
     ] {
         apply_schema_sql(pool, sql).await?;
     }
-
     Ok(())
 }
 
@@ -414,6 +413,12 @@ mod tests {
                 edge_over_random: Some(0.4),
                 parent_edge: Some(0.1),
                 edge_delta: Some(0.3),
+                parent_n_trades: Some(10),
+                child_n_trades: Some(12),
+                min_trade_retention_ratio: Some(0.5),
+                parent_realized_return_ratio: Some(0.9),
+                child_realized_return_ratio: Some(1.0),
+                gate_min_realized_return_ratio: Some(0.8),
             },
         )
         .await
@@ -475,6 +480,12 @@ mod tests {
                     edge_over_random: None,
                     parent_edge: None,
                     edge_delta: None,
+                    parent_n_trades: None,
+                    child_n_trades: None,
+                    min_trade_retention_ratio: None,
+                    parent_realized_return_ratio: None,
+                    child_realized_return_ratio: None,
+                    gate_min_realized_return_ratio: None,
                 },
             )
             .await

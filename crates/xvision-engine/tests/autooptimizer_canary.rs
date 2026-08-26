@@ -159,8 +159,8 @@ fn gate_builder(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Default::default(),
-        parent_n_trades: 0,
-        child_n_trades: 0,
+        parent_n_trades: parent_day.n_trades,
+        child_n_trades: child_day.n_trades,
         min_trade_retention_ratio: 0.5,
         min_realized_return_ratio: 0.0,
     }
@@ -243,8 +243,8 @@ fn gate_builder_total_return(
         min_improvement: 0.1,
         holdout_min_improvement: 0.1,
         objective: Objective::TotalReturn,
-        parent_n_trades: 0,
-        child_n_trades: 0,
+        parent_n_trades: parent_day.n_trades,
+        child_n_trades: child_day.n_trades,
         min_trade_retention_ratio: 0.5,
         min_realized_return_ratio: 0.0,
     }
