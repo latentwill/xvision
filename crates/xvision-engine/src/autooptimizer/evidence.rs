@@ -445,6 +445,13 @@ mod tests {
         assert!((rec.edge_over_random.unwrap() - 0.4).abs() < 1e-9);
         assert!((rec.parent_edge.unwrap() - 0.1).abs() < 1e-9);
         assert!((rec.edge_delta.unwrap() - 0.3).abs() < 1e-9);
+        // Gate-dimension evidence round-trips through migrations 075/076.
+        assert_eq!(rec.parent_n_trades, Some(12));
+        assert_eq!(rec.child_n_trades, Some(8));
+        assert!((rec.min_trade_retention_ratio.unwrap() - 0.5).abs() < 1e-9);
+        assert!((rec.parent_realized_return_ratio.unwrap() - 0.6).abs() < 1e-9);
+        assert!((rec.child_realized_return_ratio.unwrap() - 0.4).abs() < 1e-9);
+        assert!((rec.gate_min_realized_return_ratio.unwrap() - 0.25).abs() < 1e-9);
     }
 
     /// INSERT OR REPLACE: re-persisting the same bundle_hash with a new verdict

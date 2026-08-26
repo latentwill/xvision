@@ -344,8 +344,8 @@ async fn run_honesty_check_degrades_genuine_canary_error_to_neutral() {
 #[test]
 fn build_sabotaged_strategy_is_deterministic() {
     let base = make_strategy();
-    let (a, av) = build_sabotaged_strategy(&base, 42);
-    let (b, bv) = build_sabotaged_strategy(&base, 42);
+    let (a, av) = build_sabotaged_strategy(&base, 0);
+    let (b, bv) = build_sabotaged_strategy(&base, 0);
     assert_eq!(a, b, "same seed must produce identical sabotaged strategy");
     assert_eq!(av, bv, "same seed must produce the same sabotage variant");
     // 42 % 4 == 2 → absurd-cadence (never fires in a normal backtest).
