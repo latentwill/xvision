@@ -317,6 +317,10 @@ async fn single_candidate_error_records_errored_and_continues() {
             cycle_id: None,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         })
         .await
         .expect("insert root lineage node");
@@ -450,6 +454,10 @@ async fn consecutive_candidate_errors_halt_the_cycle() {
             cycle_id: None,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         })
         .await
         .expect("insert root lineage node");

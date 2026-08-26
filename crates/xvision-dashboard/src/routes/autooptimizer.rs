@@ -1769,7 +1769,6 @@ mod tests {
                 parent_holdout_score: Some(0.8),
                 child_holdout_score: Some(1.0),
                 gate_epsilon: Some(0.05),
-                holdout_epsilon: None,
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),
@@ -1786,12 +1785,6 @@ mod tests {
                 edge_over_random: Some(0.5),
                 parent_edge: Some(0.2),
                 edge_delta: Some(0.3),
-                parent_n_trades: None,
-                child_n_trades: None,
-                min_trade_retention_ratio: None,
-                parent_realized_return_ratio: None,
-                child_realized_return_ratio: None,
-                gate_min_realized_return_ratio: None,
             },
         )
         .await

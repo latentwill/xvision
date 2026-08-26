@@ -18,7 +18,11 @@ async fn fresh_store() -> LineageStore {
             status TEXT NOT NULL,
             cycle_id TEXT,
             created_at TEXT NOT NULL,
-            diversity_score REAL
+            diversity_score REAL,
+            mutation_diff_json TEXT,
+            seed INTEGER,
+            data_window_json TEXT,
+            objective TEXT
         )",
     )
     .execute(&pool)
@@ -36,6 +40,10 @@ fn make_node(seed: &[u8], parent: Option<ContentHash>, status: LineageStatus, cy
         cycle_id: Some(cycle.to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap(),
         diversity_score: None,
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
     }
 }
 
@@ -52,6 +60,10 @@ async fn insert_get_round_trip() {
         cycle_id: Some("cycle-x".into()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 0).unwrap(),
         diversity_score: None,
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
     };
     store.insert(&node).await.unwrap();
     let back = store.get(&node.bundle_hash).await.unwrap().unwrap();

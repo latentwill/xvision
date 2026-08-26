@@ -71,6 +71,15 @@ fn default_min_trade_retention_ratio() -> f64 {
     0.5
 }
 
+/// Default minimum parent-baseline trades on a gate window: 10. Below
+/// this the window is too thin for the gate objective to move
+/// (Sharpe is scale-invariant; param mutations mathematically cannot
+/// shift a 1-trade outcome), so the cycle aborts instead of burning
+/// its mutation budget on guaranteed 0.0-delta candidates.
+fn default_min_window_trades() -> u32 {
+    10
+}
+
 /// Default candidate experiments per parent per cycle. Was a hard-coded `1`
 /// (one experiment/cycle, nothing to compare); 5 gives the optimizer a real
 /// candidate pool by default.
@@ -139,6 +148,13 @@ pub struct AutoOptimizerConfig {
     /// from gaming the Sharpe metric. Range: (0.0, 1.0].
     #[serde(default = "default_min_trade_retention_ratio")]
     pub min_trade_retention_ratio: f64,
+    /// Minimum fill legs the parent baseline must execute on each gate
+    /// window (day, baseline-untouched, pool, and regime windows) before
+    /// a cycle proceeds. A thinner window cannot produce a meaningful
+    /// objective delta — every candidate would score exactly the parent's
+    /// outcome. Set to 0 to disable the check.
+    #[serde(default = "default_min_window_trades")]
+    pub min_window_trades: u32,
     pub baseline_untouched_window: BaselineUntouchedWindow,
     pub day_window: DayWindow,
     #[serde(default)]
@@ -375,6 +391,10 @@ fn default_rotation_num_windows() -> usize {
     10
 }
 
+fn default_rotation_stride_days() -> i64 {
+    30
+}
+
 impl Default for ScenarioRotationConfig {
     fn default() -> Self {
         Self {
@@ -399,6 +419,7 @@ impl Default for AutoOptimizerConfig {
             simplicity_penalty: default_simplicity_penalty(),
             simplicity_equal_tolerance: default_simplicity_equal_tolerance(),
             min_trade_retention_ratio: default_min_trade_retention_ratio(),
+            min_window_trades: default_min_window_trades(),
             min_realized_return_ratio: default_min_realized_return_ratio(),
             // F3 (QA 2026-06-04): the previous default spanned ~20 months of
             // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,

@@ -19,6 +19,12 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/078_autooptimizer_lineage_provenance.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!("../migrations/049_autooptimizer_diversity.sql"))
         .execute(&pool)
         .await
@@ -35,6 +41,10 @@ fn make_node(seed: &[u8], cycle: &str, status: LineageStatus) -> LineageNode {
         cycle_id: Some(cycle.to_string()),
         created_at: Utc::now(),
         diversity_score: None,
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
     }
 }
 

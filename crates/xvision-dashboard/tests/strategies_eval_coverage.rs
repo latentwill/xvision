@@ -169,6 +169,10 @@ async fn lineage_membership_marks_strategy_optimizer_origin() {
             cycle_id: None,
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         })
         .await
         .expect("insert lineage node");

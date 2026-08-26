@@ -19,6 +19,7 @@ use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
+use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
 use crate::autooptimizer::gate::{
     aggregate_regime_verdicts, check_net_return, check_pool_consistency,
@@ -67,19 +68,30 @@ pub async fn run_grid_evaluation(
 ) -> Result<Vec<GridEvaluationOutcome>> {
     let scenario_pool_active =
         cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
-    let (parent_day, parent_untouched) = if scenario_pool_active {
-        (MetricsSummary::default(), MetricsSummary::default())
+    let min_window_trades = config.min_window_trades;
+    let (parent_day, parent_untouched, parent_pool) = if scenario_pool_active {
+        let evaluation =
+            evaluate_pool(paper_tester, strategy, &cycle_config.scenario_pool).await?;
+        for outcome in &evaluation.outcomes {
+            ensure_window_trade_floor(
+                &format!("pool window {}", outcome.scenario_id),
+                outcome.n_trades as u32,
+                min_window_trades,
+            )?;
+        }
+        (MetricsSummary::default(), MetricsSummary::default(), Some(evaluation))
     } else {
         let parent_day = paper_tester.run(strategy, &cycle_config.day_scenario).await?;
         let parent_untouched = paper_tester
             .run(strategy, &cycle_config.baseline_scenario)
             .await?;
-        (parent_day, parent_untouched)
-    };
-    let parent_pool = if scenario_pool_active {
-        Some(evaluate_pool(paper_tester, strategy, &cycle_config.scenario_pool).await?)
-    } else {
-        None
+        ensure_window_trade_floor("day", parent_day.n_trades, min_window_trades)?;
+        ensure_window_trade_floor(
+            "baseline-untouched",
+            parent_untouched.n_trades,
+            min_window_trades,
+        )?;
+        (parent_day, parent_untouched, None)
     };
     let parent_regime_metrics = if cycle_config.regime_set.is_empty() {
         HashMap::new()
@@ -87,12 +99,21 @@ pub async fn run_grid_evaluation(
         let mut metrics = HashMap::with_capacity(cycle_config.regime_set.len());
         for regime in &cycle_config.regime_set {
             let (day, baseline) = build_regime_scenario_pair(cycle_config, regime)?;
+            let day_metrics = paper_tester.run(strategy, &day).await?;
+            let baseline_metrics = paper_tester.run(strategy, &baseline).await?;
+            ensure_window_trade_floor(
+                &format!("regime '{}' day", regime.label),
+                day_metrics.n_trades,
+                min_window_trades,
+            )?;
+            ensure_window_trade_floor(
+                &format!("regime '{}' baseline-untouched", regime.label),
+                baseline_metrics.n_trades,
+                min_window_trades,
+            )?;
             metrics.insert(
                 regime.label.clone(),
-                (
-                    paper_tester.run(strategy, &day).await?,
-                    paper_tester.run(strategy, &baseline).await?,
-                ),
+                (day_metrics, baseline_metrics),
             );
         }
         metrics
@@ -938,6 +959,12 @@ where
             phase: Phase::EvalUntouchedWindow,
             duration_ms: unt_t0.elapsed().as_millis() as u64,
         });
+        ensure_window_trade_floor("day", pd.n_trades, config.min_window_trades)?;
+        ensure_window_trade_floor(
+            "baseline-untouched",
+            pu.n_trades,
+            config.min_window_trades,
+        )?;
         (pd, pu)
     } else {
         (MetricsSummary::default(), MetricsSummary::default())
@@ -957,7 +984,19 @@ where
     for rw in &cycle_config.regime_set {
         let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
         let pd = paper_tester.run(parent_strategy, &regime_day_scen).await?;
-        let pu = paper_tester.run(parent_strategy, &regime_baseline_scen).await?;
+        let pu = paper_tester
+            .run(parent_strategy, &regime_baseline_scen)
+            .await?;
+        ensure_window_trade_floor(
+            &format!("regime '{}' day", rw.label),
+            pd.n_trades,
+            config.min_window_trades,
+        )?;
+        ensure_window_trade_floor(
+            &format!("regime '{}' baseline-untouched", rw.label),
+            pu.n_trades,
+            config.min_window_trades,
+        )?;
         parent_regime_metrics.insert(rw.label.clone(), (pd, pu));
     }
 
@@ -2452,6 +2491,28 @@ async fn persist_honesty_check(pool: &SqlitePool, cycle_id: &str, check: &Honest
         tracing::warn!(cycle_id, "failed to persist honesty check: {e}");
     }
 }
+/// F35: a gate window where the parent executes fewer than
+/// `min_window_trades` fill legs cannot produce a meaningful objective
+/// delta: Sharpe is scale-invariant, so param/prose/filter mutations
+/// mathematically cannot move a 1-trade outcome — every candidate deltas
+/// exactly 0.0. Aborting up front (right after the parent baseline
+/// backtest, before any mutation spend) turns a silently wasted cycle
+/// into a clear operator error. `min_window_trades == 0` disables.
+pub fn ensure_window_trade_floor(
+    label: &str,
+    n_trades: u32,
+    min_window_trades: u32,
+) -> Result<()> {
+    if min_window_trades == 0 || n_trades >= min_window_trades {
+        return Ok(());
+    }
+    bail!(
+        "gate window '{label}' produced only {n_trades} trade(s) for the parent strategy \
+         (required minimum {min_window_trades}). The gate objective cannot move on a window \
+         this thin. Widen the window or relax entry filters."
+    );
+}
+
 fn gate_check(
     parent_day: &MetricsSummary,
     child_day: &MetricsSummary,
@@ -2572,6 +2633,33 @@ fn resolve_slot_for_role<'a>(
     slots.first()
 }
 #[cfg(test)]
+mod trade_floor_tests {
+    use super::ensure_window_trade_floor;
+
+    #[test]
+    fn floor_bails_on_thin_window() {
+        let err = ensure_window_trade_floor("day", 1, 10).unwrap_err();
+        assert!(
+            err.to_string().contains("only 1 trade(s)"),
+            "error must name the trade count: {err}"
+        );
+        assert!(err.to_string().contains("'day'"), "error must name the window: {err}");
+    }
+
+    #[test]
+    fn floor_passes_sufficient_and_equal_counts() {
+        ensure_window_trade_floor("day", 25, 10).unwrap();
+        ensure_window_trade_floor("day", 10, 10).unwrap();
+    }
+
+    #[test]
+    fn floor_zero_disables_check() {
+        ensure_window_trade_floor("day", 0, 0).unwrap();
+        ensure_window_trade_floor("day", 1, 0).unwrap();
+    }
+}
+
+ #[cfg(test)]
 mod tests {
     use super::*;
     use crate::autooptimizer::gate::GateVerdict;
