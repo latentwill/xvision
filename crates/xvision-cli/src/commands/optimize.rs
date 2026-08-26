@@ -87,7 +87,9 @@ use xvision_engine::autooptimizer::lineage::{
     ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
 };
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
-use xvision_engine::autooptimizer::metering_dispatch::{CostMeteringDispatch, CycleMeter};
+use xvision_engine::autooptimizer::metering_dispatch::{
+    load_metering_catalogs_for_provider, CostMeteringDispatch, CycleMeter,
+};
 use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
@@ -847,6 +849,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         DispatchBinding {
             provider: mutator_binding.provider.clone(),
             model: mutator_binding.model.clone(),
+            kind: mutator_binding.kind,
             dispatch: Arc::clone(&mutator_binding.dispatch),
         }
     } else {
@@ -872,7 +875,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         ),
         None => Arc::clone(&mutator_binding.dispatch),
     };
-    let mutator_catalogs = load_metering_catalogs(&xvn_home, effective_mutator_provider).await;
+    let mutator_catalogs =
+        load_metering_catalogs(&xvn_home, &mutator_binding.provider, mutator_binding.kind).await;
     let metered_mutator: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
         mutator_raw,
         mutator_catalogs,
@@ -893,7 +897,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 ),
                 None => Arc::clone(&judge_binding.dispatch),
             };
-            let judge_catalogs = load_metering_catalogs(&xvn_home, effective_judge_provider).await;
+            let judge_catalogs =
+                load_metering_catalogs(&xvn_home, &judge_binding.provider, judge_binding.kind).await;
             Arc::new(CostMeteringDispatch::new(
                 judge_raw,
                 judge_catalogs,
@@ -2880,11 +2885,9 @@ async fn load_strategy_parent(
 async fn load_metering_catalogs(
     xvn_home: &Path,
     provider: &str,
+    kind: ProviderKind,
 ) -> Vec<Arc<xvision_core::providers::Catalog>> {
-    match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
-        Ok(Some(cat)) => vec![Arc::new(cat)],
-        _ => Vec::new(),
-    }
+    load_metering_catalogs_for_provider(xvn_home, provider, kind).await
 }
 
 fn validate_budget_usd(budget: f64) -> CliResult<()> {
@@ -2943,6 +2946,7 @@ fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> C
 struct DispatchBinding {
     provider: String,
     model: String,
+    kind: ProviderKind,
     dispatch: Arc<dyn LlmDispatch + Send + Sync>,
 }
 
@@ -2957,6 +2961,7 @@ async fn build_dispatch(
         return Ok(DispatchBinding {
             provider: requested_provider.to_string(),
             model: requested_model.to_string(),
+            kind: ProviderKind::OpenaiCompat,
             dispatch: Arc::new(MockDispatch::echo(canned)),
         });
     }
@@ -2978,6 +2983,7 @@ async fn build_dispatch(
         return Ok(DispatchBinding {
             provider: entry.name.clone(),
             model: normalized,
+            kind: entry.kind,
             dispatch: dispatch_from_provider_entry(xvn_home, entry).await?,
         });
     }
@@ -2988,6 +2994,7 @@ async fn build_dispatch(
             return Ok(DispatchBinding {
                 provider: default_entry.name.clone(),
                 model: default_llm.model.clone(),
+                kind: default_entry.kind,
                 dispatch: dispatch_from_provider_entry(xvn_home, &default_entry).await?,
             });
         }
@@ -3011,6 +3018,7 @@ async fn build_dispatch(
                 return Ok(DispatchBinding {
                     provider: entry.name.clone(),
                     model: default_llm.model.clone(),
+                    kind: entry.kind,
                     dispatch: dispatch_from_provider_entry(xvn_home, &entry).await?,
                 });
             }
@@ -3023,6 +3031,7 @@ async fn build_dispatch(
         return Ok(DispatchBinding {
             provider: "anthropic".into(),
             model: normalize_model(requested_model),
+            kind: ProviderKind::Anthropic,
             dispatch: Arc::new(AnthropicDispatch::new(key)),
         });
     }
