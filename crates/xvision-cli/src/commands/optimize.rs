@@ -589,7 +589,8 @@ pub async fn run_grid_cmd(args: GridArgs) -> CliResult<()> {
         &cfg.mutator.model,
     )
     .await?;
-    let catalogs = load_metering_catalogs(&xvn_home, &cfg.mutator.provider).await;
+    let catalogs =
+        load_metering_catalogs(&xvn_home, &cfg.mutator.provider, dispatch_binding.kind).await;
     let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> =
         Arc::new(CostMeteringDispatch::new(dispatch_binding.dispatch, catalogs, Arc::clone(&meter)));
     let ctx = ApiContext::open(

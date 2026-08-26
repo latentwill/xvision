@@ -285,8 +285,10 @@ mod tests {
         let body = build_user_body(&strategy, &strategy, &diff, "");
 
         assert!(body.contains("max_drawdown_usd"));
+        // Risk-control configuration keys are not outcome metrics: the
+        // metrics-blind check allowlists them instead of failing closed.
         ensure_metrics_blind("full judge body", &body)
-            .expect_err("full body includes strategy risk-control drawdown fields");
+            .expect("drawdown risk keys must not trip the metrics-blind check");
     }
 
     #[test]

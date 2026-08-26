@@ -1989,7 +1989,7 @@ mod tests {
             true,
         );
         assert!(
-            with.contains("Advisory optimizer context"),
+            with.contains("Prior optimizer outcomes on similar strategies"),
             "advisory section header missing: {with}"
         );
         assert!(with.contains(ctx), "advisory context text missing: {with}");

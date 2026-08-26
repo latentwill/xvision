@@ -348,8 +348,8 @@ fn build_sabotaged_strategy_is_deterministic() {
     let (b, bv) = build_sabotaged_strategy(&base, 0);
     assert_eq!(a, b, "same seed must produce identical sabotaged strategy");
     assert_eq!(av, bv, "same seed must produce the same sabotage variant");
-    // 42 % 4 == 2 → absurd-cadence (never fires in a normal backtest).
-    assert_eq!(av.as_str(), "absurd-cadence");
+    // 0 % 4 == 0 → kill-trades (zeroed position sizing).
+    assert_eq!(av.as_str(), "kill-trades");
 }
 
 #[test]

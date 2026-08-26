@@ -12,6 +12,7 @@ use xvision_engine::agent::pipeline::{
 };
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
+use xvision_engine::eval::run::RunStatus;
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{
     agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError,

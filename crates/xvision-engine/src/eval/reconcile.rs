@@ -78,6 +78,14 @@ pub enum ReconcileSource {
     ExpectedOnly,
 }
 
+impl Default for ReconcileSource {
+    fn default() -> Self {
+        // Wire-tolerance default for stored exports predating the field:
+        // ExpectedOnly (unverified), never a fabricated verified match.
+        Self::ExpectedOnly
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconcileResult {
     /// True iff broker and expected positions agree on every asset.

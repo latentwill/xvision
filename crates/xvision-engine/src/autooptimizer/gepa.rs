@@ -844,7 +844,10 @@ mod tests {
     fn real_eval_options_from_config_rejects_enabled_without_benchmark_pool() {
         let mut cfg = crate::autooptimizer::config::AutoOptimizerConfig::default();
         cfg.gepa_real_eval = true;
-        let err = real_eval_options_from_config(&cfg).unwrap_err();
+        let err = match real_eval_options_from_config(&cfg) {
+            Err(err) => err,
+            Ok(_) => panic!("expected config without gepa_benchmark_pool to be rejected"),
+        };
         assert!(err.to_string().contains("gepa_benchmark_pool"));
     }
 

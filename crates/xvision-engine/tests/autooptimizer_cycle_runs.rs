@@ -31,7 +31,11 @@ fn node(seed: &[u8], status: LineageStatus, cycle: &str, hour: u32) -> LineageNo
         cycle_id: Some(cycle.to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 6, 4, hour, 0, 0).unwrap(),
         diversity_score: None,
-    }
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
+}
 }
 
 #[tokio::test]

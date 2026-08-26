@@ -1294,6 +1294,9 @@ mod tests {
         // makes several tool rounds before reaching submit_decision.
         assert_eq!(cumulative_output_cap(Some(4096)), 32_768);
         assert_eq!(cumulative_output_cap(Some(128)), DEFAULT_MAX_OUTPUT_TOKENS);
+    }
+
+    #[test]
     fn retry_gate_admits_failed_status_and_rejects_budget_aborts() {
         // Transient sidecar failure (the 2026-08-23 campaign `User not
         // found.` shape): retried exactly once.
@@ -1328,6 +1331,6 @@ mod tests {
             max_wall_ms: DEFAULT_MAX_WALL_MS,
         };
         assert_eq!(cumulative.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
-        assert!(cumulative.max_wall_ms > 0)
+        assert!(cumulative.max_wall_ms > 0);
     }
 }

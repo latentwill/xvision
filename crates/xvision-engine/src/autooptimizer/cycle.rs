@@ -19,6 +19,7 @@ use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
+use crate::autooptimizer::run_inversion_pair;
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
 use crate::autooptimizer::gate::{
     aggregate_regime_verdicts, check_net_return, check_pool_consistency,
@@ -1025,6 +1026,11 @@ where
     let mut breaker = ConsecutiveErrors::new(cycle_config.max_consecutive_errors);
     let scenario_pool_active =
         cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    // Per-parent cache of the sampled scenario pair's parent metrics, keyed by
+    // (day id, baseline id). Filled lazily on first use per pair so repeated
+    // mutations on the same round-robin pair don't re-run the parent backtest.
+    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> =
+        HashMap::new();
 
     let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
         progress(CycleProgressEvent::PhaseStarted {

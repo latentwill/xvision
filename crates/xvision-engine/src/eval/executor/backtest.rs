@@ -220,7 +220,9 @@ pub struct Executor {
     /// Crash-recovery seam: when `Some`, the live loop seeds its book,
     /// equity curve, and PK counters from this state (see
     /// [`LiveRestoreState`]). `None` starts flat — every fresh run.
-    live_restore: Option<LiveRestoreState>,
+    /// Interior-mutability lock because `run_inner_live` takes `&self`
+    /// (the [`RunExecutor`] trait is `&self`) and consumes the state once.
+    live_restore: std::sync::Mutex<Option<LiveRestoreState>>,
 }
 
 /// LANE byu — default cadence (in executed trades) at which the live loop
@@ -283,7 +285,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
-            live_restore: None,
+            live_restore: std::sync::Mutex::new(None),
         })
     }
 
@@ -319,7 +321,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
-            live_restore: None,
+            live_restore: std::sync::Mutex::new(None),
         }
     }
 
@@ -351,7 +353,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
-            live_restore: None,
+            live_restore: std::sync::Mutex::new(None),
         }
     }
 
@@ -377,7 +379,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
-            live_restore: None,
+            live_restore: std::sync::Mutex::new(None),
         }
     }
 
@@ -462,7 +464,7 @@ impl Executor {
     /// [`LiveRestoreState`]). Chain before `run`. Fresh runs never call
     /// this — the field defaults to `None` and the loop starts flat.
     pub fn with_live_restore(mut self, restore: LiveRestoreState) -> Self {
-        self.live_restore = Some(restore);
+        self.live_restore = std::sync::Mutex::new(Some(restore));
         self
     }
 
@@ -3546,7 +3548,11 @@ impl Executor {
         let initial = scenario.capital.initial;
         // Crash-recovery seam: a resumed forward run continues the SAME
         // ledger (book, equity, PK watermarks) instead of restarting flat.
-        let restore = self.live_restore.take();
+        let restore = self
+            .live_restore
+            .lock()
+            .expect("live_restore mutex poisoned")
+            .take();
         let restored_equity = restore.as_ref().map(|r| r.equity);
         let restored_decision_idx = restore.as_ref().map(|r| r.decision_idx).unwrap_or(0);
         let restored_bar_count = restore.as_ref().map(|r| r.bar_count).unwrap_or(0);
@@ -3727,6 +3733,7 @@ impl Executor {
                         &run.id,
                         RunChartEvent::Equity(ChartEquityPoint {
                             time: bar.timestamp.timestamp(),
+                            equity_usd: equity,
                         }),
                     )
                     .await;

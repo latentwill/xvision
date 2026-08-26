@@ -37,7 +37,11 @@ fn make_active_node_at(seed: &[u8], minute: u32) -> LineageNode {
         cycle_id: Some("test-cycle".to_string()),
         created_at: Utc.with_ymd_and_hms(2026, 5, 29, 12, minute, 0).unwrap(),
         diversity_score: None,
-    }
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
+}
 }
 
 fn make_active_node(seed: &[u8]) -> LineageNode {

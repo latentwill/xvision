@@ -375,6 +375,10 @@ fn default_rotation_num_windows() -> usize {
     10
 }
 
+fn default_rotation_stride_days() -> i64 {
+    30
+}
+
 impl Default for ScenarioRotationConfig {
     fn default() -> Self {
         Self {
