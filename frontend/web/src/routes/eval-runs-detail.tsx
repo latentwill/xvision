@@ -386,7 +386,10 @@ export function EvalRunDetailRoute() {
             {receipt.data ? (
               <DeterminismCard
                 receipt={receipt.data}
-                onReproduce={() => navigate(reproduceUrl(detail.summary, receipt.data))}
+                onReproduce={() => {
+                  const r = receipt.data;
+                  if (r) navigate(reproduceUrl(detail.summary, r));
+                }}
               />
             ) : null}
 

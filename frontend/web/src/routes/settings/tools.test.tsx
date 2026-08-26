@@ -38,14 +38,17 @@ vi.mock("@/api/dataTools", async () => {
   };
 });
 
-function makeEntry(overrides: Partial<{
-  kind: "nansen" | "elfa";
-  base_url: string;
-  api_key_env: string;
-  enabled: boolean;
-  budget_credits_per_run: number | null;
-  nansen_lookahead_lag_days: number | null;
-}> = {}) {
+function makeEntry(
+  overrides: Partial<{
+    kind: "nansen" | "elfa";
+    base_url: string;
+    api_key_env: string;
+    enabled: boolean;
+    budget_credits_per_run: number | null;
+    nansen_lookahead_lag_days: number | null;
+    api_key_set: boolean;
+  }> = {},
+) {
   return {
     kind: "nansen" as const,
     base_url: "https://api.nansen.ai/v1",
@@ -53,6 +56,7 @@ function makeEntry(overrides: Partial<{
     enabled: true,
     budget_credits_per_run: 100,
     nansen_lookahead_lag_days: 1,
+    api_key_set: true,
     ...overrides,
   };
 }

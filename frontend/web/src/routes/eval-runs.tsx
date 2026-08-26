@@ -182,7 +182,9 @@ export function EvalRunsRoute() {
   const preselectedStrategy = strategyFilterUrl;
   const preselectedScenario = searchParams.get("scenario")?.trim() ?? "";
   const preselectedMode: RunMode =
-    searchParams.get("mode") === "live" ? "live" : "backtest";
+    searchParams.get("mode") === "live" || searchParams.get("mode") === "fwd"
+      ? "fwd"
+      : "backtest";
   const startRequested = searchParams.get("start") === "1";
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
