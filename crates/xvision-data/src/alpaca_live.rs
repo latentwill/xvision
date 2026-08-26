@@ -68,6 +68,25 @@ const APCA_CRYPTO_STREAM_URL: &str = "wss://stream.data.alpaca.markets/v1beta3/c
 const RECONNECT_BUDGET_DEFAULT: u32 = 5;
 const RECONNECT_BACKOFF_BASE_MS: u64 = 500;
 const RECONNECT_BACKOFF_CAP_MS: u64 = 30_000;
+const IDLE_TIMEOUT_MIN_SECS: i64 = 60;
+const IDLE_TIMEOUT_MAX_SECS: i64 = 600;
+
+/// How long the stream may deliver NOTHING before it is treated as a
+/// disconnect. A connected-but-mute websocket otherwise hangs
+/// `stream.next()` forever: no error fires, the reconnect budget never
+/// counts down, and the consumer never reaches its poll fallback —
+/// exactly the "warmup seeds fine, live bar stream delivers nothing"
+/// forward-test pathology. Defaults to `2 × granularity` clamped to
+/// `[60s, 600s]` (crypto bars flow 24/7; even an 8h bar feed emits
+/// aggregate updates far more often than every 10 minutes). Overridable
+/// via [`AlpacaLiveClient::with_idle_timeout`] for tests.
+fn default_idle_timeout(granularity_secs: i64) -> std::time::Duration {
+    let secs = granularity_secs
+        .saturating_mul(2)
+        .clamp(IDLE_TIMEOUT_MIN_SECS, IDLE_TIMEOUT_MAX_SECS);
+    std::time::Duration::from_secs(secs as u64)
+}
+
 const CHANNEL_BUFFER: usize = 64;
 
 #[derive(Default)]
@@ -144,6 +163,7 @@ pub struct AlpacaLiveCredentials {
 pub struct AlpacaLiveClient {
     creds: AlpacaLiveCredentials,
     reconnect_budget: u32,
+    idle_timeout: Option<std::time::Duration>,
 }
 
 impl AlpacaLiveClient {
@@ -152,7 +172,17 @@ impl AlpacaLiveClient {
         Self {
             creds,
             reconnect_budget: RECONNECT_BUDGET_DEFAULT,
+            idle_timeout: None,
         }
+    }
+
+    /// Override the no-message idle timeout (default
+    /// [`default_idle_timeout`]). When the stream delivers nothing for
+    /// this long the connection is treated as a disconnect and fed
+    /// through the normal reconnect/backoff budget.
+    pub fn with_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.idle_timeout = Some(timeout);
+        self
     }
 
     /// Read `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` from the
@@ -191,12 +221,16 @@ impl AlpacaLiveClient {
         let asset = asset.to_string();
         let budget = self.reconnect_budget;
         let granularity_secs = granularity.seconds().max(1) as i64;
+        let idle_timeout = self
+            .idle_timeout
+            .unwrap_or_else(|| default_idle_timeout(granularity_secs));
         let handle = tokio::spawn(run_apca_subscription_task(
             creds,
             asset,
             tx,
             budget,
             granularity_secs,
+            idle_timeout,
         ));
         Ok(BarSubscription {
             rx,
@@ -223,6 +257,9 @@ impl AlpacaLiveClient {
         let (tx, rx) = mpsc::channel(CHANNEL_BUFFER);
         let budget = self.reconnect_budget;
         let granularity_secs = granularity.seconds().max(1) as i64;
+        let idle_timeout = self
+            .idle_timeout
+            .unwrap_or_else(|| default_idle_timeout(granularity_secs));
         // Tests bypass the backoff sleeps so the loop pumps items
         // instantly. Production callers will use the eventual wired
         // path which keeps the real backoff.
@@ -233,6 +270,7 @@ impl AlpacaLiveClient {
             budget,
             granularity_secs,
             backoff_enabled,
+            idle_timeout,
         ));
         BarSubscription {
             rx,
@@ -280,6 +318,7 @@ async fn run_apca_subscription_task(
     tx: mpsc::Sender<BarStreamEvent>,
     budget: u32,
     granularity_secs: i64,
+    idle_timeout: std::time::Duration,
 ) {
     use apca::data::v2::stream::{drive, CustomUrl, Data, MarketData, RealtimeData};
 
@@ -378,7 +417,23 @@ async fn run_apca_subscription_task(
             }
         }
 
-        while let Some(message) = stream.next().await {
+        loop {
+            let message = match tokio::time::timeout(idle_timeout, stream.next()).await {
+                Ok(message) => message,
+                Err(_elapsed) => {
+                    // Connected but mute: no message (bar, quote, trade,
+                    // or error) within the idle window. Treat as a
+                    // disconnect so the reconnect budget runs down and
+                    // the consumer can reach its poll fallback instead
+                    // of hanging forever.
+                    last_disconnect_reason =
+                        format!("alpaca live idle: no messages within {idle_timeout:?}");
+                    break;
+                }
+            };
+            let Some(message) = message else {
+                break;
+            };
             // Exit immediately when the receiver is gone — don't hold
             // the Alpaca WS slot while the LiveStream has been dropped.
             if tx.is_closed() {
@@ -448,6 +503,7 @@ async fn run_subscription_task<S>(
     budget: u32,
     granularity_secs: i64,
     backoff_enabled: bool,
+    idle_timeout: std::time::Duration,
 ) where
     S: Stream<Item = LiveBarItem> + Send + ?Sized,
 {
@@ -455,7 +511,33 @@ async fn run_subscription_task<S>(
     let mut consecutive_disconnects: u32 = 0;
     let mut last_disconnect_reason = String::new();
 
-    while let Some(item) = stream.next().await {
+    loop {
+        let item = match tokio::time::timeout(idle_timeout, stream.next()).await {
+            Ok(item) => item,
+            Err(_elapsed) => {
+                // Connected but mute for the whole idle window — same
+                // handling as an explicit disconnect so the budget runs
+                // down instead of hanging the consumer forever.
+                let reason = format!("live bar stream idle: no items within {idle_timeout:?}");
+                tracing::warn!(
+                    target: "xvision_data::alpaca_live",
+                    reason = %reason,
+                    "live bar stream idle; treating as disconnect"
+                );
+                if !handle_disconnect(&tx, &mut consecutive_disconnects, &reason, budget).await {
+                    return;
+                }
+                if backoff_enabled {
+                    let backoff = compute_backoff(consecutive_disconnects);
+                    tokio::time::sleep(backoff).await;
+                }
+                continue;
+            }
+        };
+        let Some(item) = item else {
+            // Stream ended: clean close, drain without BudgetExhausted.
+            return;
+        };
         match item {
             LiveBarItem::Bar(bar) => {
                 consecutive_disconnects = 0;

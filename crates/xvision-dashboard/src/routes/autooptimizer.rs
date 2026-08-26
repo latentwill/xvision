@@ -1769,7 +1769,6 @@ mod tests {
                 parent_holdout_score: Some(0.8),
                 child_holdout_score: Some(1.0),
                 gate_epsilon: Some(0.05),
-                holdout_epsilon: None,
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),

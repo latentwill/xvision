@@ -34,6 +34,16 @@ pub struct RealEvalOptions {
     pub evaluator: Arc<dyn BenchmarkEvaluator>,
 }
 
+impl std::fmt::Debug for RealEvalOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `cache` / `evaluator` are not `Debug` (trait-object + cache
+        // internals); only the pool matters in test assertions.
+        f.debug_struct("RealEvalOptions")
+            .field("benchmark_pool", &self.benchmark_pool)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RealEvalOptions {
     pub fn new(
         benchmark_pool: Vec<GepaBenchmarkWindow>,

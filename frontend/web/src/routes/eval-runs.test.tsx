@@ -1240,7 +1240,7 @@ describe("EvalRunsRoute", () => {
       mode: "fwd",
       live_config: {
         broker_creds_ref: "alpaca",
-        granularity: "1m",
+        granularity: "5m",
         stop_policy: {
           bar_limit: null,
           decision_limit: 7,

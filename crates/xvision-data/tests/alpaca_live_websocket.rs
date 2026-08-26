@@ -227,6 +227,34 @@ async fn successful_bar_resets_disconnect_counter() {
 }
 
 #[tokio::test]
+async fn idle_stream_budget_exhausts_instead_of_hanging() {
+    let granularity = BarGranularity::Minute1;
+    // A connected-but-mute stream: never yields an item. The idle
+    // timeout must treat silence as repeated disconnects and run the
+    // reconnect budget down to BudgetExhausted rather than hanging
+    // forever (the forward-test "0 equity marks" pathology).
+    let mut sub = client()
+        .with_reconnect_budget(2)
+        .with_idle_timeout(Duration::from_millis(50))
+        .subscription_from_stream(granularity, stream::pending::<LiveBarItem>());
+
+    let mut events: Vec<BarStreamEvent> = Vec::new();
+    while let Some(evt) = timeout(Duration::from_secs(10), sub.recv())
+        .await
+        .expect("stream must terminate, not hang")
+    {
+        events.push(evt);
+    }
+    assert!(
+        matches!(
+            events.last(),
+            Some(BarStreamEvent::BudgetExhausted { attempts: 3, .. })
+        ),
+        "idle stream must budget-exhaust; got {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn receiver_drop_stops_reconnect_loop() {
     let polls = Arc::new(AtomicUsize::new(0));
     let stream_polls = Arc::clone(&polls);

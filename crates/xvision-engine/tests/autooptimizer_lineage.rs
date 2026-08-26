@@ -44,7 +44,7 @@ fn make_node(seed: &[u8], parent: Option<ContentHash>, status: LineageStatus, cy
         seed: None,
         data_window_json: None,
         objective: None,
-}
+    }
 }
 
 #[tokio::test]
@@ -64,7 +64,7 @@ async fn insert_get_round_trip() {
         seed: None,
         data_window_json: None,
         objective: None,
-};
+    };
     store.insert(&node).await.unwrap();
     let back = store.get(&node.bundle_hash).await.unwrap().unwrap();
     assert_eq!(back.bundle_hash, node.bundle_hash);

@@ -35,7 +35,7 @@ fn node(seed: &[u8], status: LineageStatus, cycle: &str, hour: u32) -> LineageNo
         seed: None,
         data_window_json: None,
         objective: None,
-}
+    }
 }
 
 #[tokio::test]

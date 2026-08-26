@@ -10,7 +10,6 @@
 //! not-found errors transparently.
 
 use std::time::Duration;
-
 use chrono::{DateTime, Utc};
 
 use axum::{

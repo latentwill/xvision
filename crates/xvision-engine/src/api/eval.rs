@@ -5303,10 +5303,12 @@ async fn build_live_executor(
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
         let stream = if uses_alpaca_data {
             // Retry WebSocket subscription with exponential backoff.
-            // Alpaca free tier allows 1 concurrent WS connection; a stale
-            // agentd or prior run may hold it. Retry up to 3 times with
-            // 5s / 10s / 20s backoff so the stale connection has time to
-            // time out on Alpaca's side.
+            // Transient connect failures are expected here: Alpaca free
+            // tier allows 1 concurrent WS connection and a stale agentd
+            // or prior run may hold it (HTTP 406 "connection limit
+            // exceeded"), and other transient transport errors occur
+            // during Alpaca incidents. Retry any error up to 3 times
+            // with 5s / 10s backoff before failing the launch.
             let mut ws = None;
             let mut last_err = String::new();
             for attempt in 0u32..3u32 {
@@ -5317,15 +5319,17 @@ async fn build_live_executor(
                     }
                     Err(e) => {
                         last_err = e.to_string();
-                        if attempt < 2 && last_err.contains("connection limit exceeded") {
+                        if attempt < 2 {
                             let wait = std::time::Duration::from_secs(5 * 2u64.pow(attempt));
                             tracing::warn!(
                                 target: "xvision_engine::live",
                                 asset = %asset,
                                 attempt = attempt + 1,
                                 wait_secs = wait.as_secs(),
-                                "Alpaca WS connection limit (HTTP 406) — retrying after backoff. \
-                                 Kill stale xvision-agentd processes or wait for connection timeout."
+                                error = %last_err,
+                                "Alpaca WS subscribe failed — retrying after backoff. \
+                                 For HTTP 406: kill stale xvision-agentd processes or \
+                                 wait for the stale connection to time out."
                             );
                             tokio::time::sleep(wait).await;
                         } else {

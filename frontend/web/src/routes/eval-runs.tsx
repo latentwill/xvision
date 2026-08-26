@@ -181,6 +181,7 @@ export function EvalRunsRoute() {
   const navigate = useNavigate();
   const preselectedStrategy = strategyFilterUrl;
   const preselectedScenario = searchParams.get("scenario")?.trim() ?? "";
+  // `?mode=live` is the pre-rename URL value; the RunMode enum is now "fwd".
   const preselectedMode: RunMode =
     searchParams.get("mode") === "live" || searchParams.get("mode") === "fwd"
       ? "fwd"

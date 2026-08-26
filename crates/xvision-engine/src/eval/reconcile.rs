@@ -68,14 +68,14 @@ pub struct ReconcileDiff {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReconcileSource {
-    /// Real broker query. The only source for which `matched = true`
-    /// actually means "verified against the venue".
-    Broker,
     /// No broker connector available: the broker side of the result is
     /// EMPTY by construction and `matched` is forced `false`. Every
     /// expected position surfaces as an unverified diff instead of the
     /// historical lie of a fabricated matched snapshot.
     ExpectedOnly,
+    /// Real broker query. The only source for which `matched = true`
+    /// actually means "verified against the venue".
+    Broker,
 }
 
 impl Default for ReconcileSource {

@@ -1,0 +1,6770 @@
+{
+  "method": {
+    "windows": [
+      {
+        "name": "camp-m1-2024-08",
+        "start": "2024-08-01T00:00:00Z",
+        "end": "2024-09-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m2",
+        "start": "2024-09-01T00:00:00Z",
+        "end": "2024-10-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m3",
+        "start": "2024-10-01T00:00:00Z",
+        "end": "2024-11-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m4",
+        "start": "2024-11-01T00:00:00Z",
+        "end": "2024-12-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m5",
+        "start": "2024-12-01T00:00:00Z",
+        "end": "2025-01-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m6",
+        "start": "2025-01-01T00:00:00Z",
+        "end": "2025-02-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m7",
+        "start": "2025-02-01T00:00:00Z",
+        "end": "2025-03-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m8",
+        "start": "2025-03-01T00:00:00Z",
+        "end": "2025-04-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m9",
+        "start": "2025-04-01T00:00:00Z",
+        "end": "2025-05-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m10",
+        "start": "2025-05-01T00:00:00Z",
+        "end": "2025-06-01T00:00:00Z"
+      },
+      {
+        "name": "camp-m11",
+        "start": "2025-06-01T00:00:00Z",
+        "end": "2025-07-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h12a",
+        "start": "2024-08-01T00:00:00Z",
+        "end": "2024-08-16T00:00:00Z"
+      },
+      {
+        "name": "camp-h12b",
+        "start": "2024-08-16T00:00:00Z",
+        "end": "2024-09-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h10a",
+        "start": "2024-10-01T00:00:00Z",
+        "end": "2024-10-16T00:00:00Z"
+      },
+      {
+        "name": "camp-h10b",
+        "start": "2024-10-16T00:00:00Z",
+        "end": "2024-11-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h12c",
+        "start": "2024-12-01T00:00:00Z",
+        "end": "2024-12-16T00:00:00Z"
+      },
+      {
+        "name": "camp-h12d",
+        "start": "2024-12-16T00:00:00Z",
+        "end": "2025-01-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h02a",
+        "start": "2025-02-01T00:00:00Z",
+        "end": "2025-02-15T00:00:00Z"
+      },
+      {
+        "name": "camp-h02b",
+        "start": "2025-02-15T00:00:00Z",
+        "end": "2025-03-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h04a",
+        "start": "2025-04-01T00:00:00Z",
+        "end": "2025-04-16T00:00:00Z"
+      },
+      {
+        "name": "camp-h04b",
+        "start": "2025-04-16T00:00:00Z",
+        "end": "2025-05-01T00:00:00Z"
+      },
+      {
+        "name": "camp-h06a",
+        "start": "2025-06-01T00:00:00Z",
+        "end": "2025-06-16T00:00:00Z"
+      },
+      {
+        "name": "camp-h06b",
+        "start": "2025-06-16T00:00:00Z",
+        "end": "2025-07-01T00:00:00Z"
+      },
+      {
+        "name": "crypto-bull-q1-2025",
+        "start": "2025-01-01T00:00:00Z",
+        "end": "2025-04-01T00:00:00Z"
+      },
+      {
+        "name": "crypto-rangebound-q2-2025",
+        "start": "2025-04-01T00:00:00Z",
+        "end": "2025-07-01T00:00:00Z"
+      },
+      {
+        "name": "crypto-bear-q3-2024",
+        "start": "2024-07-01T00:00:00Z",
+        "end": "2024-10-01T00:00:00Z"
+      },
+      {
+        "name": "flash-crash-aug-2024",
+        "start": "2024-08-01T00:00:00Z",
+        "end": "2024-09-01T00:00:00Z"
+      }
+    ],
+    "assets": [
+      "BTC/USD",
+      "ETH/USD",
+      "SOL/USD"
+    ],
+    "bars": "5Min",
+    "cache": "scratch/offline-opt/bars",
+    "grid_config_count": 4536,
+    "fee_bps_per_side": 25,
+    "slippage_bps_per_side": 5,
+    "risk_pct_per_trade": 0.0075,
+    "start_nav": 1000.0,
+    "warmup_bars": 50
+  },
+  "coverage": {
+    "profitable_asset_windows": 13,
+    "total_asset_windows": 81
+  },
+  "top_configs": [
+    {
+      "rank": 1,
+      "profitable_asset_windows": 13,
+      "total_asset_windows": 81,
+      "total_net_pnl": -2659.74782137,
+      "parameters": {
+        "ema_pair": [
+          9,
+          21
+        ],
+        "adx_floor": 25.0,
+        "rvol_floor": 1.3,
+        "stop_pct": 0.03,
+        "exit_kind": "trailing_stop",
+        "exit_pct": 0.02,
+        "take_profit_pct": null,
+        "trailing_pct": 0.02,
+        "time_exit_bars": 96,
+        "direction": "short_only"
+      },
+      "strategy": {
+        "decision_mode": "mechanistic",
+        "filter": {
+          "conditions": {
+            "all": [
+              {
+                "lhs": "ema_9",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "ema_21",
+                "op": "<",
+                "rhs": "ema_50"
+              },
+              {
+                "lhs": "close",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "adx_14",
+                "op": ">",
+                "rhs": 25.0
+              },
+              {
+                "lhs": "rvol_tod_20",
+                "op": ">",
+                "rhs": 1.3
+              }
+            ]
+          }
+        },
+        "mechanistic_config": {
+          "entry_rules": [
+            {
+              "signal_name": "trend_gate",
+              "direction": "short"
+            }
+          ],
+          "close_policies": [
+            {
+              "kind": "stop_loss",
+              "pct": 0.03
+            },
+            {
+              "kind": "trailing_stop",
+              "pct": 0.02
+            },
+            {
+              "kind": "time_exit",
+              "bars": 96
+            }
+          ]
+        }
+      },
+      "per_window_pnl": [
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "BTC/USD",
+          "net_pnl": -38.39114786
+        },
+        {
+          "window": "camp-m2",
+          "asset": "BTC/USD",
+          "net_pnl": -30.46710557
+        },
+        {
+          "window": "camp-m3",
+          "asset": "BTC/USD",
+          "net_pnl": -52.91569767
+        },
+        {
+          "window": "camp-m4",
+          "asset": "BTC/USD",
+          "net_pnl": -58.93617495
+        },
+        {
+          "window": "camp-m5",
+          "asset": "BTC/USD",
+          "net_pnl": -38.33581315
+        },
+        {
+          "window": "camp-m6",
+          "asset": "BTC/USD",
+          "net_pnl": -55.33014423
+        },
+        {
+          "window": "camp-m7",
+          "asset": "BTC/USD",
+          "net_pnl": -29.10253512
+        },
+        {
+          "window": "camp-m8",
+          "asset": "BTC/USD",
+          "net_pnl": -69.90051433
+        },
+        {
+          "window": "camp-m9",
+          "asset": "BTC/USD",
+          "net_pnl": -53.27881935
+        },
+        {
+          "window": "camp-m10",
+          "asset": "BTC/USD",
+          "net_pnl": -89.5911204
+        },
+        {
+          "window": "camp-m11",
+          "asset": "BTC/USD",
+          "net_pnl": -42.84552549
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "BTC/USD",
+          "net_pnl": 2.84778214
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "BTC/USD",
+          "net_pnl": -41.12182401
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "BTC/USD",
+          "net_pnl": -28.57477396
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "BTC/USD",
+          "net_pnl": -24.61975963
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "BTC/USD",
+          "net_pnl": -17.10349967
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "BTC/USD",
+          "net_pnl": -21.6017795
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "BTC/USD",
+          "net_pnl": -28.87481214
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "BTC/USD",
+          "net_pnl": 0.07538145
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "BTC/USD",
+          "net_pnl": -16.04858517
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "BTC/USD",
+          "net_pnl": -37.24192943
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "BTC/USD",
+          "net_pnl": -15.92835655
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "BTC/USD",
+          "net_pnl": -26.69846627
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -147.10526624
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -177.09274942
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -99.28475702
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -38.39114786
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "ETH/USD",
+          "net_pnl": -23.68174727
+        },
+        {
+          "window": "camp-m2",
+          "asset": "ETH/USD",
+          "net_pnl": -48.62505075
+        },
+        {
+          "window": "camp-m3",
+          "asset": "ETH/USD",
+          "net_pnl": -54.11331895
+        },
+        {
+          "window": "camp-m4",
+          "asset": "ETH/USD",
+          "net_pnl": -105.20008911
+        },
+        {
+          "window": "camp-m5",
+          "asset": "ETH/USD",
+          "net_pnl": -29.85441379
+        },
+        {
+          "window": "camp-m6",
+          "asset": "ETH/USD",
+          "net_pnl": -37.8969394
+        },
+        {
+          "window": "camp-m7",
+          "asset": "ETH/USD",
+          "net_pnl": 59.50164975
+        },
+        {
+          "window": "camp-m8",
+          "asset": "ETH/USD",
+          "net_pnl": -47.15596796
+        },
+        {
+          "window": "camp-m9",
+          "asset": "ETH/USD",
+          "net_pnl": -13.62895301
+        },
+        {
+          "window": "camp-m10",
+          "asset": "ETH/USD",
+          "net_pnl": -57.33723299
+        },
+        {
+          "window": "camp-m11",
+          "asset": "ETH/USD",
+          "net_pnl": -42.41773511
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "ETH/USD",
+          "net_pnl": 12.58491089
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "ETH/USD",
+          "net_pnl": -35.81591803
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "ETH/USD",
+          "net_pnl": -33.75445468
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "ETH/USD",
+          "net_pnl": -21.0700731
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "ETH/USD",
+          "net_pnl": -31.54288399
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "ETH/USD",
+          "net_pnl": 1.74346409
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "ETH/USD",
+          "net_pnl": 32.93123255
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "ETH/USD",
+          "net_pnl": 24.70631484
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "ETH/USD",
+          "net_pnl": 26.88893387
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "ETH/USD",
+          "net_pnl": -38.35934259
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "ETH/USD",
+          "net_pnl": -14.31009862
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "ETH/USD",
+          "net_pnl": -28.51569896
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -25.53710125
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -109.62539697
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -114.31341297
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -23.68174727
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-m2",
+          "asset": "SOL/USD",
+          "net_pnl": -9.12499902
+        },
+        {
+          "window": "camp-m3",
+          "asset": "SOL/USD",
+          "net_pnl": -13.9100722
+        },
+        {
+          "window": "camp-m4",
+          "asset": "SOL/USD",
+          "net_pnl": -23.91732299
+        },
+        {
+          "window": "camp-m5",
+          "asset": "SOL/USD",
+          "net_pnl": 8.3762055
+        },
+        {
+          "window": "camp-m6",
+          "asset": "SOL/USD",
+          "net_pnl": -77.57059946
+        },
+        {
+          "window": "camp-m7",
+          "asset": "SOL/USD",
+          "net_pnl": -20.13541724
+        },
+        {
+          "window": "camp-m8",
+          "asset": "SOL/USD",
+          "net_pnl": -22.87768149
+        },
+        {
+          "window": "camp-m9",
+          "asset": "SOL/USD",
+          "net_pnl": -23.93116558
+        },
+        {
+          "window": "camp-m10",
+          "asset": "SOL/USD",
+          "net_pnl": -50.53902008
+        },
+        {
+          "window": "camp-m11",
+          "asset": "SOL/USD",
+          "net_pnl": -41.8054979
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "SOL/USD",
+          "net_pnl": -7.91213545
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "SOL/USD",
+          "net_pnl": -6.04577171
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "SOL/USD",
+          "net_pnl": 7.75967241
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "SOL/USD",
+          "net_pnl": 2.33160211
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "SOL/USD",
+          "net_pnl": -30.79671467
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "SOL/USD",
+          "net_pnl": 8.07128115
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "SOL/USD",
+          "net_pnl": 4.46891642
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "SOL/USD",
+          "net_pnl": -27.35146555
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "SOL/USD",
+          "net_pnl": -17.59902392
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "SOL/USD",
+          "net_pnl": -24.64011597
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -118.01730848
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -111.51597609
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "SOL/USD",
+          "net_pnl": -9.12499902
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        }
+      ]
+    },
+    {
+      "rank": 2,
+      "profitable_asset_windows": 13,
+      "total_asset_windows": 81,
+      "total_net_pnl": -4039.46501215,
+      "parameters": {
+        "ema_pair": [
+          9,
+          21
+        ],
+        "adx_floor": 25.0,
+        "rvol_floor": 1.3,
+        "stop_pct": 0.02,
+        "exit_kind": "trailing_stop",
+        "exit_pct": 0.02,
+        "take_profit_pct": null,
+        "trailing_pct": 0.02,
+        "time_exit_bars": 96,
+        "direction": "short_only"
+      },
+      "strategy": {
+        "decision_mode": "mechanistic",
+        "filter": {
+          "conditions": {
+            "all": [
+              {
+                "lhs": "ema_9",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "ema_21",
+                "op": "<",
+                "rhs": "ema_50"
+              },
+              {
+                "lhs": "close",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "adx_14",
+                "op": ">",
+                "rhs": 25.0
+              },
+              {
+                "lhs": "rvol_tod_20",
+                "op": ">",
+                "rhs": 1.3
+              }
+            ]
+          }
+        },
+        "mechanistic_config": {
+          "entry_rules": [
+            {
+              "signal_name": "trend_gate",
+              "direction": "short"
+            }
+          ],
+          "close_policies": [
+            {
+              "kind": "stop_loss",
+              "pct": 0.02
+            },
+            {
+              "kind": "trailing_stop",
+              "pct": 0.02
+            },
+            {
+              "kind": "time_exit",
+              "bars": 96
+            }
+          ]
+        }
+      },
+      "per_window_pnl": [
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "BTC/USD",
+          "net_pnl": -58.84685384
+        },
+        {
+          "window": "camp-m2",
+          "asset": "BTC/USD",
+          "net_pnl": -46.04450734
+        },
+        {
+          "window": "camp-m3",
+          "asset": "BTC/USD",
+          "net_pnl": -78.62891754
+        },
+        {
+          "window": "camp-m4",
+          "asset": "BTC/USD",
+          "net_pnl": -87.37501433
+        },
+        {
+          "window": "camp-m5",
+          "asset": "BTC/USD",
+          "net_pnl": -57.55749819
+        },
+        {
+          "window": "camp-m6",
+          "asset": "BTC/USD",
+          "net_pnl": -82.93735095
+        },
+        {
+          "window": "camp-m7",
+          "asset": "BTC/USD",
+          "net_pnl": -45.11390576
+        },
+        {
+          "window": "camp-m8",
+          "asset": "BTC/USD",
+          "net_pnl": -107.74186223
+        },
+        {
+          "window": "camp-m9",
+          "asset": "BTC/USD",
+          "net_pnl": -79.1232986
+        },
+        {
+          "window": "camp-m10",
+          "asset": "BTC/USD",
+          "net_pnl": -131.45581094
+        },
+        {
+          "window": "camp-m11",
+          "asset": "BTC/USD",
+          "net_pnl": -63.65589817
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "BTC/USD",
+          "net_pnl": 3.63941604
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "BTC/USD",
+          "net_pnl": -62.259681
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "BTC/USD",
+          "net_pnl": -42.83887335
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "BTC/USD",
+          "net_pnl": -36.74277973
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "BTC/USD",
+          "net_pnl": -26.06710337
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "BTC/USD",
+          "net_pnl": -32.33322843
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "BTC/USD",
+          "net_pnl": -44.69410612
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "BTC/USD",
+          "net_pnl": 0.02578286
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "BTC/USD",
+          "net_pnl": -24.21270099
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "BTC/USD",
+          "net_pnl": -55.39685857
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "BTC/USD",
+          "net_pnl": -23.83150043
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "BTC/USD",
+          "net_pnl": -39.8272745
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -218.89396287
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -253.90905654
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -148.09646916
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -58.84685384
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "ETH/USD",
+          "net_pnl": -44.32148215
+        },
+        {
+          "window": "camp-m2",
+          "asset": "ETH/USD",
+          "net_pnl": -72.94787978
+        },
+        {
+          "window": "camp-m3",
+          "asset": "ETH/USD",
+          "net_pnl": -81.12677208
+        },
+        {
+          "window": "camp-m4",
+          "asset": "ETH/USD",
+          "net_pnl": -156.29449247
+        },
+        {
+          "window": "camp-m5",
+          "asset": "ETH/USD",
+          "net_pnl": -44.75090578
+        },
+        {
+          "window": "camp-m6",
+          "asset": "ETH/USD",
+          "net_pnl": -57.32760265
+        },
+        {
+          "window": "camp-m7",
+          "asset": "ETH/USD",
+          "net_pnl": 89.8496087
+        },
+        {
+          "window": "camp-m8",
+          "asset": "ETH/USD",
+          "net_pnl": -75.44084792
+        },
+        {
+          "window": "camp-m9",
+          "asset": "ETH/USD",
+          "net_pnl": -18.70989602
+        },
+        {
+          "window": "camp-m10",
+          "asset": "ETH/USD",
+          "net_pnl": -85.60769239
+        },
+        {
+          "window": "camp-m11",
+          "asset": "ETH/USD",
+          "net_pnl": -63.27528981
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "ETH/USD",
+          "net_pnl": 12.25710482
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "ETH/USD",
+          "net_pnl": -55.89349455
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "ETH/USD",
+          "net_pnl": -50.99442915
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "ETH/USD",
+          "net_pnl": -31.75149214
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "ETH/USD",
+          "net_pnl": -47.10291342
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "ETH/USD",
+          "net_pnl": 2.46827037
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "ETH/USD",
+          "net_pnl": 49.27700592
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "ETH/USD",
+          "net_pnl": 37.12056567
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "ETH/USD",
+          "net_pnl": 40.27800523
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "ETH/USD",
+          "net_pnl": -55.0872492
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "ETH/USD",
+          "net_pnl": -21.56580993
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "ETH/USD",
+          "net_pnl": -42.62880458
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -45.46145761
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -159.49179028
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -175.39652607
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -44.32148215
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-m2",
+          "asset": "SOL/USD",
+          "net_pnl": -13.7186504
+        },
+        {
+          "window": "camp-m3",
+          "asset": "SOL/USD",
+          "net_pnl": -20.84751689
+        },
+        {
+          "window": "camp-m4",
+          "asset": "SOL/USD",
+          "net_pnl": -36.71921003
+        },
+        {
+          "window": "camp-m5",
+          "asset": "SOL/USD",
+          "net_pnl": 9.38682265
+        },
+        {
+          "window": "camp-m6",
+          "asset": "SOL/USD",
+          "net_pnl": -121.4503584
+        },
+        {
+          "window": "camp-m7",
+          "asset": "SOL/USD",
+          "net_pnl": -35.08260817
+        },
+        {
+          "window": "camp-m8",
+          "asset": "SOL/USD",
+          "net_pnl": -31.08486061
+        },
+        {
+          "window": "camp-m9",
+          "asset": "SOL/USD",
+          "net_pnl": -37.38579784
+        },
+        {
+          "window": "camp-m10",
+          "asset": "SOL/USD",
+          "net_pnl": -75.05546842
+        },
+        {
+          "window": "camp-m11",
+          "asset": "SOL/USD",
+          "net_pnl": -65.5301832
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "SOL/USD",
+          "net_pnl": -11.86320444
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "SOL/USD",
+          "net_pnl": -9.09217478
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "SOL/USD",
+          "net_pnl": 11.41870647
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "SOL/USD",
+          "net_pnl": 1.16007039
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "SOL/USD",
+          "net_pnl": -47.87191413
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "SOL/USD",
+          "net_pnl": 9.03527702
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "SOL/USD",
+          "net_pnl": 5.19833315
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "SOL/USD",
+          "net_pnl": -41.00110399
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "SOL/USD",
+          "net_pnl": -29.1391719
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "SOL/USD",
+          "net_pnl": -37.48324193
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -180.28983756
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -167.31635146
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "SOL/USD",
+          "net_pnl": -13.7186504
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        }
+      ]
+    },
+    {
+      "rank": 3,
+      "profitable_asset_windows": 13,
+      "total_asset_windows": 81,
+      "total_net_pnl": -5578.21047135,
+      "parameters": {
+        "ema_pair": [
+          9,
+          21
+        ],
+        "adx_floor": 25.0,
+        "rvol_floor": 1.3,
+        "stop_pct": 0.015,
+        "exit_kind": "take_profit",
+        "exit_pct": 0.04,
+        "take_profit_pct": 0.04,
+        "trailing_pct": null,
+        "time_exit_bars": 96,
+        "direction": "short_only"
+      },
+      "strategy": {
+        "decision_mode": "mechanistic",
+        "filter": {
+          "conditions": {
+            "all": [
+              {
+                "lhs": "ema_9",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "ema_21",
+                "op": "<",
+                "rhs": "ema_50"
+              },
+              {
+                "lhs": "close",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "adx_14",
+                "op": ">",
+                "rhs": 25.0
+              },
+              {
+                "lhs": "rvol_tod_20",
+                "op": ">",
+                "rhs": 1.3
+              }
+            ]
+          }
+        },
+        "mechanistic_config": {
+          "entry_rules": [
+            {
+              "signal_name": "trend_gate",
+              "direction": "short"
+            }
+          ],
+          "close_policies": [
+            {
+              "kind": "stop_loss",
+              "pct": 0.015
+            },
+            {
+              "kind": "take_profit",
+              "pct": 0.04
+            },
+            {
+              "kind": "time_exit",
+              "bars": 96
+            }
+          ]
+        }
+      },
+      "per_window_pnl": [
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "BTC/USD",
+          "net_pnl": -68.54252815
+        },
+        {
+          "window": "camp-m2",
+          "asset": "BTC/USD",
+          "net_pnl": -48.36714049
+        },
+        {
+          "window": "camp-m3",
+          "asset": "BTC/USD",
+          "net_pnl": -94.09741244
+        },
+        {
+          "window": "camp-m4",
+          "asset": "BTC/USD",
+          "net_pnl": -113.6985513
+        },
+        {
+          "window": "camp-m5",
+          "asset": "BTC/USD",
+          "net_pnl": -113.76576559
+        },
+        {
+          "window": "camp-m6",
+          "asset": "BTC/USD",
+          "net_pnl": -100.06404255
+        },
+        {
+          "window": "camp-m7",
+          "asset": "BTC/USD",
+          "net_pnl": -42.80262032
+        },
+        {
+          "window": "camp-m8",
+          "asset": "BTC/USD",
+          "net_pnl": -123.25941138
+        },
+        {
+          "window": "camp-m9",
+          "asset": "BTC/USD",
+          "net_pnl": -88.27493272
+        },
+        {
+          "window": "camp-m10",
+          "asset": "BTC/USD",
+          "net_pnl": -168.62281582
+        },
+        {
+          "window": "camp-m11",
+          "asset": "BTC/USD",
+          "net_pnl": -85.61908906
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "BTC/USD",
+          "net_pnl": 3.71244146
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "BTC/USD",
+          "net_pnl": -73.0605487
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "BTC/USD",
+          "net_pnl": -57.17216248
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "BTC/USD",
+          "net_pnl": -37.90554458
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "BTC/USD",
+          "net_pnl": -43.27763452
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "BTC/USD",
+          "net_pnl": -73.67668365
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "BTC/USD",
+          "net_pnl": -64.38434648
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "BTC/USD",
+          "net_pnl": 23.70244686
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "BTC/USD",
+          "net_pnl": -22.88565275
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "BTC/USD",
+          "net_pnl": -65.76555045
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "BTC/USD",
+          "net_pnl": -31.69391482
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "BTC/USD",
+          "net_pnl": -54.4160119
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -245.06524988
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -310.39096324
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -150.92299588
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -68.54252815
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "ETH/USD",
+          "net_pnl": -83.02560769
+        },
+        {
+          "window": "camp-m2",
+          "asset": "ETH/USD",
+          "net_pnl": -84.98607319
+        },
+        {
+          "window": "camp-m3",
+          "asset": "ETH/USD",
+          "net_pnl": -112.8601404
+        },
+        {
+          "window": "camp-m4",
+          "asset": "ETH/USD",
+          "net_pnl": -201.78020272
+        },
+        {
+          "window": "camp-m5",
+          "asset": "ETH/USD",
+          "net_pnl": -33.71140085
+        },
+        {
+          "window": "camp-m6",
+          "asset": "ETH/USD",
+          "net_pnl": -80.72311558
+        },
+        {
+          "window": "camp-m7",
+          "asset": "ETH/USD",
+          "net_pnl": 115.18291153
+        },
+        {
+          "window": "camp-m8",
+          "asset": "ETH/USD",
+          "net_pnl": -82.51151771
+        },
+        {
+          "window": "camp-m9",
+          "asset": "ETH/USD",
+          "net_pnl": -68.73477639
+        },
+        {
+          "window": "camp-m10",
+          "asset": "ETH/USD",
+          "net_pnl": -106.78517792
+        },
+        {
+          "window": "camp-m11",
+          "asset": "ETH/USD",
+          "net_pnl": -103.2254091
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "ETH/USD",
+          "net_pnl": 3.16369389
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "ETH/USD",
+          "net_pnl": -84.24085684
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "ETH/USD",
+          "net_pnl": -65.38694985
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "ETH/USD",
+          "net_pnl": -50.79448714
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "ETH/USD",
+          "net_pnl": -50.14609438
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "ETH/USD",
+          "net_pnl": 17.30233822
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "ETH/USD",
+          "net_pnl": 85.48575334
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "ETH/USD",
+          "net_pnl": 25.31619663
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "ETH/USD",
+          "net_pnl": 13.78685399
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "ETH/USD",
+          "net_pnl": -79.30030626
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "ETH/USD",
+          "net_pnl": -51.6179051
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "ETH/USD",
+          "net_pnl": -54.41636264
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -53.24784747
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -254.04504856
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -234.17885718
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -83.02560769
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-m2",
+          "asset": "SOL/USD",
+          "net_pnl": -7.36927018
+        },
+        {
+          "window": "camp-m3",
+          "asset": "SOL/USD",
+          "net_pnl": -12.00082079
+        },
+        {
+          "window": "camp-m4",
+          "asset": "SOL/USD",
+          "net_pnl": -50.33350157
+        },
+        {
+          "window": "camp-m5",
+          "asset": "SOL/USD",
+          "net_pnl": 4.50628418
+        },
+        {
+          "window": "camp-m6",
+          "asset": "SOL/USD",
+          "net_pnl": -140.25153165
+        },
+        {
+          "window": "camp-m7",
+          "asset": "SOL/USD",
+          "net_pnl": -128.86563747
+        },
+        {
+          "window": "camp-m8",
+          "asset": "SOL/USD",
+          "net_pnl": -48.19313174
+        },
+        {
+          "window": "camp-m9",
+          "asset": "SOL/USD",
+          "net_pnl": -28.72958935
+        },
+        {
+          "window": "camp-m10",
+          "asset": "SOL/USD",
+          "net_pnl": -127.45720006
+        },
+        {
+          "window": "camp-m11",
+          "asset": "SOL/USD",
+          "net_pnl": -122.48034986
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "SOL/USD",
+          "net_pnl": -18.82967539
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "SOL/USD",
+          "net_pnl": 6.95990739
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "SOL/USD",
+          "net_pnl": 7.99034516
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "SOL/USD",
+          "net_pnl": 0.75459842
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "SOL/USD",
+          "net_pnl": -82.33382561
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "SOL/USD",
+          "net_pnl": -56.19006836
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "SOL/USD",
+          "net_pnl": 14.72581323
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "SOL/USD",
+          "net_pnl": -41.00928023
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "SOL/USD",
+          "net_pnl": -50.7410515
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "SOL/USD",
+          "net_pnl": -75.57400272
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -289.04073024
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -249.0132768
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "SOL/USD",
+          "net_pnl": -7.36927018
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        }
+      ]
+    },
+    {
+      "rank": 4,
+      "profitable_asset_windows": 12,
+      "total_asset_windows": 81,
+      "total_net_pnl": -2147.86006989,
+      "parameters": {
+        "ema_pair": [
+          12,
+          26
+        ],
+        "adx_floor": 30.0,
+        "rvol_floor": 1.0,
+        "stop_pct": 0.03,
+        "exit_kind": "take_profit",
+        "exit_pct": 0.04,
+        "take_profit_pct": 0.04,
+        "trailing_pct": null,
+        "time_exit_bars": 96,
+        "direction": "short_only"
+      },
+      "strategy": {
+        "decision_mode": "mechanistic",
+        "filter": {
+          "conditions": {
+            "all": [
+              {
+                "lhs": "ema_12",
+                "op": "<",
+                "rhs": "ema_26"
+              },
+              {
+                "lhs": "ema_26",
+                "op": "<",
+                "rhs": "ema_50"
+              },
+              {
+                "lhs": "close",
+                "op": "<",
+                "rhs": "ema_26"
+              },
+              {
+                "lhs": "adx_14",
+                "op": ">",
+                "rhs": 30.0
+              },
+              {
+                "lhs": "rvol_tod_20",
+                "op": ">",
+                "rhs": 1.0
+              }
+            ]
+          }
+        },
+        "mechanistic_config": {
+          "entry_rules": [
+            {
+              "signal_name": "trend_gate",
+              "direction": "short"
+            }
+          ],
+          "close_policies": [
+            {
+              "kind": "stop_loss",
+              "pct": 0.03
+            },
+            {
+              "kind": "take_profit",
+              "pct": 0.04
+            },
+            {
+              "kind": "time_exit",
+              "bars": 96
+            }
+          ]
+        }
+      },
+      "per_window_pnl": [
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "BTC/USD",
+          "net_pnl": -1.61723769
+        },
+        {
+          "window": "camp-m2",
+          "asset": "BTC/USD",
+          "net_pnl": -35.44219512
+        },
+        {
+          "window": "camp-m3",
+          "asset": "BTC/USD",
+          "net_pnl": -27.89339742
+        },
+        {
+          "window": "camp-m4",
+          "asset": "BTC/USD",
+          "net_pnl": -36.9826197
+        },
+        {
+          "window": "camp-m5",
+          "asset": "BTC/USD",
+          "net_pnl": -45.18859047
+        },
+        {
+          "window": "camp-m6",
+          "asset": "BTC/USD",
+          "net_pnl": -30.13360286
+        },
+        {
+          "window": "camp-m7",
+          "asset": "BTC/USD",
+          "net_pnl": -29.07956962
+        },
+        {
+          "window": "camp-m8",
+          "asset": "BTC/USD",
+          "net_pnl": -50.95176732
+        },
+        {
+          "window": "camp-m9",
+          "asset": "BTC/USD",
+          "net_pnl": -34.82402206
+        },
+        {
+          "window": "camp-m10",
+          "asset": "BTC/USD",
+          "net_pnl": -63.68756005
+        },
+        {
+          "window": "camp-m11",
+          "asset": "BTC/USD",
+          "net_pnl": -18.33611183
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "BTC/USD",
+          "net_pnl": 11.91628416
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "BTC/USD",
+          "net_pnl": -13.94560547
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "BTC/USD",
+          "net_pnl": -10.59819869
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "BTC/USD",
+          "net_pnl": -17.48046012
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "BTC/USD",
+          "net_pnl": -16.91191328
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "BTC/USD",
+          "net_pnl": -28.76311652
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "BTC/USD",
+          "net_pnl": -16.1600886
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "BTC/USD",
+          "net_pnl": -12.82581236
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "BTC/USD",
+          "net_pnl": -19.10370642
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "BTC/USD",
+          "net_pnl": -15.9114615
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "BTC/USD",
+          "net_pnl": -8.7807779
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "BTC/USD",
+          "net_pnl": -8.9736747
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -106.29004633
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -112.86418444
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -59.37086894
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -1.61723769
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "ETH/USD",
+          "net_pnl": -59.13839132
+        },
+        {
+          "window": "camp-m2",
+          "asset": "ETH/USD",
+          "net_pnl": -47.95746513
+        },
+        {
+          "window": "camp-m3",
+          "asset": "ETH/USD",
+          "net_pnl": -23.1923678
+        },
+        {
+          "window": "camp-m4",
+          "asset": "ETH/USD",
+          "net_pnl": -49.57153315
+        },
+        {
+          "window": "camp-m5",
+          "asset": "ETH/USD",
+          "net_pnl": -5.05438417
+        },
+        {
+          "window": "camp-m6",
+          "asset": "ETH/USD",
+          "net_pnl": -44.59593182
+        },
+        {
+          "window": "camp-m7",
+          "asset": "ETH/USD",
+          "net_pnl": 44.12659708
+        },
+        {
+          "window": "camp-m8",
+          "asset": "ETH/USD",
+          "net_pnl": -45.48605909
+        },
+        {
+          "window": "camp-m9",
+          "asset": "ETH/USD",
+          "net_pnl": -32.62167093
+        },
+        {
+          "window": "camp-m10",
+          "asset": "ETH/USD",
+          "net_pnl": -60.3931278
+        },
+        {
+          "window": "camp-m11",
+          "asset": "ETH/USD",
+          "net_pnl": -38.91481901
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "ETH/USD",
+          "net_pnl": -10.53947878
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "ETH/USD",
+          "net_pnl": -48.24719314
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "ETH/USD",
+          "net_pnl": -9.77370674
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "ETH/USD",
+          "net_pnl": -13.55110559
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "ETH/USD",
+          "net_pnl": -11.11753808
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "ETH/USD",
+          "net_pnl": 7.21007172
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "ETH/USD",
+          "net_pnl": 8.46318822
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "ETH/USD",
+          "net_pnl": 35.36411569
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "ETH/USD",
+          "net_pnl": 20.06007008
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "ETH/USD",
+          "net_pnl": -51.29305325
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "ETH/USD",
+          "net_pnl": -15.49875465
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "ETH/USD",
+          "net_pnl": -23.78469755
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -49.05178987
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -126.41650599
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -134.62645504
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -59.13839132
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-m2",
+          "asset": "SOL/USD",
+          "net_pnl": -9.53398742
+        },
+        {
+          "window": "camp-m3",
+          "asset": "SOL/USD",
+          "net_pnl": -9.19924567
+        },
+        {
+          "window": "camp-m4",
+          "asset": "SOL/USD",
+          "net_pnl": -48.38878024
+        },
+        {
+          "window": "camp-m5",
+          "asset": "SOL/USD",
+          "net_pnl": 12.03221892
+        },
+        {
+          "window": "camp-m6",
+          "asset": "SOL/USD",
+          "net_pnl": -19.7650764
+        },
+        {
+          "window": "camp-m7",
+          "asset": "SOL/USD",
+          "net_pnl": 11.04188137
+        },
+        {
+          "window": "camp-m8",
+          "asset": "SOL/USD",
+          "net_pnl": -21.7887061
+        },
+        {
+          "window": "camp-m9",
+          "asset": "SOL/USD",
+          "net_pnl": -20.49437575
+        },
+        {
+          "window": "camp-m10",
+          "asset": "SOL/USD",
+          "net_pnl": -52.98835312
+        },
+        {
+          "window": "camp-m11",
+          "asset": "SOL/USD",
+          "net_pnl": -72.5137097
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "SOL/USD",
+          "net_pnl": -14.17531419
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "SOL/USD",
+          "net_pnl": 5.04762012
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "SOL/USD",
+          "net_pnl": 12.22796492
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "SOL/USD",
+          "net_pnl": 1.92725948
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "SOL/USD",
+          "net_pnl": -29.59708953
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "SOL/USD",
+          "net_pnl": 38.86021699
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "SOL/USD",
+          "net_pnl": -8.70051946
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "SOL/USD",
+          "net_pnl": -10.9595633
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "SOL/USD",
+          "net_pnl": -31.33824002
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "SOL/USD",
+          "net_pnl": -41.9710097
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -31.83063601
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -139.6607173
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "SOL/USD",
+          "net_pnl": -9.53398742
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        }
+      ]
+    },
+    {
+      "rank": 5,
+      "profitable_asset_windows": 12,
+      "total_asset_windows": 81,
+      "total_net_pnl": -2150.39297238,
+      "parameters": {
+        "ema_pair": [
+          9,
+          21
+        ],
+        "adx_floor": 30.0,
+        "rvol_floor": 1.0,
+        "stop_pct": 0.03,
+        "exit_kind": "take_profit",
+        "exit_pct": 0.04,
+        "take_profit_pct": 0.04,
+        "trailing_pct": null,
+        "time_exit_bars": 96,
+        "direction": "short_only"
+      },
+      "strategy": {
+        "decision_mode": "mechanistic",
+        "filter": {
+          "conditions": {
+            "all": [
+              {
+                "lhs": "ema_9",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "ema_21",
+                "op": "<",
+                "rhs": "ema_50"
+              },
+              {
+                "lhs": "close",
+                "op": "<",
+                "rhs": "ema_21"
+              },
+              {
+                "lhs": "adx_14",
+                "op": ">",
+                "rhs": 30.0
+              },
+              {
+                "lhs": "rvol_tod_20",
+                "op": ">",
+                "rhs": 1.0
+              }
+            ]
+          }
+        },
+        "mechanistic_config": {
+          "entry_rules": [
+            {
+              "signal_name": "trend_gate",
+              "direction": "short"
+            }
+          ],
+          "close_policies": [
+            {
+              "kind": "stop_loss",
+              "pct": 0.03
+            },
+            {
+              "kind": "take_profit",
+              "pct": 0.04
+            },
+            {
+              "kind": "time_exit",
+              "bars": 96
+            }
+          ]
+        }
+      },
+      "per_window_pnl": [
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "BTC/USD",
+          "net_pnl": -18.97809612
+        },
+        {
+          "window": "camp-m2",
+          "asset": "BTC/USD",
+          "net_pnl": -35.68384704
+        },
+        {
+          "window": "camp-m3",
+          "asset": "BTC/USD",
+          "net_pnl": -30.09829162
+        },
+        {
+          "window": "camp-m4",
+          "asset": "BTC/USD",
+          "net_pnl": -33.94050709
+        },
+        {
+          "window": "camp-m5",
+          "asset": "BTC/USD",
+          "net_pnl": -44.67867903
+        },
+        {
+          "window": "camp-m6",
+          "asset": "BTC/USD",
+          "net_pnl": -41.9513978
+        },
+        {
+          "window": "camp-m7",
+          "asset": "BTC/USD",
+          "net_pnl": -29.01715543
+        },
+        {
+          "window": "camp-m8",
+          "asset": "BTC/USD",
+          "net_pnl": -50.95176732
+        },
+        {
+          "window": "camp-m9",
+          "asset": "BTC/USD",
+          "net_pnl": -35.83203864
+        },
+        {
+          "window": "camp-m10",
+          "asset": "BTC/USD",
+          "net_pnl": -55.56400035
+        },
+        {
+          "window": "camp-m11",
+          "asset": "BTC/USD",
+          "net_pnl": -14.47940214
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "BTC/USD",
+          "net_pnl": -5.67990842
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "BTC/USD",
+          "net_pnl": -13.94560547
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "BTC/USD",
+          "net_pnl": -11.43786513
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "BTC/USD",
+          "net_pnl": -18.87633143
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "BTC/USD",
+          "net_pnl": -16.38690085
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "BTC/USD",
+          "net_pnl": -28.76311652
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "BTC/USD",
+          "net_pnl": -16.1600886
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "BTC/USD",
+          "net_pnl": -12.76235333
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "BTC/USD",
+          "net_pnl": -19.30594857
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "BTC/USD",
+          "net_pnl": -16.73649988
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "BTC/USD",
+          "net_pnl": -8.7807779
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "BTC/USD",
+          "net_pnl": -5.08018235
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -117.12312635
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "BTC/USD",
+          "net_pnl": -102.58993779
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -75.9590098
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "BTC/USD",
+          "net_pnl": -18.97809612
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "ETH/USD",
+          "net_pnl": -46.18756234
+        },
+        {
+          "window": "camp-m2",
+          "asset": "ETH/USD",
+          "net_pnl": -46.81749321
+        },
+        {
+          "window": "camp-m3",
+          "asset": "ETH/USD",
+          "net_pnl": -23.1923678
+        },
+        {
+          "window": "camp-m4",
+          "asset": "ETH/USD",
+          "net_pnl": -49.57153315
+        },
+        {
+          "window": "camp-m5",
+          "asset": "ETH/USD",
+          "net_pnl": -2.6303269
+        },
+        {
+          "window": "camp-m6",
+          "asset": "ETH/USD",
+          "net_pnl": -44.53259471
+        },
+        {
+          "window": "camp-m7",
+          "asset": "ETH/USD",
+          "net_pnl": 55.6360142
+        },
+        {
+          "window": "camp-m8",
+          "asset": "ETH/USD",
+          "net_pnl": -43.50461687
+        },
+        {
+          "window": "camp-m9",
+          "asset": "ETH/USD",
+          "net_pnl": -32.47895607
+        },
+        {
+          "window": "camp-m10",
+          "asset": "ETH/USD",
+          "net_pnl": -54.17565261
+        },
+        {
+          "window": "camp-m11",
+          "asset": "ETH/USD",
+          "net_pnl": -37.87702337
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "ETH/USD",
+          "net_pnl": 1.00784924
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "ETH/USD",
+          "net_pnl": -46.27671115
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "ETH/USD",
+          "net_pnl": -9.77370674
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "ETH/USD",
+          "net_pnl": -13.55110559
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "ETH/USD",
+          "net_pnl": -11.11753808
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "ETH/USD",
+          "net_pnl": 9.66400976
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "ETH/USD",
+          "net_pnl": 17.62178428
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "ETH/USD",
+          "net_pnl": 37.3559514
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "ETH/USD",
+          "net_pnl": 20.21055694
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "ETH/USD",
+          "net_pnl": -51.29305325
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "ETH/USD",
+          "net_pnl": -12.88144236
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "ETH/USD",
+          "net_pnl": -25.32176183
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -36.50980993
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "ETH/USD",
+          "net_pnl": -119.55649199
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -123.61878421
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "ETH/USD",
+          "net_pnl": -46.18756234
+        },
+        {
+          "window": "camp-m1-2024-08",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-m2",
+          "asset": "SOL/USD",
+          "net_pnl": -8.12827292
+        },
+        {
+          "window": "camp-m3",
+          "asset": "SOL/USD",
+          "net_pnl": -9.19924567
+        },
+        {
+          "window": "camp-m4",
+          "asset": "SOL/USD",
+          "net_pnl": -51.09875027
+        },
+        {
+          "window": "camp-m5",
+          "asset": "SOL/USD",
+          "net_pnl": 12.03221892
+        },
+        {
+          "window": "camp-m6",
+          "asset": "SOL/USD",
+          "net_pnl": -43.32733726
+        },
+        {
+          "window": "camp-m7",
+          "asset": "SOL/USD",
+          "net_pnl": 11.04188137
+        },
+        {
+          "window": "camp-m8",
+          "asset": "SOL/USD",
+          "net_pnl": -21.7887061
+        },
+        {
+          "window": "camp-m9",
+          "asset": "SOL/USD",
+          "net_pnl": -20.49437575
+        },
+        {
+          "window": "camp-m10",
+          "asset": "SOL/USD",
+          "net_pnl": -49.78458062
+        },
+        {
+          "window": "camp-m11",
+          "asset": "SOL/USD",
+          "net_pnl": -73.58341889
+        },
+        {
+          "window": "camp-h12a",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h12b",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        },
+        {
+          "window": "camp-h10a",
+          "asset": "SOL/USD",
+          "net_pnl": -14.17531419
+        },
+        {
+          "window": "camp-h10b",
+          "asset": "SOL/USD",
+          "net_pnl": 5.04762012
+        },
+        {
+          "window": "camp-h12c",
+          "asset": "SOL/USD",
+          "net_pnl": 12.22796492
+        },
+        {
+          "window": "camp-h12d",
+          "asset": "SOL/USD",
+          "net_pnl": 1.92725948
+        },
+        {
+          "window": "camp-h02a",
+          "asset": "SOL/USD",
+          "net_pnl": -29.59708953
+        },
+        {
+          "window": "camp-h02b",
+          "asset": "SOL/USD",
+          "net_pnl": 38.86021699
+        },
+        {
+          "window": "camp-h04a",
+          "asset": "SOL/USD",
+          "net_pnl": -8.70051946
+        },
+        {
+          "window": "camp-h04b",
+          "asset": "SOL/USD",
+          "net_pnl": -10.9595633
+        },
+        {
+          "window": "camp-h06a",
+          "asset": "SOL/USD",
+          "net_pnl": -31.42025
+        },
+        {
+          "window": "camp-h06b",
+          "asset": "SOL/USD",
+          "net_pnl": -42.99492199
+        },
+        {
+          "window": "crypto-bull-q1-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -55.10287265
+        },
+        {
+          "window": "crypto-rangebound-q2-2025",
+          "asset": "SOL/USD",
+          "net_pnl": -137.74578293
+        },
+        {
+          "window": "crypto-bear-q3-2024",
+          "asset": "SOL/USD",
+          "net_pnl": -8.12827292
+        },
+        {
+          "window": "flash-crash-aug-2024",
+          "asset": "SOL/USD",
+          "net_pnl": 0.0
+        }
+      ]
+    }
+  ],
+  "best_config": {
+    "ema_pair": [
+      9,
+      21
+    ],
+    "adx_floor": 25.0,
+    "rvol_floor": 1.3,
+    "stop_pct": 0.03,
+    "exit_kind": "trailing_stop",
+    "exit_pct": 0.02,
+    "take_profit_pct": null,
+    "trailing_pct": 0.02,
+    "time_exit_bars": 96,
+    "direction": "short_only"
+  },
+  "best_strategy": {
+    "decision_mode": "mechanistic",
+    "filter": {
+      "conditions": {
+        "all": [
+          {
+            "lhs": "ema_9",
+            "op": "<",
+            "rhs": "ema_21"
+          },
+          {
+            "lhs": "ema_21",
+            "op": "<",
+            "rhs": "ema_50"
+          },
+          {
+            "lhs": "close",
+            "op": "<",
+            "rhs": "ema_21"
+          },
+          {
+            "lhs": "adx_14",
+            "op": ">",
+            "rhs": 25.0
+          },
+          {
+            "lhs": "rvol_tod_20",
+            "op": ">",
+            "rhs": 1.3
+          }
+        ]
+      }
+    },
+    "mechanistic_config": {
+      "entry_rules": [
+        {
+          "signal_name": "trend_gate",
+          "direction": "short"
+        }
+      ],
+      "close_policies": [
+        {
+          "kind": "stop_loss",
+          "pct": 0.03
+        },
+        {
+          "kind": "trailing_stop",
+          "pct": 0.02
+        },
+        {
+          "kind": "time_exit",
+          "bars": 96
+        }
+      ]
+    }
+  },
+  "best_per_window_pnl": [
+    {
+      "window": "camp-m1-2024-08",
+      "asset": "BTC/USD",
+      "net_pnl": -38.39114786
+    },
+    {
+      "window": "camp-m2",
+      "asset": "BTC/USD",
+      "net_pnl": -30.46710557
+    },
+    {
+      "window": "camp-m3",
+      "asset": "BTC/USD",
+      "net_pnl": -52.91569767
+    },
+    {
+      "window": "camp-m4",
+      "asset": "BTC/USD",
+      "net_pnl": -58.93617495
+    },
+    {
+      "window": "camp-m5",
+      "asset": "BTC/USD",
+      "net_pnl": -38.33581315
+    },
+    {
+      "window": "camp-m6",
+      "asset": "BTC/USD",
+      "net_pnl": -55.33014423
+    },
+    {
+      "window": "camp-m7",
+      "asset": "BTC/USD",
+      "net_pnl": -29.10253512
+    },
+    {
+      "window": "camp-m8",
+      "asset": "BTC/USD",
+      "net_pnl": -69.90051433
+    },
+    {
+      "window": "camp-m9",
+      "asset": "BTC/USD",
+      "net_pnl": -53.27881935
+    },
+    {
+      "window": "camp-m10",
+      "asset": "BTC/USD",
+      "net_pnl": -89.5911204
+    },
+    {
+      "window": "camp-m11",
+      "asset": "BTC/USD",
+      "net_pnl": -42.84552549
+    },
+    {
+      "window": "camp-h12a",
+      "asset": "BTC/USD",
+      "net_pnl": 2.84778214
+    },
+    {
+      "window": "camp-h12b",
+      "asset": "BTC/USD",
+      "net_pnl": -41.12182401
+    },
+    {
+      "window": "camp-h10a",
+      "asset": "BTC/USD",
+      "net_pnl": -28.57477396
+    },
+    {
+      "window": "camp-h10b",
+      "asset": "BTC/USD",
+      "net_pnl": -24.61975963
+    },
+    {
+      "window": "camp-h12c",
+      "asset": "BTC/USD",
+      "net_pnl": -17.10349967
+    },
+    {
+      "window": "camp-h12d",
+      "asset": "BTC/USD",
+      "net_pnl": -21.6017795
+    },
+    {
+      "window": "camp-h02a",
+      "asset": "BTC/USD",
+      "net_pnl": -28.87481214
+    },
+    {
+      "window": "camp-h02b",
+      "asset": "BTC/USD",
+      "net_pnl": 0.07538145
+    },
+    {
+      "window": "camp-h04a",
+      "asset": "BTC/USD",
+      "net_pnl": -16.04858517
+    },
+    {
+      "window": "camp-h04b",
+      "asset": "BTC/USD",
+      "net_pnl": -37.24192943
+    },
+    {
+      "window": "camp-h06a",
+      "asset": "BTC/USD",
+      "net_pnl": -15.92835655
+    },
+    {
+      "window": "camp-h06b",
+      "asset": "BTC/USD",
+      "net_pnl": -26.69846627
+    },
+    {
+      "window": "crypto-bull-q1-2025",
+      "asset": "BTC/USD",
+      "net_pnl": -147.10526624
+    },
+    {
+      "window": "crypto-rangebound-q2-2025",
+      "asset": "BTC/USD",
+      "net_pnl": -177.09274942
+    },
+    {
+      "window": "crypto-bear-q3-2024",
+      "asset": "BTC/USD",
+      "net_pnl": -99.28475702
+    },
+    {
+      "window": "flash-crash-aug-2024",
+      "asset": "BTC/USD",
+      "net_pnl": -38.39114786
+    },
+    {
+      "window": "camp-m1-2024-08",
+      "asset": "ETH/USD",
+      "net_pnl": -23.68174727
+    },
+    {
+      "window": "camp-m2",
+      "asset": "ETH/USD",
+      "net_pnl": -48.62505075
+    },
+    {
+      "window": "camp-m3",
+      "asset": "ETH/USD",
+      "net_pnl": -54.11331895
+    },
+    {
+      "window": "camp-m4",
+      "asset": "ETH/USD",
+      "net_pnl": -105.20008911
+    },
+    {
+      "window": "camp-m5",
+      "asset": "ETH/USD",
+      "net_pnl": -29.85441379
+    },
+    {
+      "window": "camp-m6",
+      "asset": "ETH/USD",
+      "net_pnl": -37.8969394
+    },
+    {
+      "window": "camp-m7",
+      "asset": "ETH/USD",
+      "net_pnl": 59.50164975
+    },
+    {
+      "window": "camp-m8",
+      "asset": "ETH/USD",
+      "net_pnl": -47.15596796
+    },
+    {
+      "window": "camp-m9",
+      "asset": "ETH/USD",
+      "net_pnl": -13.62895301
+    },
+    {
+      "window": "camp-m10",
+      "asset": "ETH/USD",
+      "net_pnl": -57.33723299
+    },
+    {
+      "window": "camp-m11",
+      "asset": "ETH/USD",
+      "net_pnl": -42.41773511
+    },
+    {
+      "window": "camp-h12a",
+      "asset": "ETH/USD",
+      "net_pnl": 12.58491089
+    },
+    {
+      "window": "camp-h12b",
+      "asset": "ETH/USD",
+      "net_pnl": -35.81591803
+    },
+    {
+      "window": "camp-h10a",
+      "asset": "ETH/USD",
+      "net_pnl": -33.75445468
+    },
+    {
+      "window": "camp-h10b",
+      "asset": "ETH/USD",
+      "net_pnl": -21.0700731
+    },
+    {
+      "window": "camp-h12c",
+      "asset": "ETH/USD",
+      "net_pnl": -31.54288399
+    },
+    {
+      "window": "camp-h12d",
+      "asset": "ETH/USD",
+      "net_pnl": 1.74346409
+    },
+    {
+      "window": "camp-h02a",
+      "asset": "ETH/USD",
+      "net_pnl": 32.93123255
+    },
+    {
+      "window": "camp-h02b",
+      "asset": "ETH/USD",
+      "net_pnl": 24.70631484
+    },
+    {
+      "window": "camp-h04a",
+      "asset": "ETH/USD",
+      "net_pnl": 26.88893387
+    },
+    {
+      "window": "camp-h04b",
+      "asset": "ETH/USD",
+      "net_pnl": -38.35934259
+    },
+    {
+      "window": "camp-h06a",
+      "asset": "ETH/USD",
+      "net_pnl": -14.31009862
+    },
+    {
+      "window": "camp-h06b",
+      "asset": "ETH/USD",
+      "net_pnl": -28.51569896
+    },
+    {
+      "window": "crypto-bull-q1-2025",
+      "asset": "ETH/USD",
+      "net_pnl": -25.53710125
+    },
+    {
+      "window": "crypto-rangebound-q2-2025",
+      "asset": "ETH/USD",
+      "net_pnl": -109.62539697
+    },
+    {
+      "window": "crypto-bear-q3-2024",
+      "asset": "ETH/USD",
+      "net_pnl": -114.31341297
+    },
+    {
+      "window": "flash-crash-aug-2024",
+      "asset": "ETH/USD",
+      "net_pnl": -23.68174727
+    },
+    {
+      "window": "camp-m1-2024-08",
+      "asset": "SOL/USD",
+      "net_pnl": 0.0
+    },
+    {
+      "window": "camp-m2",
+      "asset": "SOL/USD",
+      "net_pnl": -9.12499902
+    },
+    {
+      "window": "camp-m3",
+      "asset": "SOL/USD",
+      "net_pnl": -13.9100722
+    },
+    {
+      "window": "camp-m4",
+      "asset": "SOL/USD",
+      "net_pnl": -23.91732299
+    },
+    {
+      "window": "camp-m5",
+      "asset": "SOL/USD",
+      "net_pnl": 8.3762055
+    },
+    {
+      "window": "camp-m6",
+      "asset": "SOL/USD",
+      "net_pnl": -77.57059946
+    },
+    {
+      "window": "camp-m7",
+      "asset": "SOL/USD",
+      "net_pnl": -20.13541724
+    },
+    {
+      "window": "camp-m8",
+      "asset": "SOL/USD",
+      "net_pnl": -22.87768149
+    },
+    {
+      "window": "camp-m9",
+      "asset": "SOL/USD",
+      "net_pnl": -23.93116558
+    },
+    {
+      "window": "camp-m10",
+      "asset": "SOL/USD",
+      "net_pnl": -50.53902008
+    },
+    {
+      "window": "camp-m11",
+      "asset": "SOL/USD",
+      "net_pnl": -41.8054979
+    },
+    {
+      "window": "camp-h12a",
+      "asset": "SOL/USD",
+      "net_pnl": 0.0
+    },
+    {
+      "window": "camp-h12b",
+      "asset": "SOL/USD",
+      "net_pnl": 0.0
+    },
+    {
+      "window": "camp-h10a",
+      "asset": "SOL/USD",
+      "net_pnl": -7.91213545
+    },
+    {
+      "window": "camp-h10b",
+      "asset": "SOL/USD",
+      "net_pnl": -6.04577171
+    },
+    {
+      "window": "camp-h12c",
+      "asset": "SOL/USD",
+      "net_pnl": 7.75967241
+    },
+    {
+      "window": "camp-h12d",
+      "asset": "SOL/USD",
+      "net_pnl": 2.33160211
+    },
+    {
+      "window": "camp-h02a",
+      "asset": "SOL/USD",
+      "net_pnl": -30.79671467
+    },
+    {
+      "window": "camp-h02b",
+      "asset": "SOL/USD",
+      "net_pnl": 8.07128115
+    },
+    {
+      "window": "camp-h04a",
+      "asset": "SOL/USD",
+      "net_pnl": 4.46891642
+    },
+    {
+      "window": "camp-h04b",
+      "asset": "SOL/USD",
+      "net_pnl": -27.35146555
+    },
+    {
+      "window": "camp-h06a",
+      "asset": "SOL/USD",
+      "net_pnl": -17.59902392
+    },
+    {
+      "window": "camp-h06b",
+      "asset": "SOL/USD",
+      "net_pnl": -24.64011597
+    },
+    {
+      "window": "crypto-bull-q1-2025",
+      "asset": "SOL/USD",
+      "net_pnl": -118.01730848
+    },
+    {
+      "window": "crypto-rangebound-q2-2025",
+      "asset": "SOL/USD",
+      "net_pnl": -111.51597609
+    },
+    {
+      "window": "crypto-bear-q3-2024",
+      "asset": "SOL/USD",
+      "net_pnl": -9.12499902
+    },
+    {
+      "window": "flash-crash-aug-2024",
+      "asset": "SOL/USD",
+      "net_pnl": 0.0
+    }
+  ],
+  "round2": {
+    "method": {
+      "resolutions": [
+        "15min",
+        "1h"
+      ],
+      "families": [
+        "trend",
+        "mean_reversion"
+      ],
+      "sessions_utc": [
+        "00-06",
+        "06-12",
+        "12-18",
+        "18-24"
+      ],
+      "strategy_level_scoring": true,
+      "grid_config_count": 24624
+    },
+    "coverage": {
+      "profitable_windows": 22,
+      "total_windows": 27
+    },
+    "best_by_family": {
+      "trend": {
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 1530.12520233,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.02,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            9,
+            21
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.3
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.02
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 121.66506579
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": 4.46365377
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 22.34062976
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 75.49113942
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 20.30595831
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 87.18337861
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 102.06466451
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -14.13305964
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 87.27433416
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 69.01278748
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": -37.93654929
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 113.17679038
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 22.33576946
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 11.15294366
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -15.26749463
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -5.0208602
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 30.43078022
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.75
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 86.21914974
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 59.65969594
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 27.73214318
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 29.21720339
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 23.49951654
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 258.42037553
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 98.09335318
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 140.82876728
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 121.66506579
+          }
+        ]
+      },
+      "mean_reversion": {
+        "profitable_windows": 17,
+        "total_windows": 27,
+        "total_net_pnl": 201.1608641,
+        "parameters": {
+          "resolution": "1h",
+          "family": "mean_reversion",
+          "session_utc": "12-18",
+          "direction": "both",
+          "stop_pct": 0.03,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": null,
+          "adx_floor": null,
+          "rvol_floor": null
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "bb_lower_20_2"
+                    },
+                    {
+                      "lhs": "rsi_14",
+                      "op": "<",
+                      "rhs": 30.0
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "bb_upper_20_2"
+                    },
+                    {
+                      "lhs": "rsi_14",
+                      "op": ">",
+                      "rhs": 70.0
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.03
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": -49.00165336
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": 0.87019477
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 21.76703454
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": -56.34328876
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 21.46983661
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 120.66590428
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 71.37803115
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -33.11298119
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": -33.64694583
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 40.70851652
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": 18.49034898
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": -53.515458
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 4.68933582
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 22.00272052
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": 0.99269907
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": 5.43364915
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": -18.28230005
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": 18.33394307
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 22.81750273
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": -24.93337684
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": -8.75708948
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 23.49663717
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 8.54158449
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 171.62257677
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 41.8172951
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": -87.34219978
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": -49.00165336
+          }
+        ]
+      }
+    },
+    "top_configs": [
+      {
+        "rank": 1,
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 1530.12520233,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.02,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            9,
+            21
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.3
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.02
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 121.66506579
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": 4.46365377
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 22.34062976
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 75.49113942
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 20.30595831
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 87.18337861
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 102.06466451
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -14.13305964
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 87.27433416
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 69.01278748
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": -37.93654929
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 113.17679038
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 22.33576946
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 11.15294366
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -15.26749463
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -5.0208602
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 30.43078022
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.75
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 86.21914974
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 59.65969594
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 27.73214318
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 29.21720339
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 23.49951654
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 258.42037553
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 98.09335318
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 140.82876728
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 121.66506579
+          }
+        ],
+        "per_asset_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "BTC/USD",
+            "net_pnl": 24.21847709
+          },
+          {
+            "window": "camp-m2",
+            "asset": "BTC/USD",
+            "net_pnl": 3.30274852
+          },
+          {
+            "window": "camp-m3",
+            "asset": "BTC/USD",
+            "net_pnl": -3.41609878
+          },
+          {
+            "window": "camp-m4",
+            "asset": "BTC/USD",
+            "net_pnl": 45.42532667
+          },
+          {
+            "window": "camp-m5",
+            "asset": "BTC/USD",
+            "net_pnl": -6.9238122
+          },
+          {
+            "window": "camp-m6",
+            "asset": "BTC/USD",
+            "net_pnl": 29.31217728
+          },
+          {
+            "window": "camp-m7",
+            "asset": "BTC/USD",
+            "net_pnl": 35.85124824
+          },
+          {
+            "window": "camp-m8",
+            "asset": "BTC/USD",
+            "net_pnl": -26.61143498
+          },
+          {
+            "window": "camp-m9",
+            "asset": "BTC/USD",
+            "net_pnl": 30.37089178
+          },
+          {
+            "window": "camp-m10",
+            "asset": "BTC/USD",
+            "net_pnl": -9.28276499
+          },
+          {
+            "window": "camp-m11",
+            "asset": "BTC/USD",
+            "net_pnl": -3.58193219
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "BTC/USD",
+            "net_pnl": 42.66914708
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "BTC/USD",
+            "net_pnl": -13.82227883
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "BTC/USD",
+            "net_pnl": -13.2800194
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "BTC/USD",
+            "net_pnl": -5.91827218
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "BTC/USD",
+            "net_pnl": -7.60876737
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "BTC/USD",
+            "net_pnl": -7.48599306
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "BTC/USD",
+            "net_pnl": 21.18370709
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.16331145
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "BTC/USD",
+            "net_pnl": 30.2026479
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "BTC/USD",
+            "net_pnl": 8.78293531
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "BTC/USD",
+            "net_pnl": -12.25721319
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 34.10354758
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 6.2017019
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 27.89826087
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 24.21847709
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "ETH/USD",
+            "net_pnl": 81.57058997
+          },
+          {
+            "window": "camp-m2",
+            "asset": "ETH/USD",
+            "net_pnl": 3.05118938
+          },
+          {
+            "window": "camp-m3",
+            "asset": "ETH/USD",
+            "net_pnl": 23.51679838
+          },
+          {
+            "window": "camp-m4",
+            "asset": "ETH/USD",
+            "net_pnl": 32.18969948
+          },
+          {
+            "window": "camp-m5",
+            "asset": "ETH/USD",
+            "net_pnl": 42.55105473
+          },
+          {
+            "window": "camp-m6",
+            "asset": "ETH/USD",
+            "net_pnl": -29.93523333
+          },
+          {
+            "window": "camp-m7",
+            "asset": "ETH/USD",
+            "net_pnl": 34.27273919
+          },
+          {
+            "window": "camp-m8",
+            "asset": "ETH/USD",
+            "net_pnl": 5.25941382
+          },
+          {
+            "window": "camp-m9",
+            "asset": "ETH/USD",
+            "net_pnl": 23.10012839
+          },
+          {
+            "window": "camp-m10",
+            "asset": "ETH/USD",
+            "net_pnl": 48.00901404
+          },
+          {
+            "window": "camp-m11",
+            "asset": "ETH/USD",
+            "net_pnl": 11.56850644
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "ETH/USD",
+            "net_pnl": 70.5076433
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "ETH/USD",
+            "net_pnl": 20.28204955
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "ETH/USD",
+            "net_pnl": 17.88960706
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "ETH/USD",
+            "net_pnl": 4.63454197
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "ETH/USD",
+            "net_pnl": 4.28209359
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "ETH/USD",
+            "net_pnl": 38.10578859
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "ETH/USD",
+            "net_pnl": -9.75
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "ETH/USD",
+            "net_pnl": 44.45618701
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "ETH/USD",
+            "net_pnl": 21.37620029
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "ETH/USD",
+            "net_pnl": 1.68784832
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "ETH/USD",
+            "net_pnl": 17.19636784
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "ETH/USD",
+            "net_pnl": 20.58634161
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 64.61591168
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 85.59931153
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 90.30132413
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 81.57058997
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          },
+          {
+            "window": "camp-m2",
+            "asset": "SOL/USD",
+            "net_pnl": -1.89028413
+          },
+          {
+            "window": "camp-m3",
+            "asset": "SOL/USD",
+            "net_pnl": 2.23993016
+          },
+          {
+            "window": "camp-m4",
+            "asset": "SOL/USD",
+            "net_pnl": -2.12388674
+          },
+          {
+            "window": "camp-m5",
+            "asset": "SOL/USD",
+            "net_pnl": -15.32128423
+          },
+          {
+            "window": "camp-m6",
+            "asset": "SOL/USD",
+            "net_pnl": 87.80643466
+          },
+          {
+            "window": "camp-m7",
+            "asset": "SOL/USD",
+            "net_pnl": 31.94067709
+          },
+          {
+            "window": "camp-m8",
+            "asset": "SOL/USD",
+            "net_pnl": 7.21896152
+          },
+          {
+            "window": "camp-m9",
+            "asset": "SOL/USD",
+            "net_pnl": 33.80331398
+          },
+          {
+            "window": "camp-m10",
+            "asset": "SOL/USD",
+            "net_pnl": 30.28653843
+          },
+          {
+            "window": "camp-m11",
+            "asset": "SOL/USD",
+            "net_pnl": -45.92312355
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "SOL/USD",
+            "net_pnl": 6.543356
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "SOL/USD",
+            "net_pnl": -13.98376441
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "SOL/USD",
+            "net_pnl": -1.69418643
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "SOL/USD",
+            "net_pnl": -0.18901531
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "SOL/USD",
+            "net_pnl": 20.57925564
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "SOL/USD",
+            "net_pnl": 38.1201842
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "SOL/USD",
+            "net_pnl": -4.15835304
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "SOL/USD",
+            "net_pnl": 3.23790024
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "SOL/USD",
+            "net_pnl": 15.17038812
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 159.70091627
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 6.29233975
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 22.62918228
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          }
+        ]
+      },
+      {
+        "rank": 2,
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 1384.580498,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.02,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            9,
+            21
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.0
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.0
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.0
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.02
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 105.1328523
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": 4.46365377
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 31.23152339
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 61.60707945
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 10.70534083
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 88.68420462
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 87.74168651
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -10.12935855
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 77.29910791
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 51.90566915
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": -16.98927074
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 92.57331667
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 15.09195005
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 11.15294366
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -5.62550889
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -5.0208602
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 20.0842676
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.75
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 86.21914974
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 59.65969594
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 17.96568666
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 29.21720339
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 27.96789084
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 250.15577606
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 76.11885236
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 121.9847932
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 105.1328523
+          }
+        ],
+        "per_asset_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "BTC/USD",
+            "net_pnl": 18.23157685
+          },
+          {
+            "window": "camp-m2",
+            "asset": "BTC/USD",
+            "net_pnl": 3.30274852
+          },
+          {
+            "window": "camp-m3",
+            "asset": "BTC/USD",
+            "net_pnl": -3.41609878
+          },
+          {
+            "window": "camp-m4",
+            "asset": "BTC/USD",
+            "net_pnl": 40.43002484
+          },
+          {
+            "window": "camp-m5",
+            "asset": "BTC/USD",
+            "net_pnl": -6.9238122
+          },
+          {
+            "window": "camp-m6",
+            "asset": "BTC/USD",
+            "net_pnl": 29.31217728
+          },
+          {
+            "window": "camp-m7",
+            "asset": "BTC/USD",
+            "net_pnl": 38.77115786
+          },
+          {
+            "window": "camp-m8",
+            "asset": "BTC/USD",
+            "net_pnl": -14.81811098
+          },
+          {
+            "window": "camp-m9",
+            "asset": "BTC/USD",
+            "net_pnl": 30.37089178
+          },
+          {
+            "window": "camp-m10",
+            "asset": "BTC/USD",
+            "net_pnl": -18.94225803
+          },
+          {
+            "window": "camp-m11",
+            "asset": "BTC/USD",
+            "net_pnl": -3.58193219
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "BTC/USD",
+            "net_pnl": 32.5031229
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "BTC/USD",
+            "net_pnl": -13.82227883
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "BTC/USD",
+            "net_pnl": -13.2800194
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "BTC/USD",
+            "net_pnl": -5.91827218
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "BTC/USD",
+            "net_pnl": -7.60876737
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "BTC/USD",
+            "net_pnl": -7.48599306
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "BTC/USD",
+            "net_pnl": 21.18370709
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.16331145
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "BTC/USD",
+            "net_pnl": 30.2026479
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "BTC/USD",
+            "net_pnl": 8.78293531
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "BTC/USD",
+            "net_pnl": -12.25721319
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 49.5827789
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 2.45133438
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 13.57926063
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 18.23157685
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "ETH/USD",
+            "net_pnl": 71.02527672
+          },
+          {
+            "window": "camp-m2",
+            "asset": "ETH/USD",
+            "net_pnl": 3.05118938
+          },
+          {
+            "window": "camp-m3",
+            "asset": "ETH/USD",
+            "net_pnl": 22.60705916
+          },
+          {
+            "window": "camp-m4",
+            "asset": "ETH/USD",
+            "net_pnl": 23.30094135
+          },
+          {
+            "window": "camp-m5",
+            "asset": "ETH/USD",
+            "net_pnl": 42.55105473
+          },
+          {
+            "window": "camp-m6",
+            "asset": "ETH/USD",
+            "net_pnl": -29.93523333
+          },
+          {
+            "window": "camp-m7",
+            "asset": "ETH/USD",
+            "net_pnl": 24.18857998
+          },
+          {
+            "window": "camp-m8",
+            "asset": "ETH/USD",
+            "net_pnl": 7.29017579
+          },
+          {
+            "window": "camp-m9",
+            "asset": "ETH/USD",
+            "net_pnl": 13.12490214
+          },
+          {
+            "window": "camp-m10",
+            "asset": "ETH/USD",
+            "net_pnl": 40.56138876
+          },
+          {
+            "window": "camp-m11",
+            "asset": "ETH/USD",
+            "net_pnl": 32.515785
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "ETH/USD",
+            "net_pnl": 60.07019377
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "ETH/USD",
+            "net_pnl": 13.03823014
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "ETH/USD",
+            "net_pnl": 17.88960706
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "ETH/USD",
+            "net_pnl": 4.63454197
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "ETH/USD",
+            "net_pnl": 4.28209359
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "ETH/USD",
+            "net_pnl": 38.10578859
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "ETH/USD",
+            "net_pnl": -9.75
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "ETH/USD",
+            "net_pnl": 44.45618701
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "ETH/USD",
+            "net_pnl": 21.37620029
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "ETH/USD",
+            "net_pnl": -8.0786082
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "ETH/USD",
+            "net_pnl": 17.19636784
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "ETH/USD",
+            "net_pnl": 25.05471591
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 54.23590654
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 67.37517823
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 85.77635029
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 71.02527672
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          },
+          {
+            "window": "camp-m2",
+            "asset": "SOL/USD",
+            "net_pnl": -1.89028413
+          },
+          {
+            "window": "camp-m3",
+            "asset": "SOL/USD",
+            "net_pnl": 12.04056301
+          },
+          {
+            "window": "camp-m4",
+            "asset": "SOL/USD",
+            "net_pnl": -2.12388674
+          },
+          {
+            "window": "camp-m5",
+            "asset": "SOL/USD",
+            "net_pnl": -24.92190171
+          },
+          {
+            "window": "camp-m6",
+            "asset": "SOL/USD",
+            "net_pnl": 89.30726067
+          },
+          {
+            "window": "camp-m7",
+            "asset": "SOL/USD",
+            "net_pnl": 24.78194867
+          },
+          {
+            "window": "camp-m8",
+            "asset": "SOL/USD",
+            "net_pnl": -2.60142336
+          },
+          {
+            "window": "camp-m9",
+            "asset": "SOL/USD",
+            "net_pnl": 33.80331398
+          },
+          {
+            "window": "camp-m10",
+            "asset": "SOL/USD",
+            "net_pnl": 30.28653843
+          },
+          {
+            "window": "camp-m11",
+            "asset": "SOL/USD",
+            "net_pnl": -45.92312355
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "SOL/USD",
+            "net_pnl": 6.543356
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "SOL/USD",
+            "net_pnl": -4.34177868
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "SOL/USD",
+            "net_pnl": -1.69418643
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "SOL/USD",
+            "net_pnl": -10.53552793
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "SOL/USD",
+            "net_pnl": 20.57925564
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "SOL/USD",
+            "net_pnl": 38.1201842
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "SOL/USD",
+            "net_pnl": -4.15835304
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "SOL/USD",
+            "net_pnl": 3.23790024
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "SOL/USD",
+            "net_pnl": 15.17038812
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 146.33709062
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 6.29233975
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 22.62918228
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 15.87599873
+          }
+        ]
+      },
+      {
+        "rank": 3,
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 973.71502856,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.03,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            12,
+            26
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.3
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_12",
+                      "op": ">",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "ema_26",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_12",
+                      "op": "<",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "ema_26",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.03
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 83.22090297
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": -6.19105237
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 8.54011003
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 64.0817449
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 9.59046452
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 47.56045064
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 51.77998931
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -11.13994065
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 55.50474332
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 45.47316289
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": 9.31588844
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 72.97766122
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 14.88608216
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 3.60772761
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -8.11817863
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -2.7220978
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 16.2704832
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 54.17780979
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 35.39518283
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 20.96879231
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 24.98239771
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 14.25483469
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 122.10325995
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 99.96179068
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 73.01191587
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 83.22090297
+          }
+        ],
+        "per_asset_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "BTC/USD",
+            "net_pnl": 14.44254097
+          },
+          {
+            "window": "camp-m2",
+            "asset": "BTC/USD",
+            "net_pnl": 1.93362971
+          },
+          {
+            "window": "camp-m3",
+            "asset": "BTC/USD",
+            "net_pnl": -6.01897372
+          },
+          {
+            "window": "camp-m4",
+            "asset": "BTC/USD",
+            "net_pnl": 30.31626082
+          },
+          {
+            "window": "camp-m5",
+            "asset": "BTC/USD",
+            "net_pnl": -9.96272765
+          },
+          {
+            "window": "camp-m6",
+            "asset": "BTC/USD",
+            "net_pnl": 18.77132996
+          },
+          {
+            "window": "camp-m7",
+            "asset": "BTC/USD",
+            "net_pnl": 23.85388391
+          },
+          {
+            "window": "camp-m8",
+            "asset": "BTC/USD",
+            "net_pnl": -23.66021233
+          },
+          {
+            "window": "camp-m9",
+            "asset": "BTC/USD",
+            "net_pnl": 23.5214071
+          },
+          {
+            "window": "camp-m10",
+            "asset": "BTC/USD",
+            "net_pnl": -6.77225948
+          },
+          {
+            "window": "camp-m11",
+            "asset": "BTC/USD",
+            "net_pnl": -3.78588802
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "BTC/USD",
+            "net_pnl": 25.97256569
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.22527523
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "BTC/USD",
+            "net_pnl": -12.59881157
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "BTC/USD",
+            "net_pnl": -4.32591995
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "BTC/USD",
+            "net_pnl": -7.57143042
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "BTC/USD",
+            "net_pnl": -7.85094652
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "BTC/USD",
+            "net_pnl": 23.85388391
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.81652458
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "BTC/USD",
+            "net_pnl": 23.50366663
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "BTC/USD",
+            "net_pnl": 5.85529021
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.58505495
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 15.16243344
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 5.81902683
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 12.81535603
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 14.44254097
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "ETH/USD",
+            "net_pnl": 58.19436284
+          },
+          {
+            "window": "camp-m2",
+            "asset": "ETH/USD",
+            "net_pnl": -1.64153133
+          },
+          {
+            "window": "camp-m3",
+            "asset": "ETH/USD",
+            "net_pnl": 13.14144898
+          },
+          {
+            "window": "camp-m4",
+            "asset": "ETH/USD",
+            "net_pnl": 19.16212749
+          },
+          {
+            "window": "camp-m5",
+            "asset": "ETH/USD",
+            "net_pnl": 31.40176328
+          },
+          {
+            "window": "camp-m6",
+            "asset": "ETH/USD",
+            "net_pnl": -29.82180649
+          },
+          {
+            "window": "camp-m7",
+            "asset": "ETH/USD",
+            "net_pnl": 8.36637877
+          },
+          {
+            "window": "camp-m8",
+            "asset": "ETH/USD",
+            "net_pnl": 0.85489261
+          },
+          {
+            "window": "camp-m9",
+            "asset": "ETH/USD",
+            "net_pnl": 12.00667048
+          },
+          {
+            "window": "camp-m10",
+            "asset": "ETH/USD",
+            "net_pnl": 32.05489997
+          },
+          {
+            "window": "camp-m11",
+            "asset": "ETH/USD",
+            "net_pnl": 7.49922137
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "ETH/USD",
+            "net_pnl": 47.00509553
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "ETH/USD",
+            "net_pnl": 13.52735824
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.9264047
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "ETH/USD",
+            "net_pnl": 0.60766978
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "ETH/USD",
+            "net_pnl": 6.6959692
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "ETH/USD",
+            "net_pnl": 24.24743992
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "ETH/USD",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "ETH/USD",
+            "net_pnl": 17.52409563
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.76651653
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "ETH/USD",
+            "net_pnl": 0.23736104
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.46424522
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "ETH/USD",
+            "net_pnl": 13.72422774
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 8.32444365
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 47.70994616
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 49.6940951
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 58.19436284
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-m2",
+            "asset": "SOL/USD",
+            "net_pnl": -6.48315074
+          },
+          {
+            "window": "camp-m3",
+            "asset": "SOL/USD",
+            "net_pnl": 1.41763477
+          },
+          {
+            "window": "camp-m4",
+            "asset": "SOL/USD",
+            "net_pnl": 14.60335659
+          },
+          {
+            "window": "camp-m5",
+            "asset": "SOL/USD",
+            "net_pnl": -11.8485711
+          },
+          {
+            "window": "camp-m6",
+            "asset": "SOL/USD",
+            "net_pnl": 58.61092718
+          },
+          {
+            "window": "camp-m7",
+            "asset": "SOL/USD",
+            "net_pnl": 19.55972663
+          },
+          {
+            "window": "camp-m8",
+            "asset": "SOL/USD",
+            "net_pnl": 11.66537907
+          },
+          {
+            "window": "camp-m9",
+            "asset": "SOL/USD",
+            "net_pnl": 19.97666574
+          },
+          {
+            "window": "camp-m10",
+            "asset": "SOL/USD",
+            "net_pnl": 20.1905224
+          },
+          {
+            "window": "camp-m11",
+            "asset": "SOL/USD",
+            "net_pnl": 5.60255509
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "SOL/USD",
+            "net_pnl": 4.28013447
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "SOL/USD",
+            "net_pnl": -4.39992845
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "SOL/USD",
+            "net_pnl": -1.84663658
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "SOL/USD",
+            "net_pnl": -0.12601021
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "SOL/USD",
+            "net_pnl": 12.79983025
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "SOL/USD",
+            "net_pnl": 22.81214172
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "SOL/USD",
+            "net_pnl": -2.77223536
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "SOL/USD",
+            "net_pnl": 7.66286228
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.11566191
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 98.61638286
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 46.43281769
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 10.50246473
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          }
+        ]
+      },
+      {
+        "rank": 4,
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 964.88012149,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.03,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            9,
+            21
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.3
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_9",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "ema_21",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_21"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.03
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 83.22090297
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": -1.7075013
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 8.54011003
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 64.04097058
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 5.65495472
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 48.29675679
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 51.77998931
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -10.52311186
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 52.1361169
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 42.80689334
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": 9.31588844
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 72.97766122
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 14.88608216
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 3.60772761
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -8.11817863
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -6.56333793
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 16.2704832
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 41.1649426
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 35.39518283
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 17.60022428
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 24.98239771
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 14.25483469
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 139.12239624
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 93.94471287
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 77.57211976
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 83.22090297
+          }
+        ],
+        "per_asset_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "BTC/USD",
+            "net_pnl": 14.44254097
+          },
+          {
+            "window": "camp-m2",
+            "asset": "BTC/USD",
+            "net_pnl": 1.93362971
+          },
+          {
+            "window": "camp-m3",
+            "asset": "BTC/USD",
+            "net_pnl": -6.01897372
+          },
+          {
+            "window": "camp-m4",
+            "asset": "BTC/USD",
+            "net_pnl": 30.31626082
+          },
+          {
+            "window": "camp-m5",
+            "asset": "BTC/USD",
+            "net_pnl": -9.96272765
+          },
+          {
+            "window": "camp-m6",
+            "asset": "BTC/USD",
+            "net_pnl": 19.50763611
+          },
+          {
+            "window": "camp-m7",
+            "asset": "BTC/USD",
+            "net_pnl": 23.85388391
+          },
+          {
+            "window": "camp-m8",
+            "asset": "BTC/USD",
+            "net_pnl": -23.66021233
+          },
+          {
+            "window": "camp-m9",
+            "asset": "BTC/USD",
+            "net_pnl": 20.15278068
+          },
+          {
+            "window": "camp-m10",
+            "asset": "BTC/USD",
+            "net_pnl": -6.77225948
+          },
+          {
+            "window": "camp-m11",
+            "asset": "BTC/USD",
+            "net_pnl": -3.78588802
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "BTC/USD",
+            "net_pnl": 25.97256569
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.22527523
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "BTC/USD",
+            "net_pnl": -12.59881157
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "BTC/USD",
+            "net_pnl": -4.32591995
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "BTC/USD",
+            "net_pnl": -7.57143042
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "BTC/USD",
+            "net_pnl": -7.85094652
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "BTC/USD",
+            "net_pnl": 11.59913773
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.81652458
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "BTC/USD",
+            "net_pnl": 20.1350986
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "BTC/USD",
+            "net_pnl": 5.85529021
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.58505495
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 15.8961313
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 2.50866271
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 12.81535603
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 14.44254097
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "ETH/USD",
+            "net_pnl": 58.19436284
+          },
+          {
+            "window": "camp-m2",
+            "asset": "ETH/USD",
+            "net_pnl": -1.64153133
+          },
+          {
+            "window": "camp-m3",
+            "asset": "ETH/USD",
+            "net_pnl": 13.14144898
+          },
+          {
+            "window": "camp-m4",
+            "asset": "ETH/USD",
+            "net_pnl": 19.16212749
+          },
+          {
+            "window": "camp-m5",
+            "asset": "ETH/USD",
+            "net_pnl": 27.46625348
+          },
+          {
+            "window": "camp-m6",
+            "asset": "ETH/USD",
+            "net_pnl": -29.82180649
+          },
+          {
+            "window": "camp-m7",
+            "asset": "ETH/USD",
+            "net_pnl": 8.36637877
+          },
+          {
+            "window": "camp-m8",
+            "asset": "ETH/USD",
+            "net_pnl": 0.85489261
+          },
+          {
+            "window": "camp-m9",
+            "asset": "ETH/USD",
+            "net_pnl": 12.00667048
+          },
+          {
+            "window": "camp-m10",
+            "asset": "ETH/USD",
+            "net_pnl": 29.38863042
+          },
+          {
+            "window": "camp-m11",
+            "asset": "ETH/USD",
+            "net_pnl": 7.49922137
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "ETH/USD",
+            "net_pnl": 47.00509553
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "ETH/USD",
+            "net_pnl": 13.52735824
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.9264047
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "ETH/USD",
+            "net_pnl": 0.60766978
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "ETH/USD",
+            "net_pnl": 2.85472906
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "ETH/USD",
+            "net_pnl": 24.24743992
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "ETH/USD",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "ETH/USD",
+            "net_pnl": 17.52409563
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.76651653
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "ETH/USD",
+            "net_pnl": 0.23736104
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.46424522
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "ETH/USD",
+            "net_pnl": 13.72422774
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 17.48177966
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 45.00323247
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 49.6940951
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 58.19436284
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-m2",
+            "asset": "SOL/USD",
+            "net_pnl": -1.99959968
+          },
+          {
+            "window": "camp-m3",
+            "asset": "SOL/USD",
+            "net_pnl": 1.41763477
+          },
+          {
+            "window": "camp-m4",
+            "asset": "SOL/USD",
+            "net_pnl": 14.56258227
+          },
+          {
+            "window": "camp-m5",
+            "asset": "SOL/USD",
+            "net_pnl": -11.8485711
+          },
+          {
+            "window": "camp-m6",
+            "asset": "SOL/USD",
+            "net_pnl": 58.61092718
+          },
+          {
+            "window": "camp-m7",
+            "asset": "SOL/USD",
+            "net_pnl": 19.55972663
+          },
+          {
+            "window": "camp-m8",
+            "asset": "SOL/USD",
+            "net_pnl": 12.28220786
+          },
+          {
+            "window": "camp-m9",
+            "asset": "SOL/USD",
+            "net_pnl": 19.97666574
+          },
+          {
+            "window": "camp-m10",
+            "asset": "SOL/USD",
+            "net_pnl": 20.1905224
+          },
+          {
+            "window": "camp-m11",
+            "asset": "SOL/USD",
+            "net_pnl": 5.60255509
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "SOL/USD",
+            "net_pnl": 4.28013447
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "SOL/USD",
+            "net_pnl": -4.39992845
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "SOL/USD",
+            "net_pnl": -1.84663658
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "SOL/USD",
+            "net_pnl": -0.12601021
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "SOL/USD",
+            "net_pnl": 12.04170924
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "SOL/USD",
+            "net_pnl": 22.81214172
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "SOL/USD",
+            "net_pnl": -2.77223536
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "SOL/USD",
+            "net_pnl": 7.66286228
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.11566191
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 105.74448527
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 46.43281769
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 15.06266863
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          }
+        ]
+      },
+      {
+        "rank": 5,
+        "profitable_windows": 22,
+        "total_windows": 27,
+        "total_net_pnl": 865.82115516,
+        "parameters": {
+          "resolution": "1h",
+          "family": "trend",
+          "session_utc": "18-24",
+          "direction": "both",
+          "stop_pct": 0.03,
+          "exit_kind": "trailing_stop",
+          "exit_pct": 0.03,
+          "time_exit_bars": 96,
+          "ema_pair": [
+            12,
+            26
+          ],
+          "adx_floor": 30.0,
+          "rvol_floor": 1.0
+        },
+        "strategy": {
+          "decision_mode": "mechanistic",
+          "filter": {
+            "conditions": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_12",
+                      "op": ">",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "ema_26",
+                      "op": ">",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": ">",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.0
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "lhs": "ema_12",
+                      "op": "<",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "ema_26",
+                      "op": "<",
+                      "rhs": "ema_50"
+                    },
+                    {
+                      "lhs": "close",
+                      "op": "<",
+                      "rhs": "ema_26"
+                    },
+                    {
+                      "lhs": "adx_14",
+                      "op": ">",
+                      "rhs": 30.0
+                    },
+                    {
+                      "lhs": "rvol_tod_20",
+                      "op": ">",
+                      "rhs": 1.0
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "mechanistic_config": {
+            "entry_rules": [
+              {
+                "signal_name": "round2_gate",
+                "direction": "long"
+              },
+              {
+                "signal_name": "round2_gate",
+                "direction": "short"
+              }
+            ],
+            "close_policies": [
+              {
+                "kind": "stop_loss",
+                "pct": 0.03
+              },
+              {
+                "kind": "trailing_stop",
+                "pct": 0.03
+              },
+              {
+                "kind": "time_exit",
+                "bars": 96
+              }
+            ]
+          }
+        },
+        "per_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "net_pnl": 66.61372994
+          },
+          {
+            "window": "camp-m2",
+            "net_pnl": -6.19105237
+          },
+          {
+            "window": "camp-m3",
+            "net_pnl": 14.4683774
+          },
+          {
+            "window": "camp-m4",
+            "net_pnl": 52.2506755
+          },
+          {
+            "window": "camp-m5",
+            "net_pnl": 2.24776735
+          },
+          {
+            "window": "camp-m6",
+            "net_pnl": 48.54114389
+          },
+          {
+            "window": "camp-m7",
+            "net_pnl": 51.77998931
+          },
+          {
+            "window": "camp-m8",
+            "net_pnl": -9.89772119
+          },
+          {
+            "window": "camp-m9",
+            "net_pnl": 51.57804028
+          },
+          {
+            "window": "camp-m10",
+            "net_pnl": 24.93386629
+          },
+          {
+            "window": "camp-m11",
+            "net_pnl": 23.24425261
+          },
+          {
+            "window": "camp-h12a",
+            "net_pnl": 54.32086227
+          },
+          {
+            "window": "camp-h12b",
+            "net_pnl": 13.86167625
+          },
+          {
+            "window": "camp-h10a",
+            "net_pnl": 3.60772761
+          },
+          {
+            "window": "camp-h10b",
+            "net_pnl": -1.62770965
+          },
+          {
+            "window": "camp-h12c",
+            "net_pnl": -2.7220978
+          },
+          {
+            "window": "camp-h12d",
+            "net_pnl": 9.36701135
+          },
+          {
+            "window": "camp-h02a",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "net_pnl": 57.92271012
+          },
+          {
+            "window": "camp-h04a",
+            "net_pnl": 35.39518283
+          },
+          {
+            "window": "camp-h04b",
+            "net_pnl": 17.08775555
+          },
+          {
+            "window": "camp-h06a",
+            "net_pnl": 24.98239771
+          },
+          {
+            "window": "camp-h06b",
+            "net_pnl": 17.23375089
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "net_pnl": 126.96717331
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "net_pnl": 79.29475627
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "net_pnl": 52.94715951
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "net_pnl": 66.61372994
+          }
+        ],
+        "per_asset_window_pnl": [
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "BTC/USD",
+            "net_pnl": 7.35911721
+          },
+          {
+            "window": "camp-m2",
+            "asset": "BTC/USD",
+            "net_pnl": 1.93362971
+          },
+          {
+            "window": "camp-m3",
+            "asset": "BTC/USD",
+            "net_pnl": -6.01897372
+          },
+          {
+            "window": "camp-m4",
+            "asset": "BTC/USD",
+            "net_pnl": 26.88564362
+          },
+          {
+            "window": "camp-m5",
+            "asset": "BTC/USD",
+            "net_pnl": -9.96272765
+          },
+          {
+            "window": "camp-m6",
+            "asset": "BTC/USD",
+            "net_pnl": 18.77132996
+          },
+          {
+            "window": "camp-m7",
+            "asset": "BTC/USD",
+            "net_pnl": 23.85388391
+          },
+          {
+            "window": "camp-m8",
+            "asset": "BTC/USD",
+            "net_pnl": -13.31300445
+          },
+          {
+            "window": "camp-m9",
+            "asset": "BTC/USD",
+            "net_pnl": 23.5214071
+          },
+          {
+            "window": "camp-m10",
+            "asset": "BTC/USD",
+            "net_pnl": -14.65843531
+          },
+          {
+            "window": "camp-m11",
+            "asset": "BTC/USD",
+            "net_pnl": -3.78588802
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "BTC/USD",
+            "net_pnl": 16.7388126
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.22527523
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "BTC/USD",
+            "net_pnl": -12.59881157
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "BTC/USD",
+            "net_pnl": -4.32591995
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "BTC/USD",
+            "net_pnl": -7.57143042
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "BTC/USD",
+            "net_pnl": -7.85094652
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "BTC/USD",
+            "net_pnl": 23.85388391
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "BTC/USD",
+            "net_pnl": 0.81652458
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "BTC/USD",
+            "net_pnl": 23.50366663
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "BTC/USD",
+            "net_pnl": 5.85529021
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "BTC/USD",
+            "net_pnl": -9.58505495
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 25.92108208
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "BTC/USD",
+            "net_pnl": 2.01244158
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 2.93318547
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "BTC/USD",
+            "net_pnl": 7.35911721
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "ETH/USD",
+            "net_pnl": 48.67061357
+          },
+          {
+            "window": "camp-m2",
+            "asset": "ETH/USD",
+            "net_pnl": -1.64153133
+          },
+          {
+            "window": "camp-m3",
+            "asset": "ETH/USD",
+            "net_pnl": 12.5413218
+          },
+          {
+            "window": "camp-m4",
+            "asset": "ETH/USD",
+            "net_pnl": 10.76167529
+          },
+          {
+            "window": "camp-m5",
+            "asset": "ETH/USD",
+            "net_pnl": 31.40176328
+          },
+          {
+            "window": "camp-m6",
+            "asset": "ETH/USD",
+            "net_pnl": -29.82180649
+          },
+          {
+            "window": "camp-m7",
+            "asset": "ETH/USD",
+            "net_pnl": 8.36637877
+          },
+          {
+            "window": "camp-m8",
+            "asset": "ETH/USD",
+            "net_pnl": 0.85489261
+          },
+          {
+            "window": "camp-m9",
+            "asset": "ETH/USD",
+            "net_pnl": 8.07996744
+          },
+          {
+            "window": "camp-m10",
+            "asset": "ETH/USD",
+            "net_pnl": 19.4017792
+          },
+          {
+            "window": "camp-m11",
+            "asset": "ETH/USD",
+            "net_pnl": 21.42758554
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "ETH/USD",
+            "net_pnl": 37.58204967
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "ETH/USD",
+            "net_pnl": 12.50295233
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.9264047
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "ETH/USD",
+            "net_pnl": 0.60766978
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "ETH/USD",
+            "net_pnl": 6.6959692
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "ETH/USD",
+            "net_pnl": 24.24743992
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "ETH/USD",
+            "net_pnl": -9.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "ETH/USD",
+            "net_pnl": 21.26899596
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.76651653
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "ETH/USD",
+            "net_pnl": -3.64367571
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "ETH/USD",
+            "net_pnl": 11.46424522
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "ETH/USD",
+            "net_pnl": 16.70314394
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 1.41195421
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "ETH/USD",
+            "net_pnl": 30.849497
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 46.78979809
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "ETH/USD",
+            "net_pnl": 48.67061357
+          },
+          {
+            "window": "camp-m1-2024-08",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-m2",
+            "asset": "SOL/USD",
+            "net_pnl": -6.48315074
+          },
+          {
+            "window": "camp-m3",
+            "asset": "SOL/USD",
+            "net_pnl": 7.94602933
+          },
+          {
+            "window": "camp-m4",
+            "asset": "SOL/USD",
+            "net_pnl": 14.60335659
+          },
+          {
+            "window": "camp-m5",
+            "asset": "SOL/USD",
+            "net_pnl": -19.19126827
+          },
+          {
+            "window": "camp-m6",
+            "asset": "SOL/USD",
+            "net_pnl": 59.59162042
+          },
+          {
+            "window": "camp-m7",
+            "asset": "SOL/USD",
+            "net_pnl": 19.55972663
+          },
+          {
+            "window": "camp-m8",
+            "asset": "SOL/USD",
+            "net_pnl": 2.56039066
+          },
+          {
+            "window": "camp-m9",
+            "asset": "SOL/USD",
+            "net_pnl": 19.97666574
+          },
+          {
+            "window": "camp-m10",
+            "asset": "SOL/USD",
+            "net_pnl": 20.1905224
+          },
+          {
+            "window": "camp-m11",
+            "asset": "SOL/USD",
+            "net_pnl": 5.60255509
+          },
+          {
+            "window": "camp-h12a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h12b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          },
+          {
+            "window": "camp-h10a",
+            "asset": "SOL/USD",
+            "net_pnl": 4.28013447
+          },
+          {
+            "window": "camp-h10b",
+            "asset": "SOL/USD",
+            "net_pnl": 2.09054053
+          },
+          {
+            "window": "camp-h12c",
+            "asset": "SOL/USD",
+            "net_pnl": -1.84663658
+          },
+          {
+            "window": "camp-h12d",
+            "asset": "SOL/USD",
+            "net_pnl": -7.02948206
+          },
+          {
+            "window": "camp-h02a",
+            "asset": "SOL/USD",
+            "net_pnl": 0.0
+          },
+          {
+            "window": "camp-h02b",
+            "asset": "SOL/USD",
+            "net_pnl": 12.79983025
+          },
+          {
+            "window": "camp-h04a",
+            "asset": "SOL/USD",
+            "net_pnl": 22.81214172
+          },
+          {
+            "window": "camp-h04b",
+            "asset": "SOL/USD",
+            "net_pnl": -2.77223536
+          },
+          {
+            "window": "camp-h06a",
+            "asset": "SOL/USD",
+            "net_pnl": 7.66286228
+          },
+          {
+            "window": "camp-h06b",
+            "asset": "SOL/USD",
+            "net_pnl": 10.11566191
+          },
+          {
+            "window": "crypto-bull-q1-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 99.63413701
+          },
+          {
+            "window": "crypto-rangebound-q2-2025",
+            "asset": "SOL/USD",
+            "net_pnl": 46.43281769
+          },
+          {
+            "window": "crypto-bear-q3-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 3.22417595
+          },
+          {
+            "window": "flash-crash-aug-2024",
+            "asset": "SOL/USD",
+            "net_pnl": 10.58399915
+          }
+        ]
+      }
+    ],
+    "best_config": {
+      "resolution": "1h",
+      "family": "trend",
+      "session_utc": "18-24",
+      "direction": "both",
+      "stop_pct": 0.02,
+      "exit_kind": "trailing_stop",
+      "exit_pct": 0.03,
+      "time_exit_bars": 96,
+      "ema_pair": [
+        9,
+        21
+      ],
+      "adx_floor": 30.0,
+      "rvol_floor": 1.3
+    },
+    "best_strategy": {
+      "decision_mode": "mechanistic",
+      "filter": {
+        "conditions": {
+          "any": [
+            {
+              "all": [
+                {
+                  "lhs": "ema_9",
+                  "op": ">",
+                  "rhs": "ema_21"
+                },
+                {
+                  "lhs": "ema_21",
+                  "op": ">",
+                  "rhs": "ema_50"
+                },
+                {
+                  "lhs": "close",
+                  "op": ">",
+                  "rhs": "ema_21"
+                },
+                {
+                  "lhs": "adx_14",
+                  "op": ">",
+                  "rhs": 30.0
+                },
+                {
+                  "lhs": "rvol_tod_20",
+                  "op": ">",
+                  "rhs": 1.3
+                }
+              ]
+            },
+            {
+              "all": [
+                {
+                  "lhs": "ema_9",
+                  "op": "<",
+                  "rhs": "ema_21"
+                },
+                {
+                  "lhs": "ema_21",
+                  "op": "<",
+                  "rhs": "ema_50"
+                },
+                {
+                  "lhs": "close",
+                  "op": "<",
+                  "rhs": "ema_21"
+                },
+                {
+                  "lhs": "adx_14",
+                  "op": ">",
+                  "rhs": 30.0
+                },
+                {
+                  "lhs": "rvol_tod_20",
+                  "op": ">",
+                  "rhs": 1.3
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "mechanistic_config": {
+        "entry_rules": [
+          {
+            "signal_name": "round2_gate",
+            "direction": "long"
+          },
+          {
+            "signal_name": "round2_gate",
+            "direction": "short"
+          }
+        ],
+        "close_policies": [
+          {
+            "kind": "stop_loss",
+            "pct": 0.02
+          },
+          {
+            "kind": "trailing_stop",
+            "pct": 0.03
+          },
+          {
+            "kind": "time_exit",
+            "bars": 96
+          }
+        ]
+      }
+    }
+  }
+}

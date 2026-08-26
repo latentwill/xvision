@@ -219,9 +219,10 @@ pub struct Executor {
     attest_every_n_trades: u32,
     /// Crash-recovery seam: when `Some`, the live loop seeds its book,
     /// equity curve, and PK counters from this state (see
-    /// [`LiveRestoreState`]). `None` starts flat — every fresh run.
-    /// Interior-mutability lock because `run_inner_live` takes `&self`
-    /// (the [`RunExecutor`] trait is `&self`) and consumes the state once.
+    /// `with_live_restore`). `Mutex` because `run_inner_live` runs on
+    /// `&self` (the `RunExecutor` trait method chain is shared-method)
+    /// but must CONSUME the state so a second run can't silently
+    /// re-restore the same stale ledger.
     live_restore: std::sync::Mutex<Option<LiveRestoreState>>,
 }
 
@@ -464,7 +465,10 @@ impl Executor {
     /// [`LiveRestoreState`]). Chain before `run`. Fresh runs never call
     /// this — the field defaults to `None` and the loop starts flat.
     pub fn with_live_restore(mut self, restore: LiveRestoreState) -> Self {
-        self.live_restore = std::sync::Mutex::new(Some(restore));
+        *self
+            .live_restore
+            .get_mut()
+            .expect("live_restore mutex not poisoned") = Some(restore);
         self
     }
 
@@ -3551,8 +3555,8 @@ impl Executor {
         let restore = self
             .live_restore
             .lock()
-            .expect("live_restore mutex poisoned")
-            .take();
+            .map(|mut guard| guard.take())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().take());
         let restored_equity = restore.as_ref().map(|r| r.equity);
         let restored_decision_idx = restore.as_ref().map(|r| r.decision_idx).unwrap_or(0);
         let restored_bar_count = restore.as_ref().map(|r| r.bar_count).unwrap_or(0);

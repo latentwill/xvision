@@ -269,7 +269,7 @@ async fn run_cycle_smoke() {
         seed: None,
         data_window_json: None,
         objective: None,
-};
+    };
     LineageStore::new(pool.clone())
         .insert(&root_node)
         .await
@@ -433,7 +433,7 @@ async fn run_cycle_errors_when_selected_parent_strategy_missing() {
         seed: None,
         data_window_json: None,
         objective: None,
-};
+    };
     LineageStore::new(pool.clone())
         .insert(&root_node)
         .await
@@ -574,7 +574,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
             seed: None,
             data_window_json: None,
             objective: None,
-})
+        })
         .await
         .expect("insert root lineage node");
 
@@ -722,7 +722,7 @@ async fn run_cycle_scenario_pool_round_robin_keeps_parent_child_comparable() {
             seed: None,
             data_window_json: None,
             objective: None,
-})
+        })
         .await
         .expect("insert root lineage node");
 
@@ -894,7 +894,7 @@ async fn run_cycle_scenario_pool_cache_distinguishes_same_day_different_baseline
             seed: None,
             data_window_json: None,
             objective: None,
-})
+        })
         .await
         .expect("insert root lineage node");
 
