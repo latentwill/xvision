@@ -72,6 +72,8 @@ pub struct StopPolicy {
     /// the first bar-close past this point. Capped at
     /// [`LIVE_RUN_MAX_TIME_LIMIT_SECS`] (30 days).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub time_limit_secs: Option<u64>,
 
     /// Number of bars consumed before termination.
@@ -305,7 +307,9 @@ pub enum LiveConfigValidationError {
         field: &'static str,
     },
     StopPolicyTimeLimitTooLong {
+        #[cfg_attr(feature = "ts-export", ts(type = "number"))]
         secs: u64,
+        #[cfg_attr(feature = "ts-export", ts(type = "number"))]
         max: u64,
     },
     VenueLabelLiveRejected,

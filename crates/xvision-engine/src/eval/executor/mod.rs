@@ -35,6 +35,7 @@ pub mod traits;
 pub mod wall_clock;
 
 pub use byreal_spot_marks::ByrealSpotPriceFetcher;
+pub use backtest::LiveRestoreState;
 pub use gated_broker::GatedBrokerSurface;
 
 use std::sync::Arc;
@@ -321,5 +322,18 @@ mod tests {
     fn classify_unclassified_for_unrecognised_messages() {
         let e = anyhow::anyhow!("something completely unexpected went wrong");
         assert_eq!(classify_run_failure(&e), "unclassified");
+    }
+
+    #[test]
+    fn classify_sidecar_auth_for_user_not_found() {
+        // 2026-08-23 campaign: `User not found.` failed run 01M0PVVY at
+        // cycle0 with the old `[unclassified]` tag. The string classifier
+        // now routes it to the dedicated `sidecar_auth` class.
+        let e = anyhow::anyhow!(
+            "[unclassified] cline runtime: step did not complete for \
+             run_id=01X::trader::cycle0 (role=trader): status=failed \
+             error=Some(\"User not found.\")"
+        );
+        assert_eq!(classify_run_failure(&e), "sidecar_auth");
     }
 }

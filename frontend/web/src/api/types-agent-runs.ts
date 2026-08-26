@@ -92,6 +92,12 @@ export type SpanKind =
   // flow through the existing tree / inspector / filter machinery. The actual
   // `EngineEvent.kind` (e.g. `risk_veto`, `order_signed`) is carried in
   // `attributes.engine_event_kind`; the family/label/color resolve off that.
+
+  // WS-13 trace-obs-risk-gate: the engine's R3 risk-veto pass span
+  // (`SpanKind::RiskGate`, wire "risk.gate"). Its verdict payload is
+  // surfaced by SpanInspector so operators see why an open was rewritten
+  // to hold (2026-08-24 campaign postmortem).
+  | "risk.gate"
   | "engine.event";
 
 /**

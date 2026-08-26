@@ -211,6 +211,7 @@ pub struct TradeMarker {
     pub size: f64,
     pub fee: f64,
     pub pnl_realized: Option<f64>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_index: u32,
     pub justification: Option<String>,
 }
@@ -237,6 +238,7 @@ pub struct VetoMarker {
     pub time: i64,
     pub price: f64,
     pub reason: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_index: u32,
 }
 
@@ -251,6 +253,7 @@ pub struct HoldMarker {
     pub time: i64,
     pub price: f64,
     pub conviction: Option<f64>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_index: u32,
 }
 
@@ -1560,6 +1563,7 @@ pub struct DeploymentMetricsTick {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_loss_limit_remaining_usd: Option<f64>,
     /// Cumulative filled-trade count for the run.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub n_trades: u32,
 }
 

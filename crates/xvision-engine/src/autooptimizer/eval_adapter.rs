@@ -288,8 +288,9 @@ impl CachedBacktestPaperTester {
     }
 
     /// Phase 1: attach the shared Cline runtime + sidecar ctx (spawned once by
-    /// the optimizer via `spawn_optimizer_cline_ctx`). When set, every
-    /// paper-test trader decision routes through `execute_slot_cline`.
+    /// the optimizer via `spawn_optimizer_cline_ctx`). Agentic paper-test
+    /// trader decisions route through `execute_slot_cline`; deterministic
+    /// mechanistic strategies bypass this runtime in the executor builder.
     pub fn with_cline_runtime(mut self, runtime: AgentRuntime, cline_ctx: Option<ClineDispatchCtx>) -> Self {
         self.agent_runtime = runtime;
         self.cline_ctx = cline_ctx;
@@ -732,10 +733,13 @@ async fn build_cached_backtest_executor(
     if let Some(bus) = progress_bus {
         executor = executor.with_progress_tx(bus.sender());
     }
-    // Phase 1 parity: route the trader through the SAME Cline runtime as
-    // live/eval. With `cline_ctx = Some`, `should_use_cline` is true and the
-    // shared pipeline dispatches via `execute_slot_cline`.
-    executor = executor.with_cline_runtime(agent_runtime, cline_ctx);
+    // Agentic strategies route trader decisions through the shared Cline
+    // runtime. Mechanistic strategies never enter the pipeline's LLM branch,
+    // so leave the executor on its direct deterministic path and do not
+    // require a sidecar for this evaluation.
+    if !strategy.is_mechanistic() {
+        executor = executor.with_cline_runtime(agent_runtime, cline_ctx);
+    }
 
     Ok(executor)
 }

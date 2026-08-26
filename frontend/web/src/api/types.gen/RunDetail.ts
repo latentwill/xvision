@@ -9,4 +9,11 @@ import type { RunSummary } from "./RunSummary";
  * Full run detail — `RunSummary` plus the decision rows and equity samples.
  * Used by `/api/eval/runs/:id`.
  */
-export type RunDetail = { summary: RunSummary, decisions: Array<DecisionRowDto>, equity_curve: Array<EquityPoint>, filter_events: Array<FilterEventV1>, filter_summaries: Array<FilterSummary>, signals_used?: Array<string> | null, };
+export type RunDetail = { summary: RunSummary, decisions: Array<DecisionRowDto>, equity_curve: Array<EquityPoint>, filter_events: Array<FilterEventV1>, filter_summaries: Array<FilterSummary>, 
+/**
+ * Distinct signal tool names (Nansen + Elfa) actually called during this
+ * run, sorted alphabetically. `None` when no signal tools were called or
+ * when the trace data is unavailable (old runs, missing agent_runs rows).
+ * Drives the "signals used" chip row in the cycle-detail UI.
+ */
+signals_used: Array<string> | null, };

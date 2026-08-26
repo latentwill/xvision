@@ -40,13 +40,16 @@ pub struct EvalLimits {
     pub max_decisions: Option<u32>,
     /// Max cumulative input tokens across all model calls in the run.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_input_tokens: Option<u64>,
     /// Max cumulative output tokens across all model calls in the run.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_output_tokens: Option<u64>,
     /// Max wall-clock seconds the run may take from start to terminal.
     /// Serialized as seconds for wire stability across language clients.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_wall_clock_secs: Option<u64>,
     /// When `true`, an `max_input_tokens` breach lands the run as
     /// `Cancelled`; when `false`, that input-token breach is logged but
@@ -64,15 +67,20 @@ pub struct EvalLimits {
     /// this many milliseconds. Only for live/forward-test mode.
     /// `None` = never flag (all decisions accepted, none delayed).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub stale_data_max_age_ms: Option<u64>,
     /// Hang belt: cancel an agent that has been running longer than
     /// this many milliseconds without producing a decision.
     /// Only for live/forward-test mode. Opt-in.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_agent_ms: Option<u64>,
     /// Maximum consecutive skips before emitting a Degraded health
     /// event. Default 5. Only for live/forward-test mode.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_consecutive_skips: u32,
 }
 

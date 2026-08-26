@@ -65,6 +65,7 @@ const ALL_SPAN_KINDS: SpanKind[] = [
   "opti.judge",
   "opti.flywheel",
   "opti.eval-run",
+  "risk.gate",
   "engine.event",
 ];
 

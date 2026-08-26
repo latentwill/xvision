@@ -187,11 +187,19 @@ never the key). `[runtime] executor = "byreal"` parses but is currently
 config-only / not yet dispatched (same as `orderly` today) — venue selection
 for the CLI verbs comes from the `--venue` flag, not config.
 
-**Live-eval:** the engine path (`eval run --mode live`, `broker_creds_ref`)
-supports `alpaca`, `orderly_testnet`, and `byreal`. Byreal live-eval is
-**testnet-only** — set `BYREAL_NETWORK=testnet` (mainnet is rejected with an
-actionable error; use the `--venue byreal` CLI verbs for mainnet). Alpaca creds
-are still required for the live market-data bar stream regardless of venue.
+**Forward-test:** `xvn eval run --mode fwd` (alias `live`, deprecated) is the
+paper-trading forward test. The engine's live executor resolves seven broker
+refs: `alpaca` (paper-only), `orderly_testnet`, `orderly_mainnet`, `byreal`
+(perps), `byreal_spot`, `degen_arena`, and `hyperliquid`. Data sources follow
+the venue: Alpaca supplies the bar stream for alpaca/orderly/byreal-perps;
+Degen Arena, native Hyperliquid, and byreal_spot source bars from Hyperliquid
+candles / byreal-cli token prices and need NO Alpaca credentials. Network-
+derived venues (byreal/hyperliquid/degen) enforce that the run's venue label
+agrees with the credentials' network — mainnet requires a Live label. The CLI
+launches Forward through the engine's async start path; watch with
+`xvn eval watch <run-id>`. A Disconnected run can be reconnected via
+`POST /api/eval/runs/:id/reconnect`, which rebuilds the ledger from persisted
+decisions/equity before respawning.
 
 ## Strategy inspector and filters
 

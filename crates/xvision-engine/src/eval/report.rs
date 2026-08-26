@@ -41,9 +41,13 @@ use crate::eval::store::{DecisionRow, RunStore};
 pub struct RunTokenTotals {
     /// Sum of `model_calls.input_token_count` across the run, or
     /// `eval_runs.actual_input_tokens` when no model calls landed for this run.
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub input_tokens: Option<u64>,
     /// Sum of `model_calls.output_token_count` across the run, or
     /// `eval_runs.actual_output_tokens` when no model calls landed for this run.
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub output_tokens: Option<u64>,
     /// Sum of `model_calls.cost_usd`. `None` when every contributing row
     /// had `cost_usd = NULL`, or no model_calls landed at all.
@@ -59,6 +63,7 @@ pub struct RunTokenTotals {
     /// Count of model_call rows aggregated. Useful for debugging "why is
     /// my cost null" — when this is 0, the observability bus wasn't wired
     /// (typical for very old runs or pure-rust-baseline arms).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub model_call_count: u64,
 }
 

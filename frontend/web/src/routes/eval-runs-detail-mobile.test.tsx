@@ -141,6 +141,7 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       scenario: null,
       mode: "backtest",
       status: "completed",
+      source: "human",
       started_at: "2026-05-13T14:00:00Z",
       completed_at: "2026-05-13T14:30:00Z",
       sharpe: 2.14,
@@ -161,6 +162,10 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       skipped_dispatches: 0,
       delayed_decisions: 0,
       forced_cancels: 0,
+      n_decisions: null,
+      n_trades: null,
+      win_rate: null,
+      n_bars: null,
       flatten_requested: false,
     },
     decisions: [decision()],
@@ -171,6 +176,7 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
     ],
     filter_events: [],
     filter_summaries: [],
+    signals_used: null,
     ...overrides,
   };
 }

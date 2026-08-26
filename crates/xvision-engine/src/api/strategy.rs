@@ -47,6 +47,7 @@ pub struct StrategySummary {
     /// Manifest creator / author handle.
     #[serde(default)]
     pub creator: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_cadence_minutes: u32,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -73,9 +74,11 @@ pub struct StrategySummary {
     /// Number of attached strategy AgentRefs. Deterministic filters are not
     /// agents and must not be counted here.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub agent_count: usize,
     /// Number of deterministic strategy-level filters.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub filter_count: usize,
     /// Strategy decision activation mode: `filter_gated`, `every_bar`, or
     /// `compiled_rules`.

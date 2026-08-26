@@ -17,8 +17,9 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use xvision_engine::eval::determinism::read_receipt;
 use xvision_engine::eval::run::RunStatus;
 
 use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartEvent, RunChartPayload};
@@ -29,7 +30,6 @@ use xvision_engine::eval::compare::ComparisonReport;
 use xvision_engine::eval::export::{self, EvalRunExport};
 use xvision_engine::eval::reconcile::ReconcileOutcome;
 use xvision_engine::eval::store::RunStore;
-
 use crate::error::DashboardError;
 use crate::state::AppState;
 
@@ -191,6 +191,43 @@ pub async fn get(
     Ok(Json(detail))
 }
 
+
+#[derive(Debug, Serialize)]
+pub struct DeterminismReceiptResponse {
+    pub run_id: String,
+    pub receipt_hash: String,
+    pub engine_version: String,
+    pub schema_version: String,
+    pub created_at: String,
+    pub manifest: Option<Value>,
+}
+
+/// `GET /api/eval/runs/:id/receipt` — read the persisted determinism
+/// receipt and its canonical reproduction manifest. Pre-receipt runs return
+/// the same 404 shape as other missing run resources.
+pub async fn receipt(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<DeterminismReceiptResponse>, DashboardError> {
+    let receipt = read_receipt(&state.pool, &id)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("read determinism receipt: {e}")))?
+        .ok_or_else(|| DashboardError::NotFound(format!("determinism receipt for run {id} not found")))?;
+    let manifest = receipt
+        .manifest_canonical
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("parse determinism manifest: {e}")))?;
+    Ok(Json(DeterminismReceiptResponse {
+        run_id: receipt.run_id,
+        receipt_hash: receipt.receipt_hash,
+        engine_version: receipt.engine_version,
+        schema_version: receipt.schema_version,
+        created_at: receipt.created_at.to_rfc3339(),
+        manifest,
+    }))
+}
 async fn current_run_status_is_terminal(state: &AppState, id: &str) -> Result<bool, DashboardError> {
     let status: Option<String> = sqlx::query_scalar("SELECT status FROM eval_runs WHERE id = ?")
         .bind(id)
@@ -306,15 +343,12 @@ pub async fn reconcile_run(
 }
 
 /// `POST /api/eval/runs/:id/reconnect` — resume a disconnected forward-test
-/// run by re-reading its last persisted bar index and
-/// transitioning status back to `Running`.
+/// run by rebuilding its ledger from persisted decisions + equity and
+/// respawning the live executor, which continues the same book.
 ///
 /// Rejected with `400 Validation` when the run is not `Disconnected`
 /// or its mode is not forward-test. Backtest runs that are `Disconnected`
 /// are intentionally NOT reconnected — only forward-test runs resume.
-///
-/// The actual executor spawn from `bar_index + 1` is a follow-up; for
-/// now the run transitions to `Running` and the operator can monitor.
 pub async fn reconnect_run(
     State(state): State<AppState>,
     Path(id): Path<String>,

@@ -51,11 +51,16 @@ pub fn synthesize_optimizer_day_scenario(
         },
         venue: VenueSettings {
             venue: Venue::Alpaca,
+            // Canonical offline-reference cost profile (25 bps taker + 5 bps
+            // linear slippage per side) — the same profile the offline grid
+            // used to find the round-2 winners. The optimizer must score
+            // candidates in the world where those winners are real; maker
+            // stays at 10 bps for resting-limit fills.
             fees: Fees {
                 maker_bps: 10,
                 taker_bps: 25,
             },
-            slippage: SlippageModel::None,
+            slippage: SlippageModel::Linear { bps: 5 },
             latency: LatencyModel {
                 decision_to_fill_ms: 250,
             },

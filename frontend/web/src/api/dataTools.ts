@@ -20,14 +20,30 @@ export interface DataToolEntry {
   nansen_lookahead_lag_days: number | null;
 }
 
+/** One row in a GET/PUT response: the entry plus a redacted key-presence flag. */
+export interface DataToolRow extends DataToolEntry {
+  /** True when a key is materialized (env var set or stored secret). */
+  api_key_set: boolean;
+}
+
 /** Shape returned by GET /api/settings/data-tools. */
 export interface DataToolsReport {
-  data_tools: DataToolEntry[];
+  data_tools: DataToolRow[];
+}
+
+/** One entry accepted by PUT: the config entry plus an optional plaintext key. */
+export interface SetDataToolEntry extends DataToolEntry {
+  /**
+   * Plaintext API key. Stored to `$XVN_HOME/secrets/data_tools.toml` (0600)
+   * and exported into the daemon env under `api_key_env`. Never returned.
+   * Omit (or send empty) to keep the previously stored key.
+   */
+  api_key?: string;
 }
 
 /** Shape accepted by PUT /api/settings/data-tools. */
 export interface SetDataToolsRequest {
-  data_tools: DataToolEntry[];
+  data_tools: SetDataToolEntry[];
 }
 
 // ── TanStack Query keys ──────────────────────────────────────────────────────

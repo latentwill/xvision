@@ -81,6 +81,7 @@ pub struct ResetWorkspaceReport {
     pub tables_cleared: Vec<TableWipe>,
     /// Rows summed across `tables_cleared`. `u32` so ts-rs emits a TS
     /// `number` (no realistic user table approaches 4B rows).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub total_rows_deleted: u32,
     /// `(table_name, rows_remaining)` for every table preserved per
     /// [`RESET_WORKSPACE_PRESERVED_TABLES`]. Surfaced so the dashboard
@@ -92,6 +93,7 @@ pub struct ResetWorkspaceReport {
     pub tables_preserved: Vec<TablePreserved>,
     /// Number of files removed from `$XVN_HOME/strategies/`. 0 if the
     /// dir didn't exist (filesystem-backed strategies are optional).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub strategy_files_deleted: u32,
 }
 
@@ -103,6 +105,7 @@ pub struct ResetWorkspaceReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableWipe {
     pub table: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub rows_deleted: u32,
 }
 
@@ -114,6 +117,7 @@ pub struct TableWipe {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TablePreserved {
     pub table: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub rows_remaining: u32,
 }
 

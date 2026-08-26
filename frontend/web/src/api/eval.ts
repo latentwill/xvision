@@ -1,6 +1,6 @@
 // Eval API — typed fetchers against `engine::api::eval::*`.
 
-import { apiFetch } from "./client";
+import { ApiError, apiFetch } from "./client";
 import {
   createTrace,
   durationSince,
@@ -77,6 +77,7 @@ export const evalKeys = {
       params?.since || "",
     ] as const,
   run: (id: string) => [...evalKeys.all, "run", id] as const,
+  receipt: (id: string) => [...evalKeys.all, "receipt", id] as const,
   compare: (ids: string[]) =>
     [...evalKeys.all, "compare", ids.join(",")] as const,
 };
@@ -123,6 +124,48 @@ export function listRunsPaged(params?: ListRunsParams): Promise<RunsPage> {
 
 export function getRun(id: string): Promise<RunDetail> {
   return apiFetch<RunDetail>(`/api/eval/runs/${encodeURIComponent(id)}`);
+}
+
+export type ReceiptManifest = {
+  bars_content_hash: string;
+  bars_rows: number;
+  bars_start: string | null;
+  bars_end: string | null;
+  bars_source: string;
+  scenario_id: string;
+  strategy_hash: string;
+  strategy_source_hash: string | null;
+  provider: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  system_prompt_hash: string | null;
+  tool_cache_recording_id: string | null;
+  engine_version: string;
+  seed: number;
+};
+
+export type EvalRunReceipt = {
+  run_id: string;
+  receipt_hash: string;
+  engine_version: string;
+  schema_version: string;
+  created_at: string;
+  manifest: ReceiptManifest | null;
+};
+
+export async function getRunReceipt(id: string): Promise<EvalRunReceipt | null> {
+  try {
+    return await apiFetch<EvalRunReceipt>(
+      `/api/eval/runs/${encodeURIComponent(id)}/receipt`,
+    );
+  } catch (error) {
+    // Pre-receipt runs legitimately have no row. Keep that absence out of
+    // React Query's error state while still surfacing transport failures.
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export function deleteRun(id: string): Promise<void> {

@@ -43,6 +43,8 @@ pub struct FlywheelVelocityRequest {
     pub agent: Option<String>,
     /// Lookback window in days. Defaults to 7.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub days: Option<i64>,
 }
 
@@ -61,6 +63,8 @@ pub struct FlywheelLineageRequest {
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
 }
 
@@ -72,10 +76,15 @@ pub struct FlywheelLineageRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FlywheelStatusDto {
     pub namespace: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub observations: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub active_patterns: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub staged_patterns: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub forgotten_patterns: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub autooptimizer_runs: u64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub latest_autooptimizer_run_id: Option<String>,
@@ -91,12 +100,18 @@ pub struct FlywheelStatusDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FlywheelVelocityDto {
     pub namespace: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub days: i64,
     pub since: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub observations_captured: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub patterns_promoted: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub patterns_demoted: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub autooptimizer_runs: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub optimized_child_agents: u64,
     pub average_lineage_depth: f64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -120,14 +135,18 @@ pub struct FlywheelLineageItemDto {
     pub reproducible: bool,
     pub holdout_split: String,
     pub cohort_query: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub train_observation_count: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub dev_observation_count: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub holdout_observation_count: u64,
     pub train_hash: String,
     pub dev_hash: String,
     pub holdout_hash: String,
     pub demo_source_pattern_ids: Vec<String>,
     pub prior_pattern_ids: Vec<String>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub prompt_prefix_chars: u64,
     pub status: String,
     pub created_at: String,
@@ -166,6 +185,7 @@ pub struct FlywheelLineageItemDto {
 pub struct FlywheelLineageDto {
     pub namespace: String,
     pub items: Vec<FlywheelLineageItemDto>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub total: u64,
 }
 

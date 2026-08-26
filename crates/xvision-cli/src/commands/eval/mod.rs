@@ -29,6 +29,7 @@ use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
+use xvision_engine::eval::determinism::read_receipt;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
@@ -301,6 +302,17 @@ pub struct RunArgs {
     /// byte-identical to a non-recorded run).
     #[arg(long)]
     pub record_trajectory: bool,
+    /// Replay a previously recorded trajectory instead of fetching live
+    /// signal data (§5). Takes the recording id from a prior
+    /// `--record-trajectory` run. Backtest only: signal-tool calls are
+    /// served from the recording's cached responses and nothing new is
+    /// persisted. Conflicts with --record-trajectory.
+    #[arg(
+        long = "replay-trajectory",
+        value_name = "RECORDING_ID",
+        conflicts_with = "record_trajectory"
+    )]
+    pub replay_trajectory: Option<String>,
     /// Evaluation profile: smoke (fast/cheap) or deep (thorough).
     /// Sets defaults for --provider, --model, --max-decisions. Explicit flags override.
     ///   smoke -> openrouter / google/gemini-flash-1.5 / 30 decisions
@@ -767,7 +779,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
-                "--scenario is not applicable for --mode live (live mode runs against real-time market data, not a historical scenario)"
+                "--scenario is not applicable for --mode fwd (forward test runs against real-time market data, not a historical scenario)"
             ),
         });
     }
@@ -775,11 +787,11 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     let live_config = if mode == RunMode::Forward {
         let asset = args.live_asset.clone().ok_or_else(|| CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("--mode live requires --live-asset"),
+            source: anyhow::anyhow!("--mode fwd requires --live-asset"),
         })?;
         let capital = args.live_capital.ok_or_else(|| CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("--mode live requires --live-capital"),
+            source: anyhow::anyhow!("--mode fwd requires --live-capital"),
         })?;
         let time_limit_secs = match args.live_duration.as_deref() {
             Some(d) => {
@@ -808,7 +820,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             return Err(CliError {
                 exit: XvnExit::Usage,
                 source: anyhow::anyhow!(
-                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, --live-time-limit-secs, or --live-duration"
+                    "--mode fwd requires at least one stop flag: --live-bar-limit, --live-decision-limit, --live-time-limit-secs, or --live-duration"
                 ),
             });
         }
@@ -890,9 +902,12 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         auto_fire_review: args.auto_fire_review,
         review_model,
         max_annotations_per_review: Some(args.max_review_annotations),
-        // §2-D: `--record-trajectory` selects Record; default is Live (no
-        // recording — byte-identical to a non-recorded run).
-        trajectory_mode: if args.record_trajectory {
+        // §2-D/§5: `--record-trajectory` selects Record, `--replay-trajectory
+        // <id>` selects Replay; default is Live (no recording — byte-identical
+        // to a non-recorded run). Clap enforces the mutual exclusion.
+        trajectory_mode: if let Some(recording_id) = args.replay_trajectory.clone() {
+            RunTrajectoryMode::Replay { recording_id }
+        } else if args.record_trajectory {
             RunTrajectoryMode::Record
         } else {
             RunTrajectoryMode::Live
@@ -920,6 +935,39 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         emit_eval_progress_line(&req.agent_id, 0, 0);
     }
 
+    // Forward tests MUST launch through the engine's async `start_run` —
+    // the only surface that builds a live executor (venue + credential
+    // resolution, per-asset live streams with warmup, MultiLiveStream).
+    if req.mode == RunMode::Forward && !args.assets.is_empty() {
+        crate::progress!(
+            "--assets is a backtest-only filter; forward tests run every asset in the strategy's live config"
+        );
+    }
+    // The synchronous `eval::run` below rejects Forward by design. The run
+    // progresses in a background task; the operator watches it with
+    // `xvn eval watch`.
+    if req.mode == RunMode::Forward {
+        let detail = xvision_engine::api::eval::start_run(&ctx, req)
+            .await
+            .map_err(|e| api_to_cli("eval run", e))?;
+        obs_bus.quiesce().await;
+        let summary = detail.summary;
+        if args.json {
+            crate::io::print_json(&summary)?;
+            return Ok(());
+        }
+        println!();
+        println!(
+            "Forward test launched: {} (status {}, strategy {})",
+            summary.id,
+            summary.status.as_str(),
+            summary.agent_id
+        );
+        println!("  watch: xvn eval watch {}", summary.id);
+        println!("  stop:  xvn eval stop {}", summary.id);
+        return Ok(());
+    }
+
     let run_result = eval::run(&ctx, req).await;
 
     // Drain the obs bus to SQLite BEFORE returning, on both the success and
@@ -945,6 +993,13 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
 
     println!();
     print_run_health_card(&run, None);
+    if let Ok(Some(receipt)) = read_receipt(&ctx.db, &run.id).await {
+        let prefix: String = receipt.receipt_hash.chars().take(8).collect();
+        println!(
+            "reproduce: xvn eval run --strategy {} --scenario {} (receipt {}, manifest recorded)",
+            run.agent_id, run.scenario_id, prefix
+        );
+    }
     Ok(())
 }
 

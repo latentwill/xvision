@@ -46,8 +46,13 @@ pub struct ElfaClient {
 
 impl ElfaClient {
     /// `rpm` default 60 (Elfa). `base_url` like `https://api.elfa.ai`.
+    /// `rpm == 0` selects the default, not a 1 req/min limiter.
     pub fn new(base_url: String, api_key: String, rpm: u32) -> Self {
-        let quota = Quota::per_minute(std::num::NonZeroU32::new(rpm.max(1)).unwrap_or(nonzero!(60u32)));
+        let quota = Quota::per_minute(if rpm == 0 {
+            nonzero!(60u32)
+        } else {
+            std::num::NonZeroU32::new(rpm).unwrap()
+        });
         let client = Client::builder()
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()

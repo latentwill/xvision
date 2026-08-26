@@ -53,6 +53,13 @@ impl RunAbort {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
+// NOTE: the TS export is pinned to the DASHBOARD wire alphabet. The store
+// writes `as_str()` ("backtest"/"fwd"), and `summarise()` →
+// `RunSummary.mode` maps Forward to "live" — but NOT every surface does:
+// `/api/eval/compare` returns `ComparisonRunSummary.mode` with plain serde,
+// so a Forward run serializes as "fwd" there and falls outside the exported
+// union (pre-existing; see eval-compare display handling). Exporting the
+// serde names would type-check comparisons the main wire never satisfies.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
@@ -60,6 +67,7 @@ pub enum RunMode {
     /// Forward-test mode (Alpaca paper trading — real market data, simulated money).
     /// Formerly called "live" mode; renamed to avoid confusion with real-money live trading.
     #[serde(rename = "fwd", alias = "live")]
+    #[cfg_attr(feature = "ts-export", ts(rename = "live"))]
     Forward,
 }
 
@@ -470,11 +478,13 @@ pub struct MetricsSummary {
     /// exits, and partial-TP1 slices each count one. An open+close round-trip
     /// is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
     /// is the round-trip view. See the counter doc in `backtest.rs`.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub n_trades: u32,
     /// Count of LLM-pipeline decision slots, including synthesized SL/TP exit
     /// rows. Cadence-gated and filter-suppressed bars do not increment it (no
     /// decision occurred). Filter wake/suppression accounting lives separately
     /// in `xvision_filters::events::FilterSummary`.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub n_decisions: u32,
     /// Total LLM inference cost for all decisions in this run (USD).
     /// `None` when the model's pricing isn't in the catalog — in that case
@@ -495,14 +505,24 @@ pub struct MetricsSummary {
     /// Live/forward-test only: bars where dispatch was skipped because
     /// the agent was still processing a previous bar.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub skipped_dispatches: u64,
     /// Live/forward-test only: decisions accepted but flagged delayed
     /// because the bar was stale (age > stale-data-max-age-ms).
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub delayed_decisions: u64,
     /// Live/forward-test only: agents force-cancelled via --max-agent-ms.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub forced_cancels: u64,
+    /// Count of cadence-gated bars the strategy actually saw (backtest: one
+    /// entry per `decision_bars` push; live: bars received from the stream,
+    /// excluding warmup). `0` on rows finalized before this field existed —
+    /// the API layer maps 0 to `null` so the UI renders "—", never a fake 0.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
+    pub n_bars: u32,
 }
 
 impl MetricsSummary {

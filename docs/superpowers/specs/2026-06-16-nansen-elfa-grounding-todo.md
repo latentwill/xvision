@@ -1,59 +1,70 @@
 # Nansen + Elfa data tools — grounding TODO (verify before live use)
 
 - **Date:** 2026-06-16
-- **Status:** Open grounding items from the forward-only data-tools implementation
-  (`docs/superpowers/plans/2026-06-14-nansen-elfa-forward-only-data-tools.md`).
+- **Status:** Fully resolved 2026-08-25. §1 Nansen routes audited against live
+ docs and FIXED in `tools/nansen.rs`. §2 Elfa and §3 identity seed VERIFIED.
+ §4 secrets resolved via Settings -> Tools API-key storage. §5 replay trigger
+ IMPLEMENTED 2026-08-25 (see §5 below).
+Original plan:
+`docs/superpowers/plans/2026-06-14-nansen-elfa-forward-only-data-tools.md`.
 - **Why:** The implementation used endpoint paths + contract addresses taken from
   the spec, NOT verified against live vendor docs / a smoke call. Per the Byreal
   CLI-grounding precedent (invented flags shipped a broken surface), these MUST be
   verified before relying on real Nansen/Elfa responses. Tests assert the routing
   *logic* (mockito), not the real endpoint correctness.
 
-## 1. Nansen endpoint paths (verify against live Nansen v1/v1beta1 docs)
+## 1. Nansen endpoint paths — FIXED 2026-08-25 (routes rewritten per audit)
 
-`crates/xvision-engine/src/tools/nansen.rs` routes by `as_of_date` presence
-(present ⇒ historical/backtest ⇒ `/v1beta1`; absent ⇒ live ⇒ `/v1`):
+All findings below were applied to `crates/xvision-engine/src/tools/nansen.rs`:
+live screener path corrected, smart-money backtest degrades (no vendor
+history), request bodies rebuilt for the current schemas, historical
+who-bought-sold uses `date_range`, historical screener filtered client-side by
+`token_address` with honest truncation handling. Tests updated + extended.
 
-| Tool | Live (`/api/v1`) | Historical (`/api/v1beta1`) |
-|---|---|---|
-| `nansen_smart_money_flow` | `smart-money/netflow` | `smart-money/historical-token-balances` |
-| `nansen_token_screener` | `tgm/token-screener` | `token-screener/historical` |
-| `nansen_flow_intel` | `tgm/flow-intelligence` | `tgm/historical-who-bought-sold` |
+## 2. Elfa endpoint paths — VERIFIED 2026-08-25 (done)
 
-Verify: exact paths exist; request body field names (we send
-`{ chain, token_address[, as_of_date] }`); that `as_of_date` is day-granular and
-the snapshot/window semantics match; response shapes. For any metric lacking a
-usable historical counterpart, change its historical route to
-`degrade("backtest-unavailable for <tool>")` (the degrade plumbing already exists).
+Checked against live https://docs.elfa.ai (REST reference + per-endpoint
+pages): all three paths, the `ticker=` query param on top-mentions, and the
+`x-elfa-api-key` auth header match exactly. Base URL `https://api.elfa.ai`
+confirmed. Response envelope is `{ success, data, metadata }`.
 
-## 2. Elfa endpoint paths (verify against live Elfa v2 docs)
 
 `crates/xvision-engine/src/tools/elfa.rs` (live only): `elfa_smart_mentions` →
 `/v2/data/top-mentions` (query `ticker=`); `elfa_trending_tokens` →
 `/v2/aggregations/trending-tokens`; `elfa_trending_narratives` →
-`/v2/data/trending-narratives`. Verify paths + query params + the `x-elfa-api-key`
-header + response shapes.
+`/v2/data/trending-narratives`. All confirmed against the live v2 docs.
 
-## 3. On-chain identity seed (verify addresses)
+## 3. On-chain identity seed — VERIFIED 2026-08-25 (done)
+
+All five addresses/mints confirmed canonical (Ethereum mainnet / Solana
+mainnet); chain slugs `ethereum`/`solana` match Nansen's current lowercase
+chain enums.
+
 
 `crates/xvision-core/src/asset_registry.rs` `signal_asset_identity()` seeds:
-`BTC`/`WBTC` → ethereum WBTC `0x2260…c599`; `ETH`/`WETH` → ethereum WETH
-`0xc02a…cc2`; `USDC` → `0xa0b8…eb48`; `USDT` → `0xdac1…ec7`; `SOL` → solana mint
-`So111…112`. Verify each chain slug + contract/mint against what Nansen expects
-(esp. Nansen's native-token convention and chain naming). Unmapped assets degrade
-(`{available:false, reason:"no on-chain identity mapped for X"}`) — extend the seed
-for any additional whitelisted crypto as needed.
+`BTC`/`WBTC` → WBTC `0x2260…c599` ✓; `ETH`/`WETH` → WETH `0xc02a…cc2` ✓;
+`USDC` → `0xa0b8…eb48` ✓; `USDT` → `0xdac1…ec7` ✓; `SOL` → wrapped-SOL mint
+`So111…112` ✓. Remaining caveat only: Nansen models native tokens via
+`include_native_tokens` flags rather than contract addresses — the WETH
+representation is a deliberate proxy, fine for signal purposes.
 
-## 4. Secrets (operator)
+## 4. Secrets (operator) — RESOLVED 2026-08-25 (Settings → Tools now stores keys)
 
-Add `NANSEN_API_KEY` and `ELFA_API_KEY` to `.op_env` (1Password). Config
-(`[[data_tools]]` in the runtime config) references the env-var NAME via
-`api_key_env`; the secret never lands in config or the DB. Configure via
-Settings → Tools (or the `/api/settings/data-tools` PUT).
+PUT `/api/settings/data-tools` accepts an optional plaintext `api_key` per
+entry: persisted to `$XVN_HOME/secrets/data_tools.toml` (mode 0600), exported
+into the daemon env under `api_key_env`, re-hydrated at CLI/dashboard startup.
+GET surfaces only an `api_key_set` presence flag. Env vars remain the
+highest-priority source.
 
-## 5. Deferred (per G3)
+## 5. Production replay trigger — IMPLEMENTED 2026-08-25
 
-Production run-level backtest *replay* trigger is NOT wired — `RunTrajectoryMode`
-is `{ Live, Record }` only and engine-eval replay is deliberately out of scope
-(`eval.rs` comment). The record half + dispatch-level replay determinism are done
-and tested; the production re-run trigger lands with engine-eval replay.
+`RunTrajectoryMode` gained `Replay { recording_id }` (engine `api/eval.rs`).
+`xvn eval run --replay-trajectory <RECORDING_ID>` (conflicts with
+`--record-trajectory`) validates the recording up front: must exist and be
+status `complete`, backtest mode only — otherwise a validation error before
+any sidecar spawn. Replay runs serve signal-tool responses from the
+recording's cached HTTP responses (miss = loud error, never a live
+re-fetch), consume no credit budget, and persist no new frames.
+Tests: `replay_trigger_*` + `run_trajectory_mode_replay_serde_round_trip`
+in `api::eval::tool_registry_dispatch_tests`.
+

@@ -27,7 +27,34 @@ export type MetricsSummary = {
  * Deserialization accepts `gross_return_pct` as an alias so JSON written
  * by future code that uses the new name can still round-trip.
  */
-total_return_pct: number, sharpe: number, max_drawdown_pct: number, win_rate: number, n_trades: number, n_decisions: number, 
+total_return_pct: number, sharpe: number, max_drawdown_pct: number, 
+/**
+ * Fraction of CLOSED ROUND-TRIPS that realized positive PnL
+ * (`wins / realized_count`). A round-trip is one position open→flat
+ * cycle, closed by the trader (`flat`/flip) or a deterministic SL/TP
+ * exit. `0.0` when no round-trip closed.
+ */
+win_rate: number, 
+/**
+ * Cumulative realized PnL as a percentage of starting capital
+ * (`book.realized() / initial * 100`). Used by the optimizer's
+ * realized-return ratio gate. `0.0` when no trades have closed.
+ */
+realized_pnl_pct: number, 
+/**
+ * Count of FILL LEGS that crossed the book — opens, closes, SL/TP forced
+ * exits, and partial-TP1 slices each count one. An open+close round-trip
+ * is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
+ * is the round-trip view. See the counter doc in `backtest.rs`.
+ */
+n_trades: number, 
+/**
+ * Count of LLM-pipeline decision slots, including synthesized SL/TP exit
+ * rows. Cadence-gated and filter-suppressed bars do not increment it (no
+ * decision occurred). Filter wake/suppression accounting lives separately
+ * in `xvision_filters::events::FilterSummary`.
+ */
+n_decisions: number, 
 /**
  * Total LLM inference cost for all decisions in this run (USD).
  * `None` when the model's pricing isn't in the catalog — in that case
@@ -46,4 +73,25 @@ net_return_pct: number | null,
  * strategy saw. `None` for old runs that predate baselines support or
  * for paper-mode runs where bars are not available post-hoc.
  */
-baselines: BaselinesReport | null, };
+baselines: BaselinesReport | null, 
+/**
+ * Live/forward-test only: bars where dispatch was skipped because
+ * the agent was still processing a previous bar.
+ */
+skipped_dispatches: number, 
+/**
+ * Live/forward-test only: decisions accepted but flagged delayed
+ * because the bar was stale (age > stale-data-max-age-ms).
+ */
+delayed_decisions: number, 
+/**
+ * Live/forward-test only: agents force-cancelled via --max-agent-ms.
+ */
+forced_cancels: number, 
+/**
+ * Count of cadence-gated bars the strategy actually saw (backtest: one
+ * entry per `decision_bars` push; live: bars received from the stream,
+ * excluding warmup). `0` on rows finalized before this field existed —
+ * the API layer maps 0 to `null` so the UI renders "—", never a fake 0.
+ */
+n_bars: number, };

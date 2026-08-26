@@ -171,6 +171,8 @@ describe("Strategy requirements panel", () => {
           name: "openrouter/deepseek-chat",
           kind: "model",
           satisfied: true,
+          reason: "configured",
+          hint: "",
         },
         {
           name: "anthropic/claude-not-enabled",
@@ -246,6 +248,8 @@ describe("Run eval gate", () => {
           name: "openrouter/deepseek-chat",
           kind: "model",
           satisfied: true,
+          reason: "configured",
+          hint: "",
         },
       ],
     });

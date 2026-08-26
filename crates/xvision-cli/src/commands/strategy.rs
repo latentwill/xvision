@@ -17,7 +17,8 @@ use xvision_engine::api::{
     agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError,
 };
 use xvision_engine::diagnostics::{self, assert_launchable, DiagnosticsError, StrategyDiagnostics};
-use xvision_engine::eval::run::RunStatus;
+use xvision_engine::eval::review::ReviewStatus;
+use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
@@ -481,6 +482,9 @@ enum StrategyAction {
         /// Restrict to runs started within the last N days.
         #[arg(long)]
         since_days: Option<u32>,
+        /// Require every qualifying run to have a completed auto-review.
+        #[arg(long, default_value_t = false)]
+        require_review: bool,
         /// Emit as JSON.
         #[arg(long)]
         json: bool,
@@ -513,13 +517,12 @@ enum StrategyAction {
     /// summary (captured / approximated / dropped counts + items + the cost model
     /// reference).
     ///
-    /// Anything outside the supported Pine v5 subset is recorded in the fidelity
-    /// report as "approximated" or "dropped" — the strategy is always a valid
-    /// starting point for the autooptimizer even when some constructs are lost.
+    /// Unsupported constructs are recorded in the fidelity report. Imports
+    /// whose source predicates collapse to the bare scaffold fail unless
+    /// `--allow-degenerate` is supplied.
     ///
-    /// Exits non-zero with a structured error when the file cannot be parsed at
-    /// all (structural syntax error). Unsupported constructs are recorded in the
-    /// fidelity report, not rejected.
+    /// Exits non-zero with a structured error when the file cannot be parsed
+    /// or when the import is degenerate without the explicit override.
     #[command(name = "import-pine")]
     ImportPine {
         /// Path to a Pine Script v5 file (`.pine`).
@@ -528,6 +531,9 @@ enum StrategyAction {
         /// If omitted, the name is taken from the `strategy("...")` header.
         #[arg(long)]
         name: Option<String>,
+        /// Persist a strategy even when predicates collapsed to the scaffold.
+        #[arg(long)]
+        allow_degenerate: bool,
     },
     /// Scan the on-disk strategy directory for bundles missing from the search
     /// index and backfill them. One-shot fix for existing index divergence.
@@ -736,12 +742,17 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             sort,
             top,
             since_days,
+            require_review,
             json,
-        } => leaderboard(&sort, top, since_days, json).await,
+        } => leaderboard(&sort, top, since_days, require_review, json).await,
         StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
+        StrategyAction::ImportPine {
+            file,
+            name,
+            allow_degenerate,
+        } => import_pine_cmd(&file, name.as_deref(), allow_degenerate).await,
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
-        StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
         StrategyAction::SetRisk {
             id,
             max_drawdown_usd,
@@ -835,14 +846,13 @@ async fn reindex() -> CliResult<()> {
 
 /// Handler for `xvn strategy import-pine <file> [--name <name>]`.
 ///
-/// 1. Reads the Pine Script source from `file`.
-/// 2. Calls `import_pine` (the WU1–WU4 engine entry-point).
-/// 3. On `Ok`: applies optional `name` override, persists the strategy via the
-///    same `FilesystemStore` as the other strategy commands, then prints a
-///    human-readable fidelity summary to stdout.
-/// 4. On `Err(PineImportError)`: prints the structured error to stderr and
-///    returns a non-zero exit code (`Usage` for parse errors).
-async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResult<()> {
+/// Reads the source, imports it, rejects a degenerate predicate mapping unless
+/// explicitly overridden, persists the strategy, and prints its fidelity report.
+async fn import_pine_cmd(
+    file: &PathBuf,
+    name_override: Option<&str>,
+    allow_degenerate: bool,
+) -> CliResult<()> {
     use xvision_engine::strategies::pine_import::{import_pine, PineImportError};
 
     // 1. Read source file.
@@ -861,6 +871,20 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
             return Err(CliError::usage(anyhow::anyhow!("Nothing mappable: {msg}")));
         }
     };
+    if outcome.fidelity.is_degenerate() && !allow_degenerate {
+        eprintln!(
+            "error: Pine import is degenerate: source predicates did not map to filter \
+             conditions; refusing to persist. Re-run with --allow-degenerate to persist \
+             the scaffold."
+        );
+        eprintln!("dropped items:");
+        for item in &outcome.fidelity.dropped {
+            eprintln!("  - {} — {}", item.item, item.reason);
+        }
+        return Err(CliError::usage(anyhow::anyhow!(
+            "degenerate Pine import; use --allow-degenerate to persist"
+        )));
+    }
 
     // 3. Apply optional name override.
     if let Some(name) = name_override {
@@ -900,6 +924,7 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
         "  commission: {} bps ({}) — {}",
         cm.commission_value_bps, cm.commission_type, "taker"
     );
+    println!("  profile:    {}", cm.profile_name);
     println!(
         "  slippage:   {} bps ({})",
         cm.slippage_value_bps, cm.slippage_model
@@ -3569,6 +3594,8 @@ struct LeaderboardRow {
     best_return_pct: Option<f64>,
     best_sharpe: Option<f64>,
     run_count: usize,
+    reviewed_runs: usize,
+    total_runs: usize,
     best_run_id: Option<String>,
 }
 
@@ -3589,10 +3616,17 @@ fn sort_leaderboard_rows(rows: &mut [LeaderboardRow], sort: &str) {
     }
 }
 
-async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool) -> CliResult<()> {
+async fn leaderboard(
+    sort: &str,
+    top: usize,
+    since_days: Option<u32>,
+    require_review: bool,
+    json: bool,
+) -> CliResult<()> {
     let ctx = open_ctx().await?;
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
 
+    let review_store = RunStore::new(ctx.db.clone());
     let cutoff = since_days.map(|d| chrono::Utc::now() - chrono::Duration::days(d as i64));
 
     let mut rows: Vec<LeaderboardRow> = Vec::new();
@@ -3620,6 +3654,23 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             .iter()
             .filter(|r| cutoff.map(|c| r.started_at >= c).unwrap_or(true))
             .collect();
+        let total_runs = filtered.len();
+        let mut reviewed_runs = 0usize;
+        for run in &filtered {
+            let has_completed_review = review_store
+                .list_reviews_for_run(&run.id)
+                .await
+                .unwrap_or_default()
+                .first()
+                .map(|review| review.status == ReviewStatus::Completed)
+                .unwrap_or(false);
+            if has_completed_review {
+                reviewed_runs += 1;
+            }
+        }
+        if require_review && (total_runs == 0 || reviewed_runs != total_runs) {
+            continue;
+        }
 
         let best_return = filtered
             .iter()
@@ -3684,6 +3735,8 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             best_return_pct: best_return,
             best_sharpe,
             run_count: filtered.len(),
+            reviewed_runs,
+            total_runs,
             best_run_id,
         });
     }
@@ -3706,8 +3759,8 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
     }
 
     println!(
-        "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
-        "RANK", "STRATEGY", "RETURN_%", "SHARPE", "RUNS", "BEST_RUN"
+        "{:<4}  {:<36}  {:>10}  {:>8}  {:>13}  {}",
+        "RANK", "STRATEGY", "RETURN_%", "SHARPE", "REVIEWED/TOTAL", "BEST_RUN"
     );
     for row in &rows {
         let name = if row.strategy_name.len() > 34 {
@@ -3716,14 +3769,14 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             row.strategy_name.clone()
         };
         println!(
-            "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
+            "{:<4}  {:<36}  {:>10}  {:>8}  {:>13}  {}",
             row.rank,
             name,
             row.best_return_pct
                 .map(|v| format!("{:.2}", v))
                 .unwrap_or("-".into()),
             row.best_sharpe.map(|v| format!("{:.3}", v)).unwrap_or("-".into()),
-            row.run_count,
+            format!("{}/{}", row.reviewed_runs, row.total_runs),
             row.best_run_id.as_deref().unwrap_or("-"),
         );
     }
@@ -4417,6 +4470,8 @@ pub mod leaderboard {
             best_return_pct,
             best_sharpe,
             run_count: 1,
+            reviewed_runs: 1,
+            total_runs: 1,
             best_run_id: Some("run-1".into()),
         }
     }
@@ -4487,6 +4542,8 @@ pub mod leaderboard {
             best_return_pct: Some(12.5),
             best_sharpe: Some(1.23),
             run_count: 3,
+            reviewed_runs: 2,
+            total_runs: 3,
             best_run_id: Some("run-xyz".into()),
         };
         let json = serde_json::to_value(&row).expect("serialize");
@@ -4496,6 +4553,8 @@ pub mod leaderboard {
         assert_eq!(json["best_return_pct"], 12.5f64);
         assert_eq!(json["best_sharpe"], 1.23f64);
         assert_eq!(json["run_count"], 3u64);
+        assert_eq!(json["reviewed_runs"], 2u64);
+        assert_eq!(json["total_runs"], 3u64);
         assert_eq!(json["best_run_id"], "run-xyz");
     }
 
@@ -4511,11 +4570,24 @@ pub mod leaderboard {
     fn leaderboard_subcommand_is_registered() {
         use clap::CommandFactory;
         let cmd = crate::Cli::command();
+
         let strategy = cmd.find_subcommand("strategy").expect("strategy subcommand");
         assert!(
             strategy.find_subcommand("leaderboard").is_some(),
             "expected `leaderboard` subcommand on `xvn strategy`",
         );
+    }
+    #[test]
+    fn leaderboard_require_review_flag_parses() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let result = cmd.try_get_matches_from([
+            "xvn",
+            "strategy",
+            "leaderboard",
+            "--require-review",
+        ]);
+        assert!(result.is_ok(), "--require-review must parse successfully");
     }
 
     #[test]

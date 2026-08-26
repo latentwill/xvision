@@ -160,6 +160,41 @@ describe("SettingsToolsRoute", () => {
     });
   });
 
+  it("typing a key and saving sends api_key; blank box keeps the stored key", async () => {
+    renderRoute();
+
+    await screen.findByText("NANSEN_API_KEY");
+
+    const keyInput = screen.getByLabelText(/nansen api key/i);
+    fireEvent.change(keyInput, { target: { value: "sk-new-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      expect(toolsApi.setDataTools).toHaveBeenCalledWith({
+        data_tools: expect.arrayContaining([
+          expect.objectContaining({ api_key: "sk-new-key" }),
+        ]),
+      });
+    });
+
+    // After save the draft resets to server data; clearing the box leaves
+    // nothing dirty — "blank = keep stored key" disables Save instead of
+    // silently re-PUTting.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+    });
+  });
+
+  it("surfaces the redacted key-presence flag per row", async () => {
+    vi.mocked(toolsApi.getDataTools).mockResolvedValue({
+      data_tools: [{ ...makeEntry(), api_key_set: true } as never],
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText("set")).toBeInTheDocument();
+  });
+
   it("shows empty state when no data_tools configured", async () => {
     vi.mocked(toolsApi.getDataTools).mockResolvedValue({
       data_tools: [],

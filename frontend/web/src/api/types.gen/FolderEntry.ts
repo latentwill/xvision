@@ -10,7 +10,7 @@ export type FolderEntry = {
 /**
  * Path relative to `folder_root()`, forward-slash separated.
  */
-rel_path: string, kind: FileKind, size_bytes: bigint, 
+rel_path: string, kind: FileKind, size_bytes: number, 
 /**
  * RFC3339 UTC timestamp of the file's last-modified mtime. Empty
  * string when the mtime is unavailable on the host filesystem.

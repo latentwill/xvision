@@ -54,15 +54,10 @@ fn pyramiding_htf_has_dropped_pyramiding_and_htf() {
     );
 }
 
-// ── 2. rsi_threshold.pine (clean archetype) → zero dropped items ─────────────
+// ── 2. rsi_threshold.pine (clean archetype) → captured conditions ────────────
 //
-// NOTE: rsi_threshold uses input knobs as periods (variable period args), so the
-// filter conditions cannot be resolved from literals. This means the mapped strategy
-// is Mechanistic with entry rules but zero filter conditions, and the RSI/oversold
-// comparisons end up in unmapped (recorded as dropped). However the entry rules
-// themselves ARE captured. The test verifies that for a reasonably clean archetype
-// the overall import succeeds and the fidelity report is non-empty with some captured.
-// The strict "zero dropped" variant uses a literal-period fixture.
+// Its input period is resolved from the input default during mapping. The
+// fixture therefore exercises the same dynamic-period path as live imports.
 
 #[test]
 fn rsi_threshold_import_succeeds_and_strategy_is_valid() {
@@ -379,19 +374,10 @@ fn cost_model_has_concrete_default_values() {
     let outcome = import_pine(&src).expect("must import");
     let cm = &outcome.fidelity.cost_model;
 
-    // commission_value_bps must be > 0.0 (the default taker fee is 10 bps)
-    assert!(
-        cm.commission_value_bps > 0.0,
-        "commission_value_bps must be positive (default taker = 10 bps); got: {}",
-        cm.commission_value_bps
-    );
-
-    // slippage_value_bps must be > 0.0 (the default linear slip is 2 bps)
-    assert!(
-        cm.slippage_value_bps > 0.0,
-        "slippage_value_bps must be positive (default linear = 2 bps); got: {}",
-        cm.slippage_value_bps
-    );
+    assert_eq!(cm.profile_name, "offline-reference");
+    assert_eq!(cm.commission_value_bps, 25.0);
+    assert_eq!(cm.slippage_value_bps, 5.0);
+    assert_eq!(cm.fill_timing, "Next bar open");
 }
 
 // ── WU10-3. vocabulary matches TV-aligned names ──────────────────────────────
@@ -573,4 +559,80 @@ fn captured_if_guard_does_not_appear_in_dropped() {
         "captured if-guard must not appear as dropped Unsupported item; dropped={:?}",
         fidelity.dropped
     );
+}
+
+#[test]
+fn and_tree_lowers_to_filter_leaves() {
+    let outcome = import_pine(&load_fixture("and_tree.pine")).expect("AND tree must import");
+    let filter = outcome.strategy.filter.as_ref().expect("filter must be emitted");
+    let items = match &filter.conditions {
+        xvision_filters::ConditionTree::All(items) => items,
+        other => panic!("expected all condition tree, got {other:?}"),
+    };
+    assert_eq!(items.len(), 3);
+    for item in items {
+        assert!(matches!(item, xvision_filters::ConditionItem::Leaf(_)));
+    }
+    assert_eq!(outcome.fidelity.mapped_condition_count, 3);
+    assert!(
+        outcome
+            .fidelity
+            .captured
+            .iter()
+            .any(|item| item.item == "filter_conditions:3")
+    );
+}
+
+#[test]
+fn dynamic_input_period_uses_default_and_keeps_bound() {
+    let outcome =
+        import_pine(&load_fixture("dynamic_period.pine")).expect("dynamic period must import");
+    let filter = outcome.strategy.filter.as_ref().expect("filter must be emitted");
+    let items = match &filter.conditions {
+        xvision_filters::ConditionTree::All(items) => items,
+        other => panic!("expected all condition tree, got {other:?}"),
+    };
+    let ema_period = items.iter().find_map(|item| {
+        let xvision_filters::ConditionItem::Leaf(condition) = item else {
+            return None;
+        };
+        for operand in [&condition.lhs, &condition.rhs] {
+            if let xvision_filters::Operand::Indicator(indicator) = operand {
+                if indicator.name == xvision_filters::IndicatorName::Ema {
+                    return Some(indicator.period);
+                }
+            }
+        }
+        None
+    });
+    assert_eq!(ema_period, Some(Some(9)));
+    let bound = outcome
+        .strategy
+        .tunable_bounds
+        .iter()
+        .find(|bound| bound.path == "unbound.fast_len")
+        .expect("period input must remain an optimizer bound");
+    assert_eq!(bound.min, Some(2.0));
+    assert_eq!(bound.max, Some(100.0));
+}
+
+#[test]
+fn fidelity_report_detects_degenerate_mapping() {
+    let report = FidelityReport {
+        captured: vec![],
+        approximated: vec![],
+        dropped: vec![xvision_engine::strategies::pine_import::FidelityItem {
+            item: "signal".to_string(),
+            reason: "dropped".to_string(),
+        }],
+        cost_model: CostModelReference::default(),
+        source_condition_count: 1,
+        mapped_condition_count: 0,
+        bare_entry_rules: false,
+    };
+    assert!(report.is_degenerate());
+    let mut scaffold_only = report;
+    scaffold_only.source_condition_count = 0;
+    scaffold_only.bare_entry_rules = true;
+    assert!(scaffold_only.is_degenerate());
 }

@@ -7,7 +7,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::autooptimizer::config::GepaBenchmarkWindow;
-
+use crate::autooptimizer::eval_adapter::PaperTestRunner;
+use crate::autooptimizer::scenario_synthesis::{
+    synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario,
+};
+use crate::strategies::agent_ref::canonical_role;
+use crate::strategies::Strategy;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CachedRealEvalScore {
     pub score: f64,
@@ -36,6 +41,130 @@ pub trait BenchmarkEvaluator: Send + Sync {
     ) -> anyhow::Result<RealEvalOutcome>;
 }
 
+/// Production GEPA evaluator backed by the same paper-test runner used by the
+/// optimizer cycle. Each instruction is applied as the trader slot's
+/// per-strategy prompt, then parent and candidate are evaluated on both
+/// benchmark windows so their mean Sharpe values remain comparable.
+pub struct BacktestBenchmarkEvaluator {
+    strategy: Strategy,
+    paper_tester: Arc<dyn PaperTestRunner>,
+}
+
+impl BacktestBenchmarkEvaluator {
+    pub fn new(strategy: Strategy, paper_tester: Arc<dyn PaperTestRunner>) -> Self {
+        Self {
+            strategy,
+            paper_tester,
+        }
+    }
+
+    fn candidate_for_instruction(&self, instruction: &str) -> anyhow::Result<Strategy> {
+        let mut candidate = self.strategy.clone();
+        let trader = candidate
+            .agents
+            .iter_mut()
+            .find(|agent| canonical_role(&agent.role) == "trader")
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "GEPA instruction cannot be applied: strategy '{}' has no trader AgentRef",
+                    candidate.manifest.id
+                )
+            })?;
+        trader.prompt = instruction.to_string();
+        Ok(candidate)
+    }
+
+    fn scenarios(
+        benchmark: &GepaBenchmarkWindow,
+        cadence_minutes: u32,
+    ) -> anyhow::Result<(crate::eval::scenario::Scenario, crate::eval::scenario::Scenario)> {
+        if benchmark.day.start >= benchmark.day.end {
+            anyhow::bail!(
+                "GEPA benchmark '{}' has an empty or inverted day window ({}..{})",
+                benchmark.label,
+                benchmark.day.start,
+                benchmark.day.end
+            );
+        }
+        let day = synthesize_optimizer_day_scenario(&benchmark.day, cadence_minutes, "gepa");
+        let baseline = synthesize_baseline_untouched_scenario(&day, &benchmark.baseline)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "GEPA benchmark '{}' cannot build baseline scenario: {e}",
+                    benchmark.label
+                )
+            })?;
+        Ok((day, baseline))
+    }
+}
+
+#[async_trait]
+impl BenchmarkEvaluator for BacktestBenchmarkEvaluator {
+    async fn evaluate(
+        &self,
+        instruction: &str,
+        benchmark: &GepaBenchmarkWindow,
+    ) -> anyhow::Result<RealEvalOutcome> {
+        let candidate = self.candidate_for_instruction(instruction)?;
+        let cadence_minutes = self.strategy.manifest.decision_cadence_minutes;
+        let (day, baseline) = Self::scenarios(benchmark, cadence_minutes)?;
+        let parent_day = self
+            .paper_tester
+            .run(&self.strategy, &day)
+            .await
+            .map_err(|e| anyhow::anyhow!("GEPA benchmark '{}' parent day backtest failed: {e}", benchmark.label))?;
+        let parent_baseline = self
+            .paper_tester
+            .run(&self.strategy, &baseline)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "GEPA benchmark '{}' parent baseline backtest failed: {e}",
+                    benchmark.label
+                )
+            })?;
+        let child_day = self
+            .paper_tester
+            .run(&candidate, &day)
+            .await
+            .map_err(|e| anyhow::anyhow!("GEPA benchmark '{}' candidate day backtest failed: {e}", benchmark.label))?;
+        let child_baseline = self
+            .paper_tester
+            .run(&candidate, &baseline)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "GEPA benchmark '{}' candidate baseline backtest failed: {e}",
+                    benchmark.label
+                )
+            })?;
+        Ok(RealEvalOutcome {
+            label: benchmark.label.clone(),
+            parent_sharpe: (parent_day.sharpe + parent_baseline.sharpe) / 2.0,
+            child_sharpe: (child_day.sharpe + child_baseline.sharpe) / 2.0,
+        })
+    }
+}
+
+/// Fallback evaluator used by configuration-only callers. Runtime cycle
+/// construction should replace it with a backtest-backed implementation through
+/// [`crate::autooptimizer::gepa::real_eval_options_from_config_with_evaluator`].
+pub struct UnavailableBenchmarkEvaluator;
+
+#[async_trait]
+impl BenchmarkEvaluator for UnavailableBenchmarkEvaluator {
+    async fn evaluate(
+        &self,
+        _instruction: &str,
+        benchmark: &GepaBenchmarkWindow,
+    ) -> anyhow::Result<RealEvalOutcome> {
+        anyhow::bail!(
+            "benchmark evaluator context is required for GEPA window '{}'",
+            benchmark.label
+        )
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct RealEvalCache {
     inner: Arc<Mutex<HashMap<String, CachedRealEvalScore>>>,
@@ -58,10 +187,13 @@ impl RealEvalCache {
     }
 }
 
+/// Convert a parent/child metric delta to a bounded fitness score.
+///
+/// The unit scale avoids magnifying tiny parent metrics: a parent near zero
+/// still gets the same one-point scale as a normalised metric near one.
 pub fn normalized_delta_score(parent_metric: f64, child_metric: f64) -> f64 {
-    let denom = parent_metric.abs().max(0.01);
-    let normalized = (child_metric - parent_metric) / denom;
-    ((normalized + 1.0) / 2.0).clamp(0.0, 1.0)
+    let scale = parent_metric.abs().max(1.0);
+    (0.5 + (child_metric - parent_metric) / (2.0 * scale)).clamp(0.0, 1.0)
 }
 
 pub async fn score_real_eval_candidate(
@@ -255,11 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn normalized_delta_score_clamps_to_unit_interval() {
+    fn normalized_delta_score_uses_bounded_unit_scale() {
         assert_eq!(normalized_delta_score(1.0, 3.0), 1.0);
         assert_eq!(normalized_delta_score(1.0, -2.0), 0.0);
         assert_eq!(normalized_delta_score(1.0, 1.0), 0.5);
-        assert!(normalized_delta_score(0.0, 0.01) > 0.5);
+        assert!((normalized_delta_score(0.0, 0.01) - 0.505).abs() < 1e-12);
+        assert!((normalized_delta_score(0.0, 0.4) - 0.7).abs() < 1e-12);
     }
 
     #[test]

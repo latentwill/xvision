@@ -26,6 +26,12 @@
 //!   decision.
 //! * `end_run` is always attempted, even when `step` errored, so the
 //!   sidecar session is reclaimed.
+//! * A sidecar step ending `status="failed"` with a non-budget reason
+//!   (e.g. the transient `User not found.` identity rejection) is retried
+//!   ONCE by [`execute_slot_cline`] under a `{run_id}::retry1` idempotency
+//!   id — the suffix keeps the retry clear of the same-id dedup rule above.
+//!   Budget/wall aborts (`status="aborted"`) and replay-mode failures are
+//!   never retried.
 //! * `run_id` is the idempotency key. The sidecar `store.ts` keys sessions
 //!   by `run_id`, so a retried `start_run` with the same id is rejected /
 //!   deduped by the sidecar rather than double-executing here.
@@ -395,9 +401,66 @@ impl ClineSlotInput<'_> {
 ///
 /// See the module docs for the failure + recovery contract (item 2) and
 /// the provider-matrix abort behavior (item 5).
+///
+/// Retry policy (2026-08-24 campaign postmortem): a sidecar step that ends
+/// with `status="failed"` (e.g. the transient `User not found.` identity
+/// rejection seen at cycle0 of run 01M0PVVY) gets exactly ONE retry under a
+/// suffixed idempotency id (`{run_id}::retry1`) so the sidecar treats it as
+/// a fresh logical invocation. Budget/wall aborts (`status="aborted"`) are
+/// clean stops — never retried. Replay mode never retries: its failures are
+/// deterministic by construction.
 pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<LlmResponse> {
+    let replay = matches!(input.trajectory_mode, TrajectoryMode::Replay { .. });
+    match execute_slot_cline_once(&input, None).await {
+        Ok(resp) => Ok(resp),
+        Err(err) => {
+            if replay || !is_retryable_sidecar_step_failure(&err) {
+                return Err(err);
+            }
+            if let Some(obs) = input.obs.as_ref() {
+                obs.emit_recovery_attempt(
+                    &crate::agent::observability::fresh_span_id(),
+                    input.model_call_span_id.clone(),
+                    crate::agent::recovery::classify(&err).tag(),
+                    1,
+                )
+                .await;
+            }
+            tracing::warn!(
+                event = "sidecar_step_retry",
+                run_id = %input.run_id,
+                role = %input.slot.role,
+                error = %err,
+                "transient sidecar step failure; retrying once with a fresh session"
+            );
+            let retry_run_id = format!("{}::retry1", input.run_id);
+            execute_slot_cline_once(&input, Some(&retry_run_id)).await
+        }
+    }
+}
+
+/// True when the error is a sidecar step failure that a single fresh-session
+/// retry can plausibly fix: `StepNotCompleted` with `status="failed"` and a
+/// non-budget reason. Budget aborts (`budget_*_exceeded`, surfaced with
+/// `status="aborted"`) are deliberate harness stops, not transient faults.
+fn is_retryable_sidecar_step_failure(err: &anyhow::Error) -> bool {
+    let Some(e) = err.downcast_ref::<ClineRuntimeError>() else {
+        return false;
+    };
+    match e {
+        ClineRuntimeError::StepNotCompleted { status, error, .. } => {
+            status == "failed" && error.as_deref().map(|s| !s.contains("budget_")).unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
+async fn execute_slot_cline_once(
+    input: &ClineSlotInput<'_>,
+    run_id_override: Option<&str>,
+) -> anyhow::Result<LlmResponse> {
     let role = input.role().to_string();
-    let run_id = input.run_id.clone();
+    let run_id = run_id_override.unwrap_or(&input.run_id).to_string();
 
     // Observability: provider / model / span for the model-call lifecycle
     // written on the success path below. The backtest executor opens the
@@ -561,10 +624,15 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
             .contains("budget_output_tokens_exceeded")
         {
             tracing::warn!(
-                event = "budget_misconfig_suspected",
+                event = "budget_abort",
                 run_id = %run_id,
                 role = %role,
-                hint = "max_tokens may be too low for this model — increase to ≥2048 in agent slot settings",
+                effective_step_budget = input.budget_limits().max_output_tokens,
+                hint = "the Cline sidecar enforces a PER-STEP output budget from slot.max_tokens \
+                        (engine default 8192 when the slot leaves it unset); the run-level \
+                        `--max-output-tokens` flag is a separate cumulative budget and did NOT \
+                        cause this abort. Raise max_tokens on the agent slot (or trim tool-heavy \
+                        steps) to clear this.",
             );
         }
         let err = ClineRuntimeError::StepNotCompleted {
@@ -1226,5 +1294,40 @@ mod tests {
         // makes several tool rounds before reaching submit_decision.
         assert_eq!(cumulative_output_cap(Some(4096)), 32_768);
         assert_eq!(cumulative_output_cap(Some(128)), DEFAULT_MAX_OUTPUT_TOKENS);
+    fn retry_gate_admits_failed_status_and_rejects_budget_aborts() {
+        // Transient sidecar failure (the 2026-08-23 campaign `User not
+        // found.` shape): retried exactly once.
+        let transient = ClineRuntimeError::StepNotCompleted {
+            run_id: "r".into(),
+            role: "trader".into(),
+            status: "failed".into(),
+            error: Some("User not found.".into()),
+        };
+        assert!(is_retryable_sidecar_step_failure(&anyhow::Error::new(transient)));
+
+        // Budget aborts are clean harness stops — never retried.
+        let budget = ClineRuntimeError::StepNotCompleted {
+            run_id: "r".into(),
+            role: "trader".into(),
+            status: "aborted".into(),
+            error: Some("budget_output_tokens_exceeded".into()),
+        };
+        assert!(!is_retryable_sidecar_step_failure(&anyhow::Error::new(budget)));
+
+        // Transport errors and other classes stay fail-fast.
+        assert!(!is_retryable_sidecar_step_failure(&anyhow::anyhow!(
+            "connection reset"
+        )));
+    }
+
+    #[test]
+    fn budget_uses_cumulative_default_independent_of_turn_limit() {
+        let cumulative = BudgetLimits {
+            max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            max_wall_ms: DEFAULT_MAX_WALL_MS,
+        };
+        assert_eq!(cumulative.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
+        assert!(cumulative.max_wall_ms > 0)
     }
 }

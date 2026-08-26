@@ -3,24 +3,22 @@
 /**
  * Aggregated token + cost figures for one eval run.
  *
- * Sourced from the `model_calls` table joined to the run via the
- * observability span chain (see [`aggregate_run_token_totals`]). The
- * `cost_estimate_complete` flag tracks whether every contributing
- * `model_calls.cost_usd` had a non-null value — when `false`, the
- * reported `cost_usd` is a strict lower bound and the operator should
- * know.
+ * Sourced from `model_calls` when available, then from the run-level
+ * `eval_runs.actual_*_tokens` columns as a fallback. The
+ * `cost_estimate_complete` flag only describes per-call cost rows; run-level
+ * token fallbacks carry no cost signal and are therefore incomplete.
  */
 export type RunTokenTotals = { 
 /**
- * Sum of `model_calls.input_token_count` across the run.
- * `None` when no model_calls landed for this run.
+ * Sum of `model_calls.input_token_count` across the run, or
+ * `eval_runs.actual_input_tokens` when no model calls landed for this run.
  */
-input_tokens: bigint | null, 
+input_tokens?: number, 
 /**
- * Sum of `model_calls.output_token_count` across the run.
- * `None` when no model_calls landed for this run.
+ * Sum of `model_calls.output_token_count` across the run, or
+ * `eval_runs.actual_output_tokens` when no model calls landed for this run.
  */
-output_tokens: bigint | null, 
+output_tokens?: number, 
 /**
  * Sum of `model_calls.cost_usd`. `None` when every contributing row
  * had `cost_usd = NULL`, or no model_calls landed at all.
@@ -41,4 +39,4 @@ cost_estimate_complete: boolean,
  * my cost null" — when this is 0, the observability bus wasn't wired
  * (typical for very old runs or pure-rust-baseline arms).
  */
-model_call_count: bigint, };
+model_call_count: number, };

@@ -3,4 +3,4 @@
 /**
  * Per-namespace live-observation count for the status report.
  */
-export type MemoryNamespaceStatus = { namespace: string, live_observations: bigint, };
+export type MemoryNamespaceStatus = { namespace: string, live_observations: number, };

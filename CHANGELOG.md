@@ -14,6 +14,24 @@ container reports must match the tag pulled.
 
 ### Fixed
 
+- **Forward-test accuracy pass** — live runs now report honest win rate /
+  realized round-trips (counters were hardcoded zero); `--stale-data-max-age-ms`
+  is enforced against wall-clock bar age per its contract;
+  `--max-agent-ms` actually cancels the agent and discards the late decision
+  instead of flagging after acceptance; Degraded health fires on
+  CONSECUTIVE dispatch failures, resetting on success.
+- **CLI forward-test launches work** — `xvn eval run --mode fwd` now routes
+  through the engine's async `start_run` path (the only surface that builds
+  a live executor with venue resolution + warmup) instead of the sync path
+  that rejected Forward; strategy cadence drives bar granularity via the
+  engine's existing derivation.
+- **Honest forward-test reconnect** — `POST /api/eval/runs/:id/reconnect`
+  no longer fakes a resume: it rebuilds the portfolio book from persisted
+  decisions (reversal/partial/close semantics now match the executor),
+  seeds the last equity sample and PK watermarks, and respawns the live
+  executor to continue the same ledger. Reconciliation against a
+  disconnected run reports `source: expected_only` with an EMPTY broker
+  side instead of a fabricated matched snapshot.
 - **Eval substrate correctness** — backtest executor: flip PnL no longer
   erases prior realized PnL (entry notional frozen at entry); sizing uses
   marked equity including unrealized PnL; market fills defer to next-bar
@@ -153,8 +171,9 @@ detail. PR references are representative, not exhaustive.
 - Live eval mode (`LiveConfig` + `--live-duration`); agentless **Mechanistic
   Strategies** via the `Algorithm` trait; Pine Script ingestion → optimizable
   `Strategy` (#998, #1014).
-- Intra-bar O→H→L→C fill ordering with maker/taker aggressor-side fees and
-  per-asset fee/slip overrides; lookahead-bias prober + `DataManifest` content
+- Next-bar-open market fills; gap-aware stop/target fills with slippage,
+  maker/taker aggressor-side fees, and per-asset fee/slip overrides. Limit
+  orders are not filled yet; lookahead-bias prober + `DataManifest` content
   hashing; net-of-inference-cost return metric.
 - Episodic memory (Cortex) across agent surfaces; broker-rule circuit-breaker that
   skips unsupported trades instead of aborting the run.

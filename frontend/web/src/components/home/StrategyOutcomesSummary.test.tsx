@@ -64,6 +64,11 @@ function makeRun(
     skipped_dispatches: 0,
     delayed_decisions: 0,
     forced_cancels: 0,
+    source: "human",
+    n_decisions: null,
+    n_trades: null,
+    win_rate: null,
+    n_bars: null,
   };
 }
 

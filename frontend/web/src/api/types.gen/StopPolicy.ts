@@ -15,7 +15,7 @@ export type StopPolicy = {
  * the first bar-close past this point. Capped at
  * [`LIVE_RUN_MAX_TIME_LIMIT_SECS`] (30 days).
  */
-time_limit_secs: bigint | null, 
+time_limit_secs?: number, 
 /**
  * Number of bars consumed before termination.
  */

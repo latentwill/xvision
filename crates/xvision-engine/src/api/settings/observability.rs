@@ -71,7 +71,9 @@ pub struct ObservabilityReport {
     pub store_tool_inputs: bool,
     pub store_tool_outputs: bool,
     pub redact_secrets: bool,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub payload_ttl_days: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub max_payload_bytes: u64,
     /// True when the persisted config file exists. False means defaults
     /// are in force — the UI uses this to render "Default" vs "Custom".

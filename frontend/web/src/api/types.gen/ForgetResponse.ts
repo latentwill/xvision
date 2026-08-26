@@ -6,7 +6,7 @@ export type ForgetResponse = {
  * soft-deleted (still in-table with `forgotten_at` set);
  * when grace == 0 they are hard-deleted.
  */
-deleted: bigint, 
+deleted: number, 
 /**
  * RFC3339 timestamp until which `undo-forget` will restore the
  * rows soft-deleted by this call. `None` when grace == 0 (the

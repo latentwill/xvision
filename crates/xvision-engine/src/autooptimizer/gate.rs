@@ -10,16 +10,89 @@ const DRAWDOWN_DETERIORATION_FACTOR: f64 = 1.5;
 /// Prevents identical inputs from flipping at the threshold due to FP rounding.
 const CMP_EPS: f64 = 1e-9;
 
+use crate::autooptimizer::pool_eval::PoolComparison;
+
+/// Counts the structural changes made by a candidate for the simplicity gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimplicityStats {
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// Reject a candidate whose cost-adjusted day return is non-positive. Net is
+/// computed directly (gross minus inference cost over initial capital) because
+/// the paper-tester path leaves `net_return_pct` unset — that field is only
+/// populated post-finalize on persisted eval runs. Skipped when inference
+/// pricing is unavailable or capital is non-positive.
+pub fn check_net_return(child_day: &MetricsSummary, initial_capital: f64) -> Option<&'static str> {
+    let net = match child_day.inference_cost_quote_total {
+        Some(cost) if initial_capital > 0.0 => {
+            Some(child_day.total_return_pct - (cost / initial_capital * 100.0))
+        }
+        _ => child_day.net_return_pct,
+    };
+    net.filter(|net_return| *net_return <= 0.0)
+        .map(|_| "net return non-positive after inference costs")
+}
+
+/// Check pool-level consistency against the configured win fraction and noise
+/// floor. An empty pool is never consistent because no wins can be established.
+pub fn check_pool_consistency(
+    comparison: &PoolComparison,
+    min_pool_win_fraction: f64,
+    noise_floor_min_delta: f64,
+) -> Option<String> {
+    let n_outcomes = comparison.child.outcomes.len();
+    if n_outcomes == 0 {
+        return Some("consistency: pool has no outcomes".to_string());
+    }
+    let win_fraction = comparison.child.wins_vs_parent as f64 / n_outcomes as f64;
+    if win_fraction < min_pool_win_fraction {
+        return Some(format!(
+            "consistency: child wins {:.4} of pool windows, below minimum {:.4}",
+            win_fraction, min_pool_win_fraction
+        ));
+    }
+    let mean_delta =
+        comparison.child.mean_net_return_pct - comparison.parent.mean_net_return_pct;
+    let required_delta = comparison
+        .child
+        .noise_floor
+        .max(noise_floor_min_delta);
+    if mean_delta <= required_delta {
+        return Some(format!(
+            "consistency: mean net-return delta {:.6} does not exceed noise floor {:.6}",
+            mean_delta, required_delta
+        ));
+    }
+    None
+}
+
+/// Deletion wins when the objective is not worse within the configured
+/// tolerance. Safety guards are evaluated separately by the cycle gate.
+pub fn check_simplicity_equal_or_simpler(
+    stats: &SimplicityStats,
+    day_delta: f64,
+    holdout_delta: f64,
+    tolerance: f64,
+) -> bool {
+    stats.removed > stats.added
+        && day_delta >= -tolerance
+        && holdout_delta >= -tolerance
+}
+
 /// F24: the metric a mutation cycle optimizes. Higher-is-better for all but
-/// `MaxDrawdown`, which the gate minimizes. (`sortino` and a cost/efficiency axis
-/// are deferred: Sortino isn't computed in `MetricsSummary`, and a cost objective
-/// needs the F11/F23 realized-cost metering as its input.)
+/// `MaxDrawdown`, which the gate minimizes. `Consistency` uses pool-level
+/// evidence when available and falls back to the single-window net-return
+/// summary otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Objective {
     #[default]
     Sharpe,
     TotalReturn,
+    NetReturn,
+    Consistency,
     MaxDrawdown,
     WinRate,
 }
@@ -28,10 +101,16 @@ impl Objective {
     /// The objective's value for a window's metrics, oriented so that a LARGER
     /// number is always better (drawdown is negated so "reduce drawdown" reads as
     /// an increase, unifying the gate's delta comparison).
+    ///
+    /// `Consistency` is only a single-summary ranking fallback. True consistency
+    /// scoring requires a `PoolComparison`.
     pub fn oriented_value(&self, m: &MetricsSummary) -> f64 {
         match self {
             Self::Sharpe => m.sharpe,
             Self::TotalReturn => m.total_return_pct,
+            Self::NetReturn | Self::Consistency => {
+                m.net_return_pct.unwrap_or(m.total_return_pct)
+            }
             Self::WinRate => m.win_rate,
             // Lower drawdown is better → negate the magnitude so a reduction is a
             // positive delta.
@@ -43,6 +122,8 @@ impl Objective {
         match self {
             Self::Sharpe => "sharpe",
             Self::TotalReturn => "total_return",
+            Self::NetReturn => "net_return",
+            Self::Consistency => "consistency",
             Self::MaxDrawdown => "max_drawdown",
             Self::WinRate => "win_rate",
         }
@@ -54,6 +135,8 @@ impl Objective {
         match s.trim().to_ascii_lowercase().as_str() {
             "sharpe" => Some(Self::Sharpe),
             "total_return" | "return" | "total-return" => Some(Self::TotalReturn),
+            "net_return" | "net" | "net-return" => Some(Self::NetReturn),
+            "consistency" => Some(Self::Consistency),
             "max_drawdown" | "drawdown" | "max-drawdown" => Some(Self::MaxDrawdown),
             "win_rate" | "winrate" | "win-rate" => Some(Self::WinRate),
             _ => None,
@@ -62,7 +145,14 @@ impl Objective {
 
     /// All selectable objective labels, for CLI help / error messages.
     pub fn all_labels() -> &'static [&'static str] {
-        &["sharpe", "total_return", "max_drawdown", "win_rate"]
+        &[
+            "sharpe",
+            "total_return",
+            "net_return",
+            "consistency",
+            "max_drawdown",
+            "win_rate",
+        ]
     }
 }
 
@@ -399,5 +489,67 @@ mod tests {
             aggregate_regime_verdicts(&[(Bull, pass.clone()), (Chop, pass.clone())]),
             LineageStatus::Quarantined
         );
+    }
+
+    #[test]
+    fn net_and_consistency_objectives_use_net_return_fallback() {
+        let gross_only = MetricsSummary {
+            total_return_pct: 2.0,
+            ..Default::default()
+        };
+        let net = MetricsSummary {
+            total_return_pct: 2.0,
+            net_return_pct: Some(-0.5),
+            ..Default::default()
+        };
+        assert_eq!(Objective::parse("net"), Some(Objective::NetReturn));
+        assert_eq!(Objective::parse("consistency"), Some(Objective::Consistency));
+        assert_eq!(Objective::NetReturn.oriented_value(&gross_only), 2.0);
+        assert_eq!(Objective::Consistency.oriented_value(&net), -0.5);
+    }
+
+    #[test]
+    fn net_return_and_simplicity_helpers_enforce_boundaries() {
+        let negative = MetricsSummary {
+            net_return_pct: Some(0.0),
+            ..Default::default()
+        };
+        let unknown = MetricsSummary {
+            net_return_pct: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            check_net_return(&negative, 1000.0),
+            Some("net return non-positive after inference costs")
+        );
+        assert_eq!(check_net_return(&unknown, 1000.0), None);
+        // Non-positive capital disables the direct computation; the guard then
+        // falls back to the persisted net field (None here) and skips.
+        let unpriced = MetricsSummary {
+            net_return_pct: None,
+            inference_cost_quote_total: Some(1.0),
+            ..Default::default()
+        };
+        assert_eq!(check_net_return(&unpriced, 0.0), None);
+
+        let simpler = SimplicityStats {
+            added: 1,
+            removed: 2,
+        };
+        assert!(check_simplicity_equal_or_simpler(
+            &simpler, -0.01, 0.0, 0.01
+        ));
+        assert!(!check_simplicity_equal_or_simpler(
+            &simpler, -0.02, 0.0, 0.01
+        ));
+        assert!(!check_simplicity_equal_or_simpler(
+            &SimplicityStats {
+                added: 2,
+                removed: 2,
+            },
+            0.0,
+            0.0,
+            0.0
+        ));
     }
 }

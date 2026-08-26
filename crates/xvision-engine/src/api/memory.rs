@@ -61,6 +61,8 @@ pub struct MemoryItemDto {
     pub created_at: String,
     pub run_id: Option<String>,
     pub scenario_id: Option<String>,
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub cycle_idx: Option<i64>,
     pub source_window_start: Option<String>,
     pub source_window_end: Option<String>,
@@ -125,7 +127,11 @@ pub struct ListMemoryRequest {
     /// deletes.
     #[serde(default)]
     pub promotion_state: Option<String>,
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub offset: Option<i64>,
     /// When `Some(true)`, soft-deleted rows are included. Default is
     /// to skip rows with non-null `forgotten_at`.
@@ -146,6 +152,7 @@ pub struct ListMemoryRequest {
 pub struct MemoryListResponse {
     pub items: Vec<MemoryItemDto>,
     /// Total matching rows before LIMIT/OFFSET.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub total: u64,
 }
 
@@ -157,10 +164,15 @@ pub struct MemoryListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryNamespaceDto {
     pub namespace: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub live_total: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub observations: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub active_patterns: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub staged_patterns: u64,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub forgotten: u64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub latest_created_at: Option<String>,
@@ -174,6 +186,7 @@ pub struct MemoryNamespaceDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryNamespaceListResponse {
     pub items: Vec<MemoryNamespaceDto>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub total: u64,
 }
 
@@ -206,6 +219,8 @@ pub struct PatternCreateRequest {
     #[serde(default)]
     pub scenario_id: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub cycle_idx: Option<i64>,
 }
 
@@ -267,6 +282,7 @@ pub struct ForgetResponse {
     /// Number of rows affected by the call. When grace > 0 these are
     /// soft-deleted (still in-table with `forgotten_at` set);
     /// when grace == 0 they are hard-deleted.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub deleted: u64,
     /// RFC3339 timestamp until which `undo-forget` will restore the
     /// rows soft-deleted by this call. `None` when grace == 0 (the
@@ -274,6 +290,7 @@ pub struct ForgetResponse {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub restorable_until: Option<String>,
     /// Resolved grace window in days (0 means immediate hard-delete).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub grace_days: u32,
 }
 
@@ -308,6 +325,7 @@ pub struct UndoForgetRequest {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UndoForgetResponse {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub restored: u64,
     /// RFC3339 lower bound that was applied (resolved from
     /// `since` or computed from `grace_days`).
@@ -1104,6 +1122,7 @@ pub fn default_memory_db_path() -> std::path::PathBuf {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryNamespaceStatus {
     pub namespace: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub live_observations: u64,
 }
 
@@ -1132,6 +1151,7 @@ pub struct MemoryStatus {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub embedder_source: Option<String>,
     /// The soft-delete grace window in days (`XVN_MEMORY_FORGET_GRACE_DAYS`).
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub grace_days: u32,
     /// Per-namespace live-observation counts.
     pub namespaces: Vec<MemoryNamespaceStatus>,

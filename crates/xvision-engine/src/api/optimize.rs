@@ -73,8 +73,12 @@ pub struct MemoryDemoOptimizeRequest {
     #[serde(default)]
     pub auto_prior_patterns: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub prior_pattern_limit: Option<i64>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
     #[serde(default)]
     pub max_demo_chars: Option<usize>,
@@ -96,6 +100,7 @@ pub struct MemoryDemoObservationDto {
     pub id: String,
     pub run_id: String,
     pub scenario_id: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub cycle_idx: i64,
     pub source_window_end: String,
 }
@@ -115,6 +120,7 @@ pub struct MemoryDemoOptimizeDto {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub child_agent_id: Option<String>,
     pub slot: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub demo_count: usize,
     pub demo_source: String,
     pub reproducible: bool,
@@ -128,10 +134,13 @@ pub struct MemoryDemoOptimizeDto {
     pub dev_hash: String,
     pub holdout_hash: String,
     pub demo_source_pattern_ids: Vec<String>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub pattern_demo_source_count: usize,
     pub prior_pattern_ids: Vec<String>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub pattern_prior_count: usize,
     pub observations: Vec<MemoryDemoObservationDto>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub prompt_prefix_chars: usize,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_preview: Option<String>,

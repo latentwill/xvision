@@ -167,8 +167,13 @@ describe("AgentForm edit hydration", () => {
     const user = userEvent.setup();
     const { client } = renderAgentForm();
 
-    const name = await screen.findByLabelText(/^Name$/);
-    expect(name).toHaveValue("Server name");
+    // findByLabelText resolves as soon as the input EXISTS, which under full-
+    // suite load can precede the mocked query's first render with data. Wait
+    // for the hydrated value instead of asserting synchronously.
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Name$/)).toHaveValue("Server name");
+    });
+    const name = screen.getByLabelText(/^Name$/);
 
     await user.clear(name);
     await user.type(name, "Unsaved draft");
@@ -222,12 +227,9 @@ describe("AgentForm slot editing", () => {
     });
 
     renderAgentForm();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Provider").tagName).toBe("SELECT");
-    });
-    const provider = screen.getByLabelText("Provider");
-    await user.selectOptions(provider, "anthropic");
+    const provider = await screen.findByRole("button", { name: "Provider" });
+    await user.click(provider);
+    await user.click(screen.getByRole("option", { name: "anthropic" }));
 
     expect(screen.getByLabelText("Model")).toHaveValue("");
   });
@@ -238,8 +240,11 @@ describe("AgentForm memory selector (V2D)", () => {
     const user = userEvent.setup();
     renderAgentForm();
 
-    const select = (await screen.findByLabelText("Memory")) as HTMLSelectElement;
-    await user.selectOptions(select, "agent_scoped");
+    const memory = await screen.findByRole("button", { name: "Memory" });
+    await user.click(memory);
+    await user.click(
+      screen.getByRole("option", { name: "Agent-scoped (this agent only)" }),
+    );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => {

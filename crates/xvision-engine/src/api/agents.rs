@@ -30,11 +30,15 @@ use crate::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStor
 pub struct ListAgentsRequest {
     pub include_archived: bool,
     pub q: Option<String>,
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
     /// Optional row offset for paged listings. The dashboard's list
     /// route always sets `(limit, offset)`; CLI/MCP callers that want
     /// the full library leave both unset.
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub offset: Option<i64>,
     /// Scope visibility filter. `None` (default) and `Some("")` map to
     /// `ScopeFilter::Workspace` — only workspace agents (rows where

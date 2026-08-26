@@ -47,6 +47,8 @@ pub struct AutoOptimizerRunRequest {
     #[serde(default)]
     pub active: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
     #[serde(default)]
     pub min_observations: Option<usize>,
@@ -65,6 +67,7 @@ pub struct AutoOptimizerRunDto {
     pub pattern_id: String,
     pub pattern_text: String,
     pub promotion_state: String,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub min_observations: usize,
     pub created_at: String,
     pub status: String,
@@ -113,6 +116,8 @@ pub struct AutoOptimizerRunDto {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub judge_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub judge_token_cost: Option<i64>,
 }
 
@@ -157,6 +162,8 @@ pub struct AutoOptimizerGateRequest {
     #[serde(default)]
     pub judge_model: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub judge_token_cost: Option<i64>,
 }
 
@@ -175,8 +182,12 @@ pub struct AutoOptimizerRunListRequest {
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub limit: Option<i64>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub offset: Option<i64>,
 }
 
@@ -188,6 +199,7 @@ pub struct AutoOptimizerRunListRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AutoOptimizerRunListResponse {
     pub items: Vec<AutoOptimizerRunDto>,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub total: u64,
 }
 

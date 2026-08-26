@@ -1320,6 +1320,7 @@ pub struct Filter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fire: Option<FilterFire>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub cooldown_bars: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_wakeups_per_day: Option<u32>,

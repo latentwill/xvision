@@ -488,7 +488,7 @@ pub async fn list_lineage(
     let rows = if let (Some(status_str), Some(cycle_id)) = (&q.status, &q.cycle_id) {
         sqlx::query(
             "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
+             created_at, diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes WHERE status = ? AND cycle_id = ? \
              ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
@@ -502,7 +502,7 @@ pub async fn list_lineage(
     } else if let Some(status_str) = &q.status {
         sqlx::query(
             "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
+             created_at, diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes WHERE status = ? \
              ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
@@ -515,7 +515,7 @@ pub async fn list_lineage(
     } else if let Some(cycle_id) = &q.cycle_id {
         sqlx::query(
             "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
+             created_at, diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes WHERE cycle_id = ? \
              ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
@@ -528,7 +528,7 @@ pub async fn list_lineage(
     } else {
         sqlx::query(
             "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
+             created_at, diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes \
              ORDER BY created_at DESC LIMIT ? OFFSET ?",
         )
@@ -1575,6 +1575,18 @@ fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, Dash
     let diversity_score: Option<f64> = row
         .try_get("diversity_score")
         .map_err(|e| DashboardError::Internal(e.into()))?;
+    let mutation_diff_json: Option<String> = row
+        .try_get("mutation_diff_json")
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+    let seed: Option<i64> = row
+        .try_get("seed")
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+    let data_window_json: Option<String> = row
+        .try_get("data_window_json")
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+    let objective: Option<String> = row
+        .try_get("objective")
+        .map_err(|e| DashboardError::Internal(e.into()))?;
 
     let bundle_hash = ContentHash::from_hex(&bundle_hex).map_err(|e| DashboardError::Internal(e))?;
     let parent_hash = parent_hex
@@ -1604,6 +1616,10 @@ fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, Dash
         cycle_id,
         created_at,
         diversity_score,
+        mutation_diff_json,
+        seed,
+        data_window_json,
+        objective,
     })
 }
 

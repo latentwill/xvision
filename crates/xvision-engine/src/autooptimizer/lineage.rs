@@ -4,7 +4,21 @@ use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use super::content_hash::ContentHash;
-use super::gate::GateVerdict;
+use super::gate::{GateVerdict, Objective};
+use crate::eval::run::MetricsSummary;
+
+/// One row in the flat lineage experiment log.
+#[derive(Debug, Clone)]
+pub struct LineageLogRow {
+    pub bundle_hash: String,
+    pub parent_hash: Option<String>,
+    pub status: String,
+    pub verdict: String,
+    pub objective_metric: Option<f64>,
+    pub day_net_return_pct: Option<f64>,
+    pub day_total_return_pct: Option<f64>,
+    pub description: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageNode {
@@ -15,8 +29,19 @@ pub struct LineageNode {
     pub cycle_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub diversity_score: Option<f64>,
+    /// Serialized MutationDiff used to derive this candidate.
+    #[serde(default)]
+    pub mutation_diff_json: Option<String>,
+    /// Reproducibility seed used by the optimizer session.
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// Serialized evaluated scenario/window set.
+    #[serde(default)]
+    pub data_window_json: Option<String>,
+    /// Gate objective label used for promotion.
+    #[serde(default)]
+    pub objective: Option<String>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LineageStatus {
@@ -83,6 +108,29 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
             .execute(pool)
             .await
             .context("add lineage_nodes.diversity_score")?;
+    }
+    // Guard additive provenance columns for DBs created before migration 078.
+    for (column, sql) in [
+        (
+            "mutation_diff_json",
+            "ALTER TABLE lineage_nodes ADD COLUMN mutation_diff_json TEXT",
+        ),
+        ("seed", "ALTER TABLE lineage_nodes ADD COLUMN seed INTEGER"),
+        (
+            "data_window_json",
+            "ALTER TABLE lineage_nodes ADD COLUMN data_window_json TEXT",
+        ),
+        (
+            "objective",
+            "ALTER TABLE lineage_nodes ADD COLUMN objective TEXT",
+        ),
+    ] {
+        if !table_has_column(pool, "lineage_nodes", column).await? {
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .with_context(|| format!("add lineage_nodes.{column}"))?;
+        }
     }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS mutator_attribution (
@@ -238,9 +286,102 @@ pub async fn record_cycle_node_eval(
     .bind(created_at)
     .execute(pool)
     .await
+
     .context("record cycle_node_evaluations")?;
     Ok(())
 }
+/// Read a flat experiment log for a cycle id or a lineage-root bundle hash.
+///
+/// A bundle hash selects that node and all descendants. Any other value is
+/// treated as a cycle id and selects the nodes attributed to that cycle.
+pub async fn read_lineage_log(pool: &SqlitePool, cycle_or_root: &str) -> Result<Vec<LineageLogRow>> {
+    let root_hash = sqlx::query(
+        "SELECT bundle_hash FROM lineage_nodes
+         WHERE bundle_hash = ? OR bundle_hash LIKE ?
+         ORDER BY length(bundle_hash), bundle_hash
+         LIMIT 1",
+    )
+    .bind(cycle_or_root)
+    .bind(format!("{cycle_or_root}%"))
+    .fetch_optional(pool)
+    .await
+    .context("resolve lineage log selector")?
+    .and_then(|row| row.try_get::<String, _>("bundle_hash").ok());
+    let is_root = root_hash.is_some();
+    let rows = if is_root {
+        sqlx::query(
+            "WITH RECURSIVE descendants(bundle_hash) AS (
+                 SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash = ?
+                 UNION ALL
+                 SELECT child.bundle_hash
+                 FROM lineage_nodes child
+                 JOIN descendants parent ON child.parent_hash = parent.bundle_hash
+             )
+             SELECT n.bundle_hash, n.parent_hash, n.status, n.gate_verdict,
+                    n.objective, n.mutation_diff_json, m.metrics_day_json
+             FROM lineage_nodes n
+             JOIN descendants d ON d.bundle_hash = n.bundle_hash
+             LEFT JOIN lineage_node_metrics m ON m.bundle_hash = n.bundle_hash
+             ORDER BY n.created_at, n.bundle_hash",
+        )
+        .bind(root_hash.as_deref().unwrap_or(cycle_or_root))
+        .fetch_all(pool)
+        .await
+        .context("read lineage descendants")?
+    } else {
+        sqlx::query(
+            "SELECT n.bundle_hash, n.parent_hash, n.status, n.gate_verdict,
+                    n.objective, n.mutation_diff_json, m.metrics_day_json
+             FROM lineage_nodes n
+             LEFT JOIN lineage_node_metrics m ON m.bundle_hash = n.bundle_hash
+             WHERE n.cycle_id = ?
+                OR EXISTS (
+                    SELECT 1 FROM cycle_node_evaluations e
+                    WHERE e.cycle_id = ? AND e.bundle_hash = n.bundle_hash
+                )
+             ORDER BY n.created_at, n.bundle_hash",
+        )
+        .bind(cycle_or_root)
+        .bind(cycle_or_root)
+        .fetch_all(pool)
+        .await
+        .context("read lineage cycle")?
+    };
+
+    rows.into_iter()
+        .map(|row| {
+            let metrics = row
+                .try_get::<Option<String>, _>("metrics_day_json")?
+                .and_then(|json| serde_json::from_str::<MetricsSummary>(&json).ok());
+            let objective = row.try_get::<Option<String>, _>("objective")?;
+            let objective_metric = objective
+                .as_deref()
+                .and_then(Objective::parse)
+                .zip(metrics.as_ref())
+                .map(|(objective, metrics)| objective.oriented_value(metrics));
+            let description = row
+                .try_get::<Option<String>, _>("mutation_diff_json")?
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .and_then(|value| {
+                    value
+                        .get("rationale")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|rationale| rationale.lines().next().unwrap_or_default().to_string())
+                });
+            Ok(LineageLogRow {
+                bundle_hash: row.try_get("bundle_hash")?,
+                parent_hash: row.try_get("parent_hash")?,
+                status: row.try_get("status")?,
+                verdict: row.try_get("gate_verdict")?,
+                objective_metric,
+                day_net_return_pct: metrics.as_ref().and_then(|m| m.net_return_pct),
+                day_total_return_pct: metrics.as_ref().map(|m| m.total_return_pct),
+                description,
+            })
+        })
+        .collect()
+}
+ 
 
 async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
     // `table` is a compile-time-constant identifier at every call site; assert
@@ -271,8 +412,9 @@ impl LineageStore {
     pub async fn insert(&self, node: &LineageNode) -> Result<()> {
         sqlx::query(
             "INSERT OR REPLACE INTO lineage_nodes \
-             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, \
+              mutation_diff_json, seed, data_window_json, objective) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(node.bundle_hash.to_hex())
         .bind(node.parent_hash.as_ref().map(|h| h.to_hex()))
@@ -280,6 +422,10 @@ impl LineageStore {
         .bind(node.status.as_str())
         .bind(&node.cycle_id)
         .bind(node.created_at.to_rfc3339())
+        .bind(&node.mutation_diff_json)
+        .bind(node.seed)
+        .bind(&node.data_window_json)
+        .bind(&node.objective)
         .execute(&self.pool)
         .await
         .context("insert lineage_node")?;
@@ -297,7 +443,8 @@ impl LineageStore {
 
     pub async fn children_of(&self, parent_hash: &ContentHash) -> Result<Vec<LineageNode>> {
         let rows = sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, diversity_score \
+            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, \
+             diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes WHERE parent_hash = ? ORDER BY created_at",
         )
         .bind(parent_hash.to_hex())
@@ -324,7 +471,8 @@ impl LineageStore {
 
     pub async fn active_leaves(&self) -> Result<Vec<LineageNode>> {
         let rows = sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, diversity_score \
+            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, \
+             diversity_score, mutation_diff_json, seed, data_window_json, objective \
              FROM lineage_nodes n \
              WHERE n.status = 'active' \
                AND NOT EXISTS ( \
@@ -343,7 +491,8 @@ impl LineageStore {
 /// every reader — `LineageStore` here and [`super::cycle_runs`] — selects the
 /// same column set in the same order that [`row_to_node`] expects.
 pub(crate) const SELECT_COLS_PREFIX: &str = "SELECT bundle_hash, parent_hash, gate_verdict, status, \
-     cycle_id, created_at, diversity_score FROM lineage_nodes";
+     cycle_id, created_at, diversity_score, mutation_diff_json, seed, data_window_json, objective \
+     FROM lineage_nodes";
 
 pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
     let bundle_hex: String = row.try_get("bundle_hash").context("bundle_hash")?;
@@ -353,6 +502,10 @@ pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
     let cycle_id: Option<String> = row.try_get("cycle_id").context("cycle_id")?;
     let created_str: String = row.try_get("created_at").context("created_at")?;
     let diversity_score: Option<f64> = row.try_get("diversity_score").context("diversity_score")?;
+    let mutation_diff_json: Option<String> = row.try_get("mutation_diff_json").context("mutation_diff_json")?;
+    let seed: Option<i64> = row.try_get("seed").context("seed")?;
+    let data_window_json: Option<String> = row.try_get("data_window_json").context("data_window_json")?;
+    let objective: Option<String> = row.try_get("objective").context("objective")?;
 
     Ok(LineageNode {
         bundle_hash: ContentHash::from_hex(&bundle_hex).context("bundle_hash hex")?,
@@ -367,6 +520,10 @@ pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
             .context("created_at parse")?
             .with_timezone(&Utc),
         diversity_score,
+        mutation_diff_json,
+        seed,
+        data_window_json,
+        objective,
     })
 }
 

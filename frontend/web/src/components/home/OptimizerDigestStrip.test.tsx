@@ -45,6 +45,9 @@ function statRow(over: Partial<StatsRow>): StatsRow {
     ...over,
   };
 }
+function recentTs(daysAgo: number): string {
+  return new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+}
 
 function renderStrip() {
   const client = new QueryClient({
@@ -231,8 +234,8 @@ describe("OptimizerDigestStrip", () => {
 
   it("renders a 30d acceptance-rate segment derived from stats rows", () => {
     mockSession(baseSession, [
-      statRow({ ts: "2026-06-10T00:00:00Z", kept: 3, suspect: 1, dropped: 0 }),
-      statRow({ ts: "2026-06-11T00:00:00Z", kept: 1, suspect: 0, dropped: 4 }),
+      statRow({ ts: recentTs(10), kept: 3, suspect: 1, dropped: 0 }),
+      statRow({ ts: recentTs(9), kept: 1, suspect: 0, dropped: 4 }),
     ]);
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
@@ -249,14 +252,14 @@ describe("OptimizerDigestStrip", () => {
 
   it("tones the acceptance segment as warn when the recent half degraded", () => {
     mockSession(baseSession, [
-      statRow({ ts: "2026-06-01T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
-      statRow({ ts: "2026-06-02T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
-      statRow({ ts: "2026-06-03T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
-      statRow({ ts: "2026-06-04T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
-      statRow({ ts: "2026-06-10T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
-      statRow({ ts: "2026-06-11T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
-      statRow({ ts: "2026-06-12T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
-      statRow({ ts: "2026-06-13T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
+      statRow({ ts: recentTs(23), kept: 4, suspect: 0, dropped: 0 }),
+      statRow({ ts: recentTs(22), kept: 4, suspect: 0, dropped: 0 }),
+      statRow({ ts: recentTs(21), kept: 4, suspect: 0, dropped: 0 }),
+      statRow({ ts: recentTs(20), kept: 4, suspect: 0, dropped: 0 }),
+      statRow({ ts: recentTs(10), kept: 0, suspect: 0, dropped: 4 }),
+      statRow({ ts: recentTs(9), kept: 0, suspect: 0, dropped: 4 }),
+      statRow({ ts: recentTs(8), kept: 0, suspect: 0, dropped: 4 }),
+      statRow({ ts: recentTs(7), kept: 0, suspect: 0, dropped: 4 }),
     ]);
     renderStrip();
     const seg = screen.getByTestId("optimizer-digest-acceptance");

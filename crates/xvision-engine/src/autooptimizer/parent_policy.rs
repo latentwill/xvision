@@ -171,6 +171,10 @@ mod tests {
             cycle_id: Some("cycle-test".into()),
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         }
     }
 

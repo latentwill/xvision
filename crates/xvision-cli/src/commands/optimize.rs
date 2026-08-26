@@ -20,9 +20,9 @@
 //! ## Subcommands
 //!
 //! * **run** — run the optimizer. By default this runs ONE cycle and exits;
-//!   `--max-cycles N` runs N cycles and `--max-cycles 0` runs continuously
-//!   until SIGINT/SIGTERM, a budget ceiling, or convergence (GH #965). This is
-//!   the SAME engine path the dashboard "Run" button drives, and (via the IPC
+//!   `--cycles N` runs N cycles and `--cycles 0` runs continuously until
+//!   SIGINT/SIGTERM, a budget ceiling, or convergence (GH #965).
+//!   This is the SAME engine path the dashboard "Run" button drives, and (via
 //!   socket) CLI runs stream live into the dashboard (GH #968). It is the one
 //!   and only way to drive the optimizer — there are deliberately no manual
 //!   step verbs (a single operator surface; GH #966).
@@ -81,10 +81,10 @@ use xvision_engine::autooptimizer::cycle_runs::{
 use xvision_engine::autooptimizer::eval_adapter::{
     BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
-use xvision_engine::autooptimizer::gate::GateVerdict;
+use xvision_engine::autooptimizer::gate::{GateVerdict, Objective};
 use xvision_engine::autooptimizer::judge::Judge;
 use xvision_engine::autooptimizer::lineage::{
-    ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
+    ensure_lineage_schema, read_lineage_log, LineageNode, LineageStatus, LineageStore,
 };
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
 use xvision_engine::autooptimizer::metering_dispatch::{
@@ -133,10 +133,14 @@ pub struct OptimizeCmd {
 #[derive(Subcommand, Debug)]
 enum OptimizeAction {
     /// Run the optimizer (default action; --strategy is optional). One cycle by
-    /// default; --max-cycles N for N, --max-cycles 0 to run until stopped.
+    /// default; --cycles N for N, --cycles 0 to run until stopped.
     Run(RunCycleArgs),
+    /// Enumerate the strategy's full tunable-bound Cartesian grid.
+    Grid(GridArgs),
     /// List recent optimizer cycles from the lineage store.
     Ls(LsArgs),
+    /// Print a flat results log for a cycle or lineage root.
+    Log(LogArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
     Show(ShowArgs),
     /// Inspect a single optimizer cycle (alias for `show`).
@@ -219,6 +223,15 @@ pub struct LsArgs {
     /// Emit a JSON array instead of the table.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct LogArgs {
+    /// Cycle id or lineage-root bundle hash.
+    pub cycle_id_or_root: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db.
+    #[arg(long)]
+    pub db: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -324,6 +337,22 @@ struct LineageRow {
     gate_verdict: String,
 }
 
+#[derive(Args, Debug)]
+pub struct GridArgs {
+    /// Strategy manifest id to search.
+    #[arg(long)]
+    pub strategy: String,
+    /// Hard maximum number of combinations. Searches never truncate.
+    #[arg(long, default_value_t = xvision_engine::autooptimizer::DEFAULT_MAX_COMBINATIONS)]
+    pub max_combos: usize,
+    /// Emit combinations as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Evaluate each combination through the optimizer gate and persist lineage.
+    #[arg(long)]
+    pub evaluate: bool,
+}
+
 // ── Cycle args (pub so autooptimizer.rs can delegate) ────────────────────────
 
 #[derive(Args, Debug, Default)]
@@ -342,15 +371,15 @@ pub struct RunCycleArgs {
     /// real cycle.
     #[arg(long, hide = true)]
     pub mock: bool,
-    /// How many cycles to run before exiting (GH #965):
-    ///   • unset  → ONE cycle, then exit (default — back-compat).
-    ///   • N (>0)  → exactly N cycles.
-    ///   • 0       → run continuously until SIGINT/SIGTERM, the --budget
-    ///               ceiling, or convergence ("fire and forget").
-    /// SIGINT/SIGTERM always seals the in-flight cycle, writes terminal state,
-    /// releases the lock, and exits 0.
-    #[arg(long, value_name = "N")]
-    pub max_cycles: Option<u64>,
+    /// Number of cycles to run before exiting. Zero runs until interrupted,
+    /// the budget ceiling, or convergence. SIGINT/SIGTERM seals the active
+    /// cycle and exits cleanly. The old `--max-cycles` spelling remains an
+    /// alias.
+    #[arg(long, alias = "max-cycles", default_value_t = 1, value_name = "N")]
+    pub cycles: u64,
+    /// Seconds to wait between completed cycles.
+    #[arg(long, default_value_t = 0, value_name = "SECONDS")]
+    pub sleep_secs: u64,
     /// Unix socket of the dashboard IPC bridge so this run streams LIVE into the
     /// dashboard `/optimizer` page (GH #968). When omitted, the default
     /// `/tmp/xvn-optimizer.sock` is used automatically IF a dashboard is
@@ -476,12 +505,7 @@ pub struct RunCycleArgs {
         help = "Halt after N consecutive zero-keep cycles (default 3; 0 to disable)"
     )]
     pub max_consecutive_zero_keep: Option<u32>,
-    /// WS-11c: directory to auto-write a cycle document into when each cycle of
-    /// this run completes. Each completed cycle is exported as
-    /// `<DIR>/<cycle_id>.md` — the same high-fidelity, agent-feedable artifact
-    /// `xvn optimize export` produces — so a CLI-driven cycle leaves a feedback
-    /// document behind without a second command. Use `optimize export <cycle_id>`
-    /// to re-export any past cycle on demand.
+    /// `<DIR>/<cycle_id>.md`.
     #[arg(long, value_name = "DIR")]
     pub export: Option<PathBuf>,
 }
@@ -490,10 +514,15 @@ pub struct RunCycleArgs {
 
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
-        // `xvn optimize` with NO subcommand runs the optimizer (default action).
-        None => run_cycle_cmd(RunCycleArgs::default()).await,
+        None => run_cycle_cmd(RunCycleArgs {
+            cycles: 1,
+            ..RunCycleArgs::default()
+        })
+        .await,
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
+        Some(OptimizeAction::Grid(args)) => run_grid_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
+        Some(OptimizeAction::Log(args)) => run_log(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
         Some(OptimizeAction::Inspect(args)) => run_show(args).await,
         Some(OptimizeAction::Diff(args)) => run_diff(args).await,
@@ -507,6 +536,160 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Unlock(args)) => run_unlock(args).await,
         Some(OptimizeAction::ExplainMissingData(args)) => run_explain_missing_data(args).await,
     }
+}
+
+pub async fn run_grid_cmd(args: GridArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    let store = FilesystemStore::new(strategy_store_dir(&xvn_home));
+    let strategy = store
+        .load(&args.strategy)
+        .await
+        .map_err(|e| CliError::not_found(anyhow::anyhow!("load strategy {}: {e}", args.strategy)))?;
+    let combinations = xvision_engine::autooptimizer::enumerate_combinations(
+        &strategy.tunable_bounds,
+        Some(args.max_combos),
+    )
+    .map_err(|e| CliError::usage(anyhow::anyhow!("grid search: {e}")))?;
+    if !args.evaluate {
+        if args.json {
+            print_json(&combinations)?;
+        } else {
+            println!("strategy: {}", args.strategy);
+            println!("combinations: {}", combinations.len());
+            for (idx, combination) in combinations.iter().enumerate() {
+                println!("{idx}: {}", serde_json::to_string(&combination.values).unwrap_or_default());
+            }
+        }
+        return Ok(());
+    }
+
+    let cfg = load_ar_config(None)?;
+    cfg.validate()
+        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid optimizer config: {e}")))?;
+    let db_path = xvn_home.join("xvn.db");
+    let pool = open_and_migrate_db(&db_path).await?;
+    let lineage_store = LineageStore::new(pool.clone());
+    let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
+    let (bundle_hash, strategy) =
+        load_strategy_parent(&args.strategy, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+    let cadence_minutes = strategy.manifest.decision_cadence_minutes;
+    let day_scenario =
+        synthesize_optimizer_day_scenario(&cfg.day_window, cadence_minutes, "xvn-cli-grid");
+    let baseline_scenario =
+        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+
+    let meter: Arc<std::sync::Mutex<CycleMeter>> =
+        Arc::new(std::sync::Mutex::new(CycleMeter::default()));
+    let dispatch_binding = build_dispatch(
+        false,
+        Some(&xvn_home),
+        &cfg.mutator.provider,
+        &cfg.mutator.model,
+    )
+    .await?;
+    let catalogs = load_metering_catalogs(&xvn_home, &cfg.mutator.provider).await;
+    let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> =
+        Arc::new(CostMeteringDispatch::new(dispatch_binding.dispatch, catalogs, Arc::clone(&meter)));
+    let ctx = ApiContext::open(
+        &xvn_home,
+        Actor::Cli {
+            user: std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "operator".to_string()),
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
+    let tools = Arc::new(ToolRegistry::default_with_builtins());
+    let paper_tester_inner: Box<dyn PaperTestRunner> = if strategy.is_mechanistic() {
+        Box::new(CachedBacktestPaperTester::new(ctx, metered_dispatch, tools))
+    } else {
+        let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
+            &ctx,
+            &cfg.mutator.provider,
+            Arc::clone(&tools),
+            xvision_engine::eval::run::RunMode::Backtest,
+        )
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("spawn optimizer Cline sidecar: {e}")))?
+        .ok_or_else(|| {
+            CliError::upstream(anyhow::anyhow!(
+                "grid evaluation requires the Cline sidecar: XVN_AGENTD_BIN is not configured"
+            ))
+        })?;
+        Box::new(
+            CachedBacktestPaperTester::new(ctx, metered_dispatch, tools)
+                .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
+        )
+    };
+    let paper_tester: Arc<dyn PaperTestRunner> = Arc::new(BudgetCappedPaperTester::new_with_handle(
+        paper_tester_inner,
+        f64::INFINITY,
+        Arc::clone(&meter),
+    ));
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy.clone());
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: combinations.len(),
+        sabotage_seed: 42,
+        judge_provider: cfg.mutator.provider.clone(),
+        judge_model: cfg.mutator.model.clone(),
+        prompt_version: "grid-v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: vec![bundle_hash],
+        objective: cfg.objective,
+        regime_set: cfg.regime_set.clone(),
+        scenario_pool: Vec::new(),
+        min_pool_win_fraction: 0.5,
+        noise_floor_min_delta: 0.0,
+        simplicity_penalty: 0.0,
+        simplicity_equal_tolerance: 1e-9,
+        max_output_tokens: None,
+        max_consecutive_errors: 1,
+    };
+    let cycle_id = Ulid::new().to_string();
+    let outcomes = xvision_engine::autooptimizer::run_grid_evaluation(
+        &pool,
+        &strategy_blob_store,
+        &cfg,
+        &cycle_config,
+        &lineage_store
+            .get(&bundle_hash)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("load grid parent lineage: {e}")))?
+            .ok_or_else(|| CliError::upstream(anyhow::anyhow!("grid parent lineage disappeared")))?,
+        &strategy,
+        &combinations,
+        paper_tester.as_ref(),
+        &cycle_id,
+        42,
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("grid evaluation failed: {e}")))?;
+    if args.json {
+        print_json(&outcomes)?;
+    } else {
+        println!("strategy: {}", args.strategy);
+        println!("combinations: {}", outcomes.len());
+        for (idx, outcome) in outcomes.iter().enumerate() {
+            println!(
+                "{idx}: {} child={} objective={}",
+                outcome.gate_verdict,
+                outcome.child_hash.as_deref().unwrap_or("-"),
+                outcome
+                    .objective_metric
+                    .map(|v| format!("{v:.6}"))
+                    .unwrap_or_else(|| "-".to_string())
+            );
+        }
+    }
+    Ok(())
 }
 
 fn cycle_meter_delta(previous: CycleMeter, current: CycleMeter) -> CycleMeter {
@@ -613,14 +796,13 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // Print the session id so the operator can find logs.
     eprintln!("session: {session_id}");
 
-    // GH #965: --max-cycles controls how many cycles this run executes.
-    //   unset → one cycle (back-compat); 0 → unlimited (until signal/budget/
-    //   convergence); N → exactly N. Unlimited is modelled as `n_experiments`
-    //   with no plan, so the engine loop never stops on count.
-    let (session_mode, cycles_planned): (&str, Option<i64>) = match args.max_cycles {
-        None => ("once", None),
-        Some(0) => ("n_experiments", None),
-        Some(n) => ("n_experiments", Some(n as i64)),
+    // `--cycles` controls how many cycles this run executes:
+    //   0 → unlimited (until signal/budget/convergence); N → exactly N.
+    // Unlimited is modelled as `n_experiments` with no plan, so the engine
+    // loop never stops on count.
+    let (session_mode, cycles_planned): (&str, Option<i64>) = match args.cycles {
+        0 => ("n_experiments", None),
+        n => ("n_experiments", Some(n as i64)),
     };
 
     let lock_holder = format!(
@@ -679,7 +861,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         "model": cfg.mutator.model,
         "objective": cfg.objective.label(),
         "experiments_per_cycle": cfg.experiments_per_cycle,
-        "max_cycles": args.max_cycles,
+        "cycles": args.cycles,
         "budget_usd": args.budget,
     }))
     .unwrap_or_else(|_| "{}".to_string());
@@ -929,7 +1111,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             .optimizer_enabled
         }
     };
-    let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
+    let paper_tester_inner: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {
                 sharpe: 0.9,
@@ -955,40 +1137,46 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             opt_mem = ctx.memory_recorder.clone();
         }
         let tools = Arc::new(ToolRegistry::default_with_builtins());
-        // WU-6: the Cline sidecar is mandatory for the trader. spawn_optimizer_cline_ctx
-        // always returns Some on success and Err on failure — never Ok(None).
-        // The sidecar handles the paper-test TRADER's LLM calls. The mutator and
-        // judge use separate LlmDispatch instances, so the sidecar provider must
-        // be the trader's provider, not the mutator's. When --provider is set,
-        // use it explicitly; otherwise fall back to the mutator provider.
-        let sidecar_provider = args.provider.as_deref().unwrap_or(effective_mutator_provider);
-        let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
-            &ctx,
-            sidecar_provider,
-            Arc::clone(&tools),
-            xvision_engine::eval::run::RunMode::Backtest,
-        )
-        .await
-        .map_err(|e| {
-            CliError::upstream(anyhow::anyhow!(
-                "optimizer requires the Cline sidecar (WU-6): {e}"
+        let mechanistic = seed_parent
+            .as_ref()
+            .map(|(_, strategy)| strategy.is_mechanistic())
+            .unwrap_or(false);
+        if mechanistic {
+            Box::new(CachedBacktestPaperTester::new(
+                ctx,
+                Arc::clone(&metered_mutator),
+                tools,
             ))
-        })?
-        .ok_or_else(|| {
-            CliError::upstream(anyhow::anyhow!(
-                "optimizer requires the Cline sidecar (WU-6): \
-                     XVN_AGENTD_BIN must be set and the sidecar must be provisioned"
-            ))
-        })?;
-        Box::new(
-            CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_mutator), tools)
-                .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
-        )
+        } else {
+            let sidecar_provider = args.provider.as_deref().unwrap_or(effective_mutator_provider);
+            let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
+                &ctx,
+                sidecar_provider,
+                Arc::clone(&tools),
+                xvision_engine::eval::run::RunMode::Backtest,
+            )
+            .await
+            .map_err(|e| {
+                CliError::upstream(anyhow::anyhow!(
+                    "optimizer requires the Cline sidecar (WU-6): {e}"
+                ))
+            })?
+            .ok_or_else(|| {
+                CliError::upstream(anyhow::anyhow!(
+                    "optimizer requires the Cline sidecar (WU-6): \
+                         XVN_AGENTD_BIN must be set and the sidecar must be provisioned"
+                ))
+            })?;
+            Box::new(
+                CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_mutator), tools)
+                    .with_cline_runtime(xvision_core::config::AgentRuntime::Cline, Some(cline_ctx)),
+            )
+        }
     };
 
     let budget_cap = args.budget.unwrap_or(f64::INFINITY);
-    let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
-        paper_tester,
+    let paper_tester: Arc<dyn PaperTestRunner> = Arc::new(BudgetCappedPaperTester::new_with_handle(
+        paper_tester_inner,
         budget_cap,
         Arc::clone(&meter),
     ));
@@ -1030,6 +1218,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         explicit_parent_hashes.push(bundle_hash);
     }
 
+    let gepa_strategy = parent_strategies.values().next().cloned();
     let cycle_config = CycleConfig {
         num_parents: if explicit_parent_hashes.is_empty() {
             2
@@ -1049,18 +1238,22 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
         scenario_pool,
+        min_pool_win_fraction: 0.5,
+        noise_floor_min_delta: 0.0,
+        simplicity_penalty: 0.0,
+        simplicity_equal_tolerance: 1e-9,
         max_output_tokens: args.max_output_tokens,
         max_consecutive_errors: args.max_consecutive_errors.unwrap_or(3),
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
 
-    let max_cycles_label = match args.max_cycles {
-        None => "1 cycle".to_string(),
-        Some(0) => "until stopped (Ctrl-C / SIGTERM)".to_string(),
-        Some(n) => format!("{n} cycles"),
+    let cycles_label = if args.cycles == 0 {
+        "until stopped (Ctrl-C / SIGTERM)".to_string()
+    } else {
+        format!("{} cycle(s)", args.cycles)
     };
-    eprintln!("Starting optimizer — running {max_cycles_label}.");
+    eprintln!("Starting optimizer — running {cycles_label}.");
     eprintln!("session: {session_id}");
     eprintln!("objective: {}", cfg.objective.label());
     if let Some(ref s) = args.strategy {
@@ -1082,6 +1275,17 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let store = memory::open_default_store()
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
+        let evaluator: Arc<dyn xvision_engine::autooptimizer::gepa_eval::BenchmarkEvaluator> =
+            if let Some(strategy) = gepa_strategy.clone() {
+                Arc::new(xvision_engine::autooptimizer::gepa_eval::BacktestBenchmarkEvaluator::new(
+                    strategy,
+                    Arc::clone(&paper_tester),
+                ))
+            } else {
+                return Err(CliError::usage(anyhow::anyhow!(
+                    "GEPA bridge requires --strategy so a trader prompt can be backtested"
+                )));
+            };
         let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
             std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
                 dispatch: std::sync::Arc::clone(&metered_mutator),
@@ -1096,7 +1300,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 skip_perfect: true,
                 use_merge: true,
                 merge_frequency: 3,
-                real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config(&cfg)?,
+                real_eval: xvision_engine::autooptimizer::gepa::real_eval_options_from_config_with_evaluator(
+                    &cfg, evaluator,
+                )?,
             });
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
@@ -1216,6 +1422,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         Arc::new(std::sync::Mutex::new(CycleMeter::default()));
     let last_persisted_meter_ref = &last_persisted_meter;
 
+    let sleep_secs = args.sleep_secs;
+    let objective = cfg.objective;
+
     let session_result = xvision_engine::autooptimizer::run_session(
         &pool,
         &session_id,
@@ -1251,6 +1460,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                     cc.baseline_scenario = baseline.clone();
                 }
 
+                if rot_idx > 0 && sleep_secs > 0 {
+                    tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+                }
                 let tx = event_tx_ref.clone();
                 let log_tee = log_tee_ref.clone();
                 let progress = move |event: CycleProgressEvent| {
@@ -1324,6 +1536,16 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 {
                     eprintln!("note: could not persist cycle cost: {e}");
                 }
+
+                let best_objective = best_cycle_objective(pool_ref, &result.active_nodes, objective).await;
+                println!(
+                    "cycle_id={}\taccepted={}\trejected={}\tbest_objective={}\tcost_usd={:.6}",
+                    result.cycle_id,
+                    result.active_nodes.len(),
+                    result.rejected_nodes.len(),
+                    format_optional_metric(best_objective),
+                    delta.spent_usd,
+                );
 
                 eprintln!(
                     "cycle {} → {bucket} ({} kept, {} suspect, {} dropped, {} errored); honesty: {}; \
@@ -1753,10 +1975,74 @@ async fn run_explain_missing_data(args: ExplainMissingDataArgs) -> CliResult<()>
     Ok(())
 }
 
-// ── ls (cycle history) ───────────────────────────────────────────────────────
+// ── log (flat experiment history) ────────────────────────────────────────────
+/// `xvn optimize log <cycle-id-or-lineage-root>` — print a flat results table.
+async fn run_log(args: LogArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
+    let rows = read_lineage_log(&pool, &args.cycle_id_or_root)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("read lineage log: {e}")))?;
 
+    println!(
+        "node_hash\tstatus\tverdict\tobjective_metric\tday_net_return_pct\tday_total_return_pct\tdescription\tparent_hash"
+    );
+    for row in rows {
+        let short_hash = row.bundle_hash.get(..12).unwrap_or(&row.bundle_hash);
+        let parent_hash = row
+            .parent_hash
+            .as_deref()
+            .map(|hash| hash.get(..12).unwrap_or(hash))
+            .unwrap_or("-");
+        let description = row
+            .description
+            .as_deref()
+            .unwrap_or("-")
+            .replace(['\t', '\r', '\n'], " ");
+        println!(
+            "{short_hash}\t{}\t{}\t{}\t{}\t{}\t{description}\t{parent_hash}",
+            row.status,
+            row.verdict,
+            format_optional_metric(row.objective_metric),
+            format_optional_metric(row.day_net_return_pct),
+            format_optional_metric(row.day_total_return_pct),
+        );
+    }
+    Ok(())
+}
+
+
+fn format_optional_metric(value: Option<f64>) -> String {
+    value.map(|value| format!("{value:.6}")).unwrap_or_else(|| "-".to_string())
+}
+
+async fn best_cycle_objective(
+    pool: &SqlitePool,
+    nodes: &[LineageNode],
+    objective: Objective,
+) -> Option<f64> {
+    let mut best = None;
+    for node in nodes {
+        let row = sqlx::query("SELECT metrics_day_json FROM lineage_node_metrics WHERE bundle_hash = ?")
+            .bind(node.bundle_hash.to_hex())
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+        let metric = row
+            .and_then(|row| row.try_get::<String, _>("metrics_day_json").ok())
+            .and_then(|json| serde_json::from_str::<MetricsSummary>(&json).ok())
+            .map(|metrics| objective.oriented_value(&metrics));
+        if let Some(metric) = metric {
+            best = Some(best.map_or(metric, |current: f64| current.max(metric)));
+        }
+    }
+    best
+}
+// ── ls (cycle history) ───────────────────────────────────────────────────────
 /// `xvn optimize ls` — list recent optimizer cycles (D3). Reads the lineage
 /// store the same way the dashboard does so CLI-launched cycles are visible.
+
 async fn run_ls(args: LsArgs) -> CliResult<()> {
     let db_path = resolve_lineage_db(args.db)?;
     let cycles = if db_path.exists() {
@@ -2856,6 +3142,10 @@ async fn load_strategy_parent(
                 cycle_id: None,
                 created_at: Utc::now(),
                 diversity_score: None,
+                mutation_diff_json: None,
+                seed: None,
+                data_window_json: None,
+                objective: None,
             };
             lineage.insert(&root_node).await.map_err(|e| {
                 CliError::upstream(anyhow::anyhow!("reseed lineage parent {strategy_id}: {e}"))
@@ -2871,6 +3161,10 @@ async fn load_strategy_parent(
                 cycle_id: None,
                 created_at: Utc::now(),
                 diversity_score: None,
+                mutation_diff_json: None,
+                seed: None,
+                data_window_json: None,
+                objective: None,
             };
             lineage
                 .insert(&root_node)
@@ -3342,6 +3636,7 @@ impl Drop for OptimizerLogTee {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use super::*;
 
     // ── moved from the former autooptimizer.rs (folded into `xvn optimize`) ──
@@ -3669,11 +3964,45 @@ sqlite_url = "sqlite://x.db"
             cycle_id: Some("cycle-test".to_string()),
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         };
         LineageStore::new(pool.clone()).insert(&node).await.unwrap();
 
         let resolved = resolve_experiment_hash(&pool, "6db4e6085deb").await.unwrap();
 
         assert_eq!(resolved, node.bundle_hash);
+    }
+    #[test]
+    fn clap_parses_cycles_sleep_and_log_selector() {
+        let parsed = crate::Cli::try_parse_from([
+            "xvn",
+            "optimize",
+            "run",
+            "--cycles",
+            "0",
+            "--sleep-secs",
+            "7",
+        ])
+        .unwrap();
+        let crate::Command::Optimize(cmd) = parsed.command else {
+            panic!("expected optimize command");
+        };
+        let Some(OptimizeAction::Run(args)) = cmd.action else {
+            panic!("expected optimize run action");
+        };
+        assert_eq!(args.cycles, 0);
+        assert_eq!(args.sleep_secs, 7);
+
+        let parsed = crate::Cli::try_parse_from(["xvn", "optimize", "log", "lineage-root"]).unwrap();
+        let crate::Command::Optimize(cmd) = parsed.command else {
+            panic!("expected optimize command");
+        };
+        let Some(OptimizeAction::Log(args)) = cmd.action else {
+            panic!("expected optimize log action");
+        };
+        assert_eq!(args.cycle_id_or_root, "lineage-root");
     }
 }

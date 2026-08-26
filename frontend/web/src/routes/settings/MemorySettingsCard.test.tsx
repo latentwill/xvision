@@ -54,7 +54,7 @@ function memoryStatus(overrides: Partial<MemoryStatus> = {}): MemoryStatus {
     // runtime — the fixture must match the wire reality, not the type
     // (regression: a 0n accumulator over numbers crashed /settings/general).
     namespaces: [
-      { namespace: "chat", live_observations: 12 as unknown as bigint },
+      { namespace: "chat", live_observations: 12 },
     ],
     ...overrides,
   };
@@ -178,8 +178,8 @@ describe("MemorySettingsCard", () => {
     vi.mocked(settingsApi.getMemoryStatus).mockResolvedValue(
       memoryStatus({
         namespaces: [
-          { namespace: "chat", live_observations: 7 as unknown as bigint },
-          { namespace: "optimizer", live_observations: 5 as unknown as bigint },
+          { namespace: "chat", live_observations: 7 },
+          { namespace: "optimizer", live_observations: 5 },
         ],
       }),
     );

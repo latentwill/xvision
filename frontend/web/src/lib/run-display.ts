@@ -1,4 +1,4 @@
-import type { RunSummary } from "@/api/types.gen";
+import type { RunSummary, StopPolicy } from "@/api/types.gen";
 
 export type NamedStrategy = {
   agent_id: string;
@@ -57,7 +57,7 @@ export function displayScenarioName(
   id: string,
   scenarios: NamedScenario[] = [],
   mode?: string,
-  stopPolicy?: { bar_limit?: number | null; decision_limit?: number | null; time_limit_secs?: bigint | null; trade_limit?: number | null },
+  stopPolicy?: StopPolicy,
 ): string {
   if (mode === "fwd") {
     const parts: string[] = [];

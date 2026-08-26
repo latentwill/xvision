@@ -21,6 +21,7 @@ vi.mock("@/api/eval", async () => {
   return {
     ...actual,
     getRun: vi.fn(),
+    getRunReceipt: vi.fn(),
     cancelRun: vi.fn(),
     downloadEvalRunExport: vi.fn(),
     retryRun: vi.fn(),
@@ -181,6 +182,7 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       scenario: null,
       mode: "backtest",
       status: "running",
+      source: "human",
       started_at: "2026-05-13T14:00:00Z",
       completed_at: null,
       sharpe: null,
@@ -202,11 +204,16 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       skipped_dispatches: 0,
       delayed_decisions: 0,
       forced_cancels: 0,
+      n_decisions: null,
+      n_trades: null,
+      win_rate: null,
+      n_bars: null,
     },
     decisions: [],
     equity_curve: [],
     filter_events: [],
     filter_summaries: [],
+    signals_used: null,
     ...overrides,
   };
 }
@@ -217,6 +224,7 @@ describe("EvalRunDetailRoute", () => {
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
+    vi.mocked(evalApi.getRunReceipt).mockResolvedValue(null);
     vi.mocked(evalApi.cancelRun).mockResolvedValue({
       ...detail().summary,
       status: "cancelled",
@@ -437,6 +445,58 @@ describe("EvalRunDetailRoute", () => {
     await waitFor(() =>
       expect(evalApi.downloadEvalRunExport).toHaveBeenCalledWith("01LIVE"),
     );
+  });
+
+  it("shows the determinism receipt summary and enables Reproduce when a manifest is present", async () => {
+    vi.mocked(evalApi.getRunReceipt).mockResolvedValue({
+      run_id: "01LIVE",
+      receipt_hash: "abcdef1234567890abcdef1234567890",
+      engine_version: "0.9.4",
+      schema_version: "1",
+      created_at: "2026-05-13T14:01:00Z",
+      manifest: {
+        bars_content_hash: "bars-hash",
+        bars_rows: 123,
+        bars_start: "2024-01-01T00:00:00Z",
+        bars_end: "2024-02-01T00:00:00Z",
+        bars_source: "fixture.csv",
+        scenario_id: "btc-4h",
+        strategy_hash: "strategy-hash",
+        strategy_source_hash: null,
+        provider: "openrouter",
+        model: "anthropic/claude-sonnet-4.5",
+        prompt_version: null,
+        system_prompt_hash: null,
+        tool_cache_recording_id: null,
+        engine_version: "0.9.4",
+        seed: 42,
+      },
+    });
+
+    renderDetail();
+
+    const receipt = await screen.findByTestId("determinism-receipt");
+    expect(receipt).toHaveTextContent("abcdef123456…");
+    expect(receipt).toHaveTextContent("0.9.4");
+    expect(receipt).toHaveTextContent("fixture.csv · 123 rows");
+    expect(receipt).toHaveTextContent("openrouter / anthropic/claude-sonnet-4.5");
+    expect(receipt).toHaveTextContent("42");
+    expect(
+      screen.getByRole("button", { name: "Reproduce eval run 01LIVE" }),
+    ).toBeEnabled();
+  });
+
+  it("omits determinism summary and Reproduce for pre-receipt runs", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(detail());
+    vi.mocked(evalApi.getRunReceipt).mockResolvedValue(null);
+
+    renderDetail();
+
+    await screen.findByRole("button", { name: /stop eval run/i });
+    expect(screen.queryByTestId("determinism-receipt")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reproduce eval run 01LIVE" }),
+    ).not.toBeInTheDocument();
   });
 
   it("derives ENGAGED vs FILTERED phase from synthesized-row markers", async () => {
@@ -752,16 +812,14 @@ describe("EvalRunDetailRoute", () => {
           run_id: "01LIVE",
           kind: "performance",
           severity: "medium",
+          title: "Modest sharpe",
           summary: "Modest sharpe",
+          recommendation: "Test on a longer window.",
           evidence: [{ kind: "metric", reference: "metric:sharpe" }],
           extracted_at: "2026-05-13T14:02:00Z",
           schema_version: "2",
-          eval_review_id: "01REVIEW",
           type: "performance",
           confidence: 0.6,
-          title: "Modest sharpe",
-          description: "Sharpe 1.2 is modest given the 5% return.",
-          recommendation: "Test on a longer window.",
         },
       ],
     });

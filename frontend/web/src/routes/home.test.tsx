@@ -180,6 +180,11 @@ function homeRun(over: Partial<RunSummary>): RunSummary {
     skipped_dispatches: 0,
     delayed_decisions: 0,
     forced_cancels: 0,
+    source: "human",
+    n_decisions: null,
+    n_trades: null,
+    win_rate: null,
+    n_bars: null,
     ...over,
   };
 }
@@ -280,20 +285,16 @@ describe("HomeRoute", () => {
     );
   });
 
-  // e17: the deploy-readiness strip mounts as its own slim safety-gate band,
-  // directly under the SafetyPauseBanner and ABOVE the pulse/attention bands.
-  it("renders the deploy-readiness strip above the pulse band", async () => {
+  // The deploy-readiness gate was removed once its queries became unused; the
+  // home route now starts with the safety banner and outcome/pulse content.
+  it("does not render the removed deploy-readiness strip", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
 
-    const strip = await screen.findByTestId("deploy-readiness-strip");
-    const pulse = await screen.findByTestId("pulse-band");
-
-    // Strip precedes the pulse band in DOM order (it is a gate, not a nag).
-    expect(
-      strip.compareDocumentPosition(pulse) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(document.querySelector('[data-testid="pulse-band"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-testid="deploy-readiness-strip"]')).toBeNull();
   });
 
   // jlm: the "since you were last here" delta subtitle renders in the Topbar
@@ -355,24 +356,69 @@ describe("HomeRoute", () => {
     second.unmount();
   });
 
-  // S1-W7: NagStrip renders (inside the attention band) when there are nag
-  // items (missing provider key)
-  it("renders nag-strip when a provider has a missing API key", async () => {
-    const { listProviders } = await import("@/api/settings");
-    vi.mocked(listProviders).mockResolvedValueOnce({
-      providers: [
-        {
-          name: "OpenAI",
-          kind: "openai-compat",
-          base_url: "https://api.openai.com/v1",
-          synthetic: false,
-          is_default: false,
-          api_key_env: "OPENAI_API_KEY",
-          api_key_set: false,
-          enabled_models: [],
-        },
-      ],
-      default_model: null,
+  it("renders nag-strip when a broker has missing credentials", async () => {
+    const { getBrokers } = await import("@/api/settings");
+    vi.mocked(getBrokers).mockResolvedValueOnce({
+      alpaca: {
+        name: "Alpaca",
+        kind: "alpaca",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: "paper trading",
+        credentials: [{ env_var: "ALPACA_API_KEY", is_set: false }],
+      },
+      orderly: {
+        name: "Orderly",
+        kind: "orderly",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: null,
+        credentials: [],
+      },
+      byreal: {
+        name: "Byreal",
+        kind: "byreal",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: null,
+        credentials: [],
+      },
+      byreal_spot: {
+        name: "Byreal Spot",
+        kind: "byreal_spot",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: null,
+        credentials: [],
+      },
+      degen_arena: {
+        name: "Degen Arena",
+        kind: "degen_arena",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: null,
+        credentials: [],
+      },
+      hyperliquid: {
+        name: "Hyperliquid",
+        kind: "hyperliquid",
+        configured: false,
+        stored: false,
+        stored_key_id_suffix: null,
+        base_url: null,
+        note: null,
+        credentials: [],
+      },
     });
 
     renderRoute();
@@ -598,25 +644,11 @@ describe("HomeRoute", () => {
       ).toBeTruthy();
     }
 
-    // The live summary + critical findings render inside the attention band.
+    // The live summary renders inside the attention band.
     const band = nodes[1]!;
     expect(
       band.querySelector('[data-testid="live-summary-strip"]'),
     ).not.toBeNull();
-    expect(
-      band.querySelector('[data-testid="critical-findings-row"]'),
-    ).not.toBeNull();
-  });
-
-  // jlm: the Topbar subtitle is now the honest "since you were last here"
-  // delta. On a first visit (no stored boundary) it shows the neutral welcome
-  // line rather than a "0 runs since…" non-event.
-  it("shows the neutral first-visit delta subtitle on a fresh boundary", async () => {
-    renderRoute();
-    await screen.findByRole("heading", { name: "Dashboard" });
-    expect(await screen.findByTestId("home-delta-subtitle")).toHaveTextContent(
-      /welcome/i,
-    );
   });
 
   // Reachability gate: the optimizer last-run digest must actually be MOUNTED

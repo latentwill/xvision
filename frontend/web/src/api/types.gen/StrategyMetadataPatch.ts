@@ -6,11 +6,11 @@
  * patch with every field `None` is a valid no-op and round-trips the
  * stored strategy untouched.
  *
- * Scope is deliberately narrow: only the four operator-editable
- * top-level manifest fields a typo in the create wizard could land
- * on. The strategy `id`, `creator`, `template`, `published_at`,
- * `risk_preset_or_config`, `agents`, `pipeline`, and `risk` are out
- * of scope — they either have dedicated sub-routes
+ * Scope: the operator-editable top-level manifest fields a typo in the
+ * create wizard could land on, plus `creator` (so the operator can stamp a
+ * strategy with their profile handle — QA). The strategy `id`, `template`,
+ * `published_at`, `risk_preset_or_config`, `agents`, `pipeline`, and `risk`
+ * remain out of scope — they either have dedicated sub-routes
  * (slot/agents/pipeline/risk) or are immutable post-create.
  *
  * # Color clear convention
@@ -21,7 +21,7 @@
  * `Option<String>` (no separate `null` vs. `""` ambiguity) while
  * giving the UI a clean "unset" affordance.
  */
-export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, decision_cadence_minutes: number | null,
+export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, decision_cadence_minutes: number | null, 
 /**
  * Optional per-strategy display color. Must be a 7-character CSS
  * hex string (`#RRGGBB`, case-insensitive) when non-empty.
@@ -30,10 +30,11 @@ export type StrategyMetadataPatch = { display_name: string | null, plain_summary
  * (maps to `manifest.color = None`). `None` leaves the existing
  * color untouched. `Some("#D4A547")` sets the color.
  */
-color: string | null,
+color: string | null, 
 /**
  * Optional strategy author/owner handle. `Some(non-empty)` sets the
  * `creator` (e.g. the operator's profile handle); `Some("")`/whitespace
- * and `None` both leave the existing creator untouched.
+ * and `None` both leave the existing creator untouched (no accidental
+ * wipe). QA: "allow creator to be updated with the user profile".
  */
 creator: string | null, };

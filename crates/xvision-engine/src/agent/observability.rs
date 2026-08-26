@@ -1775,11 +1775,13 @@ impl ObsEmitter {
             matches!(verdict, "approved" | "modified" | "vetoed"),
             "unexpected risk gate verdict: {verdict}"
         );
-        let status = if verdict == "vetoed" {
-            SpanStatus::Error
-        } else {
-            SpanStatus::Ok
-        };
+        // 2026-08-24 campaign postmortem: a veto is CORRECT policy behavior
+        // (e.g. `max_concurrent_positions`), not a failure. Recording it as
+        // `SpanStatus::Error` poisoned every status-based error metric
+        // (436 false errors on Aug 23 alone vs 24 real ones). The verdict +
+        // `veto_reason` still travel in `error_json` below, so consumers that
+        // care select on the payload, not the status.
+        let status = SpanStatus::Ok;
         let mut payload = serde_json::Map::new();
         payload.insert(
             "verdict".to_string(),
@@ -1797,10 +1799,10 @@ impl ObsEmitter {
             }
         }
         // WS-13 (`trace-obs-risk-gate`): carry the verdict payload for any
-        // verdict that CHANGED the trader's action — `vetoed` (status
-        // error) AND `modified` (status ok). `approved` stays clean (no
-        // payload) so the persisted span row distinguishes "risk ran and
-        // touched nothing" from "risk ran and rewrote the action", while
+        // verdict that CHANGED the trader's action — `vetoed` AND `modified`
+        // (both status ok). `approved` stays clean (no payload) so the
+        // persisted span row distinguishes "risk ran and touched nothing"
+        // from "risk ran and rewrote the action", while
         // still matching the sibling `filter.eval` convention that a
         // clean pass carries no error payload.
         let error_json = if verdict == "approved" {

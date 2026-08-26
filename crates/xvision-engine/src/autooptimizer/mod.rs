@@ -33,9 +33,11 @@ pub mod diversity;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
 pub mod eval_adapter;
+pub mod pool_eval;
 pub mod events_store;
 pub mod evidence;
 pub mod gate;
+pub mod grid;
 pub mod gepa;
 pub mod gepa_eval;
 pub mod inversion;
@@ -70,7 +72,10 @@ pub use config::{
     ScenarioWindowPair, TradeDirection,
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
-pub use cycle::{run_cycle, select_scenario_pair, CycleConfig, CycleResult};
+pub use cycle::{
+    run_cycle, run_grid_evaluation, select_scenario_pair, CycleConfig, CycleResult,
+    GridEvaluationOutcome,
+};
 pub use cycle_export::{
     assemble_cycle_export, build_cycle_export, load_cycle_events, operator_label,
     render_cycle_export_markdown, render_cycle_report_markdown, CycleExport, ExperimentSummary,
@@ -82,6 +87,10 @@ pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
     NodeProvenance,
 };
+pub use grid::{
+    enumerate_combinations, mutation_diff_for_combination, GridCombination, DEFAULT_MAX_COMBINATIONS,
+};
+pub use gepa_eval::BacktestBenchmarkEvaluator;
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,

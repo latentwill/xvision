@@ -322,6 +322,7 @@ pub struct ByrealSpotStored {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlpacaTestReport {
     pub ok: bool,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub latency_ms: u32,
     /// Account status as reported by `/v2/account` (e.g. "ACTIVE").
     /// None on failure or when the field is missing from the response.

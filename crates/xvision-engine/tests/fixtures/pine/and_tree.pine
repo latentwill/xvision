@@ -1,0 +1,8 @@
+//@version=5
+strategy("AND tree", overlay=true)
+fast = ta.ema(close, 9)
+slow = ta.ema(close, 21)
+adx_value = ta.adx(14)
+signal = fast > slow and close > fast and adx_value > 20
+if signal
+    strategy.entry("Long", strategy.long)

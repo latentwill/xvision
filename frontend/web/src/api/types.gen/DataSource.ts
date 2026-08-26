@@ -2,4 +2,4 @@
 import type { AdjustmentMode } from "./AdjustmentMode";
 import type { WalkModel } from "./WalkModel";
 
-export type DataSource = { "type": "AlpacaHistorical", feed: string | null, adjustment: AdjustmentMode, } | { "type": "SyntheticWalk", seed: bigint, model: WalkModel, };
+export type DataSource = { "type": "AlpacaHistorical", feed: string | null, adjustment: AdjustmentMode, } | { "type": "SyntheticWalk", seed: number, model: WalkModel, };

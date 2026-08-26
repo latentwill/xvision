@@ -1,0 +1,7 @@
+//@version=5
+strategy("Dynamic period", overlay=true)
+fast_len = input.int(9, title="Fast length", minval=2, maxval=100)
+fast = ta.ema(close, fast_len)
+signal = close > fast
+if signal
+    strategy.entry("Long", strategy.long)

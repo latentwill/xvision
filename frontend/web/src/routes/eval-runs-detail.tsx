@@ -9,8 +9,10 @@ import {
   downloadEvalRunExport,
   evalKeys,
   getRun,
+  getRunReceipt,
   listRuns,
   retryRun,
+  type EvalRunReceipt,
 } from "@/api/eval";
 import { chartKeys, getRunChart, openRunStream } from "@/api/chart";
 import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
@@ -64,6 +66,13 @@ export function EvalRunDetailRoute() {
     queryFn: () => getRun(id),
     enabled: id.length > 0,
     refetchInterval: (query) => pollFor(query.state.data?.summary.status),
+  });
+  const receipt = useQuery({
+    queryKey: evalKeys.receipt(id),
+    queryFn: () => getRunReceipt(id),
+    enabled: !!id,
+    retry: false,
+    refetchInterval: false,
   });
   const chart = useQuery({
     queryKey: chartKeys.run(id),
@@ -374,6 +383,12 @@ export function EvalRunDetailRoute() {
               summary={detail.summary}
               totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
             />
+            {receipt.data ? (
+              <DeterminismCard
+                receipt={receipt.data}
+                onReproduce={() => navigate(reproduceUrl(detail.summary, receipt.data))}
+              />
+            ) : null}
 
             <SummaryCard
               summary={detail.summary}
@@ -974,6 +989,73 @@ function DecisionsCard({
       onJump={onJump}
       filterSummaries={filterSummaries}
     />
+  );
+}
+
+function reproduceUrl(summary: RunSummary, receipt: EvalRunReceipt): string {
+  const manifest = receipt.manifest;
+  const params = new URLSearchParams({
+    strategy: summary.agent_id,
+    scenario: manifest?.scenario_id || summary.scenario_id,
+    mode: summary.mode,
+    start: "1",
+  });
+  return `/eval-runs?${params.toString()}`;
+}
+
+function DeterminismCard({
+  receipt,
+  onReproduce,
+}: {
+  receipt: EvalRunReceipt;
+  onReproduce: () => void;
+}) {
+  const manifest = receipt.manifest;
+  const providerModel = manifest
+    ? [manifest.provider, manifest.model].filter(Boolean).join(" / ") || "—"
+    : "—";
+  const rows: [string, string][] = [
+    ["receipt", `${receipt.receipt_hash.slice(0, 12)}…`],
+    ["engine", receipt.engine_version],
+  ];
+  if (manifest) {
+    rows.push(
+      ["bars", `${manifest.bars_source} · ${manifest.bars_rows} rows`],
+      ["span", `${manifest.bars_start ?? "—"} → ${manifest.bars_end ?? "—"}`],
+      ["strategy", `${manifest.strategy_hash.slice(0, 12)}…`],
+      ["provider / model", providerModel],
+      ["seed", String(manifest.seed)],
+    );
+  }
+  return (
+    <Card data-testid="determinism-receipt">
+      <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3">
+        <div className="flex items-baseline gap-3">
+          <h2 className="m-0 font-sans text-[22px] tracking-tight text-text" style={{ fontWeight: 600 }}>
+            Determinism
+          </h2>
+          <span className="text-[11px] font-mono text-text-3">reproduction receipt</span>
+        </div>
+        <button
+          type="button"
+          aria-label={`Reproduce eval run ${receipt.run_id}`}
+          title={manifest ? "Open a new run with the recorded strategy, scenario, and mode." : "Reproduction inputs are unavailable for this pre-receipt run."}
+          onClick={onReproduce}
+          disabled={!manifest}
+          className={`${ACTION_BTN} text-text-2 hover:border-gold/40 hover:text-text`}
+        >
+          Reproduce
+        </button>
+      </div>
+      <div className="p-4 text-[11px] font-mono flex flex-wrap gap-x-6 gap-y-2">
+        {rows.map(([key, value]) => (
+          <div key={key} className="flex items-baseline gap-2">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-text-3">{key}</span>
+            <span className="text-text tabular-nums break-all">{value}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

@@ -29,7 +29,7 @@ top_p: number,
 /**
  * Random seed, if deterministic sampling was requested.
  */
-seed: bigint, 
+seed: number, 
 /**
  * Input tokens consumed (prompt + system).
  */

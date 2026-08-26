@@ -29,6 +29,10 @@ export type SpanCategory =
   // so it reads as a "go look at the actual run" affordance under the
   // experiment, separate from the phase rows.
   | "opti_eval_run"
+  // WS-13 trace-obs-risk-gate: the engine's R3 risk-veto pass span. Red,
+  // matching the engine-event `risk` family — a gate row reads as a veto
+  // signal, not a lifecycle event.
+  | "risk_gate"
   // WS-8 typed fallback: a span kind we don't recognise lands here instead of
   // being silently bucketed into `supervisor` (which read as a confident
   // "SUPER" badge). An `unknown`-category row still renders — it just shows the
@@ -75,6 +79,9 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   // WS-8 typed fallback. Neutral slate, distinct from every confident family
   // swatch — a fallback row reads as "uncategorised", not as a known kind.
   unknown:    { hex: "#64748b", label: "EVENT" },
+  // WS-13: risk.gate rows share the engine-event risk family tone so a
+  // veto reads consistently across engine.event and span surfaces.
+  risk_gate:  { hex: "#f87171", label: "RISK" },
 };
 
 /**
@@ -115,6 +122,9 @@ export function categoryOf(kind: SpanKind): SpanCategory {
     kind === "tool.validate_output"
   )
     return "tool";
+  // WS-13 trace-obs-risk-gate: the R3 risk-veto pass span. First-class
+  // red family — never let it fall into the unknown bucket.
+  if (kind === "risk.gate") return "risk_gate";
   if (kind === "broker.call") return "broker";
   if (kind === "artifact.write") return "artifact";
   // WS-11a OPTI scope: the autooptimizer cycle trace rows. The cycle root gets

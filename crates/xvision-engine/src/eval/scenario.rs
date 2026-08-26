@@ -64,6 +64,7 @@ pub struct Scenario {
     /// `body_json` predates this field hydrate to the same default via
     /// `serde(default)`.
     #[serde(default = "default_warmup_bars")]
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub warmup_bars: u32,
 
     // ── Regime labels (migration 021) ─────────────────────────────────────
@@ -441,6 +442,7 @@ pub enum DataSource {
         adjustment: AdjustmentMode,
     },
     SyntheticWalk {
+        #[cfg_attr(feature = "ts-export", ts(type = "number"))]
         seed: u64,
         model: WalkModel,
     },
@@ -641,7 +643,9 @@ pub enum Venue {
 )]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fees {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub maker_bps: u32,
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub taker_bps: u32,
 }
 
@@ -726,6 +730,7 @@ fn glob_match_bytes(pat: &[u8], txt: &[u8]) -> bool {
 )]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencyModel {
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub decision_to_fill_ms: u32,
 }
 
@@ -810,7 +815,10 @@ pub struct BarCachePolicy {
 #[serde(tag = "policy")]
 pub enum RefreshPolicy {
     NeverRefresh,
-    RefreshIfOlderThan { duration_secs: u64 },
+    RefreshIfOlderThan {
+        #[cfg_attr(feature = "ts-export", ts(type = "number"))]
+        duration_secs: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -20,8 +20,11 @@ use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
-use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
-use crate::autooptimizer::inversion::run_inversion_pair;
+use crate::autooptimizer::gate::{
+    aggregate_regime_verdicts, check_net_return, check_pool_consistency,
+    check_simplicity_equal_or_simpler, evaluate, GateInput, GateVerdict, Objective,
+    SimplicityStats,
+};
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
 use crate::autooptimizer::mutator::{MutationDiff, Mutator};
@@ -32,11 +35,182 @@ use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRo
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
+use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
+use crate::autooptimizer::pool_eval::{
+    compare_pool_evaluations, evaluate_pool, PoolComparison, PoolEvaluation,
+};
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GridEvaluationOutcome {
+    pub combination: GridCombination,
+    pub child_hash: Option<String>,
+    pub gate_verdict: String,
+    pub lineage_status: Option<String>,
+    pub objective_metric: Option<f64>,
+}
+
+/// Evaluate every grid combination through the cycle's normal gate, paper-test,
+/// content-hash, and lineage persistence path. The caller owns scenario and
+/// paper-tester setup; this function deliberately does not truncate or swallow
+/// evaluation errors.
+pub async fn run_grid_evaluation(
+    pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
+    config: &AutoOptimizerConfig,
+    cycle_config: &CycleConfig,
+    parent_node: &LineageNode,
+    strategy: &Strategy,
+    combinations: &[GridCombination],
+    paper_tester: &dyn PaperTestRunner,
+    cycle_id: &str,
+    seed: u64,
+) -> Result<Vec<GridEvaluationOutcome>> {
+    let scenario_pool_active =
+        cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    let (parent_day, parent_untouched) = if scenario_pool_active {
+        (MetricsSummary::default(), MetricsSummary::default())
+    } else {
+        let parent_day = paper_tester.run(strategy, &cycle_config.day_scenario).await?;
+        let parent_untouched = paper_tester
+            .run(strategy, &cycle_config.baseline_scenario)
+            .await?;
+        (parent_day, parent_untouched)
+    };
+    let parent_pool = if scenario_pool_active {
+        Some(evaluate_pool(paper_tester, strategy, &cycle_config.scenario_pool).await?)
+    } else {
+        None
+    };
+    let parent_regime_metrics = if cycle_config.regime_set.is_empty() {
+        HashMap::new()
+    } else {
+        let mut metrics = HashMap::with_capacity(cycle_config.regime_set.len());
+        for regime in &cycle_config.regime_set {
+            let (day, baseline) = build_regime_scenario_pair(cycle_config, regime)?;
+            metrics.insert(
+                regime.label.clone(),
+                (
+                    paper_tester.run(strategy, &day).await?,
+                    paper_tester.run(strategy, &baseline).await?,
+                ),
+            );
+        }
+        metrics
+    };
+    let baseline_cache = tokio::sync::Mutex::new(HashMap::new());
+    let parent_hash = ContentHash::of_json(&serde_json::to_value(strategy)?);
+    let lineage = LineageStore::new(pool.clone());
+    let mut seen = HashSet::new();
+    let progress = |_event: CycleProgressEvent| {};
+    let mut outcomes = Vec::with_capacity(combinations.len());
+
+    for combination in combinations {
+        let diff = mutation_diff_for_combination(strategy, combination)?;
+        let candidate = diff.apply_to(strategy);
+        let child_hash = ContentHash::of_json(&serde_json::to_value(&candidate)?);
+        let child_hash_hex = child_hash.to_hex();
+        if child_hash == parent_hash {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: None,
+                gate_verdict: "identity".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+        if !seen.insert(child_hash) {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: Some(child_hash_hex),
+                gate_verdict: "deduplicated".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+        // A prior active/rejected node already represents this content hash. Do
+        // not spend another backtest on a content-addressed candidate.
+        if lineage.get(&child_hash).await?.is_some() {
+            outcomes.push(GridEvaluationOutcome {
+                combination: combination.clone(),
+                child_hash: Some(child_hash_hex),
+                gate_verdict: "already_evaluated".to_string(),
+                lineage_status: None,
+                objective_metric: None,
+            });
+            continue;
+        }
+
+        let simplicity = simplicity_stats(&diff);
+        let pool_comparison = if scenario_pool_active {
+            let parent_pool = parent_pool
+                .as_ref()
+                .expect("scenario pool parent evaluation is present");
+            Some(compare_pool_evaluations(
+                evaluate_pool(paper_tester, &candidate, &cycle_config.scenario_pool).await?,
+                parent_pool,
+            ))
+        } else {
+            None
+        };
+        let outcome = gate_and_classify(
+            strategy,
+            diff,
+            cycle_config,
+            paper_tester,
+            config.baseline_direction,
+            &baseline_cache,
+            &parent_day,
+            &parent_untouched,
+            config.min_improvement,
+            config.holdout_min_improvement,
+            config.min_trade_retention_ratio,
+            config.min_realized_return_ratio,
+            &parent_regime_metrics,
+            &cycle_config.day_scenario,
+            &cycle_config.baseline_scenario,
+            pool_comparison.as_ref(),
+            Some(simplicity.clone()),
+            &progress,
+            cycle_id,
+            &parent_node.bundle_hash.to_hex(),
+        )
+        .await?;
+        let objective_metric = objective_metric(
+            cycle_config.objective,
+            &outcome.child_day,
+            outcome.child_pool.as_ref(),
+            simplicity.added,
+            cycle_config.simplicity_penalty,
+        );
+        let (node, resolved_status) = build_and_insert_node(
+            pool,
+            strategy_blob_store,
+            &outcome,
+            parent_node,
+            cycle_id,
+            cycle_config.objective,
+            seed,
+        )
+        .await?;
+        outcomes.push(GridEvaluationOutcome {
+            combination: combination.clone(),
+            child_hash: Some(node.bundle_hash.to_hex()),
+            gate_verdict: outcome.verdict.as_str().to_string(),
+            lineage_status: Some(resolved_status.as_str().to_string()),
+            objective_metric: Some(objective_metric),
+        });
+    }
+    outcomes.sort_by(|a, b| {
+        b.objective_metric
+            .partial_cmp(&a.objective_metric)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(outcomes)
+}
 
 /// Per-cycle configuration.
-///
-/// `Clone` so the CLI session loop can derive a fresh per-cycle config from one
-/// base, varying only `sustained_no_pass_cycles` across cycles (GH #965).
 #[derive(Clone)]
 pub struct CycleConfig {
     pub num_parents: usize,
@@ -61,17 +235,27 @@ pub struct CycleConfig {
     /// When empty the orchestrator uses the single day+baseline path unchanged.
     /// Populated from `AutoOptimizerConfig.regime_set`.
     pub regime_set: Vec<RegimeWindow>,
-    /// B19: pre-synthesized pool of `(day_scenario, baseline_scenario)` pairs the
-    /// cycle SAMPLES round-robin across candidates (candidate `i` uses
-    /// `scenario_pool[i % len]`), so different candidates are scored on different
-    /// regimes and a strategy tuned to one fixed window can't dominate the cycle.
+    /// B19: pre-synthesized pool of `(day_scenario, baseline_scenario)` pairs.
+    /// When non-empty, every candidate is evaluated across the full pool.
     ///
     /// Synthesized from `AutoOptimizerConfig.scenario_pool` (one entry per
-    /// `ScenarioWindowPair`). EMPTY (the default) ⇒ every candidate uses the
-    /// single `day_scenario`/`baseline_scenario` pair above, exactly as before
+    /// `ScenarioWindowPair`). EMPTY (the default) ⇒ every candidate uses
+    /// the single `day_scenario`/`baseline_scenario` pair above, exactly as before
     /// (back-compat). Ignored on the regime-matrix path (`regime_set` non-empty),
     /// which has its own multi-window semantics.
     pub scenario_pool: Vec<(Scenario, Scenario)>,
+    /// Minimum fraction of pool windows where the child must beat its parent.
+    /// Default: 0.5.
+    pub min_pool_win_fraction: f64,
+    /// Minimum mean child−parent delta above the pool noise floor.
+    /// Default: 0.0.
+    pub noise_floor_min_delta: f64,
+    /// Per-added-change ranking penalty. Zero disables the penalty.
+    /// Default: 0.0.
+    pub simplicity_penalty: f64,
+    /// Tolerance for equal-improvement simplicity checks.
+    /// Default: 1e-9.
+    pub simplicity_equal_tolerance: f64,
     /// Strict per-call output-token cap applied to EVERY LLM dispatch this
     /// cycle (candidate paper-test trader decisions, the experiment writer,
     /// and the judge). `None` = no cycle-level cap; each slot keeps its own
@@ -136,6 +320,8 @@ struct MutationOutcome {
     /// the historic-run detail can show per-candidate backtest results.
     child_day: MetricsSummary,
     child_untouched: MetricsSummary,
+    /// Full scenario-pool evaluation when the pool path is active.
+    child_pool: Option<PoolEvaluation>,
     /// Phase 2: per-regime evaluation rows. Empty when `regime_set` is empty
     /// (legacy / single-window path).
     regime_rows: Vec<RegimeResultRow>,
@@ -144,13 +330,10 @@ struct MutationOutcome {
     /// regime-matrix paths where no single day/holdout pair is definitive.
     gate_scores: Option<GateScores>,
     /// WS-11b: the persisted eval `Run.id` for this candidate's PRIMARY
-    /// day-window evaluation (the `paper_tester.run_with_run_id` call on the
-    /// legacy / scenario-pool path). `None` on the regime-matrix path (which
-    /// runs several evals and has no single definitive run) and for any
-    /// `PaperTestRunner` that doesn't surface a run id (test stubs). Threaded
-    /// onto `CycleProgressEvent::MutationGated` so the frontend can nest a
-    /// navigable eval-run node under the experiment row.
+    /// day-window evaluation.
     eval_run_id: Option<String>,
+    /// Exact window set used for this candidate's evaluation.
+    data_window_json: Option<String>,
 }
 
 /// Numeric gate inputs captured at gate-verdict time so they can be persisted
@@ -354,15 +537,12 @@ pub async fn run_cycle(
     // Memoizes the random-baseline objective score per (training window,
     // direction) for the whole cycle, so the extra backtest runs at most once.
     let baseline_cache: BaselineCache = BaselineCache::default();
+    let mut parent_pool_cache: HashMap<ContentHash, PoolEvaluation> = HashMap::new();
 
     for parent_node in &parents {
         if is_cancelled() {
             break;
         }
-        // P4: pause checkpoint — suspend here between parents if pause is set,
-        // polling every 1s until the flag is cleared (resume) or the cycle is
-        // cancelled. This is the outer per-parent boundary; the inner per-mutation
-        // boundary in `process_parent_mutations` does the same check.
         while pause
             .as_ref()
             .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
@@ -382,6 +562,18 @@ pub async fn run_cycle(
             cycle_id: cycle_id.clone(),
             parent_hash: ph,
         });
+        let parent_pool_evaluation = if cycle_config.regime_set.is_empty()
+            && !cycle_config.scenario_pool.is_empty()
+        {
+            if !parent_pool_cache.contains_key(&parent_node.bundle_hash) {
+                let evaluation =
+                    evaluate_pool(paper_tester, parent_strategy, &cycle_config.scenario_pool).await?;
+                parent_pool_cache.insert(parent_node.bundle_hash, evaluation);
+            }
+            parent_pool_cache.get(&parent_node.bundle_hash)
+        } else {
+            None
+        };
         let (active, suspect, rejected, nc, ec) = process_parent_mutations(
             pool,
             strategy_blob_store,
@@ -396,6 +588,7 @@ pub async fn run_cycle(
             judge,
             paper_tester,
             &baseline_cache,
+            parent_pool_evaluation,
             &progress,
             &mut findings_by_node,
             dsr_prefix.as_deref(),
@@ -625,6 +818,49 @@ pub fn select_scenario_pair<'a>(
     let (day, baseline) = &pool[mutation_idx % pool.len()];
     (day, baseline)
 }
+fn simplicity_stats(diff: &MutationDiff) -> SimplicityStats {
+    let added = diff.prose.len()
+        + diff.params.len()
+        + diff.tools.added.len()
+        + diff.tools.removed.len()
+        + diff.filter.len()
+        + if diff.create_filter.is_some() { 1 } else { 0 };
+    let removed = diff
+        .prose
+        .iter()
+        .filter(|edit| !edit.before.is_empty())
+        .count()
+        + diff
+            .params
+            .iter()
+            .filter(|edit| !edit.before.is_null())
+            .count()
+        + diff
+            .filter
+            .iter()
+            .filter(|edit| !edit.before.is_null())
+            .count()
+        + diff.tools.removed.len();
+    SimplicityStats { added, removed }
+}
+
+fn objective_metric(
+    objective: Objective,
+    child_day: &MetricsSummary,
+    child_pool: Option<&PoolEvaluation>,
+    added: usize,
+    simplicity_penalty: f64,
+) -> f64 {
+    let base = if matches!(objective, Objective::Consistency) {
+        child_pool
+            .map(|pool| pool.mean_net_return_pct + pool.profitable_fraction)
+            .unwrap_or_else(|| objective.oriented_value(child_day))
+    } else {
+        objective.oriented_value(child_day)
+    };
+    base - simplicity_penalty * added as f64
+}
+
 
 const LOW_TRADE_PARENT_FILL_LEG_FLOOR: u32 = 5;
 
@@ -765,6 +1001,7 @@ async fn process_parent_mutations<F>(
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
     baseline_cache: &BaselineCache,
+    parent_pool_evaluation: Option<&PoolEvaluation>,
     progress: &F,
     _findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
@@ -786,30 +1023,10 @@ where
     let mut no_candidate_count: usize = 0;
     let mut errored_count: usize = 0;
     let mut breaker = ConsecutiveErrors::new(cycle_config.max_consecutive_errors);
+    let scenario_pool_active =
+        cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
 
-    // B19: when the scenario_pool is active, the parent must be re-evaluated on
-    // EACH sampled pair (a child is compared only against its parent on the SAME
-    // pair — comparability rule). Those per-pair parent metrics are cached lazily
-    // below (`parent_pool_metrics`). The eager single-pair parent backtest is
-    // therefore only meaningful for the legacy single-pair path; skip it when a
-    // pool is configured to avoid a wasted backtest on a pair no candidate may
-    // even use.
-    let scenario_pool_active = cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
-
-    // Fix 6: Only backtest the parent on the legacy day/baseline scenarios when
-    // regime_set is empty. When regime_set is non-empty, the legacy day+baseline
-    // metrics are never used for classification — only per-regime backtests drive
-    // the gate. Skipping these runs avoids wasted backtests. B19: also skip when
-    // a scenario_pool is active (per-pair parent metrics are computed lazily).
     let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
-        // U5: bracket the parent baseline backtests with phase boundaries so the
-        // cycle output stream isn't silent for the 10–20 minutes these two
-        // (full-window) backtests take. Before this, the only event between
-        // `ParentSelected` and the first candidate's `PhaseStarted` was nothing —
-        // operators read the gap as a hang and cancelled the cycle. The
-        // underlying executor also emits `EvalHeartbeat` on its ProgressTx (wired
-        // via `CachedBacktestPaperTester::with_progress_bus`); a CLI/dashboard
-        // bridge drains that and re-emits `CycleProgressEvent::EvalProgress`.
         progress(CycleProgressEvent::PhaseStarted {
             session_id: String::new(),
             cycle_id: cycle_id.to_string(),
@@ -851,12 +1068,6 @@ where
         (MetricsSummary::default(), MetricsSummary::default())
     };
 
-    // B19: per-pair parent metrics cache, keyed by BOTH sampled scenario ids.
-    // The baseline id is part of the key because two pool entries may reuse the
-    // same training/day window with different holdout windows. In that shape,
-    // keying only by day id would incorrectly reuse the first holdout metrics
-    // and break the parent/child comparability rule.
-    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -1366,6 +1577,24 @@ where
             phase: Phase::GateEvaluating,
             detail: "Running backtests and numeric gate".to_string(),
         });
+        // The pool path evaluates every candidate on every pair. The selected
+        // pair remains the primary window used for the existing detail fields.
+        let (sampled_day, sampled_baseline) = select_scenario_pair(
+            &cycle_config.scenario_pool,
+            (&cycle_config.day_scenario, &cycle_config.baseline_scenario),
+            mutation_idx,
+        );
+        let simplicity = simplicity_stats(&diff);
+        let pool_comparison = if scenario_pool_active {
+            let parent_pool = parent_pool_evaluation
+                .expect("scenario pool parent evaluation is present");
+            Some(compare_pool_evaluations(
+                evaluate_pool(paper_tester, &candidate, &cycle_config.scenario_pool).await?,
+                parent_pool,
+            ))
+        } else {
+            None
+        };
         if scenario_pool_active {
             // B19 observability: the proposal currently gives operators no way to
             // tell which regime a candidate was scored on. Emit the sampled pair's
@@ -1380,6 +1609,7 @@ where
                 "B19 round-robin: candidate evaluated on sampled scenario pair"
             );
         }
+
         let gate_t0 = Instant::now();
         let gate_result = gate_and_classify(
             &enriched_parent,
@@ -1388,8 +1618,8 @@ where
             paper_tester,
             config.baseline_direction,
             baseline_cache,
-            &gate_parent_day,
-            &gate_parent_untouched,
+            &parent_day,
+            &parent_untouched,
             min_improvement,
             holdout_min_improvement,
             config.min_trade_retention_ratio,
@@ -1397,6 +1627,8 @@ where
             &parent_regime_metrics,
             sampled_day,
             sampled_baseline,
+            pool_comparison.as_ref(),
+            Some(simplicity),
             progress,
             cycle_id,
             &ph_str,
@@ -1446,7 +1678,16 @@ where
         // collision-guard preserves an existing active node).  Emit the SSE event
         // and route the result bucket from the resolved status, not outcome.status.
         let (node, resolved_status) =
-            build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+            build_and_insert_node(
+                pool,
+                strategy_blob_store,
+                &outcome,
+                parent_node,
+                cycle_id,
+                config.objective,
+                cycle_config.sabotage_seed,
+            )
+            .await?;
         let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
@@ -1726,21 +1967,11 @@ async fn gate_and_classify<F>(
     holdout_min_improvement: f64,
     min_trade_retention_ratio: f64,
     min_realized_return_ratio: f64,
-    // Per-regime parent metrics (label → (day, untouched)), pre-computed by
-    // `process_parent_mutations` so each parent is evaluated only once per
-    // regime window across all its mutations.
     parent_regime_metrics: &HashMap<String, (MetricsSummary, MetricsSummary)>,
-    // B19: the (day, baseline) scenario pair THIS candidate is evaluated on,
-    // selected round-robin by the caller. On the legacy / regime paths this is
-    // the single cycle day/baseline pair (`cycle_config.day_scenario` /
-    // `baseline_scenario`); on the scenario_pool path it is the sampled pair.
-    // The `parent_day`/`parent_untouched` passed above were computed on this SAME
-    // pair (comparability), so the legacy gate path uses these scenarios for the
-    // child eval, inversion check, and random-baseline edge — never the raw
-    // `cycle_config` fields — to stay consistent with the parent metrics.
     sampled_day: &Scenario,
     sampled_baseline: &Scenario,
-    // Progress callback + context for emitting inner phase events.
+    pool_comparison: Option<&PoolComparison>,
+    simplicity: Option<SimplicityStats>,
     progress: &F,
     cycle_id: &str,
     parent_hash_str: &str,
@@ -1748,13 +1979,6 @@ async fn gate_and_classify<F>(
 where
     F: Fn(CycleProgressEvent),
 {
-    // R4: normalize the diff's stale `before` baselines to the parent's live
-    // values BEFORE the candidate is gated and stored. Beyond the inversion
-    // honesty-check, the stored diff feeds `describe_mutation_outcome` → the
-    // optimizer-memory write-back; an un-normalized (model-hallucinated)
-    // `before` would persist a fictitious baseline later recalled into the
-    // experiment-writer prompt. `after` is never touched, so the forward child
-    // and the lineage hash are unaffected.
     let mut diff = diff;
     crate::autooptimizer::inversion::normalize_prose_baseline(&mut diff, parent_strategy);
     crate::autooptimizer::inversion::normalize_filter_baseline(&mut diff, parent_strategy);
@@ -1763,13 +1987,12 @@ where
     let child = diff.apply_to(parent_strategy);
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 
-    // ── Phase 2: regime-matrix path ──────────────────────────────────────────
     if !cycle_config.regime_set.is_empty() {
-        // Build (day, baseline) scenario pairs for every regime window.
-        let mut regime_inputs: Vec<RegimeEvalInput> = Vec::with_capacity(cycle_config.regime_set.len());
+        let mut regime_inputs: Vec<RegimeEvalInput> =
+            Vec::with_capacity(cycle_config.regime_set.len());
         for rw in &cycle_config.regime_set {
-            let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
-            // EvalDayWindow phase for each regime.
+            let (regime_day_scen, regime_baseline_scen) =
+                build_regime_scenario_pair(cycle_config, rw)?;
             progress(CycleProgressEvent::PhaseStarted {
                 session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
@@ -1914,13 +2137,14 @@ where
             status: regime_status,
             delta_sharpe,
             child_day,
+            child_pool: None,
             child_untouched,
             regime_rows,
-            // Regime-matrix path: no single day/holdout pair is the gate gate.
             gate_scores: None,
             // Regime-matrix path runs several evals across windows — no single
             // definitive eval run to nest under the experiment (WS-11b).
             eval_run_id: None,
+            data_window_json: serde_json::to_string(&cycle_config.regime_set).ok(),
         });
     }
 
@@ -1967,19 +2191,91 @@ where
         phase: Phase::EvalUntouchedWindow,
         duration_ms: t0.elapsed().as_millis() as u64,
     });
-    let raw_verdict = gate_check(
-        parent_day,
-        &child_day,
-        parent_untouched,
-        &child_untouched,
-        min_improvement,
-        holdout_min_improvement,
-        cycle_config.objective,
-        parent_day.n_trades,
-        child_day.n_trades,
-        min_trade_retention_ratio,
-        min_realized_return_ratio,
-    );
+    // Pool path: the parent day/holdout metrics are intentionally zeroed (the
+    // full scenario pool replaces the single pair), so the legacy parent-relative
+    // gate_check would compare against a fictitious zero-drawdown parent and
+    // reject everything. Pool acceptance = net-return guard + pool consistency
+    // (+ simplicity rescue + inversion check below); legacy gate otherwise.
+    let mut raw_verdict = if pool_comparison.is_some() {
+        GateVerdict::Pass
+    } else {
+        gate_check(
+            parent_day,
+            &child_day,
+            parent_untouched,
+            &child_untouched,
+            min_improvement,
+            holdout_min_improvement,
+            cycle_config.objective,
+            parent_day.n_trades,
+            child_day.n_trades,
+            min_trade_retention_ratio,
+            min_realized_return_ratio,
+        )
+    };
+    let mut honesty_failed = false;
+    if let Some(comparison) = pool_comparison {
+        if let Some(reason) = check_net_return(&child_day, sampled_day.capital.initial) {
+            honesty_failed = true;
+            raw_verdict = GateVerdict::Fail {
+                reason: reason.to_string(),
+            };
+        } else if let Some(reason) = check_pool_consistency(
+            comparison,
+            cycle_config.min_pool_win_fraction,
+            cycle_config.noise_floor_min_delta,
+        ) {
+            honesty_failed = true;
+            raw_verdict = GateVerdict::Fail { reason };
+        }
+    }
+    if let Some(stats) = simplicity.as_ref() {
+        if stats.removed > stats.added {
+            let (day_delta, holdout_delta) = if let Some(comparison) = pool_comparison {
+                let mean_delta = if comparison.child.outcomes.is_empty() {
+                    0.0
+                } else {
+                    comparison
+                        .child
+                        .outcomes
+                        .iter()
+                        .filter_map(|child| {
+                            comparison
+                                .parent
+                                .outcomes
+                                .iter()
+                                .find(|parent| parent.scenario_id == child.scenario_id)
+                                .map(|parent| child.net_return_pct - parent.net_return_pct)
+                        })
+                        .sum::<f64>()
+                        / comparison.child.outcomes.len() as f64
+                };
+                (mean_delta, 0.0)
+            } else {
+                (
+                    cycle_config.objective.oriented_value(&child_day)
+                        - cycle_config.objective.oriented_value(parent_day),
+                    cycle_config.objective.oriented_value(&child_untouched)
+                        - cycle_config.objective.oriented_value(parent_untouched),
+                )
+            };
+            // Simplicity rescue (Karpathy criterion): a strict deletion that is
+            // not worse within tolerance is a WIN and overrides an objective or
+            // safety rejection — but never the honesty guards (net return,
+            // pool consistency), which fail the candidate outright above.
+            if !honesty_failed
+                && !matches!(raw_verdict, GateVerdict::Pass)
+                && check_simplicity_equal_or_simpler(
+                    stats,
+                    day_delta,
+                    holdout_delta,
+                    cycle_config.simplicity_equal_tolerance,
+                )
+            {
+                raw_verdict = GateVerdict::Pass;
+            }
+        }
+    }
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
@@ -2104,14 +2400,30 @@ where
         delta_sharpe,
         child_day,
         child_untouched,
+        child_pool: pool_comparison.map(|comparison| comparison.child.clone()),
         regime_rows: vec![],
         gate_scores,
         eval_run_id,
+        data_window_json: scenario_window_json(sampled_day, sampled_baseline),
     })
 }
+/// Serialize the exact day and holdout scenarios used for a candidate.
+fn scenario_window_json(day: &Scenario, baseline: &Scenario) -> Option<String> {
+    serde_json::to_string(&serde_json::json!({
+        "day": {
+            "id": &day.id,
+            "start": day.time_window.start.to_rfc3339(),
+            "end": day.time_window.end.to_rfc3339(),
+        },
+        "baseline": {
+            "id": &baseline.id,
+            "start": baseline.time_window.start.to_rfc3339(),
+            "end": baseline.time_window.end.to_rfc3339(),
+        },
+    }))
+    .ok()
+}
 
-/// Build a (day, baseline) `Scenario` pair for a regime window, cloned and
-/// date-patched from the cycle's base `day_scenario`.
 fn build_regime_scenario_pair(cycle_config: &CycleConfig, rw: &RegimeWindow) -> Result<(Scenario, Scenario)> {
     use crate::eval::scenario::{BarCachePolicy, RefreshPolicy, TimeWindow};
     use chrono::{NaiveDate, TimeZone, Utc};
@@ -2185,23 +2497,16 @@ fn should_preserve_active_collision(new_status: &LineageStatus) -> bool {
 }
 
 /// Build and atomically persist a lineage node together with its per-regime
-/// audit rows (if any).  Returns the node that was actually written to the DB
-/// and its **resolved** [`LineageStatus`] — which may differ from
-/// `outcome.status` when the collision-guard preserves an existing Active node.
-///
-/// Fix 1 (MAJOR): node insert and regime-results insert are wrapped in a single
-/// SQLite transaction so a regime-insert failure cannot leave a node without its
-/// audit rows.
-///
-/// Fix 2 (MAJOR): the resolved status is returned so callers can route the SSE
-/// event and result buckets from what the DB actually persisted, not from the
-/// pre-persistence derived status.
+/// audit rows (if any). Returns the node actually written and its resolved
+/// status.
 async fn build_and_insert_node(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
+    objective: Objective,
+    seed: u64,
 ) -> Result<(LineageNode, LineageStatus)> {
     let store = LineageStore::new(pool.clone());
     // F33: record this cycle's evaluation edge to the candidate up-front (before
@@ -2247,6 +2552,10 @@ async fn build_and_insert_node(
         cycle_id: Some(cycle_id.to_string()),
         created_at: Utc::now(),
         diversity_score: None,
+        mutation_diff_json: serde_json::to_string(&outcome.diff).ok(),
+        seed: i64::try_from(seed).ok(),
+        data_window_json: outcome.data_window_json.clone(),
+        objective: Some(objective.label().to_string()),
     };
 
     // Fix 1: wrap node insert + regime rows in a single transaction so a
@@ -2256,8 +2565,9 @@ async fn build_and_insert_node(
         let mut tx = pool.begin().await.context("begin node+regime tx")?;
         sqlx::query(
             "INSERT OR REPLACE INTO lineage_nodes \
-             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, \
+              mutation_diff_json, seed, data_window_json, objective) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(node.bundle_hash.to_hex())
         .bind(node.parent_hash.as_ref().map(|h| h.to_hex()))
@@ -2265,6 +2575,10 @@ async fn build_and_insert_node(
         .bind(node.status.as_str())
         .bind(&node.cycle_id)
         .bind(node.created_at.to_rfc3339())
+        .bind(&node.mutation_diff_json)
+        .bind(node.seed)
+        .bind(&node.data_window_json)
+        .bind(&node.objective)
         .execute(&mut *tx)
         .await
         .context("insert lineage_node (tx)")?;
@@ -2489,6 +2803,10 @@ mod tests {
             cycle_id: Some("c".into()),
             created_at: Utc::now(),
             diversity_score: None,
+            mutation_diff_json: None,
+            seed: None,
+            data_window_json: None,
+            objective: None,
         }
     }
 
@@ -2662,6 +2980,10 @@ mod tests {
             objective: Objective::Sharpe,
             regime_set: Vec::new(),
             scenario_pool: Vec::new(),
+            min_pool_win_fraction: 0.5,
+            noise_floor_min_delta: 0.0,
+            simplicity_penalty: 0.0,
+            simplicity_equal_tolerance: 1e-9,
             max_output_tokens: None,
             max_consecutive_errors: 3,
         };

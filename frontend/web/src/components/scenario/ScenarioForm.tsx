@@ -176,6 +176,9 @@ export function ScenarioForm({
         latency: { decision_to_fill_ms: latencyMs },
         fill_model: fillModel,
         overrides: initial?.venue?.overrides ?? [],
+        // Engine default (5 bps/day ≈ 18%/yr) when the operator doesn't
+        // touch it; per-asset VenueOverride entries take precedence.
+        borrow_bps_per_day: initial?.venue?.borrow_bps_per_day ?? 5.0,
       },
       data_source: dataSource,
       replay_mode: REPLAY_MODE,

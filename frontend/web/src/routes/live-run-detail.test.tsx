@@ -79,6 +79,7 @@ function makeEvalDetail(): RunDetail {
       scenario: { id: "", display_name: "BTC momentum (live)" },
       mode: "fwd",
       status: "running",
+      source: "human",
       started_at: "2026-06-10T10:00:00Z",
       completed_at: null,
       sharpe: null,
@@ -100,11 +101,16 @@ function makeEvalDetail(): RunDetail {
       skipped_dispatches: 0,
       delayed_decisions: 0,
       forced_cancels: 0,
+      n_decisions: null,
+      n_trades: null,
+      win_rate: null,
+      n_bars: null,
     },
     decisions: [],
     equity_curve: [],
     filter_events: [],
     filter_summaries: [],
+    signals_used: null,
   };
 }
 

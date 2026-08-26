@@ -17,25 +17,115 @@
 //!     engine_version
 //! )
 //! ```
+//! `bars_content_hash` is computed from the loaded rows by
+//! [`canonical_bars_content_hash`]. It must never be a path or cache-key hash:
+//! those identify a location, not the bytes evaluated.
 //!
-//! `bars_content_hash` is produced by `eval-candle-integrity-and-manifest`
-//! when that track lands. Until then, callers may pass a stub (e.g. the SHA-256
-//! of the bars file path) — the receipt is still stable per `engine_version`
-//! as long as the stub is deterministic for a given fixture.
+//! The optional `manifest_canonical` receipt column stores the compact JSON
+//! manifest built by [`ReceiptManifest::canonical_json`].
 //!
-//! `manifest_canonical` is reserved but left `NULL` by this track;
-//! `eval-candle-integrity-and-manifest` (migration 027) populates it once its
-//! pinned-fixtures work lands.
+//! The receipt table is intentionally independent of `eval_runs`: a run can be
+//! re-read and verified even when its mutable summary fields change.
 //!
 //! ## Persistence
-//!
-//! Receipts are stored in the `determinism_receipts` SQLite table (engine DB,
-//! migration 026). The table is keyed by `run_id` (one receipt per run).
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+
+use xvision_core::market::Ohlcv;
+/// Canonical manifest persisted with a determinism receipt.
+///
+/// The fields that are not available at the receipt seam remain JSON `null`.
+/// `bars_content_hash` and `engine_version` are required because a receipt
+/// without either cannot identify the evaluated input or implementation.
+///
+/// Replay-provenance fields are audit metadata only and do not affect
+/// `receipt_hash`, which remains the five-field input tuple documented above.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceiptManifest {
+    pub bars_content_hash: String,
+    pub bars_rows: usize,
+    pub bars_start: Option<String>,
+    pub bars_end: Option<String>,
+    pub bars_source: String,
+    pub scenario_id: String,
+    pub strategy_hash: String,
+    pub strategy_source_hash: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub prompt_version: Option<String>,
+    pub system_prompt_hash: Option<String>,
+    pub tool_cache_recording_id: Option<String>,
+    pub engine_version: String,
+    pub seed: u64,
+    /// Original run whose cached tool responses were replayed, when known.
+    #[serde(default)]
+    pub replay_of_run_id: Option<String>,
+    /// Whether replay inputs matched the original receipt; `None` means
+    /// verification was unavailable.
+    #[serde(default)]
+    pub replay_inputs_match: Option<bool>,
+    /// Reasons replay inputs differed, or why verification could not complete.
+    #[serde(default)]
+    pub replay_mismatches: Vec<String>,
+}
+
+impl ReceiptManifest {
+    /// Serialise the manifest as compact, deterministic JSON.
+    pub fn canonical_json(&self) -> String {
+        serde_json::to_string(self).expect("receipt manifest is JSON-safe")
+    }
+}
+
+/// Hash loaded OHLCV rows, independent of source file encoding or row order.
+///
+/// Each row is sorted by timestamp and then by the raw IEEE-754 bits of its
+/// OHLCV values. The hash input is fixed-width binary data:
+/// `(timestamp_seconds, timestamp_nanoseconds, open_bits, high_bits,
+/// low_bits, close_bits, volume_bits)`. Using `to_bits` preserves `-0.0` and
+/// NaN payloads instead of introducing formatting or parser drift.
+pub fn canonical_bars_content_hash(bars: &[Ohlcv]) -> String {
+    let mut rows: Vec<&Ohlcv> = bars.iter().collect();
+    rows.sort_unstable_by(|a, b| {
+        (
+            a.timestamp.timestamp(),
+            a.timestamp.timestamp_subsec_nanos(),
+            a.open.to_bits(),
+            a.high.to_bits(),
+            a.low.to_bits(),
+            a.close.to_bits(),
+            a.volume.to_bits(),
+        )
+            .cmp(&(
+                b.timestamp.timestamp(),
+                b.timestamp.timestamp_subsec_nanos(),
+                b.open.to_bits(),
+                b.high.to_bits(),
+                b.low.to_bits(),
+                b.close.to_bits(),
+                b.volume.to_bits(),
+            ))
+    });
+
+    let mut hasher = Sha256::new();
+    for bar in rows {
+        hasher.update(bar.timestamp.timestamp().to_be_bytes());
+        hasher.update(bar.timestamp.timestamp_subsec_nanos().to_be_bytes());
+        for bits in [
+            bar.open.to_bits(),
+            bar.high.to_bits(),
+            bar.low.to_bits(),
+            bar.close.to_bits(),
+            bar.volume.to_bits(),
+        ] {
+            hasher.update(bits.to_be_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
 
 /// Inputs required to mint a determinism receipt.
 #[derive(Debug, Clone)]
@@ -46,9 +136,8 @@ pub struct ReceiptInputs {
     pub strategy_hash: String,
     /// Scenario identifier.
     pub scenario_id: String,
-    /// Content hash of the OHLCV bars fixture. May be a stub (sha256 of the
-    /// file path) until `eval-candle-integrity-and-manifest` provides the
-    /// canonical hash.
+    /// SHA-256 of the canonical loaded OHLCV rows. A path or cache-key hash
+    /// is not a valid receipt input.
     pub bars_content_hash: String,
     /// Random seed used for this run.
     pub seed: u64,
@@ -66,8 +155,7 @@ pub struct DeterminismReceipt {
     pub engine_version: String,
     pub schema_version: String,
     pub created_at: DateTime<Utc>,
-    /// Reserved for `eval-candle-integrity-and-manifest`. Always `None` from
-    /// this track; the downstream track's migration populates it.
+    /// Compact canonical JSON manifest of all known reproduction inputs.
     pub manifest_canonical: Option<String>,
 }
 
@@ -80,6 +168,16 @@ impl DeterminismReceipt {
     /// Two calls with identical `inputs` values produce the same
     /// `receipt_hash`. Any change to any input field changes the hash.
     pub fn mint(inputs: &ReceiptInputs) -> Self {
+        Self::mint_with_manifest_json(inputs, None)
+    }
+
+    /// Mint a receipt and persist the supplied canonical manifest in the same
+    /// row. The receipt hash remains the required five-field tuple.
+    pub fn mint_with_manifest(inputs: &ReceiptInputs, manifest: &ReceiptManifest) -> Self {
+        Self::mint_with_manifest_json(inputs, Some(manifest.canonical_json()))
+    }
+
+    fn mint_with_manifest_json(inputs: &ReceiptInputs, manifest: Option<String>) -> Self {
         let canonical = format!(
             "{}\0{}\0{}\0{}\0{}",
             inputs.strategy_hash,
@@ -90,8 +188,7 @@ impl DeterminismReceipt {
         );
         let mut hasher = Sha256::new();
         hasher.update(canonical.as_bytes());
-        let hash_bytes = hasher.finalize();
-        let receipt_hash = hex::encode(hash_bytes);
+        let receipt_hash = hex::encode(hasher.finalize());
 
         DeterminismReceipt {
             run_id: inputs.run_id.clone(),
@@ -99,7 +196,7 @@ impl DeterminismReceipt {
             engine_version: inputs.engine_version.clone(),
             schema_version: inputs.schema_version.clone(),
             created_at: Utc::now(),
-            manifest_canonical: None,
+            manifest_canonical: manifest,
         }
     }
 }
@@ -257,6 +354,63 @@ mod tests {
             ..base.clone()
         });
         assert_ne!(r_base.receipt_hash, r_scen.receipt_hash, "scenario_id change");
+    }
+
+    #[test]
+    fn bars_hash_is_order_independent_and_uses_float_bits() {
+        use chrono::TimeZone;
+
+        let first = Ohlcv {
+            timestamp: Utc.timestamp_opt(2, 3).single().unwrap(),
+            open: -0.0,
+            high: 2.0,
+            low: 1.0,
+            close: 1.5,
+            volume: 10.0,
+        };
+        let second = Ohlcv {
+            timestamp: Utc.timestamp_opt(1, 4).single().unwrap(),
+            open: 3.0,
+            high: 4.0,
+            low: 2.0,
+            close: 3.5,
+            volume: 20.0,
+        };
+        let forward = canonical_bars_content_hash(&[first.clone(), second.clone()]);
+        let reverse = canonical_bars_content_hash(&[second, first.clone()]);
+        assert_eq!(forward, reverse);
+        assert_ne!(
+            forward,
+            canonical_bars_content_hash(&[Ohlcv {
+                open: 0.0,
+                ..first
+            }])
+        );
+    }
+
+    #[test]
+    fn manifest_replay_fields_default_when_absent() {
+        let old_manifest = r#"{
+            "bars_content_hash":"bars",
+            "bars_rows":1,
+            "bars_start":null,
+            "bars_end":null,
+            "bars_source":"db_cache",
+            "scenario_id":"scenario",
+            "strategy_hash":"strategy",
+            "strategy_source_hash":null,
+            "provider":null,
+            "model":null,
+            "prompt_version":null,
+            "system_prompt_hash":null,
+            "tool_cache_recording_id":null,
+            "engine_version":"engine",
+            "seed":0
+        }"#;
+        let manifest: ReceiptManifest = serde_json::from_str(old_manifest).unwrap();
+        assert_eq!(manifest.replay_of_run_id, None);
+        assert_eq!(manifest.replay_inputs_match, None);
+        assert!(manifest.replay_mismatches.is_empty());
     }
 
     #[test]

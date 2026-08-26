@@ -335,7 +335,14 @@ pub struct RouteDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub branches: Vec<RouteBranch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "ts-export", ts(optional))]
+    // Wire omits the key when empty (skip_serializing_if), so the honest TS
+    // shape is optional. ts-rs 9's `optional` is Option-only, so borrow the
+    // Option shape via `as` — this also keeps the RouteGraphEdge import in
+    // the generated file (a plain `ts(type = ...)` override drops imports).
+    #[cfg_attr(
+        feature = "ts-export",
+        ts(as = "Option<Vec<RouteGraphEdge>>", optional)
+    )]
     pub graph_edges: Vec<RouteGraphEdge>,
     #[serde(default = "default_route_context_fields")]
     pub context_fields: Vec<RouteContextField>,
