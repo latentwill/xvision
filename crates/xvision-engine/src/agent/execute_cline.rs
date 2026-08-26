@@ -436,11 +436,7 @@ fn is_retryable_sidecar_step_failure(err: &anyhow::Error) -> bool {
     };
     match e {
         ClineRuntimeError::StepNotCompleted { status, error, .. } => {
-            status == "failed"
-                && error
-                    .as_deref()
-                    .map(|s| !s.contains("budget_"))
-                    .unwrap_or(true)
+            status == "failed" && error.as_deref().map(|s| !s.contains("budget_")).unwrap_or(true)
         }
         _ => false,
     }
@@ -1299,7 +1295,9 @@ mod tests {
         assert!(!is_retryable_sidecar_step_failure(&anyhow::Error::new(budget)));
 
         // Transport errors and other classes stay fail-fast.
-        assert!(!is_retryable_sidecar_step_failure(&anyhow::anyhow!("connection reset")));
+        assert!(!is_retryable_sidecar_step_failure(&anyhow::anyhow!(
+            "connection reset"
+        )));
     }
 
     #[test]

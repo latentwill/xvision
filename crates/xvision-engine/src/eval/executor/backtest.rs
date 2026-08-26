@@ -95,6 +95,23 @@ pub(crate) struct LiveRuntime {
     pub(crate) stop_policy: crate::eval::live_config::StopPolicy,
 }
 
+/// Persisted-ledger seed for a RESUMED disconnected forward run
+/// (`api::eval::resume_disconnected_run`). Carries the reconstructed
+/// portfolio book (positions + realized PnL from `eval_decisions`), the
+/// last persisted equity sample, and the counter watermarks so the loop
+/// continues the SAME ledger — and keeps `(run_id, decision_index)` /
+/// `(run_id, asset, bar_index)` primary keys monotonic across the gap.
+#[derive(Debug)]
+pub struct LiveRestoreState {
+    pub book: crate::eval::executor::book::PortfolioBook,
+    /// Last persisted equity sample (USD). Falls back to initial capital.
+    pub equity: f64,
+    /// Next decision index to persist (= MAX(persisted) + 1).
+    pub decision_idx: u32,
+    /// Next global bar index to persist (= MAX(persisted) + 1).
+    pub bar_count: u32,
+}
+
 #[derive(Default)]
 pub struct Executor {
     /// Optional progress channel. When `None` the executor is silent
@@ -198,6 +215,10 @@ pub struct Executor {
     /// at the call site so the boundary modulo never divides by zero. Only
     /// consulted when `attest_hook` is `Some`.
     attest_every_n_trades: u32,
+    /// Crash-recovery seam: when `Some`, the live loop seeds its book,
+    /// equity curve, and PK counters from this state (see
+    /// [`LiveRestoreState`]). `None` starts flat — every fresh run.
+    live_restore: Option<LiveRestoreState>,
 }
 
 /// LANE byu — default cadence (in executed trades) at which the live loop
@@ -260,6 +281,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
+            live_restore: None,
         })
     }
 
@@ -295,6 +317,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
+            live_restore: None,
         }
     }
 
@@ -326,6 +349,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
+            live_restore: None,
         }
     }
 
@@ -351,6 +375,7 @@ impl Executor {
             canary_sabotage: None,
             attest_hook: None,
             attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
+            live_restore: None,
         }
     }
 
@@ -428,6 +453,14 @@ impl Executor {
     /// the per-bar check is a constant-time no-op.
     pub fn with_limits(mut self, limits: super::super::limits::EvalLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    /// Seed the live loop from a resumed run's persisted ledger (see
+    /// [`LiveRestoreState`]). Chain before `run`. Fresh runs never call
+    /// this — the field defaults to `None` and the loop starts flat.
+    pub fn with_live_restore(mut self, restore: LiveRestoreState) -> Self {
+        self.live_restore = Some(restore);
         self
     }
 
@@ -3520,19 +3553,28 @@ impl Executor {
         let history_window = scenario.warmup_bars as usize;
 
         let initial = scenario.capital.initial;
+        // Crash-recovery seam: a resumed forward run continues the SAME
+        // ledger (book, equity, PK watermarks) instead of restarting flat.
+        let restore = self.live_restore.take();
+        let restored_equity = restore.as_ref().map(|r| r.equity);
+        let restored_decision_idx = restore.as_ref().map(|r| r.decision_idx).unwrap_or(0);
+        let restored_bar_count = restore.as_ref().map(|r| r.bar_count).unwrap_or(0);
         // Pooled book + NAV are SHARED across all assets (PortfolioBook
         // carries per-asset legs + a pooled equity formula).
-        let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
-        let mut equity = initial;
-        let mut equity_curve: Vec<f64> = vec![initial];
-        let mut peak_equity = initial.max(0.0);
+        let mut book = match restore {
+            Some(r) => r.book,
+            None => crate::eval::executor::book::PortfolioBook::new(initial),
+        };
+        let mut equity = restored_equity.unwrap_or(initial);
+        let mut equity_curve: Vec<f64> = vec![equity];
+        let mut peak_equity = equity.max(0.0);
         // Single monotonic decision counter, shared across assets — exactly
         // like the multi-asset backtest. Each arriving (asset, bar) gets a
         // unique index so the `(run_id, decision_index)` PK never collides.
-        let mut decision_idx = 0u32;
+        let mut decision_idx = restored_decision_idx;
         let mut n_trades = 0u32;
-        let wins = 0u32;
-        let realized_count = 0u32;
+        let mut wins = 0u32;
+        let mut realized_count = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
@@ -3651,9 +3693,11 @@ impl Executor {
         let mut delayed_decisions: u64 = 0;
         /// Count of agents force-cancelled via --max-agent-ms.
         let mut forced_cancels: u64 = 0;
-        // Track the bar timestamp this agent was dispatched for.
-        // Used to compute staleness when the decision arrives.
-        let mut current_agent_bar: Option<chrono::DateTime<chrono::Utc>> = None;
+        // Consecutive dispatch failures/skips — reset to 0 on every
+        // successful decision. Drives the max-consecutive-skips Degraded
+        // health signal (limits.rs contract), unlike the cumulative
+        // `skipped_dispatches` above which never resets.
+        let mut consecutive_skips: u64 = 0;
 
         tracing::info!(
             target: "xvision_engine::live_executor",
@@ -3671,7 +3715,7 @@ impl Executor {
         // but `run_inner_live` never consumes it — indicators see zero
         // history and the first several bars are wasted.
         let warmup = runtime.bar_source.take_warmup_history();
-        let mut bar_count: u32 = 0;
+        let mut bar_count: u32 = restored_bar_count;
         if !warmup.is_empty() {
             let counts: Vec<String> = warmup
                 .iter()
@@ -3692,7 +3736,6 @@ impl Executor {
                         &run.id,
                         RunChartEvent::Equity(ChartEquityPoint {
                             time: bar.timestamp.timestamp(),
-                            equity_usd: equity,
                         }),
                     )
                     .await;
@@ -3793,6 +3836,11 @@ impl Executor {
                     equity = book.equity(&std::collections::BTreeMap::new());
                     equity_curve.push(equity);
                 }
+                // Flatten closes are round trips too — credit the run's
+                // win-rate counters so cancelled-run partial metrics are
+                // honest about the legs the flatten settled.
+                realized_count += flatten.fully_closed as u32;
+                wins += flatten.closed_with_profit as u32;
                 let mut partial = compute_run_metrics(
                     &equity_curve,
                     initial,
@@ -3848,6 +3896,10 @@ impl Executor {
                     equity = book.equity(&std::collections::BTreeMap::new());
                     equity_curve.push(equity);
                 }
+                // Same round-trip credit as the cancel-time flatten: full
+                // flatten closes count toward realized_count/wins.
+                realized_count += flatten.fully_closed as u32;
+                wins += flatten.closed_with_profit as u32;
                 // Clear the request UNCONDITIONALLY (even when some legs failed
                 // to close or the book was already flat): the flag is a
                 // one-shot request, and re-flattening every cycle would trap a
@@ -4005,28 +4057,45 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
-            // Graceful LLM delay: determine if this decision is stale.
-            // Compare the bar this agent was dispatched for against the
-            // current decision timestamp. In async mode, the agent may
-            // have taken several bars to complete — when it does, the
-            // decision is flagged as delayed.
-            let delayed = if let Some(agent_bar) = current_agent_bar.take() {
-                let bar_age_ms = (decision_ts - agent_bar).num_milliseconds();
-                let cadence_ms = strategy.manifest.decision_cadence_minutes as i64 * 60_000;
-                if bar_age_ms >= cadence_ms {
-                    delayed_decisions += 1;
-                    true
-                } else {
-                    false
+            // Stale-data flag (limits.rs contract): when
+            // `stale_data_max_age_ms` is configured, flag the decision as
+            // delayed when the decision bar's age against the wall clock
+            // exceeds the threshold — the data the trader decided on was
+            // already stale. Unset = never flag (all decisions accepted).
+            let delayed = match self.limits.as_ref().and_then(|l| l.stale_data_max_age_ms) {
+                Some(max_age_ms) => {
+                    let bar_age_ms = (wall_now - bar.timestamp).num_milliseconds();
+                    let is_stale = bar_age_ms > max_age_ms as i64;
+                    if is_stale {
+                        delayed_decisions += 1;
+                    }
+                    is_stale
                 }
-            } else {
-                false
+                None => false,
             };
-            current_agent_bar = Some(decision_ts);
-            let dispatch_start = Instant::now();
 
-            let outcome = match self
-                .decide_one_live(
+            // Round-trip detection: a cycle that takes THIS asset's leg from
+            // open to flat (or flips its direction) closes one round trip;
+            // the realized-PnL delta over the cycle decides win/loss. Mirrors
+            // the backtest path's `realized_count`/`wins` semantics so
+            // forward runs report honest win rates instead of hardcoded 0.
+            let sign_before = signum_f64(book.position(asset_sym));
+            let realized_before = book.realized();
+
+            // Hang belt: --max-agent-ms races the dispatch against a timeout
+            // budget. On expiry the agent task is CANCELLED and any late
+            // result discarded — no decision is accepted from an agent that
+            // blew its budget (limits.rs contract). No limit configured =>
+            // effectively infinite budget, pure passthrough.
+            let agent_budget = std::time::Duration::from_millis(
+                self.limits
+                    .as_ref()
+                    .and_then(|l| l.max_agent_ms)
+                    .unwrap_or(u64::MAX),
+            );
+            let dispatched = tokio::time::timeout(
+                agent_budget,
+                self.decide_one_live(
                     DecideOneLiveCtx {
                         run,
                         strategy,
@@ -4067,21 +4136,54 @@ impl Executor {
                     },
                     &mut runtime.fill_sink,
                     &mut book,
-                )
-                .await
-            {
-                Ok(o) => o,
-                Err(e) => {
+                ),
+            )
+            .await
+            .map_err(|_| LiveDispatchAbort::TimedOut)
+            .and_then(|inner| inner.map_err(LiveDispatchAbort::Error));
+            let outcome = match dispatched {
+                Ok(o) => {
+                    // A successful dispatch ends any consecutive-skip streak.
+                    consecutive_skips = 0;
+                    // Close detection runs AFTER the cycle settled its fills.
+                    let sign_after = signum_f64(book.position(asset_sym));
+                    if sign_before != 0 && sign_after != sign_before {
+                        realized_count += 1;
+                        if book.realized() - realized_before > 0.0 {
+                            wins += 1;
+                        }
+                    }
+                    o
+                }
+                Err(abort) => {
+                    let timed_out = matches!(abort, LiveDispatchAbort::TimedOut);
+                    if timed_out {
+                        forced_cancels += 1;
+                    }
+                    skipped_dispatches += 1;
+                    consecutive_skips += 1;
                     tracing::warn!(
                         target: "xvision_engine::live",
-                        error = %e,
                         live_bar_count,
-                        "live agent dispatch failed; skipping bar, will retry next cycle"
+                        timed_out,
+                        detail = match &abort {
+                            LiveDispatchAbort::Error(e) => e.to_string(),
+                            LiveDispatchAbort::TimedOut => {
+                                "agent exceeded --max-agent-ms; late decision discarded".to_string()
+                            }
+                        },
+                        "live agent dispatch aborted; skipping bar, will retry next cycle"
                     );
-                    skipped_dispatches += 1;
                     let limits = self.limits.as_ref();
-                    let max_skips = limits.map(|l| l.max_consecutive_skips).unwrap_or(5);
-                    if skipped_dispatches > 0 && skipped_dispatches % max_skips as u64 == 0 {
+                    // Degraded health fires ONCE per streak, when the
+                    // CONSECUTIVE skip count crosses the configured threshold
+                    // (never on cumulative-error multiples of it). The counter
+                    // resets on the next successful dispatch.
+                    let max_skips = limits
+                        .map(|l| u64::from(l.max_consecutive_skips))
+                        .unwrap_or(5)
+                        .max(1);
+                    if consecutive_skips == max_skips {
                         self.emit(ProgressEvent::MetricsUpdated {
                             run_id: run.id.clone(),
                             equity,
@@ -4094,7 +4196,7 @@ impl Executor {
                         });
                         tracing::warn!(
                             target: "xvision_engine::live",
-                            consecutive_skips = skipped_dispatches,
+                            consecutive_skips,
                             "max-consecutive-skips threshold reached \u{2014} agent may be stuck"
                         );
                     }
@@ -4107,19 +4209,6 @@ impl Executor {
                     continue;
                 }
             };
-            // Hang belt: check dispatch elapsed against --max-agent-ms
-            let dispatch_elapsed = dispatch_start.elapsed();
-            if let Some(max_ms) = self.limits.as_ref().and_then(|l| l.max_agent_ms) {
-                if dispatch_elapsed.as_millis() as u64 > max_ms {
-                    forced_cancels += 1;
-                    tracing::warn!(
-                        target: "xvision_engine::live",
-                        elapsed_ms = dispatch_elapsed.as_millis(),
-                        max_agent_ms = max_ms,
-                        "agent dispatch exceeded max-agent-ms; decision accepted but flagged as forced-cancel"
-                    );
-                }
-            }
 
             // Always mark-to-market and record an equity sample, even
             // when the filter gate suppresses dispatch.  Without this,
@@ -5543,6 +5632,7 @@ impl Executor {
 
         let now = Utc::now();
         let mut closed = 0usize;
+        let mut closed_with_profit = 0usize;
         let mut any_fill = false;
         for (asset_sym, pos, entry, last_mark) in open {
             let asset = asset_sym.as_alpaca_pair();
@@ -5633,6 +5723,9 @@ impl Executor {
                 any_fill = true;
                 if fully_closed {
                     closed += 1;
+                    if fill.realized_pnl > 0.0 {
+                        closed_with_profit += 1;
+                    }
                 }
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
@@ -5759,6 +5852,7 @@ impl Executor {
         FlattenOutcome {
             fully_closed: closed,
             any_fill,
+            closed_with_profit,
         }
     }
 }
@@ -5780,6 +5874,9 @@ struct FlattenOutcome {
     /// True iff at least one broker close fill (full OR partial) was applied
     /// to the book, so realized PnL changed and equity must be recomputed.
     any_fill: bool,
+    /// Of the `fully_closed` legs, how many settled a POSITIVE realized PnL.
+    /// Lets the live loop credit flatten closes to its win-rate counters.
+    closed_with_profit: usize,
 }
 
 /// Why the live executor is flattening open positions. Shapes the log /
@@ -5805,6 +5902,27 @@ impl FlattenReason {
             FlattenReason::Cancel => "cancel",
             FlattenReason::Flatten => "flatten",
         }
+    }
+}
+
+/// Why a live-loop agent dispatch produced no accepted decision. The
+/// `--max-agent-ms` timeout race maps an elapsed budget to [`Self::TimedOut`]
+/// (agent task cancelled, late result discarded); a failing
+/// `decide_one_live` maps to [`Self::Error`]. Both skip the bar identically.
+enum LiveDispatchAbort {
+    Error(anyhow::Error),
+    TimedOut,
+}
+
+/// Sign of a book position with an epsilon dead-zone: 1 long, -1 short,
+/// 0 flat. Used by the live loop's round-trip detection.
+fn signum_f64(x: f64) -> i32 {
+    if x > f64::EPSILON {
+        1
+    } else if x < -f64::EPSILON {
+        -1
+    } else {
+        0
     }
 }
 

@@ -343,15 +343,12 @@ pub async fn reconcile_run(
 }
 
 /// `POST /api/eval/runs/:id/reconnect` — resume a disconnected forward-test
-/// run by re-reading its last persisted bar index and
-/// transitioning status back to `Running`.
+/// run by rebuilding its ledger from persisted decisions + equity and
+/// respawning the live executor, which continues the same book.
 ///
 /// Rejected with `400 Validation` when the run is not `Disconnected`
 /// or its mode is not forward-test. Backtest runs that are `Disconnected`
 /// are intentionally NOT reconnected — only forward-test runs resume.
-///
-/// The actual executor spawn from `bar_index + 1` is a follow-up; for
-/// now the run transitions to `Running` and the operator can monitor.
 pub async fn reconnect_run(
     State(state): State<AppState>,
     Path(id): Path<String>,

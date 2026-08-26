@@ -43,7 +43,7 @@ use crate::eval::determinism::{
     canonical_bars_content_hash, persist_receipt, read_receipt, DeterminismReceipt, ReceiptInputs,
     ReceiptManifest,
 };
-use crate::eval::executor::{Executor, GatedBrokerSurface, RunExecutor};
+use crate::eval::executor::{Executor, GatedBrokerSurface, LiveRestoreState, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
 use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
@@ -60,6 +60,7 @@ use crate::eval::scenario::{
 use crate::eval::store::{ListFilter, RunStore};
 use crate::safety::{AuthContext, VenueLabel};
 use crate::tools::ToolRegistry;
+use sha2::{Digest, Sha256};
 use xvision_agent_client::{AgentClient, ToolDispatch, ToolDispatchError};
 use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
@@ -68,7 +69,6 @@ use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
 use xvision_execution::{ByrealLiveSurface, DegenArenaSurface, HyperliquidSurface};
 use xvision_filters::{FilterEventV1, FilterSummary};
-use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // U13: agentd process registry for eval cancel
@@ -806,23 +806,33 @@ async fn set_paused_inner(ctx: &ApiContext, run_id: &str, paused: bool, action: 
     result
 }
 
-/// Resume a `Disconnected` live (forward-test) run by re-reading its
-/// last persisted bar index and transitioning status back to `Running`.
+/// Resume a `Disconnected` live (forward-test) run: rebuild the ledger
+/// from persisted state, then spawn a live executor that CONTINUES the
+/// same book instead of restarting flat.
 ///
-/// The actual executor spawn is a follow-up; this validates the run,
-/// loads the resume checkpoint from `eval_run_bars`, and marks the run
-/// as `Running` so the operator can see it transition. The executor
-/// will be spawned from `bar_index + 1` in the follow-up PR.
+/// Restoration (all from the DB, no broker round-trip):
+///
+/// * positions + VWAP entries — `compute_expected_positions` replays
+///   `eval_decisions` (reversal/partial/close semantics match the
+///   executor's `PortfolioBook`);
+/// * realized PnL — Σ `pnl_realized` over the run's decisions;
+/// * equity — the newest `eval_equity_samples` row (falls back to the
+///   configured initial capital);
+/// * PK watermarks — decision/bar counters continue at MAX(persisted)+1
+///   so resumed writes never collide with pre-disconnect rows.
+///
+/// The bar stream itself is rebuilt fresh (warmup re-fetched), so bars
+/// that arrived during the outage are covered by the new warmup window.
 ///
 /// # Validation
 /// - `NotFound` — the run id doesn't exist.
-/// - `Validation` — status is not `Disconnected`, or mode is not `Live`.
+/// - `Validation` — status is not `Disconnected`, or mode is not Forward.
 ///   Backtest runs that are `Disconnected` are intentionally NOT
-///   auto-resumable — only forward-test (live mode) runs reconnect.
+///   auto-resumable — only forward-test runs reconnect.
 pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResult<RunDetail> {
     let store = RunStore::new(ctx.db.clone());
 
-    // 1. Load + validate the run
+    // ── 1. Load + validate the run ──────────────────────────────────
     let run = get_inner(ctx, run_id).await?;
 
     if run.status != RunStatus::Disconnected {
@@ -838,19 +848,124 @@ pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResul
         )));
     }
 
-    // 2. Read last bar index from eval_run_bars
-    let last_bar_index: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(bar_index) FROM eval_run_bars WHERE run_id = ?")
-            .bind(run_id)
-            .fetch_optional(&ctx.db)
-            .await
-            .map_err(|e| ApiError::Internal(format!("read eval_run_bars for {run_id}: {e}")))?
-            .flatten();
+    let cfg = run
+        .live_config
+        .clone()
+        .ok_or_else(|| ApiError::Validation(format!("run '{run_id}' has no live_config to resume")))?;
+    let strategy = api_strategy::get(ctx, &run.agent_id).await?;
 
-    let _resume_from = last_bar_index.map(|i| i + 1).unwrap_or(0);
+    // ── 2. Rebuild the persisted ledger ─────────────────────────────
+    let decisions = store
+        .read_decisions(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read decisions for {run_id}: {e}")))?;
+    let expected_positions = crate::eval::reconcile::compute_expected_positions(&decisions);
+    let realized_total: f64 = decisions.iter().filter_map(|d| d.pnl_realized).sum();
 
-    // 3. Transition status back to Running and clear terminal fields from the
-    // disconnect marker.
+    let decision_idx = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(decision_index), -1) + 1 FROM eval_decisions WHERE run_id = ?",
+    )
+    .bind(run_id)
+    .fetch_one(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("read decision watermark for {run_id}: {e}")))?
+        as i64;
+
+    let bar_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(bar_index), -1) + 1 FROM eval_run_bars WHERE run_id = ?",
+    )
+    .bind(run_id)
+    .fetch_one(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("read bar watermark for {run_id}: {e}")))?
+        as i64;
+
+    let last_equity: Option<f64> = sqlx::query_scalar(
+        "SELECT equity_usd FROM eval_equity_samples WHERE run_id = ? \
+         ORDER BY timestamp DESC LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("read last equity for {run_id}: {e}")))?;
+
+    let mut book = crate::eval::executor::book::PortfolioBook::new(cfg.capital.initial);
+    for p in &expected_positions {
+        let sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&p.asset)
+            .map_err(|e| ApiError::Validation(format!("restore position '{}': {e}", p.asset)))?;
+        book.set_position(sym, p.size, p.entry_price.unwrap_or(0.0));
+    }
+    book.add_realized(realized_total);
+
+    let restore = LiveRestoreState {
+        book,
+        equity: last_equity.unwrap_or(cfg.capital.initial),
+        decision_idx: u32::try_from(decision_idx.max(0)).unwrap_or(u32::MAX),
+        bar_count: u32::try_from(bar_count.max(0)).unwrap_or(u32::MAX),
+    };
+    let resume_decision_idx = restore.decision_idx;
+    let resume_bar_count = restore.bar_count;
+
+    // ── 3. Rebuild the runtime wiring (same path as start_run) ──────
+    let scenario = scenario_from_live_config(&cfg);
+    let agent_slots = resolve_agent_slots(ctx, &strategy).await?;
+    validate_eval_trader_source(&strategy, &agent_slots)?;
+    assert_launchable_with_guardrails(ctx, &run.agent_id, &strategy, &agent_slots).await?;
+    let (dispatch, findings_model) = build_eval_dispatch(ctx, &strategy, &agent_slots, None).await?;
+    let sig_cfg = resolve_signal_tool_config(ctx);
+    let tools = Arc::new(build_tool_registry(ctx, &sig_cfg));
+    let provider_catalogs = load_provider_catalogs(ctx).await;
+
+    let obs_config = effective_obs_config(ctx);
+    let obs_emitter = ctx.obs_event_bus.as_ref().map(|bus| {
+        let blob_store = xvision_observability::BlobStore::new(ctx.xvn_home.join("agent_runs").join("blobs"));
+        crate::agent::observability::ObsEmitter::new(bus.clone(), run.id.clone())
+            .with_retention(crate::agent::observability::ObsRetentionPolicy::from_config(
+                &obs_config,
+            ))
+            .with_blob_store(blob_store)
+    });
+
+    let (agent_runtime, _reason) = resolve_agent_runtime(ctx).await;
+    let cline_ctx = {
+        let provider_name = select_eval_provider(ctx, &strategy, &agent_slots).await?;
+        let cfg_path = runtime_config_path(ctx);
+        let entry = crate::api::settings::providers::resolve_provider(
+            ctx,
+            &cfg_path,
+            &provider_name,
+            None,
+        )
+        .await
+        .map_err(|u| {
+            ApiError::Validation(format!(
+                "agent_runtime = cline: provider `{}` is not launchable (reason={}): {}",
+                u.provider,
+                u.reason.as_str(),
+                u.hint
+            ))
+        })?;
+        let (cctx, _no_recording) =
+            spawn_cline_ctx(ctx, entry, tools.clone(), None, None, RunMode::Forward).await?;
+        Some(cctx)
+    };
+
+    let executor: Box<dyn RunExecutor> = build_live_executor(
+        ctx,
+        &cfg,
+        None,
+        obs_emitter.clone(),
+        provider_catalogs,
+        None,
+        agent_runtime,
+        cline_ctx,
+        Some(restore),
+    )
+    .await?;
+
+    // ── 4. Flip status, then spawn the continuing driver ────────────
+    // `execute_in_background.begin_running` accepts rows already Running,
+    // so the Disconnected → Running flip must land BEFORE the spawn.
     let resumed = store
         .resume_disconnected(run_id)
         .await
@@ -861,17 +976,48 @@ pub async fn resume_disconnected_run(ctx: &ApiContext, run_id: &str) -> ApiResul
         )));
     }
 
-    // 4. Re-read for the detail response
-    let detail = get_run(ctx, run_id).await?;
+    let mut run_row = store
+        .get(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("re-read resumed run {run_id}: {e}")))?;
+    run_row.status = RunStatus::Running;
 
     tracing::info!(
         target: "xvision_engine::eval",
         run_id = %run_id,
-        resume_from_bar = _resume_from,
-        "resumed disconnected live run (executor spawn follow-up)"
+        restored_positions = expected_positions.len(),
+        restored_realized_usd = realized_total,
+        resume_decision_idx,
+        resume_bar_count,
+        "resuming disconnected forward run from persisted ledger"
     );
 
-    Ok(detail)
+    let (gate_provider, gate_model) = resolve_launch_gate_key(&strategy, &agent_slots, &findings_model);
+    let launch_permit = ctx.launch_gate.acquire(&gate_provider, &gate_model).await;
+    let ctx_bg = ctx.clone();
+    let rid = run_id.to_string();
+    spawn_launch_gated_task(launch_permit, async move {
+        execute_in_background(
+            ctx_bg,
+            run_row,
+            strategy,
+            scenario,
+            agent_slots,
+            executor,
+            dispatch,
+            findings_model,
+            tools,
+            obs_emitter,
+            false,
+            None,
+            None,
+        )
+        .await;
+        let _ = rid;
+    });
+
+    // 5. Re-read for the detail response
+    get_run(ctx, run_id).await
 }
 
 async fn get_inner(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
@@ -3114,17 +3260,14 @@ async fn resolve_replay_recording(
     store: &xvision_observability::trajectory::store::TrajectoryStore,
     recording_id: &str,
 ) -> ApiResult<String> {
-    use xvision_observability::trajectory::store::{STATUS_COMPLETE, StoreError};
-    let info = store
-        .get_recording(recording_id)
-        .await
-        .map_err(|e| match e {
-            StoreError::NotFound(_) => ApiError::Validation(format!(
-                "replay recording `{recording_id}` not found — record it first with \
+    use xvision_observability::trajectory::store::{StoreError, STATUS_COMPLETE};
+    let info = store.get_recording(recording_id).await.map_err(|e| match e {
+        StoreError::NotFound(_) => ApiError::Validation(format!(
+            "replay recording `{recording_id}` not found — record it first with \
                  --record-trajectory, then replay its id"
-            )),
-            other => ApiError::Internal(format!("load replay recording: {other}")),
-        })?;
+        )),
+        other => ApiError::Internal(format!("load replay recording: {other}")),
+    })?;
     if info.status != STATUS_COMPLETE {
         return Err(ApiError::Validation(format!(
             "replay recording `{recording_id}` has status `{}` (must be `{STATUS_COMPLETE}` \
@@ -3563,10 +3706,7 @@ async fn run_inner(
         // a bad id or a non-backtest mode fails before any sidecar spawn.
         // A replay run must never silently fall back to live fetches.
         let replay = match (&req.trajectory_mode, req.mode) {
-            (
-                RunTrajectoryMode::Replay { recording_id },
-                crate::eval::run::RunMode::Backtest,
-            ) => {
+            (RunTrajectoryMode::Replay { recording_id }, crate::eval::run::RunMode::Backtest) => {
                 let blob_root = ctx.xvn_home.join("agent_runs").join("blobs");
                 let store = crate::agent::cline_recording::open_store(ctx.db.clone(), blob_root)
                     .await
@@ -3642,6 +3782,7 @@ async fn run_inner(
                 req.limits.as_ref(),
                 agent_runtime,
                 cline_ctx,
+                None,
             )
             .await
         }
@@ -3848,13 +3989,11 @@ async fn run_inner(
     )
     .await;
 
-
     // Guardrail rewrite summary (eval-guardrail-log-collapse). Reads
     // guard-role supervisor_notes, emits one tracing::warn! and one
     // eval_findings row summarising the rewrite rate. Best-effort.
     let store_for_guard = RunStore::new(ctx.db.clone());
     crate::eval::guardrail_summary::fire_guardrail_summary(&store_for_guard, &finalized.id).await;
-
 
     Ok(finalized)
 }
@@ -4051,22 +4190,23 @@ async fn persist_receipt_for_manifest(
                             Ok(Some(original_receipt)) => {
                                 let mut mismatches = Vec::new();
                                 match original_receipt.manifest_canonical.as_deref() {
-                                    Some(canonical) => match serde_json::from_str::<ReceiptManifest>(canonical) {
-                                        Ok(original) => {
-                                            if manifest.scenario_id != original.scenario_id {
-                                                mismatches.push("scenario_id differs".to_string());
+                                    Some(canonical) => {
+                                        match serde_json::from_str::<ReceiptManifest>(canonical) {
+                                            Ok(original) => {
+                                                if manifest.scenario_id != original.scenario_id {
+                                                    mismatches.push("scenario_id differs".to_string());
+                                                }
+                                                if manifest.bars_content_hash != original.bars_content_hash {
+                                                    mismatches.push("bars_content_hash differs".to_string());
+                                                }
+                                                if manifest.engine_version != original.engine_version {
+                                                    mismatches.push("engine_version differs".to_string());
+                                                }
                                             }
-                                            if manifest.bars_content_hash != original.bars_content_hash {
-                                                mismatches.push("bars_content_hash differs".to_string());
-                                            }
-                                            if manifest.engine_version != original.engine_version {
-                                                mismatches.push("engine_version differs".to_string());
-                                            }
+                                            Err(error) => mismatches
+                                                .push(format!("original manifest is unparseable: {error}")),
                                         }
-                                        Err(error) => mismatches.push(format!(
-                                            "original manifest is unparseable: {error}"
-                                        )),
-                                    },
+                                    }
                                     None => mismatches.push("original manifest is missing".to_string()),
                                 }
                                 manifest.replay_inputs_match = Some(mismatches.is_empty());
@@ -4144,7 +4284,9 @@ async fn persist_receipt_for_manifest(
                 tracing::warn!(run_id = %run.id, error = %error, "receipt: persist eval run bars manifest failed");
             }
         }
-        Err(error) => tracing::warn!(run_id = %run.id, error = %error, "receipt: serialize data manifest failed"),
+        Err(error) => {
+            tracing::warn!(run_id = %run.id, error = %error, "receipt: serialize data manifest failed")
+        }
     }
     if let Err(error) = persist_receipt(&ctx.db, &receipt).await {
         tracing::warn!(run_id = %run.id, error = %error, "receipt: persist determinism receipt failed");
@@ -4858,6 +5000,7 @@ async fn build_live_executor(
     limits: Option<&crate::eval::limits::EvalLimits>,
     agent_runtime: AgentRuntime,
     cline_ctx: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
+    restore: Option<LiveRestoreState>,
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
@@ -5317,6 +5460,9 @@ async fn build_live_executor(
     if let Some(l) = limits {
         live = live.with_limits(l.clone());
     }
+    if let Some(restore) = restore {
+        live = live.with_live_restore(restore);
+    }
     Ok(Box::new(live))
 }
 
@@ -5505,8 +5651,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                     u.hint
                 ))
             })?;
-        let (cctx, _no_recording) =
-            spawn_cline_ctx(ctx, entry, tools.clone(), None, None, req.mode).await?;
+        let (cctx, _no_recording) = spawn_cline_ctx(ctx, entry, tools.clone(), None, None, req.mode).await?;
         Some(cctx)
     };
 
@@ -5538,6 +5683,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
                 req.limits.as_ref(),
                 agent_runtime,
                 cline_ctx,
+                None,
             )
             .await?
         }
@@ -5846,7 +5992,6 @@ async fn execute_in_background(
         tool_cache_recording_id.as_deref(),
     )
     .await;
-
 
     // Rule-based auto-review postprocess. Setup/execution failures persist an
     // `unavailable` eval_reviews row, while the run remains successful.
@@ -7763,17 +7908,16 @@ mod tool_registry_dispatch_tests {
         let store = make_test_store(&tmp).await;
 
         let rec = store.begin_recording(&make_test_key()).await.unwrap();
-        store
-            .mark_incomplete(&rec, "test: never finished")
-            .await
-            .unwrap();
+        store.mark_incomplete(&rec, "test: never finished").await.unwrap();
         let err = super::resolve_replay_recording(&store, &rec.0).await.unwrap_err();
         assert!(err.to_string().contains("incomplete"), "got: {err}");
 
         let rec2_key = make_test_key();
         let rec2 = store.begin_recording(&rec2_key).await.unwrap();
         store.mark_corrupt(&rec2, "test").await.unwrap();
-        let err = super::resolve_replay_recording(&store, &rec2.0).await.unwrap_err();
+        let err = super::resolve_replay_recording(&store, &rec2.0)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("corrupt"), "got: {err}");
     }
 

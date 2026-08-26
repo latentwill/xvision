@@ -35,6 +35,7 @@ pub mod traits;
 pub mod wall_clock;
 
 pub use byreal_spot_marks::ByrealSpotPriceFetcher;
+pub use backtest::LiveRestoreState;
 pub use gated_broker::GatedBrokerSurface;
 
 use std::sync::Arc;

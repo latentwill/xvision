@@ -29,6 +29,7 @@ use xvision_engine::api::{scenario as api_scenario, strategy as api_strategy};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::behavior::{derive_behavior_summary, BehaviorSummary};
 use xvision_engine::eval::compare::ComparisonEquityCurve;
+use xvision_engine::eval::determinism::read_receipt;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
@@ -36,7 +37,6 @@ use xvision_engine::eval::report::{aggregate_run_token_totals, compute_run_repor
 use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, TimeWindow};
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::eval::determinism::read_receipt;
 use xvision_engine::safety::VenueLabel;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
@@ -779,7 +779,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         return Err(CliError {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!(
-                "--scenario is not applicable for --mode live (live mode runs against real-time market data, not a historical scenario)"
+                "--scenario is not applicable for --mode fwd (forward test runs against real-time market data, not a historical scenario)"
             ),
         });
     }
@@ -787,11 +787,11 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     let live_config = if mode == RunMode::Forward {
         let asset = args.live_asset.clone().ok_or_else(|| CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("--mode live requires --live-asset"),
+            source: anyhow::anyhow!("--mode fwd requires --live-asset"),
         })?;
         let capital = args.live_capital.ok_or_else(|| CliError {
             exit: XvnExit::Usage,
-            source: anyhow::anyhow!("--mode live requires --live-capital"),
+            source: anyhow::anyhow!("--mode fwd requires --live-capital"),
         })?;
         let time_limit_secs = match args.live_duration.as_deref() {
             Some(d) => {
@@ -820,7 +820,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             return Err(CliError {
                 exit: XvnExit::Usage,
                 source: anyhow::anyhow!(
-                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, --live-time-limit-secs, or --live-duration"
+                    "--mode fwd requires at least one stop flag: --live-bar-limit, --live-decision-limit, --live-time-limit-secs, or --live-duration"
                 ),
             });
         }
@@ -933,6 +933,39 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     // single-value.
     if args.stream_progress {
         emit_eval_progress_line(&req.agent_id, 0, 0);
+    }
+
+    // Forward tests MUST launch through the engine's async `start_run` —
+    // the only surface that builds a live executor (venue + credential
+    // resolution, per-asset live streams with warmup, MultiLiveStream).
+    if req.mode == RunMode::Forward && !args.assets.is_empty() {
+        crate::progress!(
+            "--assets is a backtest-only filter; forward tests run every asset in the strategy's live config"
+        );
+    }
+    // The synchronous `eval::run` below rejects Forward by design. The run
+    // progresses in a background task; the operator watches it with
+    // `xvn eval watch`.
+    if req.mode == RunMode::Forward {
+        let detail = xvision_engine::api::eval::start_run(&ctx, req)
+            .await
+            .map_err(|e| api_to_cli("eval run", e))?;
+        obs_bus.quiesce().await;
+        let summary = detail.summary;
+        if args.json {
+            crate::io::print_json(&summary)?;
+            return Ok(());
+        }
+        println!();
+        println!(
+            "Forward test launched: {} (status {}, strategy {})",
+            summary.id,
+            summary.status.as_str(),
+            summary.agent_id
+        );
+        println!("  watch: xvn eval watch {}", summary.id);
+        println!("  stop:  xvn eval stop {}", summary.id);
+        return Ok(());
     }
 
     let run_result = eval::run(&ctx, req).await;
