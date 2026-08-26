@@ -355,6 +355,13 @@ impl StrategyStore for FilesystemStore {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if let Some(id) = name_str.strip_suffix(".json") {
+                // Skip non-strategy artifacts that share this directory:
+                // sidecars like `{id}.marketplace.json` (their stems contain
+                // a dot) and any other file whose stem isn't a valid
+                // strategy id. Reindexing them produced per-startup warnings.
+                if validate_strategy_id_for_path(id).is_err() {
+                    continue;
+                }
                 ids.push(id.to_string());
             }
         }
@@ -486,6 +493,25 @@ mod tests {
         let err = store.load("../escape").await.unwrap_err();
         let downcast: Option<&StrategyIdError> = err.downcast_ref();
         assert!(downcast.is_some(), "expected StrategyIdError, got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn list_skips_sidecars_and_invalid_stems() {
+        let (store, td) = store_in_tmp();
+        // A real strategy plus two artifacts that share the directory:
+        // a marketplace metadata sidecar (stem contains a dot) and a file
+        // whose stem isn't a valid strategy id at all.
+        let good = strategy_with_id("01HZSTRATEGYGOOD000001A");
+        store.save(&good).await.unwrap();
+        std::fs::write(
+            td.path().join("01HZSTRATEGYGOOD000001A.marketplace.json"),
+            "{\"listing_id\":\"1\"}",
+        )
+        .unwrap();
+        std::fs::write(td.path().join("not-a-valid-id!.json"), "{}").unwrap();
+
+        let ids = store.list().await.unwrap();
+        assert_eq!(ids, vec!["01HZSTRATEGYGOOD000001A".to_string()]);
     }
 
     #[tokio::test]
