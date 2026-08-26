@@ -19,27 +19,26 @@ use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::run_inversion_pair;
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
 use crate::autooptimizer::gate::{
-    aggregate_regime_verdicts, check_net_return, check_pool_consistency,
-    check_simplicity_equal_or_simpler, evaluate, GateInput, GateVerdict, Objective,
-    SimplicityStats,
+    aggregate_regime_verdicts, check_net_return, check_pool_consistency, check_simplicity_equal_or_simpler,
+    evaluate, GateInput, GateVerdict, Objective, SimplicityStats,
 };
+use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
 use crate::autooptimizer::mutator::{MutationDiff, Mutator};
 use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
 use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
-use crate::autooptimizer::progress::{CycleProgressEvent, Phase};
-use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
-use crate::eval::run::MetricsSummary;
-use crate::eval::scenario::Scenario;
-use crate::strategies::Strategy;
-use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
 use crate::autooptimizer::pool_eval::{
     compare_pool_evaluations, evaluate_pool, PoolComparison, PoolEvaluation,
 };
+use crate::autooptimizer::progress::{CycleProgressEvent, Phase};
+use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
+use crate::autooptimizer::run_inversion_pair;
+use crate::eval::run::MetricsSummary;
+use crate::eval::scenario::Scenario;
+use crate::strategies::Strategy;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GridEvaluationOutcome {
@@ -66,8 +65,7 @@ pub async fn run_grid_evaluation(
     cycle_id: &str,
     seed: u64,
 ) -> Result<Vec<GridEvaluationOutcome>> {
-    let scenario_pool_active =
-        cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    let scenario_pool_active = cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
     let (parent_day, parent_untouched) = if scenario_pool_active {
         (MetricsSummary::default(), MetricsSummary::default())
     } else {
@@ -563,18 +561,17 @@ pub async fn run_cycle(
             cycle_id: cycle_id.clone(),
             parent_hash: ph,
         });
-        let parent_pool_evaluation = if cycle_config.regime_set.is_empty()
-            && !cycle_config.scenario_pool.is_empty()
-        {
-            if !parent_pool_cache.contains_key(&parent_node.bundle_hash) {
-                let evaluation =
-                    evaluate_pool(paper_tester, parent_strategy, &cycle_config.scenario_pool).await?;
-                parent_pool_cache.insert(parent_node.bundle_hash, evaluation);
-            }
-            parent_pool_cache.get(&parent_node.bundle_hash)
-        } else {
-            None
-        };
+        let parent_pool_evaluation =
+            if cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty() {
+                if !parent_pool_cache.contains_key(&parent_node.bundle_hash) {
+                    let evaluation =
+                        evaluate_pool(paper_tester, parent_strategy, &cycle_config.scenario_pool).await?;
+                    parent_pool_cache.insert(parent_node.bundle_hash, evaluation);
+                }
+                parent_pool_cache.get(&parent_node.bundle_hash)
+            } else {
+                None
+            };
         let (active, suspect, rejected, nc, ec) = process_parent_mutations(
             pool,
             strategy_blob_store,
@@ -826,21 +823,9 @@ fn simplicity_stats(diff: &MutationDiff) -> SimplicityStats {
         + diff.tools.removed.len()
         + diff.filter.len()
         + if diff.create_filter.is_some() { 1 } else { 0 };
-    let removed = diff
-        .prose
-        .iter()
-        .filter(|edit| !edit.before.is_empty())
-        .count()
-        + diff
-            .params
-            .iter()
-            .filter(|edit| !edit.before.is_null())
-            .count()
-        + diff
-            .filter
-            .iter()
-            .filter(|edit| !edit.before.is_null())
-            .count()
+    let removed = diff.prose.iter().filter(|edit| !edit.before.is_empty()).count()
+        + diff.params.iter().filter(|edit| !edit.before.is_null()).count()
+        + diff.filter.iter().filter(|edit| !edit.before.is_null()).count()
         + diff.tools.removed.len();
     SimplicityStats { added, removed }
 }
@@ -861,7 +846,6 @@ fn objective_metric(
     };
     base - simplicity_penalty * added as f64
 }
-
 
 const LOW_TRADE_PARENT_FILL_LEG_FLOOR: u32 = 5;
 
@@ -1024,13 +1008,11 @@ where
     let mut no_candidate_count: usize = 0;
     let mut errored_count: usize = 0;
     let mut breaker = ConsecutiveErrors::new(cycle_config.max_consecutive_errors);
-    let scenario_pool_active =
-        cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    let scenario_pool_active = cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
     // Per-parent cache of the sampled scenario pair's parent metrics, keyed by
     // (day id, baseline id). Filled lazily on first use per pair so repeated
     // mutations on the same round-robin pair don't re-run the parent backtest.
-    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> =
-        HashMap::new();
+    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
 
     let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
         progress(CycleProgressEvent::PhaseStarted {
@@ -1073,7 +1055,6 @@ where
     } else {
         (MetricsSummary::default(), MetricsSummary::default())
     };
-
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -1592,8 +1573,7 @@ where
         );
         let simplicity = simplicity_stats(&diff);
         let pool_comparison = if scenario_pool_active {
-            let parent_pool = parent_pool_evaluation
-                .expect("scenario pool parent evaluation is present");
+            let parent_pool = parent_pool_evaluation.expect("scenario pool parent evaluation is present");
             Some(compare_pool_evaluations(
                 evaluate_pool(paper_tester, &candidate, &cycle_config.scenario_pool).await?,
                 parent_pool,
@@ -1683,17 +1663,16 @@ where
         // and returns the *resolved* status (which may be Active when the
         // collision-guard preserves an existing active node).  Emit the SSE event
         // and route the result bucket from the resolved status, not outcome.status.
-        let (node, resolved_status) =
-            build_and_insert_node(
-                pool,
-                strategy_blob_store,
-                &outcome,
-                parent_node,
-                cycle_id,
-                config.objective,
-                cycle_config.sabotage_seed,
-            )
-            .await?;
+        let (node, resolved_status) = build_and_insert_node(
+            pool,
+            strategy_blob_store,
+            &outcome,
+            parent_node,
+            cycle_id,
+            config.objective,
+            cycle_config.sabotage_seed,
+        )
+        .await?;
         let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
@@ -1994,11 +1973,9 @@ where
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 
     if !cycle_config.regime_set.is_empty() {
-        let mut regime_inputs: Vec<RegimeEvalInput> =
-            Vec::with_capacity(cycle_config.regime_set.len());
+        let mut regime_inputs: Vec<RegimeEvalInput> = Vec::with_capacity(cycle_config.regime_set.len());
         for rw in &cycle_config.regime_set {
-            let (regime_day_scen, regime_baseline_scen) =
-                build_regime_scenario_pair(cycle_config, rw)?;
+            let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
             progress(CycleProgressEvent::PhaseStarted {
                 session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
