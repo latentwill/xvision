@@ -9,7 +9,7 @@ describe("forward-test run display", () => {
       displayScenarioName("", [], "fwd", {
         bar_limit: 12,
         decision_limit: null,
-        time_limit_secs: null,
+        time_limit_secs: undefined,
         trade_limit: null,
       }),
     ).toBe("Forward Test · 12 bars");

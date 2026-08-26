@@ -45,6 +45,7 @@ function makeEntry(overrides: Partial<{
   enabled: boolean;
   budget_credits_per_run: number | null;
   nansen_lookahead_lag_days: number | null;
+  api_key_set: boolean;
 }> = {}) {
   return {
     kind: "nansen" as const,
@@ -53,6 +54,7 @@ function makeEntry(overrides: Partial<{
     enabled: true,
     budget_credits_per_run: 100,
     nansen_lookahead_lag_days: 1,
+    api_key_set: false,
     ...overrides,
   };
 }

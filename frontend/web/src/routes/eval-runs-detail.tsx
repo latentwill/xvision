@@ -386,7 +386,12 @@ export function EvalRunDetailRoute() {
             {receipt.data ? (
               <DeterminismCard
                 receipt={receipt.data}
-                onReproduce={() => navigate(reproduceUrl(detail.summary, receipt.data))}
+                onReproduce={() => {
+                  // Narrow inside the callback: TS can't keep the JSX
+                  // truthiness narrowing alive into a deferred closure.
+                  const data = receipt.data;
+                  if (data) navigate(reproduceUrl(detail.summary, data));
+                }}
               />
             ) : null}
 

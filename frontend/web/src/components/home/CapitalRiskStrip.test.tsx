@@ -96,7 +96,7 @@ describe("CapitalRiskStrip", () => {
     renderStrip(allNull);
     const strip = screen.getByTestId("capital-risk-strip");
     expect(within(strip).getByTestId("capital-risk-empty")).toBeInTheDocument();
-    expect(strip.textContent).toMatch(/no live trading strategies have been launched/i);
+    expect(strip.textContent).toMatch(/no forward-test paper capital deployed/i);
   });
 
   it("renders '—' for an individual null field, never a fabricated $0", () => {
