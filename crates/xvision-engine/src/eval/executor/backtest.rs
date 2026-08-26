@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{Timelike, Utc};
 use ulid::Ulid;
 use xvision_core::market::Ohlcv;
 use xvision_core::providers::Catalog;
@@ -74,7 +74,9 @@ use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, 
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::risk::RiskConfig;
-use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
+use crate::strategies::{
+    select_entry_rule, trend_from_filter_context, ClosePolicy, DecisionMode, MechanisticConfig, Strategy,
+};
 use crate::tools::ToolRegistry;
 
 use super::trader_output::TraderOutput;
@@ -1025,6 +1027,13 @@ impl Executor {
         // table-only path.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
+        if strategy.decision_mode != DecisionMode::Mechanistic {
+            if let (Some(hook), Some(asset)) = (filter_hook.as_mut(), active.first()) {
+                if let Some(warmup) = self.warmup_bars.get(asset) {
+                    hook.seed_warmup(warmup);
+                }
+            }
+        }
         // ERROR-1 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
         // the documented `wake_when_in_position = Never` contract is "no
         // mid-position calls; exits rely ENTIRELY on the deterministic risk
@@ -1129,6 +1138,44 @@ impl Executor {
                 .await;
                 last_partial_persist = Instant::now();
             }
+            // Feed every base-timeframe bar into the filter. The strategy
+            // cadence controls dispatch, not indicator/resampler updates;
+            // otherwise a 5m source with a 60m cadence would make the hook
+            // infer a 60m input interval and bypass its 1h aggregation.
+            let mut filter_gated = false;
+            let mut filter_trigger_context: Option<serde_json::Value> = None;
+            if let Some(hook) = filter_hook.as_mut() {
+                if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
+                    let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    if let Some(evaluation) = hook.evaluate_resampled(gate_bar, in_position) {
+                        hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
+                            .await?;
+                        if !evaluation.outcome.decision.is_active() {
+                            filter_gated = true;
+                            if matches!(
+                                evaluation.outcome.decision,
+                                xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                            ) {
+                                self.emit(ProgressEvent::FilterBlocked {
+                                    run_id: run.id.clone(),
+                                    reason: "in_position".to_string(),
+                                });
+                            }
+                        } else {
+                            filter_trigger_context = evaluation.trigger_context.clone();
+                        }
+                    } else {
+                        filter_gated = true;
+                    }
+                }
+            }
+            if strategy.decision_mode == DecisionMode::Mechanistic
+                && filter_hook.as_ref().is_some_and(|hook| !hook.mechanistic_ready())
+            {
+                filter_gated = true;
+                filter_trigger_context = None;
+            }
             // Cadence gate: only fire on timestamps whose minute-aligned
             // value is divisible by the strategy's cadence. Timestamp-level
             // (shared across all assets at this ts).
@@ -1155,68 +1202,6 @@ impl Executor {
                 eta_secs: None,
             });
 
-            // track-plan-touches: per-bar filter evaluation. `None` means
-            // EveryBar strategy (no gating). The filter is a STRATEGY-level
-            // gate, evaluated once per timestamp; when not `Active` it skips
-            // ALL assets' decisions this timestamp. `in_position` is true
-            // when any leg is open.
-            //
-            // QA31 (filter-bypass on staggered multi-asset data): previously
-            // this hard-coded `asset_sym` (the FIRST active asset, captured
-            // outside the timestamp loop). If that first asset had a data
-            // gap at this timestamp — common in multi-asset backtests with
-            // different trading hours or holidays — the entire filter
-            // evaluation was SKIPPED, leaving `filter_gated = false`. The
-            // 6-fires/day cap and the cooldown were silently bypassed for
-            // every other asset at that timestamp, and operators saw the
-            // strategy fire every bar despite a strict filter being set.
-            //
-            // Fix: evaluate on ANY asset that has a bar at this timestamp.
-            // `assets_at_ts` is exactly that set (its keys are the assets
-            // with present bars), so picking the first entry from the
-            // BTreeMap gives a deterministic representative bar. The
-            // strategy filter is a STRATEGY-level signal — it doesn't care
-            // which asset's bar it sees, only that the timestamp has one.
-            //
-            // The wakeup gate allows LLM dispatch on both Trip (first bar
-            // the condition tree becomes true after Inactive/Cooldown) AND
-            // Hold (subsequent bars the condition tree stays true). Level
-            // operators (Gt/Lt/Gte/Lte) correctly fire every bar the level
-            // holds; Cooldown, CappedForDay, SuppressedInPosition, Warming,
-            // and Inactive still suppress dispatch.
-            let mut filter_gated = false;
-            let mut filter_trigger_context: Option<serde_json::Value> = None;
-            if let Some(hook) = filter_hook.as_mut() {
-                if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
-                    let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
-                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
-                    let evaluation = hook.evaluate(gate_bar, in_position);
-                    hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
-                        .await?;
-                    if !evaluation.outcome.decision.is_active() {
-                        filter_gated = true;
-                        // U11: surface the specific "blocked because a position
-                        // is open" case on the live progress stream so operators
-                        // can tell it apart from "filter simply didn't fire". The
-                        // suppressed_in_position reason is already recorded in the
-                        // persisted FilterEventV1 ledger via `hook.record`; this
-                        // additional event rides the same ProgressTx for live
-                        // CLI/dashboard consumers.
-                        if matches!(
-                            evaluation.outcome.decision,
-                            xvision_filters::runtime::ActivationDecision::SuppressedInPosition
-                        ) {
-                            self.emit(ProgressEvent::FilterBlocked {
-                                run_id: run.id.clone(),
-                                reason: "in_position".to_string(),
-                            });
-                        }
-                    } else {
-                        filter_trigger_context = evaluation.trigger_context.clone();
-                    }
-                }
-            }
-
             // Per-asset fan-out. Each iteration runs the existing
             // per-decision body for one asset using that asset's own bar
             // vec + index (T+1 look-ahead, history slicing). `'asset`
@@ -1241,13 +1226,11 @@ impl Executor {
 
                 let filter_gated_position_sltp_check = filter_gated
                     && book.position(asset_sym).abs() > f64::EPSILON
-                    && sltp_state.contains_key(&asset_sym);
+                    && (sltp_state.contains_key(&asset_sym)
+                        || strategy.decision_mode == DecisionMode::Mechanistic);
                 if filter_gated && !filter_gated_position_sltp_check {
                     // Strategy filter gated this timestamp: skip the agent
-                    // pipeline for this asset. No decision row is written
-                    // (matches the single-asset filter-gate behavior, which
-                    // recorded only the filter evaluation + dense equity).
-                    // Equity is recorded once per timestamp below.
+                    // pipeline for this asset. No decision row is written.
                     continue 'asset;
                 }
 
@@ -1620,7 +1603,7 @@ impl Executor {
                     }
                 }
 
-                if filter_gated_position_sltp_check {
+                if filter_gated_position_sltp_check && strategy.decision_mode != DecisionMode::Mechanistic {
                     // PF-17: filter-gated in-position bars still need the
                     // deterministic SL/TP check above, but a non-triggering
                     // bar must continue to skip the agent pipeline.
@@ -1908,6 +1891,14 @@ impl Executor {
                         book.position(asset_sym),
                         book.entry_price(asset_sym),
                         bar.close,
+                        seed_bars_held,
+                        sltp_state
+                            .get(&asset_sym)
+                            .map(|state| state.hwm)
+                            .unwrap_or_else(|| book.entry_price(asset_sym)),
+                        filter_trigger_context.as_ref(),
+                        history_slice,
+                        bar.timestamp,
                     )
                 } else {
                     let seed_for_repair = seed.clone();
@@ -3785,9 +3776,11 @@ impl Executor {
                 // indicator engine accumulates the bars it needs to exit
                 // the Warming state. Must run BEFORE hist.extend() which
                 // consumes `bars`.
-                if let Some(hook) = filter_hook.as_mut() {
-                    for bar in &bars {
-                        hook.evaluate(bar, false);
+                if strategy.decision_mode != DecisionMode::Mechanistic {
+                    if let Some(hook) = filter_hook.as_mut() {
+                        for bar in &bars {
+                            hook.evaluate_resampled(bar, false);
+                        }
                     }
                 }
                 // Seed per-asset history for the LLM seed context.
@@ -4725,29 +4718,38 @@ impl Executor {
         let mut filter_trigger_context: Option<serde_json::Value> = None;
         if let Some(hook) = filter_hook.as_mut() {
             let in_position = book.position(asset_sym).abs() > f64::EPSILON;
-            let evaluation = hook.evaluate(bar, in_position);
-            hook.record(
-                store.pool(),
-                self.progress.as_ref(),
-                &run.id,
-                decision_ts,
-                &evaluation,
-            )
-            .await?;
-            if !evaluation.outcome.decision.is_active() {
-                filter_gated = true;
-                if matches!(
-                    evaluation.outcome.decision,
-                    xvision_filters::runtime::ActivationDecision::SuppressedInPosition
-                ) {
-                    self.emit(ProgressEvent::FilterBlocked {
-                        run_id: run.id.clone(),
-                        reason: "in_position".to_string(),
-                    });
+            if let Some(evaluation) = hook.evaluate_resampled(bar, in_position) {
+                hook.record(
+                    store.pool(),
+                    self.progress.as_ref(),
+                    &run.id,
+                    decision_ts,
+                    &evaluation,
+                )
+                .await?;
+                if !evaluation.outcome.decision.is_active() {
+                    filter_gated = true;
+                    if matches!(
+                        evaluation.outcome.decision,
+                        xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                    ) {
+                        self.emit(ProgressEvent::FilterBlocked {
+                            run_id: run.id.clone(),
+                            reason: "in_position".to_string(),
+                        });
+                    }
+                } else {
+                    filter_trigger_context = evaluation.trigger_context.clone();
                 }
             } else {
-                filter_trigger_context = evaluation.trigger_context.clone();
+                filter_gated = true;
             }
+        }
+        if strategy.decision_mode == DecisionMode::Mechanistic
+            && filter_hook.as_ref().is_some_and(|hook| !hook.mechanistic_ready())
+        {
+            filter_gated = true;
+            filter_trigger_context = None;
         }
 
         // Inject filter context into the seed (parity with backtest L1307-1311).
@@ -4799,11 +4801,15 @@ impl Executor {
         let filter_gated_position_sltp_check = filter_gated
             && book.position(asset_sym).abs() > f64::EPSILON
             && sltp_state.contains_key(&asset_sym);
-        if live_filter_gate_should_short_circuit(
-            filter_gated,
-            book.position(asset_sym).abs() > f64::EPSILON,
-            sltp_state.contains_key(&asset_sym),
-        ) {
+        let mechanistic_in_position = strategy.decision_mode == DecisionMode::Mechanistic
+            && book.position(asset_sym).abs() > f64::EPSILON;
+        if !mechanistic_in_position
+            && live_filter_gate_should_short_circuit(
+                filter_gated,
+                book.position(asset_sym).abs() > f64::EPSILON,
+                sltp_state.contains_key(&asset_sym),
+            )
+        {
             return Ok(LiveDecisionOutcome {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -4960,7 +4966,7 @@ impl Executor {
             }
         }
 
-        if filter_gated_position_sltp_check {
+        if filter_gated_position_sltp_check && !mechanistic_in_position {
             return Ok(LiveDecisionOutcome {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -5035,7 +5041,23 @@ impl Executor {
                     .mechanistic_config
                     .as_ref()
                     .expect("validate_strategy ensures mechanistic_config");
-                let parsed = mechanistic_action(cfg, pre_fill_position, pre_fill_entry, bar.close);
+                let parsed = mechanistic_action(
+                    cfg,
+                    pre_fill_position,
+                    pre_fill_entry,
+                    bar.close,
+                    sltp_state
+                        .get(&asset_sym)
+                        .map(|state| state.bars_held)
+                        .unwrap_or(0),
+                    sltp_state
+                        .get(&asset_sym)
+                        .map(|state| state.hwm)
+                        .unwrap_or(pre_fill_entry),
+                    filter_trigger_context.as_ref(),
+                    &history_slice,
+                    bar.timestamp,
+                );
                 (0u64, 0u64, parsed)
             } else {
                 // WS-17: open decision span for live observability.
@@ -6386,30 +6408,62 @@ pub fn classify_aggressor_side(
             if fill_price <= bar_open + half_spread {
                 return AggressorSide::Maker;
             }
-        } else {
-            // Passive sell: fill at or above open - half_spread (resting offer).
-            if fill_price >= bar_open - half_spread {
-                return AggressorSide::Maker;
-            }
         }
     }
     AggressorSide::Taker
 }
 
-/// Apply mechanistic close policies to produce a `TraderOutput` without any LLM
-/// call. Returns `flat` when a StopLoss or TakeProfit threshold is breached;
-/// returns `hold` when flat or no policy triggers.
+/// Apply mechanistic entry and close policies without an LLM call. `bars_held`
+/// counts executor decision cycles (for a 5m strategy, one unit is one 5m
+/// cycle), not wall-clock hours.
 fn mechanistic_action(
     cfg: &MechanisticConfig,
     position: f64,
     entry_price: f64,
     mark_price: f64,
+    bars_held: u32,
+    peak_price: f64,
+    filter_context: Option<&serde_json::Value>,
+    history: &[&Ohlcv],
+    timestamp: chrono::DateTime<Utc>,
 ) -> TraderOutput {
     if position.abs() < f64::EPSILON || entry_price <= 0.0 {
+        if !mechanistic_session_open(cfg.entry_session_utc.as_deref(), timestamp) {
+            return TraderOutput {
+                action: "hold".into(),
+                conviction: 0.5,
+                justification: "mechanistic: outside entry session".into(),
+                ..Default::default()
+            };
+        }
+        let trend_long = mechanistic_trend(filter_context, history, mark_price);
+        let rule = select_entry_rule(cfg, trend_long);
+        let Some(rule) = rule else {
+            return TraderOutput {
+                action: "hold".into(),
+                conviction: 0.5,
+                justification: "mechanistic: no entry rule".into(),
+                ..Default::default()
+            };
+        };
+        let action = match rule.direction {
+            crate::strategies::EntryDirection::Long => "long_open",
+            crate::strategies::EntryDirection::Short => "short_open",
+        };
+        tracing::debug!(
+            target = "xvision.mechanistic",
+            timestamp = %timestamp,
+            mark_price,
+            trend_long = ?trend_long,
+            context = ?filter_context,
+            direction = ?rule.direction,
+            action,
+            "mechanistic backtest entry"
+        );
         return TraderOutput {
-            action: "hold".into(),
-            conviction: 0.0,
-            justification: "mechanistic: no open position".into(),
+            action: action.into(),
+            conviction: 1.0,
+            justification: "mechanistic entry".into(),
             ..Default::default()
         };
     }
@@ -6418,33 +6472,82 @@ fn mechanistic_action(
     } else {
         (entry_price - mark_price) / entry_price * 100.0
     };
+    let peak = peak_price.max(entry_price);
     for policy in &cfg.close_policies {
-        match policy {
-            ClosePolicy::StopLoss { pct } if pnl_pct <= -*pct => {
-                return TraderOutput {
-                    action: "flat".into(),
-                    conviction: 1.0,
-                    justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
-                    ..Default::default()
+        let (hit, label) = match policy {
+            ClosePolicy::StopLoss { pct } => (pnl_pct <= -*pct, "stop_loss"),
+            ClosePolicy::TakeProfit { pct } => (pnl_pct >= *pct, "take_profit"),
+            ClosePolicy::TrailingStop { pct } => {
+                let distance = *pct / 100.0;
+                let hit = if position > 0.0 {
+                    mark_price <= peak * (1.0 - distance)
+                } else {
+                    mark_price >= peak * (1.0 + distance)
                 };
+                (hit, "trailing_stop")
             }
-            ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
-                return TraderOutput {
-                    action: "flat".into(),
-                    conviction: 1.0,
-                    justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
-                    ..Default::default()
+            ClosePolicy::TimeExit { bars } => (bars_held >= *bars, "time_exit"),
+            ClosePolicy::TargetPnl { usd } => {
+                let pnl = if position > 0.0 {
+                    (mark_price - entry_price) * position.abs()
+                } else {
+                    (entry_price - mark_price) * position.abs()
                 };
+                (pnl >= *usd, "target_pnl")
             }
-            _ => {}
+        };
+        if hit {
+            return TraderOutput {
+                action: "flat".into(),
+                conviction: 1.0,
+                justification: format!("mechanistic {label}"),
+                ..Default::default()
+            };
         }
     }
     TraderOutput {
         action: "hold".into(),
-        conviction: 0.0,
-        justification: "mechanistic: no close policy triggered".into(),
+        conviction: 0.5,
+        justification: "mechanistic hold".into(),
         ..Default::default()
     }
+}
+
+fn mechanistic_session_open(spec: Option<&str>, timestamp: chrono::DateTime<Utc>) -> bool {
+    let Some(spec) = spec else { return true };
+    let mut parts = spec.split('-');
+    let (Ok(start), Ok(end)) = (
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+        parts.next().unwrap_or_default().trim().parse::<u32>(),
+    ) else {
+        return true;
+    };
+    if parts.next().is_some() || start > 24 || end > 24 || start == end {
+        return true;
+    }
+    let hour = timestamp.hour();
+    if start < end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
+    }
+}
+
+fn mechanistic_trend(
+    filter_context: Option<&serde_json::Value>,
+    history: &[&Ohlcv],
+    current_price: f64,
+) -> Option<bool> {
+    trend_from_filter_context(filter_context, current_price).or_else(|| {
+        let mut ema = None;
+        for bar in history {
+            ema = Some(match ema {
+                None => bar.close,
+                Some(previous) => previous + (2.0 / 22.0) * (bar.close - previous),
+            });
+        }
+        ema.map(|value| current_price > value)
+    })
 }
 
 /// Find the trader slot's repair context — system prompt, model id,

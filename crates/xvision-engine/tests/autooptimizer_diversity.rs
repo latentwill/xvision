@@ -19,13 +19,11 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!(
-        "../migrations/078_autooptimizer_lineage_provenance.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
     sqlx::query(include_str!("../migrations/049_autooptimizer_diversity.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/078_autooptimizer_lineage_provenance.sql"))
         .execute(&pool)
         .await
         .unwrap();

@@ -19,9 +19,11 @@
 //! same "unknown is not zero" stance as `crate::eval::cost`, so the CLI can say
 //! "N call(s) with unknown price" instead of a misleading `$0.00`.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use xvision_core::config::ProviderKind;
 use xvision_core::providers::Catalog;
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, LlmResponse};
@@ -76,6 +78,43 @@ impl CostMeteringDispatch {
         }
         None
     }
+}
+
+/// Load cached catalogs used by the optimizer cycle meter for one executing
+/// provider.
+///
+/// Direct network providers often run models by their bare provider model id
+/// (`deepseek-v4-pro`) while the pricing cache that carries rates is
+/// OpenRouter's canonical `vendor/model` catalog (`deepseek/deepseek-v4-pro`).
+/// The cost resolver already handles that id-shape gap; this loader makes the
+/// OpenRouter pricing catalog visible to non-local network providers without
+/// billing local/self-hosted providers against OpenRouter rates.
+pub async fn load_metering_catalogs_for_provider(
+    xvn_home: &Path,
+    provider: &str,
+    kind: ProviderKind,
+) -> Vec<Arc<Catalog>> {
+    let mut catalogs = Vec::new();
+
+    match crate::providers::load_cached_catalog(xvn_home, provider).await {
+        Ok(Some(cat)) => catalogs.push(Arc::new(cat)),
+        Ok(None) => {}
+        Err(err) => tracing::warn!(provider, error = %err, "load metering provider catalog failed"),
+    }
+
+    if should_load_openrouter_pricing_reference(provider, kind) {
+        match crate::providers::load_cached_catalog(xvn_home, "openrouter").await {
+            Ok(Some(cat)) => catalogs.push(Arc::new(cat)),
+            Ok(None) => {}
+            Err(err) => tracing::warn!(provider, error = %err, "load OpenRouter metering catalog failed"),
+        }
+    }
+
+    catalogs
+}
+
+fn should_load_openrouter_pricing_reference(provider: &str, kind: ProviderKind) -> bool {
+    provider != "openrouter" && matches!(kind, ProviderKind::Anthropic | ProviderKind::OpenaiCompat | ProviderKind::Vllm)
 }
 
 #[async_trait]
@@ -288,5 +327,94 @@ mod tests {
         assert_eq!(m.unpriced_calls, 1);
         assert_eq!(m.input_tokens, 100);
         assert_eq!(m.output_tokens, 50);
+    }
+
+    fn deepseek_catalog(provider: &str, priced: bool) -> Catalog {
+        Catalog {
+            provider: provider.into(),
+            fetched_at: Utc::now(),
+            source_url: "test".into(),
+            models: vec![ModelEntry {
+                id: "deepseek/deepseek-v4-pro".into(),
+                display_name: None,
+                context_window: None,
+                max_output_tokens: None,
+                supports_reasoning: None,
+                supports_tools: None,
+                pricing_per_million_input_usd: priced.then_some(0.435),
+                pricing_per_million_output_usd: priced.then_some(0.87),
+                raw: serde_json::Value::Null,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn network_provider_metering_loads_openrouter_pricing_reference() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        crate::providers::save_cached_catalog(tmp.path(), &deepseek_catalog("deepseek", false))
+            .await
+            .unwrap();
+        crate::providers::save_cached_catalog(tmp.path(), &deepseek_catalog("openrouter", true))
+            .await
+            .unwrap();
+
+        let catalogs = load_metering_catalogs_for_provider(
+            tmp.path(),
+            "deepseek",
+            xvision_core::config::ProviderKind::OpenaiCompat,
+        )
+        .await;
+        assert_eq!(catalogs.len(), 2, "direct provider catalog plus OpenRouter pricing reference");
+
+        let meter = Arc::new(Mutex::new(CycleMeter::default()));
+        let dispatch = CostMeteringDispatch::new(
+            Arc::new(FixedTokensDispatch {
+                input: 1_000_000,
+                output: 1_000_000,
+            }),
+            catalogs,
+            Arc::clone(&meter),
+        );
+
+        dispatch.complete(req("deepseek-v4-pro")).await.unwrap();
+
+        let m = *meter.lock().unwrap();
+        assert!((m.spent_usd - 1.305).abs() < 1e-9, "DeepSeek call must price via OpenRouter");
+        assert_eq!(m.unpriced_calls, 0);
+    }
+
+    #[tokio::test]
+    async fn local_provider_metering_does_not_use_openrouter_pricing_reference() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        crate::providers::save_cached_catalog(tmp.path(), &deepseek_catalog("ollama", false))
+            .await
+            .unwrap();
+        crate::providers::save_cached_catalog(tmp.path(), &deepseek_catalog("openrouter", true))
+            .await
+            .unwrap();
+
+        let catalogs =
+            load_metering_catalogs_for_provider(tmp.path(), "ollama", xvision_core::config::ProviderKind::Ollama)
+                .await;
+        assert!(
+            catalogs.iter().all(|catalog| catalog.provider != "openrouter"),
+            "local Ollama calls must not be billed against OpenRouter pricing"
+        );
+
+        let meter = Arc::new(Mutex::new(CycleMeter::default()));
+        let dispatch = CostMeteringDispatch::new(
+            Arc::new(FixedTokensDispatch {
+                input: 1_000_000,
+                output: 1_000_000,
+            }),
+            catalogs,
+            Arc::clone(&meter),
+        );
+
+        dispatch.complete(req("deepseek-v4-pro")).await.unwrap();
+
+        let m = *meter.lock().unwrap();
+        assert_eq!(m.spent_usd, 0.0);
+        assert_eq!(m.unpriced_calls, 1);
     }
 }

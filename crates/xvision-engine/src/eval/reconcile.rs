@@ -65,18 +65,25 @@ pub struct ReconcileDiff {
 }
 
 /// Where the broker-side half of a reconciliation came from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReconcileSource {
     /// No broker connector available: the broker side of the result is
     /// EMPTY by construction and `matched` is forced `false`. Every
     /// expected position surfaces as an unverified diff instead of the
     /// historical lie of a fabricated matched snapshot.
-    #[default]
     ExpectedOnly,
     /// Real broker query. The only source for which `matched = true`
     /// actually means "verified against the venue".
     Broker,
+}
+
+impl Default for ReconcileSource {
+    fn default() -> Self {
+        // Wire-tolerance default for stored exports predating the field:
+        // ExpectedOnly (unverified), never a fabricated verified match.
+        Self::ExpectedOnly
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -19,27 +19,26 @@ use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
+use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
+use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::gate::{
-    aggregate_regime_verdicts, check_net_return, check_pool_consistency,
-    check_simplicity_equal_or_simpler, evaluate, GateInput, GateVerdict, Objective,
-    SimplicityStats,
+    aggregate_regime_verdicts, check_net_return, check_pool_consistency, check_simplicity_equal_or_simpler,
+    evaluate, GateInput, GateVerdict, Objective, SimplicityStats,
 };
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
 use crate::autooptimizer::mutator::{MutationDiff, Mutator};
 use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
 use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
+use crate::autooptimizer::pool_eval::{
+    compare_pool_evaluations, evaluate_pool, PoolComparison, PoolEvaluation,
+};
 use crate::autooptimizer::progress::{CycleProgressEvent, Phase};
 use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
-use crate::autooptimizer::grid::{mutation_diff_for_combination, GridCombination};
-use crate::autooptimizer::pool_eval::{
-    compare_pool_evaluations, evaluate_pool, PoolComparison, PoolEvaluation,
-};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GridEvaluationOutcome {
@@ -583,18 +582,17 @@ pub async fn run_cycle(
             cycle_id: cycle_id.clone(),
             parent_hash: ph,
         });
-        let parent_pool_evaluation = if cycle_config.regime_set.is_empty()
-            && !cycle_config.scenario_pool.is_empty()
-        {
-            if !parent_pool_cache.contains_key(&parent_node.bundle_hash) {
-                let evaluation =
-                    evaluate_pool(paper_tester, parent_strategy, &cycle_config.scenario_pool).await?;
-                parent_pool_cache.insert(parent_node.bundle_hash, evaluation);
-            }
-            parent_pool_cache.get(&parent_node.bundle_hash)
-        } else {
-            None
-        };
+        let parent_pool_evaluation =
+            if cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty() {
+                if !parent_pool_cache.contains_key(&parent_node.bundle_hash) {
+                    let evaluation =
+                        evaluate_pool(paper_tester, parent_strategy, &cycle_config.scenario_pool).await?;
+                    parent_pool_cache.insert(parent_node.bundle_hash, evaluation);
+                }
+                parent_pool_cache.get(&parent_node.bundle_hash)
+            } else {
+                None
+            };
         let (active, suspect, rejected, nc, ec) = process_parent_mutations(
             pool,
             strategy_blob_store,
@@ -846,21 +844,9 @@ fn simplicity_stats(diff: &MutationDiff) -> SimplicityStats {
         + diff.tools.removed.len()
         + diff.filter.len()
         + if diff.create_filter.is_some() { 1 } else { 0 };
-    let removed = diff
-        .prose
-        .iter()
-        .filter(|edit| !edit.before.is_empty())
-        .count()
-        + diff
-            .params
-            .iter()
-            .filter(|edit| !edit.before.is_null())
-            .count()
-        + diff
-            .filter
-            .iter()
-            .filter(|edit| !edit.before.is_null())
-            .count()
+    let removed = diff.prose.iter().filter(|edit| !edit.before.is_empty()).count()
+        + diff.params.iter().filter(|edit| !edit.before.is_null()).count()
+        + diff.filter.iter().filter(|edit| !edit.before.is_null()).count()
         + diff.tools.removed.len();
     SimplicityStats { added, removed }
 }
@@ -882,6 +868,130 @@ fn objective_metric(
     base - simplicity_penalty * added as f64
 }
 
+const LOW_TRADE_PARENT_FILL_LEG_FLOOR: u32 = 5;
+
+fn low_trade_parent_context(
+    parent_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    parent: &Strategy,
+    config: &AutoOptimizerConfig,
+    objective: Objective,
+) -> Option<String> {
+    if parent_day.n_trades >= LOW_TRADE_PARENT_FILL_LEG_FLOOR {
+        return None;
+    }
+
+    let filter_allowed = config.allowed_mutation_kinds.iter().any(|k| k == "filter");
+    let filter_guidance = match (filter_allowed, parent.filter.is_some()) {
+        (true, true) => {
+            "Priority 1: propose ONE filter-loosening variant for this writer slot. \
+             Use only listed tunable filter paths and move thresholds in the pass-more-bars direction \
+             (for example: lower lower-bound thresholds, raise upper-bound thresholds, reduce cooldown). \
+             Do not guess unlisted paths."
+        }
+        (true, false) => {
+            "Priority 1: because no filter exists, use the offered filter creation path only if it can \
+             admit more qualified bars without removing risk controls."
+        }
+        (false, _) => {
+            "Filter edits are not allowed for this run; do not pretend to widen the gate. \
+             Prefer allowed parameter/prose changes that can improve fills, exits, or sizing."
+        }
+    };
+
+    Some(format!(
+        "Current parent sample-size warning:\n\
+         - Parent day-window fill legs: {day_trades} (below the {floor}-leg scoring floor).\n\
+         - Parent day-window {objective}: {day_score:.4}.\n\
+         - Parent holdout-window {objective}: {holdout_score:.4}.\n\
+         At this sample size, a 0.0 objective delta can mean 'not enough fills to measure', not \
+         'no behavioral change'.\n\
+         {filter_guidance}\n\
+         Priority 2: if this writer slot is focused on params/prose instead of filter, tune conviction, \
+         sizing, or exit management only in ways that can create measurable fill-leg differences. \
+         Return exactly ONE experiment; sibling writer calls handle other variants.",
+        day_trades = parent_day.n_trades,
+        floor = LOW_TRADE_PARENT_FILL_LEG_FLOOR,
+        objective = objective.label(),
+        day_score = objective.oriented_value(parent_day),
+        holdout_score = objective.oriented_value(parent_untouched),
+    ))
+}
+
+fn gate_target_context(
+    parent_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    config: &AutoOptimizerConfig,
+    objective: Objective,
+) -> String {
+    let parent_day_score = objective.oriented_value(parent_day);
+    let parent_holdout_score = objective.oriented_value(parent_untouched);
+    let required_day_score = parent_day_score + config.min_improvement;
+    let required_holdout_score = parent_holdout_score + config.holdout_min_improvement;
+    let parent_worst_drawdown = parent_day
+        .max_drawdown_pct
+        .abs()
+        .max(parent_untouched.max_drawdown_pct.abs());
+    let drawdown_ceiling = parent_worst_drawdown * 1.5;
+    let min_child_trades = if parent_day.n_trades == 0 {
+        None
+    } else {
+        Some(((parent_day.n_trades as f64) * config.min_trade_retention_ratio).floor() as u32)
+    }
+    .map(|n| n.max(1));
+
+    let trade_line = match min_child_trades {
+        Some(n) => format!(
+            "- Trade-retention guard: child must execute at least {n} fill legs ({:.0}% of parent's {}).",
+            config.min_trade_retention_ratio * 100.0,
+            parent_day.n_trades
+        ),
+        None => "- Trade-retention guard: parent has 0 fill legs on this window; do not optimize toward a no-trade child.".to_string(),
+    };
+    let realized_line = if config.min_realized_return_ratio > 0.0 {
+        format!(
+            "- Realized-return guard: if total return is positive, child must book at least {:.0}% of that return.",
+            config.min_realized_return_ratio * 100.0
+        )
+    } else {
+        "- Realized-return guard: disabled for this run.".to_string()
+    };
+
+    format!(
+        "Gate target contract for this writer slot (advisory; the deterministic gate remains authoritative):\n\
+         - Objective: {objective}; parent day {parent_day_score:.4}, required child day ≥ {required_day_score:.4} (Δ ≥ {day_eps:.4}).\n\
+         - Parent holdout {parent_holdout_score:.4}, required child holdout ≥ {required_holdout_score:.4} (Δ ≥ {holdout_eps:.4}).\n\
+         - Drawdown guard: child worst drawdown must stay ≤ {drawdown_ceiling:.4}% (1.5× parent worst {parent_worst_drawdown:.4}%) unless objective is max_drawdown.\n\
+         {trade_line}\n\
+         {realized_line}\n\
+         Prefer experiments with a plausible reason to improve BOTH day and holdout objective without expanding drawdown.",
+        objective = objective.label(),
+        day_eps = config.min_improvement,
+        holdout_eps = config.holdout_min_improvement,
+    )
+}
+
+fn combine_writer_advisory_context(
+    memory_context: Option<&str>,
+    gate_context: Option<&str>,
+    low_trade_context: Option<&str>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if let Some(ctx) = memory_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(format!("Prior optimizer outcomes on similar strategies:\n{ctx}"));
+    }
+    if let Some(ctx) = gate_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(ctx.to_string());
+    }
+    if let Some(ctx) = low_trade_context.map(str::trim).filter(|s| !s.is_empty()) {
+        sections.push(ctx.to_string());
+    }
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
+}
 
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
@@ -919,8 +1029,11 @@ where
     let mut no_candidate_count: usize = 0;
     let mut errored_count: usize = 0;
     let mut breaker = ConsecutiveErrors::new(cycle_config.max_consecutive_errors);
-    let scenario_pool_active =
-        cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    let scenario_pool_active = cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+    // Per-parent cache of the sampled scenario pair's parent metrics, keyed by
+    // (day id, baseline id). Filled lazily on first use per pair so repeated
+    // mutations on the same round-robin pair don't re-run the parent backtest.
+    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
 
     let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
         progress(CycleProgressEvent::PhaseStarted {
@@ -969,7 +1082,6 @@ where
     } else {
         (MetricsSummary::default(), MetricsSummary::default())
     };
-
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -1032,6 +1144,7 @@ where
             }
         }
     };
+
     // F32: every candidate this parent has ALREADY produced (across all prior
     // cycles), so the mutator can be steered away from re-deriving them and any
     // duplicate is dropped before it spends a backtest. Best-effort: a lineage
@@ -1182,6 +1295,56 @@ where
         // explored). The cycle_id is unique per cycle (ULID), so hashing it varies
         // the seed every run; mixing the mutation index varies it within a cycle.
         let exploration_seed = exploration_seed_for(cycle_id, mutation_idx);
+        // B19 + low-trade guidance: choose this candidate's scoring pair before
+        // writer proposal so the mutator sees the parent sample size for the SAME
+        // window the numeric gate will later compare against. Legacy/regime-empty
+        // runs reuse the eager parent metrics; scenario-pool runs compute/cache
+        // the sampled pair's parent metrics here instead of after proposal.
+        let (sampled_day, sampled_baseline) = select_scenario_pair(
+            &cycle_config.scenario_pool,
+            (&cycle_config.day_scenario, &cycle_config.baseline_scenario),
+            mutation_idx,
+        );
+        let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
+            let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
+            if !parent_pool_metrics.contains_key(&pair_key) {
+                let pd = paper_tester.run(parent_strategy, sampled_day).await?;
+                let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
+                parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
+            }
+            let (pd, pu) = parent_pool_metrics
+                .get(&pair_key)
+                .expect("parent pool metrics just inserted");
+            (pd.clone(), pu.clone())
+        } else {
+            (parent_day.clone(), parent_untouched.clone())
+        };
+        let low_trade_context = if cycle_config.regime_set.is_empty() {
+            low_trade_parent_context(
+                &gate_parent_day,
+                &gate_parent_untouched,
+                parent_strategy,
+                config,
+                cycle_config.objective,
+            )
+        } else {
+            None
+        };
+        let gate_context = if cycle_config.regime_set.is_empty() {
+            Some(gate_target_context(
+                &gate_parent_day,
+                &gate_parent_untouched,
+                config,
+                cycle_config.objective,
+            ))
+        } else {
+            None
+        };
+        let writer_advisory_context = combine_writer_advisory_context(
+            mutation_memory_context.as_deref(),
+            gate_context.as_deref(),
+            low_trade_context.as_deref(),
+        );
         // When tournament_enabled, run the 3-candidate Borda-count tournament
         // instead of a direct propose call. Incumbent win means no candidate
         // beat the parent this iteration.
@@ -1209,7 +1372,12 @@ where
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner
-                .run_tournament(&parent_for_mutator, config, None) // prompts injected into clone
+                .run_tournament(
+                    &parent_for_mutator,
+                    config,
+                    None,
+                    writer_advisory_context.as_deref(),
+                ) // prompts injected into clone
                 .await
             {
                 Ok(r) if r.incumbent_wins => {
@@ -1260,7 +1428,7 @@ where
                     dsr_prefix,
                     exploration_seed,
                     mutation_idx,
-                    mutation_memory_context.as_deref(),
+                    writer_advisory_context.as_deref(),
                     &avoid,
                     None, // prompts are injected directly into parent_for_mutator
                 )
@@ -1444,8 +1612,7 @@ where
         );
         let simplicity = simplicity_stats(&diff);
         let pool_comparison = if scenario_pool_active {
-            let parent_pool = parent_pool_evaluation
-                .expect("scenario pool parent evaluation is present");
+            let parent_pool = parent_pool_evaluation.expect("scenario pool parent evaluation is present");
             Some(compare_pool_evaluations(
                 evaluate_pool(paper_tester, &candidate, &cycle_config.scenario_pool).await?,
                 parent_pool,
@@ -1453,6 +1620,21 @@ where
         } else {
             None
         };
+        if scenario_pool_active {
+            // B19 observability: the proposal currently gives operators no way to
+            // tell which regime a candidate was scored on. Emit the sampled pair's
+            // label (display_name carries the window) so the round-robin is visible
+            // in cycle logs / SSE-adjacent tracing.
+            tracing::info!(
+                cycle_id,
+                parent_hash = %ph_str,
+                mutation_idx,
+                scenario_label = %sampled_day.display_name,
+                scenario_day = %sampled_day.description,
+                "B19 round-robin: candidate evaluated on sampled scenario pair"
+            );
+        }
+
         let gate_t0 = Instant::now();
         let gate_result = gate_and_classify(
             &enriched_parent,
@@ -1520,17 +1702,16 @@ where
         // and returns the *resolved* status (which may be Active when the
         // collision-guard preserves an existing active node).  Emit the SSE event
         // and route the result bucket from the resolved status, not outcome.status.
-        let (node, resolved_status) =
-            build_and_insert_node(
-                pool,
-                strategy_blob_store,
-                &outcome,
-                parent_node,
-                cycle_id,
-                config.objective,
-                cycle_config.sabotage_seed,
-            )
-            .await?;
+        let (node, resolved_status) = build_and_insert_node(
+            pool,
+            strategy_blob_store,
+            &outcome,
+            parent_node,
+            cycle_id,
+            config.objective,
+            cycle_config.sabotage_seed,
+        )
+        .await?;
         let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
@@ -1580,9 +1761,9 @@ where
                     parent_n_trades: gs.parent_n_trades,
                     child_n_trades: gs.child_n_trades,
                     min_trade_retention_ratio: gs.min_trade_retention_ratio,
-                    parent_realized_return_ratio: None,
-                    child_realized_return_ratio: None,
-                    gate_min_realized_return_ratio: None,
+                    parent_realized_return_ratio: gs.parent_realized_return_ratio,
+                    child_realized_return_ratio: gs.child_realized_return_ratio,
+                    gate_min_realized_return_ratio: gs.gate_min_realized_return_ratio,
                 },
             )
             .await
@@ -1605,10 +1786,32 @@ where
                 LineageStatus::Quarantined => "suspect",
                 LineageStatus::Rejected => "rejected",
             };
+            let reason_str = match &outcome.verdict {
+                GateVerdict::Fail { reason } => Some(reason.as_str()),
+                GateVerdict::Pass => None,
+            };
+            let gate_context =
+                outcome
+                    .gate_scores
+                    .as_ref()
+                    .map(|gs| crate::autooptimizer::mutator::MutationGateContext {
+                        objective_label: cycle_config.objective.label(),
+                        delta_day: Some(gs.delta_day),
+                        delta_holdout: Some(gs.delta_holdout),
+                        drawdown_ratio: gs.drawdown_ratio,
+                        parent_n_trades: gs.parent_n_trades,
+                        child_n_trades: gs.child_n_trades,
+                        min_trade_retention_ratio: gs.min_trade_retention_ratio,
+                        parent_realized_return_ratio: gs.parent_realized_return_ratio,
+                        child_realized_return_ratio: gs.child_realized_return_ratio,
+                        min_realized_return_ratio: gs.gate_min_realized_return_ratio,
+                        reason: reason_str,
+                    });
             let obs = crate::autooptimizer::mutator::describe_mutation_outcome(
                 &outcome.diff,
                 outcome.delta_sharpe,
                 status_label,
+                gate_context,
             );
             if let Err(e) = mem
                 .record_observation_in_namespace(
@@ -1809,11 +2012,9 @@ where
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 
     if !cycle_config.regime_set.is_empty() {
-        let mut regime_inputs: Vec<RegimeEvalInput> =
-            Vec::with_capacity(cycle_config.regime_set.len());
+        let mut regime_inputs: Vec<RegimeEvalInput> = Vec::with_capacity(cycle_config.regime_set.len());
         for rw in &cycle_config.regime_set {
-            let (regime_day_scen, regime_baseline_scen) =
-                build_regime_scenario_pair(cycle_config, rw)?;
+            let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
             progress(CycleProgressEvent::PhaseStarted {
                 session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
@@ -2678,6 +2879,136 @@ mod tests {
             data_window_json: None,
             objective: None,
         }
+    }
+
+    fn filter_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Test Strategy",
+                "plain_summary": "Strategy with a filter for mutation tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000A",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("filter strategy fixture must deserialize")
+    }
+
+    fn metrics_with_trades(n_trades: u32, sharpe: f64) -> MetricsSummary {
+        MetricsSummary {
+            sharpe,
+            total_return_pct: 0.0,
+            max_drawdown_pct: 0.0,
+            win_rate: 0.0,
+            n_trades,
+            n_decisions: 0,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
+            baselines: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn low_trade_parent_context_warns_and_preserves_one_experiment_contract() {
+        let strategy = filter_strategy();
+        let config = AutoOptimizerConfig::default();
+        let context = low_trade_parent_context(
+            &metrics_with_trades(2, -1.136),
+            &metrics_with_trades(3, -3.926),
+            &strategy,
+            &config,
+            Objective::Sharpe,
+        )
+        .expect("two fill legs should trigger context");
+
+        assert!(context.contains("Parent day-window fill legs: 2"), "{context}");
+        assert!(context.contains("below the 5-leg scoring floor"), "{context}");
+        assert!(context.contains("filter-loosening variant"), "{context}");
+        assert!(context.contains("Return exactly ONE experiment"), "{context}");
+        assert!(
+            !context.contains("propose 3-4"),
+            "context must not ask the one-experiment writer for multiple variants: {context}"
+        );
+    }
+
+    #[test]
+    fn low_trade_parent_context_is_absent_when_parent_has_enough_fills() {
+        let strategy = filter_strategy();
+        let config = AutoOptimizerConfig::default();
+        let context = low_trade_parent_context(
+            &metrics_with_trades(5, 0.25),
+            &metrics_with_trades(8, 0.20),
+            &strategy,
+            &config,
+            Objective::Sharpe,
+        );
+        assert!(context.is_none());
+    }
+
+    #[test]
+    fn combine_writer_advisory_context_keeps_memory_gate_and_low_trade_sections() {
+        let combined = combine_writer_advisory_context(
+            Some("param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)"),
+            Some("Gate target contract for this writer slot\n- Objective: sharpe"),
+            Some("Current parent sample-size warning:\n- Parent day-window fill legs: 2"),
+        )
+        .expect("non-empty sections combine");
+
+        assert!(
+            combined.contains("Prior optimizer outcomes on similar strategies"),
+            "{combined}"
+        );
+        assert!(combined.contains("Gate target contract"), "{combined}");
+        assert!(
+            combined.contains("Current parent sample-size warning"),
+            "{combined}"
+        );
+    }
+
+    #[test]
+    fn gate_target_context_surfaces_holdout_drawdown_trade_and_realized_requirements() {
+        let config = AutoOptimizerConfig::default();
+        let context = gate_target_context(
+            &metrics_with_trades(26, 0.25),
+            &metrics_with_trades(18, 0.20),
+            &config,
+            Objective::Sharpe,
+        );
+
+        assert!(context.contains("Gate target contract"), "{context}");
+        assert!(context.contains("required child day"), "{context}");
+        assert!(context.contains("required child holdout"), "{context}");
+        assert!(context.contains("Drawdown guard"), "{context}");
+        assert!(context.contains("Trade-retention guard"), "{context}");
+        assert!(context.contains("Realized-return guard"), "{context}");
     }
 
     #[test]

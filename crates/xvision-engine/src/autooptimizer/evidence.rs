@@ -283,7 +283,6 @@ pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
     ] {
         apply_schema_sql(pool, sql).await?;
     }
-
     Ok(())
 }
 
@@ -402,12 +401,12 @@ mod tests {
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),
-                parent_n_trades: Some(10),
+                parent_n_trades: Some(12),
                 child_n_trades: Some(8),
                 min_trade_retention_ratio: Some(0.5),
-                parent_realized_return_ratio: Some(0.12),
-                child_realized_return_ratio: Some(0.14),
-                gate_min_realized_return_ratio: Some(0.0),
+                parent_realized_return_ratio: Some(0.6),
+                child_realized_return_ratio: Some(0.4),
+                gate_min_realized_return_ratio: Some(0.25),
                 verdict: "passed",
                 reason: None,
                 rationale: Some("Adjusted ADX threshold from 25 to 30 for stronger trend filter"),
@@ -440,6 +439,13 @@ mod tests {
         assert!((rec.edge_over_random.unwrap() - 0.4).abs() < 1e-9);
         assert!((rec.parent_edge.unwrap() - 0.1).abs() < 1e-9);
         assert!((rec.edge_delta.unwrap() - 0.3).abs() < 1e-9);
+        // Gate-dimension evidence round-trips through migrations 075/076.
+        assert_eq!(rec.parent_n_trades, Some(12));
+        assert_eq!(rec.child_n_trades, Some(8));
+        assert!((rec.min_trade_retention_ratio.unwrap() - 0.5).abs() < 1e-9);
+        assert!((rec.parent_realized_return_ratio.unwrap() - 0.6).abs() < 1e-9);
+        assert!((rec.child_realized_return_ratio.unwrap() - 0.4).abs() < 1e-9);
+        assert!((rec.gate_min_realized_return_ratio.unwrap() - 0.25).abs() < 1e-9);
     }
 
     /// INSERT OR REPLACE: re-persisting the same bundle_hash with a new verdict
@@ -463,18 +469,18 @@ mod tests {
                     delta_day: None,
                     delta_holdout: None,
                     drawdown_ratio: None,
-                    parent_n_trades: None,
-                    child_n_trades: None,
-                    min_trade_retention_ratio: None,
-                    parent_realized_return_ratio: None,
-                    child_realized_return_ratio: None,
-                    gate_min_realized_return_ratio: None,
                     verdict,
                     reason: None,
                     rationale: None,
                     edge_over_random: None,
                     parent_edge: None,
                     edge_delta: None,
+                    parent_n_trades: None,
+                    child_n_trades: None,
+                    min_trade_retention_ratio: None,
+                    parent_realized_return_ratio: None,
+                    child_realized_return_ratio: None,
+                    gate_min_realized_return_ratio: None,
                 },
             )
             .await

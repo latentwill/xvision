@@ -49,9 +49,10 @@ pub struct Judge {
     pub model: String,
 }
 
-/// Asserts that the given text contains none of the forbidden metric tokens.
-/// Called on the user body before dispatch to ensure the judge is metrics-blind.
-pub fn assert_metrics_blind(text: &str) {
+/// Returns an error when dynamic review evidence contains forbidden performance
+/// metric tokens. Static strategy JSON/markdown is allowed to mention risk
+/// controls such as `max_drawdown_usd`; those are not hidden backtest scores.
+pub fn ensure_metrics_blind(label: &str, text: &str) -> Result<()> {
     let lower = text
         .to_lowercase()
         // These are risk-control configuration keys, not outcome metrics.
@@ -60,11 +61,13 @@ pub fn assert_metrics_blind(text: &str) {
         .replace("max_drawdown_usd", "")
         .replace("max_drawdown_pct", "");
     for token in FORBIDDEN_METRIC_TOKENS {
-        assert!(
-            !lower.contains(token),
-            "judge prompt must not include metrics: found '{token}'"
-        );
+        if lower.contains(token) {
+            return Err(anyhow::anyhow!(
+                "judge prompt must not include metrics in {label}: found '{token}'"
+            ));
+        }
     }
+    Ok(())
 }
 
 fn build_user_body(parent: &Strategy, child: &Strategy, diff: &MutationDiff, tape: &str) -> String {
@@ -180,8 +183,8 @@ pub async fn run_judge(
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     scenario_start: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Vec<Finding>> {
+    ensure_metrics_blind("trade activity sample", trade_tape_excerpt)?;
     let body = build_user_body(parent_strategy, child_strategy, diff, trade_tape_excerpt);
-    assert_metrics_blind(&body);
 
     let system_prompt = build_system_prompt(parent_strategy, diff, memory, scenario_start).await;
 
@@ -199,4 +202,102 @@ pub async fn run_judge(
 
     let resp = judge.dispatch.complete(req).await?;
     Ok(extract_findings(&resp.text()))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent::llm::{ContentBlock, StopReason};
+
+    struct StubDispatch;
+
+    #[async_trait::async_trait]
+    impl LlmDispatch for StubDispatch {
+        async fn complete(&self, _req: LlmRequest) -> anyhow::Result<crate::agent::llm::LlmResponse> {
+            Ok(crate::agent::llm::LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "[]".to_string(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+            })
+        }
+    }
+
+    fn stub_judge() -> Judge {
+        Judge {
+            dispatch: Arc::new(StubDispatch),
+            provider: "test".to_string(),
+            model: "test".to_string(),
+        }
+    }
+
+    use super::*;
+    use serde_json::json;
+
+    fn strategy_with_drawdown_risk_fields() -> Strategy {
+        let v = json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000J",
+                "display_name": "Judge Test Strategy",
+                "plain_summary": "",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000J", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.015,
+                "max_concurrent_positions": 2,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05,
+                "max_total_exposure_pct": 150.0,
+                "max_drawdown_usd": 0.0,
+                "max_drawdown_pct": null
+            },
+            "activation_mode": "every_bar"
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialize")
+    }
+
+    #[tokio::test]
+    async fn run_judge_allows_strategy_schema_drawdown_fields() {
+        let strategy = strategy_with_drawdown_risk_fields();
+        let diff = crate::autooptimizer::mutator::empty_mutation();
+
+        let findings = run_judge(&stub_judge(), &strategy, &strategy, &diff, "", None, None)
+            .await
+            .expect("strategy risk-control drawdown fields must not trip the prompt gate");
+
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn full_body_would_trip_the_old_broad_validator() {
+        let strategy = strategy_with_drawdown_risk_fields();
+        let diff = crate::autooptimizer::mutator::empty_mutation();
+
+        let body = build_user_body(&strategy, &strategy, &diff, "");
+
+        assert!(body.contains("max_drawdown_usd"));
+        // Risk-control configuration keys are not outcome metrics: the
+        // metrics-blind check allowlists them instead of failing closed.
+        ensure_metrics_blind("full judge body", &body)
+            .expect("drawdown risk keys must not trip the metrics-blind check");
+    }
+
+    #[test]
+    fn trade_tape_metric_leak_returns_error() {
+        let err = ensure_metrics_blind("trade activity sample", "sharpe improved")
+            .expect_err("metric names must stay out of the dynamic trade sample");
+
+        assert!(err
+            .to_string()
+            .contains("judge prompt must not include metrics in trade activity sample"));
+    }
 }

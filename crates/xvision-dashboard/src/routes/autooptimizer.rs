@@ -1772,7 +1772,6 @@ mod tests {
                 delta_day: Some(0.3),
                 delta_holdout: Some(0.2),
                 drawdown_ratio: Some(1.1),
-                holdout_epsilon: Some(0.005),
                 parent_n_trades: Some(10),
                 child_n_trades: Some(8),
                 min_trade_retention_ratio: Some(0.5),

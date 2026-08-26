@@ -138,6 +138,10 @@ async fn run_chain(pool: &sqlx::SqlitePool) -> ContentHash {
         cycle_id: Some(CYCLE_ID.into()),
         created_at: fixed_created_at(),
         diversity_score: None,
+        mutation_diff_json: None,
+        seed: None,
+        data_window_json: None,
+        objective: None,
     };
     let store = LineageStore::new(pool.clone());
     store.insert(&node).await.expect("lineage insert must succeed");

@@ -183,7 +183,9 @@ export function EvalRunsRoute() {
   const preselectedScenario = searchParams.get("scenario")?.trim() ?? "";
   // `?mode=live` is the pre-rename URL value; the RunMode enum is now "fwd".
   const preselectedMode: RunMode =
-    searchParams.get("mode") === "live" ? "fwd" : "backtest";
+    searchParams.get("mode") === "live" || searchParams.get("mode") === "fwd"
+      ? "fwd"
+      : "backtest";
   const startRequested = searchParams.get("start") === "1";
   // render the action button next to the run count.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());

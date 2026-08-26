@@ -131,6 +131,17 @@ pub const SUBMIT_DECISION_TOOL: &str = "submit_decision";
 /// (currently a Rust-only knob via `ClineSlotInput.max_wall_ms`; the
 /// per-agent UI surface is a follow-on QA30 item).
 const DEFAULT_MAX_INPUT_TOKENS: u32 = 200_000;
+/// Cumulative sidecar-run output allowance. Scales with the slot's
+/// per-provider-call limit (8x) so an agentic cycle has room for several
+/// tool rounds plus the final `submit_decision`, never below the default
+/// floor for slots that do not set a per-turn cap.
+fn cumulative_output_cap(max_tokens: Option<u32>) -> u32 {
+    match max_tokens {
+        Some(turn) => turn.saturating_mul(8).max(DEFAULT_MAX_OUTPUT_TOKENS),
+        None => DEFAULT_MAX_OUTPUT_TOKENS,
+    }
+}
+
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8_192;
 const DEFAULT_MAX_WALL_MS: u32 = u32::MAX;
 
@@ -364,10 +375,12 @@ impl ClineSlotInput<'_> {
     fn budget_limits(&self) -> BudgetLimits {
         BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            // This is a cumulative run cap. Do not reuse the per-provider-call
-            // max_tokens here: an agent turn may contain multiple model/tool
-            // iterations and must have room to reach submit_decision.
-            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            // Cumulative run cap. Never reuse the per-provider-call
+            // `max_tokens` as-is — an agent turn may contain multiple
+            // model/tool iterations and needs room to reach
+            // `submit_decision` — but a fixed floor starves agentic slots:
+            // scale the allowance with the per-turn limit instead.
+            max_output_tokens: cumulative_output_cap(self.max_tokens),
             max_wall_ms: self.max_wall_ms.unwrap_or(DEFAULT_MAX_WALL_MS),
         }
     }
@@ -1274,6 +1287,16 @@ mod tests {
     }
 
     #[test]
+    fn cumulative_output_cap_scales_with_turn_limit() {
+        // No per-turn limit: the default floor applies unchanged.
+        assert_eq!(cumulative_output_cap(None), DEFAULT_MAX_OUTPUT_TOKENS);
+        // Small per-turn limit: 8x, at least the floor — an agentic cycle
+        // makes several tool rounds before reaching submit_decision.
+        assert_eq!(cumulative_output_cap(Some(4096)), 32_768);
+        assert_eq!(cumulative_output_cap(Some(128)), DEFAULT_MAX_OUTPUT_TOKENS);
+    }
+
+    #[test]
     fn retry_gate_admits_failed_status_and_rejects_budget_aborts() {
         // Transient sidecar failure (the 2026-08-23 campaign `User not
         // found.` shape): retried exactly once.
@@ -1308,6 +1331,6 @@ mod tests {
             max_wall_ms: DEFAULT_MAX_WALL_MS,
         };
         assert_eq!(cumulative.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
-        assert!(cumulative.max_wall_ms > 0)
+        assert!(cumulative.max_wall_ms > 0);
     }
 }

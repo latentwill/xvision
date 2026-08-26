@@ -28,7 +28,7 @@ use xvision_engine::autooptimizer::{
     gate::GateVerdict,
     judge::Judge,
     lineage::{LineageNode, LineageStatus, LineageStore},
-    metering_dispatch::{CostMeteringDispatch, CycleMeter},
+    metering_dispatch::{load_metering_catalogs_for_provider, CostMeteringDispatch, CycleMeter},
     mutator::Mutator,
     parent_policy::ParentPolicy,
     preflight::infer_trader_provider,
@@ -1082,10 +1082,15 @@ pub(super) async fn load_metering_catalogs(
     xvn_home: &std::path::Path,
     provider: &str,
 ) -> Vec<Arc<xvision_core::providers::Catalog>> {
-    match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
-        Ok(Some(cat)) => vec![Arc::new(cat)],
-        _ => Vec::new(),
-    }
+    let kind = match load_autooptimizer_provider(provider, xvn_home).await {
+        Ok(entry) => entry.kind,
+        Err(err) => {
+            tracing::warn!(provider, error = %err, "load metering provider config failed");
+            return Vec::new();
+        }
+    };
+
+    load_metering_catalogs_for_provider(xvn_home, provider, kind).await
 }
 
 #[cfg(test)]
