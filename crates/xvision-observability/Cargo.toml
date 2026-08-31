@@ -59,7 +59,7 @@ version  = "0.21"
 optional = true
 
 [dependencies.opentelemetry_sdk]
-version  = "0.21"
+version  = "0.32"
 # `testing` is needed by `tests/otel_tee_smoke.rs` for the in-memory span
 # exporter. It only gets pulled in when `--features otel` is active.
 features = ["rt-tokio", "testing"]
