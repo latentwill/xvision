@@ -32,7 +32,7 @@ getrandom = "0.2"
 
 # rmcp 1.6: official Rust MCP SDK. Default features = base64 + macros + server.
 # transport-io enables `rmcp::transport::stdio()` for MCP-over-stdin/stdout.
-rmcp = { version = "1.6", features = ["transport-io"] }
+rmcp = { version = "2.1", features = ["transport-io"] }
 schemars = "1"
 ulid     = "1"
 
