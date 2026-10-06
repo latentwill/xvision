@@ -1,17 +1,9 @@
 name: rustfmt
 
-# Blocks unformatted Rust from merging — the backstop for PRs that bypass the
-# local guard (.githooks/pre-commit runs `cargo fmt` on staged .rs). Fast:
+# Manual formatting check; local pre-commit formatting remains the default.
 # rustfmt only parses, so no build/cache is needed.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - main
-    paths:
-      - "**/*.rs"
-      - "rust-toolchain.toml"
-      - ".github/workflows/rustfmt.yml"
+  workflow_dispatch:
 
 concurrency:
   group: rustfmt-${{ github.ref }}
@@ -22,7 +14,6 @@ permissions:
 
 jobs:
   rustfmt:
-    if: false  # disabled 2026-06-18 — local pre-commit hook suffices
     name: cargo fmt --check
     runs-on: ubuntu-latest
     timeout-minutes: 10

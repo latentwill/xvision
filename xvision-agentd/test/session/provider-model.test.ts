@@ -18,6 +18,19 @@ const KNOWN_PROVIDERS = [
 ]
 
 describe("buildProviderModel — Cline gateway provider registration", () => {
+  it("refuses Groq by provider ID and by custom endpoint before model construction", () => {
+    for (const [providerId, baseUrl] of [
+      ["groq", undefined],
+      ["groq", "https://proxy.example/v1"],
+      ["openai-compat", "https://api.groq.com/openai/v1"],
+      ["litellm", "https://API.GROQ.COM.:443/openai/v1/"],
+      ["custom", "https://user@api.groq.com/openai/v1"],
+    ]) {
+      expect(() => buildProviderModel({ providerId: providerId!, ...(baseUrl ? { baseUrl } : {}), modelId: "qwen/qwen3.8-27b" }))
+        .toThrow(/Groq is disabled/)
+    }
+  })
+
   it("routes the legacy 'openai-compatible' family id to a registered OpenRouter provider", () => {
     expect(
       resolveGatewayProviderId(

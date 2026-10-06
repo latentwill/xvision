@@ -19,7 +19,7 @@
  *   "openai-compatible" / "openai-compat" alias BEFORE the knownProviders
  *   shortcut, enforcing base_url presence and routing to a concrete registered
  *   id (openrouter, deepseek, litellm, …) based on the base_url. Concrete
- *   registered ids include "openrouter", "deepseek", "groq", "litellm", etc.
+ *   registered ids include "openrouter", "deepseek", "litellm", etc.
  *
  * A fresh gateway is created per Agent construction — there is no shared state.
  * Each run has its own credentials/baseUrl and must not share gateway config
@@ -128,6 +128,18 @@ export function resolveGatewayProviderId(
   knownProviders: readonly string[],
 ): string {
   const normalizedProviderId = Llms.normalizeProviderId(providerId)
+
+  let hostname = ""
+  if (baseUrl) {
+    try {
+      hostname = new URL(baseUrl.trim()).hostname.toLowerCase().replace(/\.$/, "")
+    } catch {
+      // Existing URL validation below handles malformed custom endpoints.
+    }
+  }
+  if (normalizedProviderId.toLowerCase() === "groq" || hostname === "groq.com" || hostname.endsWith(".groq.com")) {
+    throw new Error("Groq is disabled in xvision; remove the saved provider and revoke its API key")
+  }
 
   // IMPORTANT: check OPENAI_COMPAT_ALIASES BEFORE the knownProviders shortcut.
   //

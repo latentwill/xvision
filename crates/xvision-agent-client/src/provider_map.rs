@@ -13,7 +13,7 @@
 //! - [`ProviderKind::Anthropic`] → `"anthropic"` (also a Cline built-in id, so it
 //!   works through Cline's internal construction even before the gateway lands).
 //! - [`ProviderKind::OpenaiCompat`] → a concrete Cline OpenAI-compatible
-//!   provider id inferred from `base_url` (`openrouter`, `deepseek`, `groq`,
+//!   provider id inferred from `base_url` (`openrouter`, `deepseek`,
 //!   etc.), falling back to Cline's generic `litellm` carrier for arbitrary
 //!   OpenAI-compatible endpoints. `@cline/llms@0.0.41` does not register
 //!   `"openai-compatible"` as a gateway provider id; it is an internal provider
@@ -42,6 +42,8 @@ pub struct ClineProvider {
 /// Why a provider could not be mapped onto the Cline runtime.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderMapError {
+    #[error("{0}")]
+    Disabled(&'static str),
     #[error(
         "provider kind {kind:?} has no Cline mapping (provider '{name}'); \
              it stays on the LlmDispatch fallback"
@@ -57,8 +59,6 @@ fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
         "openai-native"
     } else if lower.contains("api.deepseek.com") {
         "deepseek"
-    } else if lower.contains("api.groq.com") {
-        "groq"
     } else if lower.contains("api.x.ai") {
         "xai"
     } else if lower.contains("api.together.xyz") {
@@ -99,6 +99,11 @@ fn local_openai_base_url(base_url: &str) -> Option<String> {
 /// contract, an unmapped provider aborts unless the runtime flag explicitly
 /// selects `LlmDispatch`.
 pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvider, ProviderMapError> {
+    if xvision_core::providers::policy::is_groq_provider(&entry.name, &entry.base_url, &entry.api_key_env) {
+        return Err(ProviderMapError::Disabled(
+            xvision_core::providers::policy::GROQ_DISABLED_MESSAGE,
+        ));
+    }
     let (provider_id, base_url) = match entry.kind {
         ProviderKind::Anthropic => (CLINE_PROVIDER_ANTHROPIC.to_string(), None),
         ProviderKind::OpenaiCompat => {
@@ -137,6 +142,15 @@ pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvid
 mod tests {
     use super::*;
     use xvision_core::config::{ProviderEntry, ProviderKind};
+
+    #[test]
+    fn saved_groq_provider_cannot_launch_sidecar() {
+        let result = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "https://api.groq.com/openai/v1"),
+            "qwen/qwen3.8-27b",
+        );
+        assert!(matches!(result, Err(ProviderMapError::Disabled(_))));
+    }
 
     fn entry(kind: ProviderKind, base_url: &str) -> ProviderEntry {
         ProviderEntry {

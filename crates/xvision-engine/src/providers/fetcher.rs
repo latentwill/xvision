@@ -68,6 +68,13 @@ pub trait CatalogFetcher: Send + Sync {
 /// no-auth endpoints (Ollama, vLLM with --no-auth) — those will still
 /// be tried; the fetcher just won't send an Authorization header.
 pub fn fetcher_for(provider: &ProviderEntry, api_key: String) -> Result<Box<dyn CatalogFetcher>> {
+    if xvision_core::providers::policy::is_groq_provider(
+        &provider.name,
+        &provider.base_url,
+        &provider.api_key_env,
+    ) {
+        bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+    }
     match provider.kind {
         ProviderKind::Anthropic => Ok(Box::new(AnthropicFetcher::new(
             provider.name.clone(),
@@ -166,6 +173,9 @@ impl CatalogFetcher for AnthropicFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        if xvision_core::providers::policy::is_groq_endpoint(&self.url) {
+            bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let mut req = http.get(&self.url).header("anthropic-version", "2023-06-01");
         if !self.api_key.is_empty() {
             req = req.header("x-api-key", &self.api_key);
@@ -278,6 +288,9 @@ impl CatalogFetcher for OpenRouterFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        if xvision_core::providers::policy::is_groq_endpoint(&self.url) {
+            bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let mut req = http.get(&self.url);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -424,6 +437,9 @@ impl CatalogFetcher for OpenAiCompatFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        if xvision_core::providers::policy::is_groq_endpoint(&self.url) {
+            bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let mut req = http.get(&self.url);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -536,6 +552,9 @@ impl CatalogFetcher for OllamaFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        if xvision_core::providers::policy::is_groq_endpoint(&self.url) {
+            bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let mut req = http.get(&self.url);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -633,6 +652,9 @@ impl CatalogFetcher for LlamaCppFetcher {
     }
 
     async fn fetch(&self, http: &reqwest::Client) -> Result<Catalog> {
+        if xvision_core::providers::policy::is_groq_endpoint(&self.url) {
+            bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let mut req = http.get(&self.url);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);

@@ -164,9 +164,11 @@ export ANTHROPIC_API_KEY=$(op read 'op://Personal/xvision-anthropic/api_key')
 Cost reference: a Phase 9 backtest (100–300 setups × 1 briefing) is roughly
 $1–5 with Haiku and $20–60 with Opus-class reasoning. Prefer Haiku in CI.
 
-### OpenAI-compatible (OpenRouter / Together / Groq)
+### OpenAI-compatible (OpenRouter / Together)
 
-Any OpenAI-compatible endpoint works. OpenRouter is recommended for multi-model
+Groq is disabled in xvision, including saved configurations and custom Groq URLs.
+Revoke previously deployed Groq keys to stop usage from older builds. Other
+OpenAI-compatible endpoints work. OpenRouter is recommended for multi-model
 evaluation.
 
 ```bash

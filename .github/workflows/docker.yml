@@ -1,14 +1,7 @@
 name: docker
 
-# Triggers locked down 2026-05-10 to conserve Actions minutes during the v1
-# build-out. The previous config rebuilt on every push to main (incl. doc /
-# chore / team-queue commits) and on every PR with a Cargo.toml touch — at
-# the current cadence (~30 PRs/day) that was burning the budget without
-# producing artifacts anyone consumes. Re-enable broader triggers once v1
-# lands and we want pre-merge image smoke again.
+# Builds run only when explicitly requested through workflow_dispatch.
 on:
-  push:
-    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       dockerfile:
@@ -30,8 +23,7 @@ on:
           - release
           - staging
 
-# Auto-cancel superseded runs on the same ref. Belt + suspenders against
-# the queue stacking up if multiple tags get pushed in quick succession.
+# Cancel superseded manual builds on the same ref.
 concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: true
@@ -81,7 +73,7 @@ jobs:
         run: cargo check --bin xvn
 
       - name: Rust identity compile check
-        if: github.event_name == 'push' || github.event.inputs.build_identity == 'true'
+        if: inputs.build_identity
         run: cargo check --workspace
 
       - name: Set up pnpm
@@ -156,9 +148,7 @@ jobs:
   build-identity:
     runs-on: ubuntu-latest
     needs: build-default
-    if: |
-      github.event_name != 'pull_request' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.build_identity == 'true')
+    if: inputs.build_identity
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 

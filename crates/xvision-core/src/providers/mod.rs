@@ -15,6 +15,7 @@
 
 pub mod catalog;
 pub mod model_metadata;
+pub mod policy;
 
 pub use catalog::{Catalog, ModelEntry};
 pub use model_metadata::{lookup_model, ModelClass, ModelMetadata};

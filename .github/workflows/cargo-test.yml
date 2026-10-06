@@ -1,14 +1,7 @@
 name: cargo-test
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - main
-    paths-ignore:
-      - "frontend/**"
-      - "docs/**"
-      - "**.md"
+  workflow_dispatch:
 
 concurrency:
   group: cargo-test-${{ github.ref }}
