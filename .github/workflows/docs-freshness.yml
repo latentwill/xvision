@@ -6,18 +6,12 @@ name: docs freshness
 #     `crates/xvision-cli/src/commands/` also modifies the wiki's
 #     `cli-reference.md` (and bumps its `last_reviewed`).
 #
-# Path-scoped to keep Actions minutes low: only runs on PRs that touch
-# the wiki, the manifest, the CLI commands tree, or this workflow.
+# Runs only when manually requested; no PR or schedule trigger.
 #
 # Source: team/contracts/docs-freshness-staleness-guard.md.
 
 on:
-  pull_request:
-    paths:
-      - "crates/xvision-dashboard/wiki/**"
-      - "crates/xvision-cli/src/commands/**"
-      - "scripts/docs-freshness-lint.sh"
-      - ".github/workflows/docs-freshness.yml"
+  workflow_dispatch:
 
 concurrency:
   group: docs-freshness-${{ github.ref }}

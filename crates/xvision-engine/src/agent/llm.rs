@@ -885,6 +885,9 @@ impl AnthropicDispatch {
     /// Used in tests to point the real dispatcher at a stub server.
     #[doc(hidden)]
     pub async fn complete_with_url(&self, req: LlmRequest, url: &str) -> anyhow::Result<LlmResponse> {
+        if xvision_core::providers::policy::is_groq_endpoint(url) {
+            anyhow::bail!(xvision_core::providers::policy::GROQ_DISABLED_MESSAGE);
+        }
         let body = anthropic_request_body(&req);
         let http_resp = self
             .client
@@ -1598,6 +1601,11 @@ impl OpenaiCompatDispatch {
     /// fresh-request retry for transient invalid JSON bodies. Returns a typed
     /// outcome so `complete` can apply its retry policy.
     async fn complete_once(&self, body: &serde_json::Value, url: &str) -> OpenAiAttempt {
+        if xvision_core::providers::policy::is_groq_endpoint(url) {
+            return OpenAiAttempt::Fatal(anyhow::anyhow!(
+                xvision_core::providers::policy::GROQ_DISABLED_MESSAGE
+            ));
+        }
         for decode_attempt in 0..=RESPONSE_DECODE_RETRIES {
             let mut request = self.client.post(url).header("content-type", "application/json");
             if !self.api_key.is_empty() {
@@ -1894,6 +1902,20 @@ mod max_tokens_body_tests {
             cache_control: None,
             force_json: false,
         }
+    }
+
+    #[tokio::test]
+    async fn saved_groq_endpoint_is_rejected_before_http() {
+        let dispatch =
+            OpenaiCompatDispatch::new("https://api.groq.com/openai/v1".into(), "not-a-real-key".into());
+        let err = dispatch
+            .complete(req_with("qwen/qwen3.8-27b", None))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            xvision_core::providers::policy::GROQ_DISABLED_MESSAGE
+        );
     }
 
     #[test]

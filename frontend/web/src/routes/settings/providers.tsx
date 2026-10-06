@@ -34,7 +34,7 @@ import { logInfo, safeUrlHost } from "@/lib/logger";
 
 // Provider presets the form recognises. Each preset fills in a sensible
 // (wire kind, name, base URL) tuple; the user only has to paste an API key.
-// Pick "Custom" for anything else — DeepSeek/Groq/Together-style endpoints
+// Pick "Custom" for anything else — DeepSeek/Together-style endpoints
 // that don't have a preset, or self-hosted Ollama / vLLM / llama.cpp.
 type KindOption = {
   value: string;
@@ -75,15 +75,6 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     defaultBaseUrl: "https://api.deepseek.com",
     isCustom: false,
     keyHelp: "Starts with sk-…",
-  },
-  {
-    value: "groq",
-    label: "Groq",
-    wireKind: "openai-compat",
-    defaultName: "groq",
-    defaultBaseUrl: "https://api.groq.com/openai/v1",
-    isCustom: false,
-    keyHelp: "Starts with gsk_…",
   },
   {
     value: "openrouter",

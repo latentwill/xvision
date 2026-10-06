@@ -423,6 +423,14 @@ pub async fn resolve_provider(
             });
         }
     };
+    if xvision_core::providers::policy::is_groq_provider(&entry.name, &entry.base_url, &entry.api_key_env) {
+        return Err(ProviderUnavailable {
+            provider: name.to_string(),
+            reason: ProviderUnavailableReason::ProviderDisabled,
+            model: model.map(str::to_string),
+            hint: xvision_core::providers::policy::GROQ_DISABLED_MESSAGE.to_string(),
+        });
+    }
     // Reserved/synthetic rows are not launchable from any surface.
     if entry.name.starts_with('_') {
         return Err(ProviderUnavailable {
@@ -666,6 +674,11 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
+    if xvision_core::providers::policy::is_groq_provider(&entry.name, &entry.base_url, &entry.api_key_env) {
+        return Err(ApiError::Validation(
+            xvision_core::providers::policy::GROQ_DISABLED_MESSAGE.into(),
+        ));
+    }
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
     } else {
@@ -990,6 +1003,11 @@ async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest)
         api_key,
     } = req;
 
+    if xvision_core::providers::policy::is_groq_provider(&name, &base_url, &api_key_env) {
+        return Err(ApiError::Validation(
+            xvision_core::providers::policy::GROQ_DISABLED_MESSAGE.into(),
+        ));
+    }
     let parsed_kind = parse_kind(&kind)?;
     // Normalize before any further checks or the disk write — a name with
     // surrounding whitespace should be stored trimmed, and validated trimmed.
@@ -1128,6 +1146,11 @@ async fn update_inner(
     name: &str,
     req: UpdateProviderRequest,
 ) -> ApiResult<ProviderRow> {
+    if xvision_core::providers::policy::is_groq_provider(name, &req.base_url, &req.api_key_env) {
+        return Err(ApiError::Validation(
+            xvision_core::providers::policy::GROQ_DISABLED_MESSAGE.into(),
+        ));
+    }
     let cfg = load_cfg(config_path).await?;
     let entry = cfg
         .providers
@@ -1471,7 +1494,12 @@ fn effective_from_entry(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -
     // For now `enabled` mirrors "row exists and is non-synthetic". Filtered
     // upstream in `effective_providers`; setting `true` here keeps the
     // field meaningful if a caller hands a synthetic row directly.
-    let enabled = !entry.name.starts_with('_');
+    let enabled = !entry.name.starts_with('_')
+        && !xvision_core::providers::policy::is_groq_provider(
+            &entry.name,
+            &entry.base_url,
+            &entry.api_key_env,
+        );
     let has_enabled_model = !models.is_empty();
     // Local-candle has no remote catalog — launchability for it skips
     // the per-model gate. For network kinds we require at least one model.
@@ -1672,7 +1700,6 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
             // Prefer the newer DeepSeek id when an operator explicitly sets
             // this provider as the workspace default.
             "deepseek" => Some("deepseek-v4-flash"),
-            "groq" => Some("llama-3.3-70b-versatile"),
             "openrouter" => Some("anthropic/claude-3.5-sonnet"),
             "openai" => Some("gpt-4o-mini"),
             // Named presets — pick a current default so "Set as default"

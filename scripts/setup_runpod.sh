@@ -19,7 +19,7 @@
 #   MODEL=gguf|q4|q5|q6|q8                Skip the model menu.
 #                                         gguf  = best quant (Q8_0); inference path
 #                                         qN    = pick a specific GGUF quant
-#   INTERN=anthropic|openai|openrouter|together|groq|deepseek|local|custom|skip
+#   INTERN=anthropic|openai|openrouter|together|deepseek|local|custom|skip
 #                                         Skip the intern backend menu.
 #   ALPACA=skip                           Skip Alpaca paper credential prompt.
 #   ASSUME_YES=1                          Take all defaults; never prompt.
@@ -388,7 +388,7 @@ download_model() {
 # ---------------------------------------------------------------------------
 choose_intern() {
   if [[ -n "${INTERN:-}" ]]; then echo "$INTERN"; return; fi
-  if [[ "$ASSUME_YES" == "1" || ! -t 0 ]]; then echo "anthropic"; return; fi
+  if [[ "$ASSUME_YES" == "1" || ! -t 0 ]]; then echo "skip"; return; fi
   cat >&2 <<EOF
 
 Pick the Stage 1 Intern backend:
@@ -396,24 +396,22 @@ Pick the Stage 1 Intern backend:
   2) openai      — OpenAI (gpt-style)                               [OPENAI_API_KEY]
   3) openrouter  — multi-model gateway (recommended for evaluation) [OPENROUTER_API_KEY]
   4) together    — Together AI                                      [TOGETHER_API_KEY]
-  5) groq        — Groq fast-inference                              [GROQ_API_KEY]
-  6) deepseek    — DeepSeek API                                     [DEEPSEEK_API_KEY]
-  7) local       — local OpenAI-compat server (vLLM / Ollama / llama.cpp)
-  8) custom      — user-supplied base URL + key env var
-  9) skip        — configure later
+  5) deepseek    — DeepSeek API                                     [DEEPSEEK_API_KEY]
+  6) local       — local OpenAI-compat server (vLLM / Ollama / llama.cpp)
+  7) custom      — user-supplied base URL + key env var
+  8) skip        — configure later
 
 EOF
-  local sel; sel=$(prompt "Selection [1-9, default 1]:" "1")
+  local sel; sel=$(prompt "Selection [1-8, default 8]:" "8")
   case "$sel" in
-    1|"") echo anthropic ;;
+    1) echo anthropic ;;
     2) echo openai ;;
     3) echo openrouter ;;
     4) echo together ;;
-    5) echo groq ;;
-    6) echo deepseek ;;
-    7) echo local ;;
-    8) echo custom ;;
-    9) echo skip ;;
+    5) echo deepseek ;;
+    6) echo local ;;
+    7) echo custom ;;
+    8|"") echo skip ;;
     *) fail "unknown intern selection: $sel" ;;
   esac
 }
@@ -458,12 +456,7 @@ setup_intern() {
       [[ -n "$key" ]] && env_set TOGETHER_API_KEY "$key"
       ;;
     groq)
-      env_set XVN_INTERN_PROVIDER  "openai-compat"
-      env_set XVN_INTERN_BASE_URL  "https://api.groq.com/openai/v1"
-      env_set XVN_INTERN_MODEL     "$(prompt 'Groq model [qwen/qwen3.6-27b]:' 'qwen/qwen3.6-27b')"
-      env_set XVN_INTERN_KEY_ENV   "GROQ_API_KEY"
-      key=$(prompt "GROQ_API_KEY (paste, blank to skip):" "")
-      [[ -n "$key" ]] && env_set GROQ_API_KEY "$key"
+      fail "Groq is disabled in xvision; remove the saved provider and revoke its API key."
       ;;
     deepseek)
       env_set XVN_INTERN_PROVIDER  "openai-compat"
