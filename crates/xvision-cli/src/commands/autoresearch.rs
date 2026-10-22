@@ -7,6 +7,7 @@
 //! command; this file intentionally keeps the first slice offline and
 //! memory-bound.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,12 +22,20 @@ use xvision_engine::api::memory;
 use xvision_engine::autoresearch::blob_store::BlobStore;
 use xvision_engine::autoresearch::config::AutoresearchConfig;
 use xvision_engine::autoresearch::content_hash::ContentHash;
+use xvision_engine::autoresearch::eval_adapter::{BacktestPaperTester, PaperTestRunner, StubPaperTester};
 use xvision_engine::autoresearch::gate::GateVerdict;
+use xvision_engine::autoresearch::judge::Judge;
 use xvision_engine::autoresearch::lineage::{LineageNode, LineageStatus, LineageStore};
 use xvision_engine::autoresearch::mutator::{MutationDiff, Mutator};
+use xvision_engine::autoresearch::parent_policy::ParentPolicy;
+use xvision_engine::autoresearch::progress::CycleProgressEvent;
 use xvision_engine::autoresearch::seal::build_and_sign;
 use xvision_engine::autoresearch::session::{default_key_path, load_or_generate_key, SessionCommitment};
+use xvision_engine::autoresearch::{canonical_scenarios, run_evening_cycle, run_evening_cycle_with_cycle_id, CycleConfig};
+use xvision_engine::eval::run::MetricsSummary;
+use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::Strategy;
+use xvision_engine::tools::ToolRegistry;
 use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, XvnExit};
@@ -59,6 +68,8 @@ pub enum Op {
     SessionInit(SessionInitArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
+    /// Run one full evening cycle (orchestrator).
+    EveningCycle(EveningCycleArgs),
 }
 
 #[derive(Args, Debug)]
@@ -107,6 +118,22 @@ pub struct MutateOnceArgs {
     pub key_path: Option<PathBuf>,
     /// Use mock LLM dispatch (for tests and offline use).
     #[arg(long)]
+    pub mock: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct EveningCycleArgs {
+    /// Session ID to load from ~/.xvn/lineage/sessions.
+    #[arg(long)]
+    pub session_id: String,
+    /// Path to autoresearch.toml.
+    #[arg(long, default_value = "config/autoresearch.toml")]
+    pub config: PathBuf,
+    /// SQLite lineage database path.
+    #[arg(long)]
+    pub db: PathBuf,
+    /// Use deterministic mock dispatch/test doubles.
+    #[arg(long, default_value_t = false)]
     pub mock: bool,
 }
 
@@ -303,6 +330,7 @@ pub async fn run(cmd: AutoresearchCmd) -> CliResult<()> {
         },
         Op::SessionInit(args) => run_session_init(args).await,
         Op::MutateOnce(args) => run_mutate_once(args).await,
+        Op::EveningCycle(args) => run_evening_cycle_cmd(args).await,
     }
 }
 
@@ -750,6 +778,174 @@ async fn run_session_init(args: SessionInitArgs) -> CliResult<()> {
     Ok(())
 }
 
+struct EveningCycleMockPaperTester;
+
+#[async_trait::async_trait]
+impl PaperTestRunner for EveningCycleMockPaperTester {
+    async fn run(&self, strategy: &Strategy, _scenario: &xvision_engine::eval::scenario::Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(mock_evening_cycle_metrics(strategy))
+    }
+}
+
+fn mock_evening_cycle_metrics(strategy: &Strategy) -> MetricsSummary {
+    let cadence_minutes = strategy.manifest.decision_cadence_minutes.max(1) as f64;
+    let risk = strategy.risk.risk_pct_per_trade;
+    let loss_kill = strategy.risk.daily_loss_kill_pct;
+    let cadence_penalty = if cadence_minutes > 10_000.0 { 0.9 } else { 0.0 };
+    let sabotage_penalty = if risk <= 0.0 || loss_kill >= 1.0 || cadence_penalty > 0.0 { 0.9 } else { 0.0 };
+    let rsi = strategy
+        .mechanical_params
+        .get("rsi_period")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(14.0);
+    let param_bonus = ((rsi - 14.0) / 35.0).clamp(0.0, 0.6);
+    let cadence_bonus = (60.0 / cadence_minutes).clamp(0.0, 0.2) * 0.25;
+    let sharpe = (1.0 + param_bonus + cadence_bonus - sabotage_penalty).max(0.0);
+    MetricsSummary {
+        total_return_pct: sharpe * 10.0,
+        sharpe,
+        max_drawdown_pct: (0.25 - param_bonus * 0.1 + sabotage_penalty * 0.2).max(0.0),
+        win_rate: (0.55 + param_bonus * 0.1 - sabotage_penalty * 0.35).clamp(0.0, 1.0),
+        n_trades: if sabotage_penalty > 0.0 { 0 } else { 4 },
+        n_decisions: if sabotage_penalty > 0.0 { 0 } else { 8 },
+        inference_cost_quote_total: None,
+        net_return_pct: None,
+        baselines: None,
+    }
+}
+
+async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
+    let cfg = AutoresearchConfig::load(&args.config)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{}: {}", args.config.display(), e)))?;
+    cfg.validate().map_err(CliError::usage)?;
+    let pool = open_and_migrate_db(&args.db).await?;
+    let session = load_evening_cycle_session(&args.session_id).await?;
+    let key_path = default_key_path().map_err(CliError::upstream)?;
+    let operator_key = load_or_generate_key(&key_path)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("{}: {}", key_path.display(), e)))?;
+
+    let blob_store = BlobStore::new(default_blob_dir());
+    let mut parent_strategies = HashMap::new();
+    for hash in &session.parent_strategy_hashes {
+        let strategy = load_strategy_blob(&blob_store, hash).await?;
+        parent_strategies.insert(hash.to_hex(), strategy);
+    }
+    if parent_strategies.is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "evening-cycle requires at least one parent strategy in the session"
+        )));
+    }
+
+    let canonical = canonical_scenarios();
+    let day_scenario = canonical
+        .first()
+        .cloned()
+        .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no canonical day scenario available")))?;
+    let baseline_scenario = canonical
+        .get(1)
+        .cloned()
+        .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no canonical baseline scenario available")))?;
+
+    let mutator_dispatch = build_evening_cycle_dispatch(args.mock, "mutator").await?;
+    let judge_dispatch = build_evening_cycle_dispatch(args.mock, "judge").await?;
+    let mutator = Mutator {
+        provider: cfg.mutator.provider.clone(),
+        model: cfg.mutator.model.clone(),
+        dispatch: Arc::clone(&mutator_dispatch),
+        max_retries: cfg.mutator.max_retries,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&judge_dispatch),
+        provider: cfg.mutator.provider.clone(),
+        model: cfg.mutator.model.clone(),
+    };
+    let cycle_config = CycleConfig {
+        num_parents: session.parent_strategy_hashes.len(),
+        mutations_per_parent: 1,
+        sabotage_seed: 0,
+        judge_provider: cfg.mutator.provider.clone(),
+        judge_model: cfg.mutator.model.clone(),
+        prompt_version: "cli-evening-cycle".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+    };
+    let parent_policy = ParentPolicy::RoundRobin;
+    let paper_tester: Box<dyn PaperTestRunner> = if args.mock {
+        Box::new(EveningCycleMockPaperTester)
+    } else {
+        Box::new(BacktestPaperTester::new(
+            RunStore::new(pool.clone()),
+            Arc::clone(&mutator_dispatch),
+            Arc::new(ToolRegistry::default_with_builtins()),
+        ))
+    };
+
+    let result = run_evening_cycle(
+        &pool,
+        &blob_store,
+        &cfg,
+        &cycle_config,
+        &parent_policy,
+        &mutator,
+        &judge,
+        paper_tester.as_ref(),
+        &operator_key,
+        &session.session_id.to_string(),
+        |event| {
+            println!("[event] {}", serde_json::to_string(&event).expect("serialize cycle progress event"));
+        },
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("autoresearch evening-cycle: {e}")))?;
+
+    println!(
+        "cycle complete: cycle_id={} active_nodes={} rejected_nodes={} seal={}",
+        result.cycle_id,
+        result.active_nodes.len(),
+        result.rejected_nodes.len(),
+        result.seal.seal_id
+    );
+    Ok(())
+}
+
+async fn build_evening_cycle_dispatch(
+    mock: bool,
+    role: &str,
+) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
+    if mock {
+        let response = if role == "mutator" {
+            r#"{"kind":"param","prose":[],"params":[{"key":"rsi_period","before":14,"after":21}],"tools":{"added":[],"removed":[]},"rationale":"increase rsi period"}"#
+        } else {
+            "[]"
+        };
+        return Ok(Arc::new(MockDispatch::echo(response)));
+    }
+    let key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| CliError::auth(anyhow::anyhow!("ANTHROPIC_API_KEY not set")))?;
+    Ok(Arc::new(AnthropicDispatch::new(key)))
+}
+
+async fn load_evening_cycle_session(session_id: &str) -> CliResult<SessionCommitment> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| CliError::upstream(anyhow::anyhow!("no home directory found")))?;
+    let path = home
+        .join(".xvn")
+        .join("lineage")
+        .join("sessions")
+        .join(format!("session-{session_id}.json"));
+    let session = SessionCommitment::load_from(&path)
+        .map_err(|e| CliError::not_found(anyhow::anyhow!("{}: {e}", path.display())))?;
+    if session.session_id.to_string() != session_id {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "session file {} does not match requested session_id {session_id}",
+            path.display()
+        )));
+    }
+    Ok(session)
+}
+
 // ── mutate-once ───────────────────────────────────────────────────────────────
 
 async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
@@ -949,6 +1145,10 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     let pool = SqlitePool::connect(&url)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open lineage db: {e}")))?;
+    sqlx::migrate!("../xvision-engine/migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("run migrations: {e}")))?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS lineage_nodes (
             bundle_hash TEXT PRIMARY KEY,

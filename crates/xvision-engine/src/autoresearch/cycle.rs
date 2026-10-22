@@ -168,6 +168,108 @@ pub async fn run_evening_cycle(
     })
 }
 
+/// Deterministic test seam for the evening-cycle orchestrator.
+///
+/// The production entry point (`run_evening_cycle`) generates a fresh ULID.
+/// Integration tests that need stable Merkle roots across runs can supply a
+/// fixed `cycle_id` here so the underlying lineage leaf hashes stay identical.
+#[doc(hidden)]
+pub async fn run_evening_cycle_with_cycle_id(
+    pool: &SqlitePool,
+    _blob_store: &BlobStore,
+    config: &AutoresearchConfig,
+    cycle_config: &CycleConfig,
+    parent_policy: &ParentPolicy,
+    mutator: &Mutator,
+    judge: &Judge,
+    paper_tester: &dyn PaperTestRunner,
+    operator_key: &SigningKey,
+    session_id: &str,
+    cycle_id: &str,
+    progress: impl Fn(CycleProgressEvent) + Send + Sync,
+) -> Result<CycleResult> {
+    let cycle_id = cycle_id.to_string();
+    let min_improvement =
+        effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
+            .await?
+            .effective_min_improvement;
+
+    let lineage_store = LineageStore::new(pool.clone());
+    let parents = select_parents(
+        parent_policy,
+        &lineage_store,
+        cycle_config.num_parents,
+        cycle_config.sabotage_seed,
+    )
+    .await?;
+    progress(CycleProgressEvent::CycleStarted {
+        cycle_id: cycle_id.clone(),
+        parent_count: parents.len(),
+    });
+
+    let mut active_nodes: Vec<LineageNode> = Vec::new();
+    let mut rejected_nodes: Vec<LineageNode> = Vec::new();
+    let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
+
+    for parent_node in &parents {
+        let ph = parent_node.bundle_hash.to_hex();
+        if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
+            progress(CycleProgressEvent::ParentSelected {
+                cycle_id: cycle_id.clone(),
+                parent_hash: ph,
+            });
+            let (active, rejected) = process_parent_mutations(
+                pool,
+                parent_node,
+                parent_strategy,
+                &cycle_id,
+                min_improvement,
+                cycle_config,
+                config,
+                mutator,
+                judge,
+                paper_tester,
+                &progress,
+                &mut findings_by_node,
+            )
+            .await?;
+            active_nodes.extend(active);
+            rejected_nodes.extend(rejected);
+        }
+    }
+
+    let honesty_check = run_cycle_canary(
+        &parents,
+        cycle_config,
+        config,
+        mutator,
+        paper_tester,
+        min_improvement,
+        &cycle_id,
+        &progress,
+    )
+    .await?;
+    let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
+    let merkle_root = lineage_store.merkle_root_for_cycle(&cycle_id).await?;
+    let node_count = active_nodes.len() + rejected_nodes.len();
+    let seal = build_and_sign(&cycle_id, session_id, merkle_root, node_count, operator_key)?;
+    seal.persist(pool).await?;
+    progress(CycleProgressEvent::CycleSealed {
+        cycle_id: cycle_id.clone(),
+        merkle_root: seal.merkle_root.to_hex(),
+        node_count,
+    });
+    Ok(CycleResult {
+        cycle_id,
+        active_nodes,
+        rejected_nodes,
+        honesty_check,
+        diversity_score,
+        seal,
+        findings_by_node,
+    })
+}
+
 async fn run_cycle_canary<F>(
     parents: &[LineageNode],
     cycle_config: &CycleConfig,

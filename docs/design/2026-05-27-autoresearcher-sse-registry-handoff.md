@@ -1,201 +1,82 @@
-# SSE display-label registry handoff — autoresearcher events
+# SSE registry handoff — AR-2 progress events
 
-> For: backend/frontend engineer working on the live cycle viewer
-> Date: 2026-05-27
-> Source of truth: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md` §11
+> For: backend engineer wiring the dashboard live cycle stream
+> Date: 2026-05-29
+> Source of truth: `crates/xvision-engine/src/autoresearch/progress.rs`
+> Related plan: `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md`
+>
+> **Status:** follow-up contract stub. The stream taxonomy is defined now; the dashboard-side SSE endpoint / subscriber wiring is the remaining integration step once PR #686 is merged.
 
-## TL;DR
+## What this registry covers
 
-Add a registry mapping SSE wire event names (`mutation_proposed`,
-`cycle_sealed`, etc.) to operator-readable display labels
-("Experiment proposed", "Evening summary signed"). The wire names
-stay — they're a protocol contract between the orchestrator and any
-subscriber. The dashboard renders the display label.
+This handoff covers the *AR-2 cycle progress stream*:
+`xvision_engine::autoresearch::progress::{CycleProgressEvent, ProgressChannel}`.
 
-Two implementations: a Rust-side helper in `xvision-dashboard` that
-attaches the display label to each SSE payload, and a JS-side fallback
-in `bus.js` so any client that hits the channel directly still gets
-readable labels.
+It does **not** change the wire schema. The registry only standardizes:
 
-## Files in scope
+- the SSE `event:` names used by the dashboard,
+- the operator-facing labels shown in the live cycle viewer,
+- and the subscription contract for a dashboard consumer.
 
-- `crates/xvision-dashboard/src/sse.rs` — add a `display_label(event:
-  &AutoresearchEvent) -> &'static str` helper, include the label in
-  the SSE event metadata (either as the `event:` field of the SSE
-  frame, as a `display_label` JSON field on the payload, or both)
-- `crates/xvision-dashboard/static/js/bus.js` — add a wire→display
-  map; render using `event.displayLabel` if present, else fall back
-  to the JS-side map
-- `crates/xvision-dashboard/tests/sse_smoke.rs` — extend to assert
-  display labels are emitted
+## Wire names and labels
 
-## Files NOT in scope
+The dashboard should treat the following `CycleProgressEvent` variants as the canonical SSE registry:
 
-- `crates/xvision-engine/src/autoresearch/progress.rs` — the
-  `AutoresearchEvent` enum definition stays (it's the wire schema)
-- Any code that emits events (orchestrator, mutator, judge, etc.) —
-  emitters keep emitting the same wire names
-- Frontend React SPA — already has its own
-  `formatEventName()` helper proposed in the frontend handoff; this
-  registry is for the vanilla-JS static SPA at
-  `crates/xvision-dashboard/static/`
+| Rust variant | SSE event name | Display label |
+|---|---|---|
+| `CycleStarted` | `cycle_started` | Evening run started |
+| `ParentSelected` | `parent_selected` | Parent selected |
+| `MutationProposed` | `mutation_proposed` | Experiment proposed |
+| `MutationGated` | `mutation_gated` | Experiment gated |
+| `HonestyCheckRun` | `honesty_check_run` | Honesty check run |
+| `JudgeFinding` | `judge_finding` | Judge finding |
+| `CycleSealed` | `cycle_sealed` | Evening summary signed |
 
-## The mapping (from terminology lock §11)
+Notes:
 
-| Wire name (stays) | Display label |
-|---|---|
-| `cycle_started` | Evening run started |
-| `mutation_proposed` | Experiment proposed |
-| `mutation_evaluating` | Testing experiment |
-| `mutation_committed` | Experiment kept |
-| `mutation_rejected` | Experiment dropped |
-| `mutation_quarantined` | Experiment flagged for review |
-| `lineage_forked` | New branch added |
-| `judge_wrote_finding` | Reviewer finished notes |
-| `canary_outcome` | Honesty check result |
-| `diversity_updated` | Variety score updated |
-| `ladder_snapshot` | Proposer scoreboard updated |
-| `cycle_sealed` | Evening summary signed |
-| `cycle_failed` | Evening run failed |
+- The SSE `event:` field must be the snake_case wire name.
+- The JSON payload should carry the same `kind` value for client-side routing.
+- If the payload includes a `display_label`, the dashboard should render that value and only fall back to the local registry when it is absent.
 
-## Rust-side implementation
+## Subscription contract
 
-Add to `crates/xvision-dashboard/src/sse.rs`:
+The dashboard-side contract is a plain `tokio::sync::broadcast` subscription:
 
-```rust
-use xvision_engine::autoresearch::progress::AutoresearchEvent;
+- `ProgressChannel::default()` creates the shared broadcaster.
+- The dashboard subscribes via `ProgressChannel::subscribe()`.
+- Each received `CycleProgressEvent` is serialized once and forwarded to SSE clients.
+- `RecvError::Lagged(n)` is a recoverable drop signal; the dashboard should emit a `lagged` frame and continue or reconnect.
+- `RecvError::Closed` is terminal for the stream.
 
-/// Maps an event's wire name to its operator-facing display label.
-/// The wire name (returned by `event_kind`) is the SSE `event:`
-/// frame identifier and the JSON `kind` field on the payload. The
-/// display label is what the dashboard renders to the operator.
-///
-/// See: docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md §11
-pub fn display_label(event: &AutoresearchEvent) -> &'static str {
-    use AutoresearchEvent::*;
-    match event {
-        CycleStarted { .. }        => "Evening run started",
-        MutationProposed { .. }    => "Experiment proposed",
-        MutationEvaluating { .. }  => "Testing experiment",
-        MutationCommitted { .. }   => "Experiment kept",
-        MutationRejected { .. }    => "Experiment dropped",
-        MutationQuarantined { .. } => "Experiment flagged for review",
-        LineageForked { .. }       => "New branch added",
-        JudgeWroteFinding { .. }   => "Reviewer finished notes",
-        CanaryOutcome { .. }       => "Honesty check result",
-        DiversityUpdated { .. }    => "Variety score updated",
-        LadderSnapshot { .. }      => "Proposer scoreboard updated",
-        CycleSealed { .. }         => "Evening summary signed",
-        CycleFailed { .. }         => "Evening run failed",
-    }
+Minimal payload shape for SSE frames:
+
+```json
+{
+  "kind": "cycle_started",
+  "display_label": "Evening run started",
+  "data": { /* CycleProgressEvent payload */ }
 }
 ```
 
-In the SSE handler, wrap the JSON payload so the display label is
-attached:
+## Implementation surface for the dashboard
 
-```rust
-let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-    Ok(event) => {
-        let kind = event_kind(&event);          // wire name
-        let label = display_label(&event);      // operator-facing
-        let payload = serde_json::json!({
-            "kind": kind,
-            "display_label": label,
-            "data": event,
-        });
-        let json = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
-        Some(Ok::<Event, Infallible>(Event::default().event(kind).data(json)))
-    }
-    Err(_) => None,
-});
-```
+The eventual dashboard wiring should keep the registry in one place and fan it out to the client:
 
-Where `event_kind` is the existing match that maps each variant to
-its snake_case wire name (already present in `sse.rs`).
+- Rust helper for `CycleProgressEvent -> event name`
+- Rust helper for `CycleProgressEvent -> display label`
+- SSE handler that subscribes to `ProgressChannel`
+- Client-side router that keys off `kind`
 
-## JS-side implementation
+The helper should be exhaustive over the enum so new variants fail loudly in code review and CI.
 
-Add to `crates/xvision-dashboard/static/js/bus.js`:
+## Why this is a follow-up rather than the main implementation
 
-```js
-// Wire-to-display mapping. Mirrors crates/xvision-dashboard/src/sse.rs::display_label.
-// Kept in sync via the SSE registry handoff
-// (docs/design/2026-05-27-autoresearcher-sse-registry-handoff.md).
-// If the server is sending display_label on the payload, prefer that;
-// this map is the fallback when the field is missing.
-const DISPLAY_LABELS = {
-  cycle_started:         "Evening run started",
-  mutation_proposed:     "Experiment proposed",
-  mutation_evaluating:   "Testing experiment",
-  mutation_committed:    "Experiment kept",
-  mutation_rejected:     "Experiment dropped",
-  mutation_quarantined:  "Experiment flagged for review",
-  lineage_forked:        "New branch added",
-  judge_wrote_finding:   "Reviewer finished notes",
-  canary_outcome:        "Honesty check result",
-  diversity_updated:     "Variety score updated",
-  ladder_snapshot:       "Proposer scoreboard updated",
-  cycle_sealed:          "Evening summary signed",
-  cycle_failed:          "Evening run failed",
-};
+PR #686 is the orchestrator / evening-cycle merge point. Until that lands, there is no stable dashboard route to subscribe to the live cycle stream end-to-end, so this document is the smallest concrete artifact that prepares the contract without depending on the merge.
 
-export function displayLabel(event) {
-  if (event && event.display_label) return event.display_label;
-  if (event && event.kind && DISPLAY_LABELS[event.kind]) return DISPLAY_LABELS[event.kind];
-  return event && event.kind ? event.kind : "Unknown event";
-}
-```
+## Acceptance criteria for the follow-up patch
 
-Then in every place the live cycle viewer renders an event:
-
-```js
-const label = displayLabel(event);
-// ...render `label` in the DOM, not event.kind
-```
-
-## Acceptance criteria
-
-1. `display_label()` helper exists in `crates/xvision-dashboard/src/sse.rs`
-   and covers all 13 event variants.
-2. SSE payloads include a `display_label` field on the JSON body (or
-   another agreed location; document the choice in the handler).
-3. `crates/xvision-dashboard/static/js/bus.js` exports a
-   `displayLabel(event)` helper with the same mapping as fallback.
-4. Every render path in the static SPA that uses `event.kind` for
-   display switches to `displayLabel(event)`.
-5. The SSE smoke test (`sse_smoke.rs`) asserts that a known event
-   payload includes the expected display label.
-6. Adding a new event variant requires updating both the Rust and JS
-   mappings; document this expectation in a comment at the top of each
-   file (and add a CI lint if feasible — match the variant count of
-   `AutoresearchEvent` against the entry count of the mapping).
-
-## Test paths
-
-- `crates/xvision-dashboard/tests/sse_smoke.rs` — extend
-- New unit test for `display_label()` covering all 13 variants
-- Manual smoke: connect to `/api/events`, trigger one event of each
-  kind via the orchestrator (or via the test IPC bridge), verify the
-  display label appears in the rendered dashboard
-
-## Things to push back on
-
-- Whether to attach the display label as an SSE-level `event:` frame
-  parameter, as a JSON payload field, or both. The handoff suggests
-  both, but if one is clearly more idiomatic for the rest of the
-  codebase, pick that one and document.
-- Whether the JS-side fallback map is worth maintaining (duplicates
-  state). Alternative: always require the server to send the label.
-  Recommendation here is to keep the fallback so the bus.js works
-  against an older server version during a rollout.
-- If the static SPA at `crates/xvision-dashboard/static/` is being
-  deprecated in favor of the React SPA at `frontend/web/`, this
-  handoff's JS-side work may be wasted. Confirm before doing it.
-
-## Reference
-
-- Terminology lock §11: `docs/superpowers/specs/2026-05-27-autoresearcher-terminology-lock.md`
-- AR-3 plan (where the dashboard SSE event taxonomy was specified):
-  `docs/superpowers/plans/2026-05-09-autoresearcher-3-dashboard.md`
-- Project-wide terminology note: `/CLAUDE.md` §Terminology → "Operator-facing names (autoresearcher subsurface)"
+1. Every `CycleProgressEvent` variant has a stable SSE event name.
+2. The dashboard uses the same names in its registry and in its SSE frames.
+3. The dashboard render path prefers `display_label` and falls back to the registry.
+4. The subscription code handles lagged and closed receivers without panicking.
+5. A smoke test proves the stream can emit at least one known AR-2 event and label it correctly.
