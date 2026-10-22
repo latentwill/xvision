@@ -81,6 +81,8 @@ beforeEach(() => {
   vi.mocked(agentsApi.deployedInStrategies).mockResolvedValue([]);
   vi.mocked(agentsApi.recentRuns).mockResolvedValue([]);
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] });
+  vi.mocked(agentsApi.updateAgent).mockResolvedValue(baseAgent);
+  vi.mocked(agentsApi.validateAgent).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -164,6 +166,55 @@ describe("AgentForm edit hydration", () => {
       expect(screen.getByLabelText(/^Name$/)).toHaveValue("Unsaved draft");
     });
   });
+
+  it("duplicates a slot with max_tokens cleared back to null", async () => {
+    const user = userEvent.setup();
+    renderAgentForm();
+
+    await screen.findByLabelText(/^Name$/);
+    await user.click(await screen.findByTitle("Duplicate slot"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(agentsApi.updateAgent).toHaveBeenCalled();
+    });
+    const [, body] = vi.mocked(agentsApi.updateAgent).mock.calls.at(-1)!;
+    expect(body.slots).toHaveLength(2);
+    expect(body.slots[1].name).toBe("main_copy");
+    expect(body.slots[1].max_tokens).toBeNull();
+  });
+
+  it("clears the model when switching to a provider that does not support it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "openrouter",
+          api_key_set: true,
+          synthetic: false,
+          enabled_models: ["claude-sonnet-4-6"],
+        },
+        {
+          name: "anthropic",
+          api_key_set: true,
+          synthetic: false,
+          enabled_models: ["claude-haiku-4-5"],
+        },
+      ] as any,
+    });
+
+    renderAgentForm();
+
+    const provider = await screen.findByLabelText("Provider");
+    const model = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    expect(model.value).toBe("openrouter::claude-sonnet-4-6");
+
+    await user.selectOptions(provider, "anthropic");
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("");
+    });
+  });
 });
 
 describe("AgentForm cross references", () => {
@@ -181,9 +232,7 @@ describe("AgentForm cross references", () => {
     // The UI renders run_id.slice(0,12)+"… — "+status as separate adjacent text
     // nodes inside one <li>, so getByText(exact string) won't match the full
     // element text. Use a regex against the combined textContent instead.
-    expect(screen.getByText((_, el) => {
-      return !!el && el.tagName === "LI" && (el.textContent ?? "").includes("01HZRUN12345");
-    })).toBeInTheDocument();
+    expect(screen.getByText(/01HZRUN12345.*completed/)).toBeInTheDocument();
     expect(screen.queryByText(/Not deployed in any strategy yet/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
   });

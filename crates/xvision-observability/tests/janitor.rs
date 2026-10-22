@@ -245,12 +245,19 @@ async fn max_bytes_evicts_oldest_until_under_cap() {
     let store = BlobStore::new(tmp.path());
 
     // Three 1KB blobs written in sequence; cap=2KB → janitor must evict
-    // at least one. The first-written blob has the oldest mtime and
-    // should be evicted first regardless of its SHA hex.
+    // at least one. Make the ordering explicit so the "oldest by mtime"
+    // branch is deterministic even on filesystems with coarse timestamps.
     let a = store.write(&vec![b'a'; 1024]).unwrap();
     let b = store.write(&vec![b'b'; 1024]).unwrap();
     let c = store.write(&vec![b'c'; 1024]).unwrap();
-    let _ = (b, c); // keep distinct names for readability
+
+    use std::time::{Duration as StdDuration, SystemTime};
+    let base = SystemTime::UNIX_EPOCH + StdDuration::from_secs(1_700_000_000);
+    for (idx, sha) in [a.as_str(), b.as_str(), c.as_str()].into_iter().enumerate() {
+        let path = tmp.path().join(sha);
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(base + StdDuration::from_secs(idx as u64)).unwrap();
+    }
 
     let stats = truncate_to_max_bytes(&pool, &store, 2 * 1024).await.unwrap();
     assert!(stats.blob_files_deleted >= 1);

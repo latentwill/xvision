@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
@@ -47,9 +47,9 @@ fn scoped_unset(key: &'static str) -> EnvGuard {
 }
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("eval.sqlite");
+    let pool = SqlitePool::connect(&format!("sqlite://{}", db_path.display()))
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
@@ -72,7 +72,6 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
         pool,

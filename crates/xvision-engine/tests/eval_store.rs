@@ -1,9 +1,15 @@
 use chrono::{TimeZone, Utc};
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::eval::{DecisionRow, ListFilter, MetricsSummary, Run, RunMode, RunStatus, RunStore};
 
 async fn pool_with_migration() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("eval.sqlite");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}", db_path.display()))
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/002_eval.sql"))
         .execute(&pool)
         .await
@@ -20,6 +26,7 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    dir.into_path();
     pool
 }
 

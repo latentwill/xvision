@@ -87,7 +87,17 @@ export function SlotForm({
           {providerNames.length > 0 ? (
             <select
               value={slot.provider}
-              onChange={(e) => patch("provider", e.target.value)}
+              onChange={(e) => {
+                const nextProvider = e.target.value;
+                const nextProviderRow = providerRows.find((p) => p.name === nextProvider);
+                const modelStillValid =
+                  !!nextProviderRow?.enabled_models?.includes(slot.model);
+                onChange({
+                  ...slot,
+                  provider: nextProvider,
+                  model: modelStillValid ? slot.model : "",
+                });
+              }}
               className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
             >
               <option value="">— select provider —</option>

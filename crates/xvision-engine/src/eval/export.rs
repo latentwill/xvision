@@ -485,9 +485,11 @@ mod roundtrip {
     use xvision_core::providers::{Catalog, ModelEntry};
 
     async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("eval.sqlite");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(":memory:")
+            .connect(&format!("sqlite://{}", db_path.display()))
             .await
             .unwrap();
         // Migrations the export touches transitively: 001 (api_audit),
@@ -504,7 +506,6 @@ mod roundtrip {
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
-        let dir = tempfile::tempdir().unwrap();
         let ctx = ApiContext::new(
             pool,
             Actor::Cli {

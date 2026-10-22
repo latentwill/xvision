@@ -15,9 +15,11 @@ use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("eval.sqlite");
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(":memory:")
+        .connect(&format!("sqlite://{}", db_path.display()))
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
@@ -36,7 +38,6 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {

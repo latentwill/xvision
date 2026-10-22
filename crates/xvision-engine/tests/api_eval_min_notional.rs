@@ -33,7 +33,11 @@ use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
 
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("eval.sqlite");
+    let pool = SqlitePool::connect(&format!("sqlite://{}", db_path.display()))
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/001_api_audit.sql"))
         .execute(&pool)
         .await
@@ -54,7 +58,6 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
-    let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     let ctx = ApiContext::new(
         pool,

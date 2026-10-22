@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { Icon, type IconName } from "@/components/primitives/Icon";
@@ -21,10 +22,72 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function MobileDrawer() {
   const open = useUi((s) => s.mobileDrawerOpen);
   const setOpen = useUi((s) => s.setMobileDrawerOpen);
   const navigate = useNavigate();
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const lastActiveRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      if (lastActiveRef.current && document.contains(lastActiveRef.current)) {
+        lastActiveRef.current.focus();
+      }
+      lastActiveRef.current = null;
+      return;
+    }
+
+    lastActiveRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const t = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+      const root = drawerRef.current;
+      if (!root) return;
+
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1,
+      );
+      if (focusables.length === 0) return;
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+      if (event.shiftKey) {
+        if (!active || !root.contains(active) || active === first) {
+          event.preventDefault();
+          last.focus();
+        }
+        return;
+      }
+
+      if (!active || !root.contains(active) || active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, setOpen]);
 
   if (!open) return null;
 
@@ -36,12 +99,20 @@ export function MobileDrawer() {
         aria-label="Close navigation"
         onClick={() => setOpen(false)}
       />
-      <aside className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))] pl-[max(0px,env(safe-area-inset-left))]">
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Primary navigation"
+        tabIndex={-1}
+        className="absolute top-0 bottom-0 left-0 w-[84vw] max-w-[340px] bg-surface-sidebar border-r border-border-soft flex flex-col py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(0px,env(safe-area-inset-bottom))] pl-[max(0px,env(safe-area-inset-left))]"
+      >
         <div className="px-5 pb-5 flex items-center justify-between">
           <span className="font-serif italic font-medium text-[34px] tracking-tight text-text">
             xvn
           </span>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => setOpen(false)}
             className="w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text hover:bg-surface-hover"
