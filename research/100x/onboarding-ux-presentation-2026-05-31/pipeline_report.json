@@ -1,0 +1,420 @@
+{
+  "pipeline": {
+    "elapsed_sec": 53.99420475959778,
+    "phases": 1,
+    "total_tasks": 20,
+    "tasks_by_status": {
+      "success": 20
+    },
+    "model": "deepseek-chat",
+    "max_agents": 20
+  },
+  "cost": {
+    "elapsed_sec": 53.994948625564575,
+    "total_cost_usd": 0.061392829999999995,
+    "budget_limit_usd": 15.0,
+    "budget_pct_used": 0.40928553333333334,
+    "total_requests": 21,
+    "agents": {
+      "agent-fan-01": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00193531,
+        "avg_latency_ms": 23240.280583966523,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-02": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00228592,
+        "avg_latency_ms": 30019.65822605416,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-03": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00171259,
+        "avg_latency_ms": 20748.10901901219,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-04": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00188746,
+        "avg_latency_ms": 24393.19869200699,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-05": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00200578,
+        "avg_latency_ms": 26484.609520062804,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-06": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00216499,
+        "avg_latency_ms": 25597.019440028816,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-07": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00225417,
+        "avg_latency_ms": 28890.40518901311,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-08": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00216673,
+        "avg_latency_ms": 27939.307354972698,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-09": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00187137,
+        "avg_latency_ms": 24956.027704058215,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-10": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00182004,
+        "avg_latency_ms": 24409.501690999605,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-11": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00229767,
+        "avg_latency_ms": 31136.46081299521,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-12": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00204059,
+        "avg_latency_ms": 25444.153912947513,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-13": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00183701,
+        "avg_latency_ms": 24661.093092989177,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-14": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00184571,
+        "avg_latency_ms": 24453.354922006838,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-15": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00205842,
+        "avg_latency_ms": 26725.009888992645,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-16": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00160776,
+        "avg_latency_ms": 20700.360508053564,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-17": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00238163,
+        "avg_latency_ms": 29857.181253028102,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-18": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00161211,
+        "avg_latency_ms": 22608.415466034785,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-19": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00230941,
+        "avg_latency_ms": 31026.28689794801,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-20": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00201622,
+        "avg_latency_ms": 25900.378543068655,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "synth-phase-1": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.02128194,
+        "avg_latency_ms": 22800.15086196363,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      }
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "fan-01",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 8192,
+      "cost_usd": 0.00193531,
+      "latency_ms": 23240.280583966523,
+      "error": ""
+    },
+    {
+      "task_id": "fan-02",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 10325,
+      "cost_usd": 0.00228592,
+      "latency_ms": 30019.65822605416,
+      "error": ""
+    },
+    {
+      "task_id": "fan-03",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 7290,
+      "cost_usd": 0.00171259,
+      "latency_ms": 20748.10901901219,
+      "error": ""
+    },
+    {
+      "task_id": "fan-04",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 8685,
+      "cost_usd": 0.00188746,
+      "latency_ms": 24393.19869200699,
+      "error": ""
+    },
+    {
+      "task_id": "fan-05",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9015,
+      "cost_usd": 0.00200578,
+      "latency_ms": 26484.609520062804,
+      "error": ""
+    },
+    {
+      "task_id": "fan-06",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9701,
+      "cost_usd": 0.00216499,
+      "latency_ms": 25597.019440028816,
+      "error": ""
+    },
+    {
+      "task_id": "fan-07",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9723,
+      "cost_usd": 0.00225417,
+      "latency_ms": 28890.40518901311,
+      "error": ""
+    },
+    {
+      "task_id": "fan-08",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9877,
+      "cost_usd": 0.00216673,
+      "latency_ms": 27939.307354972698,
+      "error": ""
+    },
+    {
+      "task_id": "fan-09",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 7995,
+      "cost_usd": 0.00187137,
+      "latency_ms": 24956.027704058215,
+      "error": ""
+    },
+    {
+      "task_id": "fan-10",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 8279,
+      "cost_usd": 0.00182004,
+      "latency_ms": 24409.501690999605,
+      "error": ""
+    },
+    {
+      "task_id": "fan-11",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 10221,
+      "cost_usd": 0.00229767,
+      "latency_ms": 31136.46081299521,
+      "error": ""
+    },
+    {
+      "task_id": "fan-12",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9284,
+      "cost_usd": 0.00204059,
+      "latency_ms": 25444.153912947513,
+      "error": ""
+    },
+    {
+      "task_id": "fan-13",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 8473,
+      "cost_usd": 0.00183701,
+      "latency_ms": 24661.093092989177,
+      "error": ""
+    },
+    {
+      "task_id": "fan-14",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 8109,
+      "cost_usd": 0.00184571,
+      "latency_ms": 24453.354922006838,
+      "error": ""
+    },
+    {
+      "task_id": "fan-15",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9216,
+      "cost_usd": 0.00205842,
+      "latency_ms": 26725.009888992645,
+      "error": ""
+    },
+    {
+      "task_id": "fan-16",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 7004,
+      "cost_usd": 0.00160776,
+      "latency_ms": 20700.360508053564,
+      "error": ""
+    },
+    {
+      "task_id": "fan-17",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 10261,
+      "cost_usd": 0.00238163,
+      "latency_ms": 29857.181253028102,
+      "error": ""
+    },
+    {
+      "task_id": "fan-18",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 7506,
+      "cost_usd": 0.00161211,
+      "latency_ms": 22608.415466034785,
+      "error": ""
+    },
+    {
+      "task_id": "fan-19",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 10420,
+      "cost_usd": 0.00230941,
+      "latency_ms": 31026.28689794801,
+      "error": ""
+    },
+    {
+      "task_id": "fan-20",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "You are researching onboarding/UX and presentation patterns for the xvision research wiki. Deduplica",
+      "result_length": 9177,
+      "cost_usd": 0.00201622,
+      "latency_ms": 25900.378543068655,
+      "error": ""
+    }
+  ],
+  "phases": [
+    {
+      "phase_num": 1,
+      "tasks_count": 20,
+      "has_synthesis": true,
+      "synthesis_length": 10482
+    }
+  ]
+}

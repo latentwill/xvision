@@ -28,6 +28,13 @@ last_reviewed = "2026-05-20"
 path = "quickstart.md"
 
 [[page]]
+slug = "roadmap"
+title = "Roadmap"
+section = "Planning"
+last_reviewed = "2026-05-29"
+path = "roadmap.md"
+
+[[page]]
 slug = "strategies"
 title = "Strategies"
 section = "Concepts"
@@ -75,6 +82,20 @@ title = "Experiments"
 section = "Concepts"
 last_reviewed = "2026-05-20"
 path = "experiments.md"
+
+[[page]]
+slug = "degen-virtuals-agent-investigation"
+title = "Degen Virtuals Agent Investigation"
+section = "Research"
+last_reviewed = "2026-06-09"
+path = "degen-virtuals-agent-investigation.md"
+
+[[page]]
+slug = "kinamix-academy-ai-course-landscape"
+title = "AI Course Landscape"
+section = "Kinamix Academy"
+last_reviewed = "2026-06-09"
+path = "kinamix-academy-ai-course-landscape.md"
 
 [[page]]
 slug = "cli-reference"

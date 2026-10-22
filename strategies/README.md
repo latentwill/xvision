@@ -47,6 +47,11 @@ Each strategy gets its own markdown file: `<slug>.md`. Required sections:
 - `fibonacci_retracement` — pullback entries on golden ratios.
 - `ma_triple_screen` — Elder triple-screen (trend / oscillator / entry).
 
+### Queued — Opening-range breakout
+
+- [`orb/`](orb/README.md) — session-aware ORB family: confirmed breakout,
+  prior-day-level confirmation, and failed-breakout reversal.
+
 ### Queued — Onchain / Mantle-native (FOLLOWUPS SLF6 / F14)
 
 - `funding_rate_fader` — fade extreme perp funding.

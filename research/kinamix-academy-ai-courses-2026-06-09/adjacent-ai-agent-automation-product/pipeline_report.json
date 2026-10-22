@@ -1,0 +1,97 @@
+{
+  "pipeline": {
+    "elapsed_sec": 63.57232856750488,
+    "phases": 1,
+    "total_tasks": 3,
+    "tasks_by_status": {
+      "success": 3
+    },
+    "model": "deepseek-chat",
+    "max_agents": 6
+  },
+  "cost": {
+    "elapsed_sec": 63.572453022003174,
+    "total_cost_usd": 0.01782065,
+    "budget_limit_usd": 4.0,
+    "budget_pct_used": 0.44551625,
+    "total_requests": 4,
+    "agents": {
+      "agent-fan-01": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00362442,
+        "avg_latency_ms": 38273.203887976706,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-02": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00304674,
+        "avg_latency_ms": 36203.67607602384,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-03": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00362442,
+        "avg_latency_ms": 41549.64999301592,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "synth-phase-1": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00752507,
+        "avg_latency_ms": 21957.376317994203,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      }
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "fan-01",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research adjacent courses relevant to Kinamix Academy: AI agent building, AI automation agencies, n8",
+      "result_length": 14555,
+      "cost_usd": 0.00362442,
+      "latency_ms": 38273.203887976706,
+      "error": ""
+    },
+    {
+      "task_id": "fan-02",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research adjacent courses relevant to Kinamix Academy: AI agent building, AI automation agencies, n8",
+      "result_length": 13034,
+      "cost_usd": 0.00304674,
+      "latency_ms": 36203.67607602384,
+      "error": ""
+    },
+    {
+      "task_id": "fan-03",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research adjacent courses relevant to Kinamix Academy: AI agent building, AI automation agencies, n8",
+      "result_length": 16437,
+      "cost_usd": 0.00362442,
+      "latency_ms": 41549.64999301592,
+      "error": ""
+    }
+  ],
+  "phases": [
+    {
+      "phase_num": 1,
+      "tasks_count": 3,
+      "has_synthesis": true,
+      "synthesis_length": 10999
+    }
+  ]
+}

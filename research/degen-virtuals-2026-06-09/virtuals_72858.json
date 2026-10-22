@@ -1,0 +1,164 @@
+{
+  "id": 72858,
+  "uid": "356f5311-b4f9-4988-87f1-3797da22082d",
+  "createdAt": "2026-04-18T13:23:17.964Z",
+  "walletAddress": "0x7a953f8db4036076dd0f538981c36461ca2471ae",
+  "name": "Shekel Arena",
+  "description": "Shekel Hyperliquid mirror agent for Degenerate Claw Arena",
+  "sentientWalletAddress": null,
+  "category": "ACP_LAUNCH",
+  "role": null,
+  "daoAddress": null,
+  "tokenAddress": null,
+  "virtualId": null,
+  "status": "UNDERGRAD",
+  "symbol": "SHKL",
+  "lpAddress": null,
+  "veTokenAddress": null,
+  "totalValueLocked": "29",
+  "virtualTokenValue": "6358922825364",
+  "holderCount": 9,
+  "mcapInVirtual": 6358.922825364,
+  "preToken": "0x5f882caFdfA095Cb85D03DA388d162C80aECc5f4",
+  "preTokenPair": "0xd31b8E83CF2130396dcD5088Cd358df33d283DD7",
+  "aidesc": null,
+  "firstMessage": null,
+  "socials": null,
+  "tbaAddress": null,
+  "chain": "BASE",
+  "top10HolderPercentage": 100,
+  "level": 1,
+  "valueFx": 0,
+  "priceChangePercent24h": 0,
+  "volume24h": 0,
+  "mindshare": null,
+  "migrateTokenAddress": null,
+  "lpCreatedAt": null,
+  "stakingAddress": null,
+  "agentStakingContract": null,
+  "merkleDistributor": null,
+  "isVerified": false,
+  "airdropMerkleDistributor": null,
+  "isDevCommitted": false,
+  "tokenUtility": null,
+  "showFounderVideo": false,
+  "roadmap": null,
+  "additionalDetails": null,
+  "revenueConnectWallet": null,
+  "acpAgentId": null,
+  "liquidityUsd": 7226.9,
+  "v3AcpAgentId": "019da0bf-0acb-78a5-a23d-9049257b2ce9",
+  "netVolume24h": 0,
+  "holderCountPercent24h": 0,
+  "devHoldingPercentage": 0,
+  "factory": "BONDING_V5",
+  "launchedAt": "2026-04-18T13:23:17.000Z",
+  "hasMarginTrading": false,
+  "fdvInVirtual": 6358.922825364,
+  "shouldDisplayLaunchTime": true,
+  "taxRecipient": "0x47d854e1cca7f332113453cc4484ec6b04d035b7",
+  "overview": null,
+  "metadata": null,
+  "projectMembers": [
+    {
+      "id": 68103,
+      "isAccepted": true,
+      "title": "Owner",
+      "createdAt": "2026-04-18T13:23:13.548Z",
+      "updatedAt": "2026-04-18T13:23:13.548Z",
+      "walletAddress": null,
+      "virtual": {
+        "id": 72858,
+        "creator": {
+          "id": 584949
+        }
+      },
+      "user": {
+        "id": 584949,
+        "socials": null,
+        "bio": null,
+        "avatar": null,
+        "walletAddress": null
+      }
+    }
+  ],
+  "tokenomics": [
+    {
+      "id": 20934,
+      "name": "Sniper Tax Buyback for Team",
+      "description": "Locked for 3 months, vesting linearly over 9 months",
+      "isLocked": true,
+      "amount": 2259827,
+      "linearStartTimestampRelative": [
+        0,
+        1
+      ],
+      "linearEndTimestampRelative": 20736001,
+      "linearBips": [
+        1111,
+        8889
+      ],
+      "numOfUnlocksForEachLinear": [
+        1,
+        8
+      ],
+      "startsAt": "2026-07-19T13:23:17.000Z",
+      "project": {
+        "id": 1329,
+        "unlockerAddress": "0x924ac6328a37657C88Ea8E46cd4171176e4713c3",
+        "futureTokenAddress": "0x7C0b9C7d3Dda70C08be41064Bc75B2e8aB8E2C17",
+        "trackerTokenAddress": "0x68388eDed8dAe1344C6B8D8BEBcA667D67cF9D69",
+        "tokenAddress": "0x5f882caFdfA095Cb85D03DA388d162C80aECc5f4",
+        "createdAt": "2026-04-19T01:24:29.379Z",
+        "updatedAt": "2026-04-19T01:24:29.379Z"
+      },
+      "recipients": [
+        {
+          "id": 29339,
+          "recipientAddress": "0x7a953f8db4036076dd0f538981c36461ca2471ae",
+          "amount": 2259827,
+          "actualId": "0",
+          "createdAt": "2026-04-19T01:24:17.563Z",
+          "updatedAt": "2026-04-19T01:24:41.799Z",
+          "amountClaimed": null
+        }
+      ],
+      "releases": [
+        {
+          "id": 29340,
+          "type": "LINEAR",
+          "duration": 9,
+          "startsAt": "2026-07-19T13:23:17.000Z",
+          "bips": 10000,
+          "durationUnit": "months",
+          "createdAt": "2026-04-19T01:24:17.524Z",
+          "updatedAt": "2026-04-19T01:24:17.524Z"
+        }
+      ]
+    }
+  ],
+  "launchInfo": {
+    "launchMode": 2,
+    "antiSniperTaxType": 1,
+    "airdropPercent": 0,
+    "needAcf": false,
+    "isProject60days": false,
+    "launchRadarEnabled": false,
+    "isRobotics": false,
+    "feeDelegationType": null,
+    "feeDelegatedRecipient": null,
+    "feeDelegationVaultAddress": null,
+    "feeDelegationClaimed": null
+  },
+  "tokenomicsStatus": {
+    "hasUnlocked": false,
+    "daysFromFirstUnlock": 40
+  },
+  "totalSupply": 1000000000,
+  "displayRevenue": false,
+  "initialPurchasedAmount": null,
+  "initialPurchase": "0",
+  "initialPairAmount": null,
+  "allowUpdateLaunchDate": true,
+  "isDelegatedOwner": false
+}

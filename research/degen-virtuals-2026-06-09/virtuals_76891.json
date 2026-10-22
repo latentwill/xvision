@@ -1,0 +1,118 @@
+{
+  "id": 76891,
+  "uid": "07ce6cd6-fd0d-47c9-83be-18a64620392a",
+  "createdAt": "2026-05-19T01:02:18.042Z",
+  "walletAddress": "0x8649F14009964411Fc230E8f29032d00b35fb850",
+  "name": "Bamboo",
+  "description": "",
+  "sentientWalletAddress": null,
+  "category": "IP MIRROR",
+  "role": "",
+  "daoAddress": null,
+  "tokenAddress": null,
+  "virtualId": null,
+  "status": "UNDERGRAD",
+  "symbol": "BAMBOO",
+  "lpAddress": null,
+  "veTokenAddress": null,
+  "totalValueLocked": "0",
+  "virtualTokenValue": "6300077729849",
+  "holderCount": 3,
+  "mcapInVirtual": 6300.077729849,
+  "preToken": "0x673F6476D9679E7Ed6B25301A56BD5f678576eDf",
+  "preTokenPair": "0xa941ef32c14a30B69cAFb5D2763A94fF151aE7f3",
+  "aidesc": null,
+  "firstMessage": null,
+  "socials": {
+    "VERIFIED_LINKS": {
+      "TWITTER": "https://x.com/BambooAgentAI"
+    },
+    "VERIFIED_USERNAMES": {
+      "TWITTER": "BambooAgentAI"
+    }
+  },
+  "tbaAddress": null,
+  "chain": "BASE",
+  "top10HolderPercentage": 100,
+  "level": 1,
+  "valueFx": 0,
+  "priceChangePercent24h": 0,
+  "volume24h": 0,
+  "mindshare": null,
+  "migrateTokenAddress": null,
+  "lpCreatedAt": null,
+  "stakingAddress": null,
+  "agentStakingContract": null,
+  "merkleDistributor": null,
+  "isVerified": false,
+  "airdropMerkleDistributor": null,
+  "isDevCommitted": false,
+  "tokenUtility": "",
+  "showFounderVideo": false,
+  "roadmap": "",
+  "additionalDetails": "",
+  "revenueConnectWallet": null,
+  "acpAgentId": null,
+  "liquidityUsd": 7192.12,
+  "v3AcpAgentId": "019e3cd6-63d0-73aa-932f-ce02df7e96fa",
+  "netVolume24h": 0,
+  "holderCountPercent24h": -25,
+  "devHoldingPercentage": 0,
+  "factory": "BONDING_V5",
+  "launchedAt": "2026-05-19T01:02:13.000Z",
+  "hasMarginTrading": false,
+  "fdvInVirtual": 6300.077729849,
+  "shouldDisplayLaunchTime": true,
+  "taxRecipient": "0x8649F14009964411Fc230E8f29032d00b35fb850",
+  "overview": "",
+  "metadata": null,
+  "characterDescription": "",
+  "projectMembers": [
+    {
+      "id": 72170,
+      "isAccepted": true,
+      "title": "Owner",
+      "createdAt": "2026-05-18T20:47:03.014Z",
+      "updatedAt": "2026-05-18T20:47:03.014Z",
+      "walletAddress": null,
+      "virtual": {
+        "id": 76891,
+        "creator": {
+          "id": 588324
+        }
+      },
+      "user": {
+        "id": 588324,
+        "socials": null,
+        "bio": null,
+        "avatar": null,
+        "walletAddress": null
+      }
+    }
+  ],
+  "tokenomics": [],
+  "launchInfo": {
+    "launchMode": 0,
+    "antiSniperTaxType": 0,
+    "airdropPercent": 0,
+    "needAcf": false,
+    "isProject60days": false,
+    "launchRadarEnabled": false,
+    "isRobotics": false,
+    "feeDelegationType": "address",
+    "feeDelegatedRecipient": "0x8649f14009964411fc230e8f29032d00b35fb850",
+    "feeDelegationVaultAddress": null,
+    "feeDelegationClaimed": true
+  },
+  "tokenomicsStatus": {
+    "hasUnlocked": true,
+    "daysFromFirstUnlock": 0
+  },
+  "totalSupply": 1000000000,
+  "displayRevenue": false,
+  "initialPurchasedAmount": "0",
+  "initialPurchase": "0",
+  "initialPairAmount": null,
+  "allowUpdateLaunchDate": true,
+  "isDelegatedOwner": false
+}

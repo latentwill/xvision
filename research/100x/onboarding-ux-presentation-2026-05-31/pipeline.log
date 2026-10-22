@@ -1,0 +1,73 @@
+[16:18:36] Pipeline starting: 1 phases, 20 tasks, 20 agents
+[16:18:36] Model: deepseek-chat | Budget: $15.00
+[16:18:36] Output: /home/agents/xvision/research/100x/onboarding-ux-presentation-2026-05-31
+[16:18:36] 
+============================================================
+[16:18:36] PHASE 1: 20 tasks, 20 agents
+[16:18:36] ============================================================
+[16:18:36] [agent-fan-01] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-02] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-03] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-04] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-05] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-06] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-07] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-08] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-09] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-10] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-11] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-12] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-13] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-14] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-15] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-16] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-17] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-18] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-19] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:36] [agent-fan-20] START: You are researching onboarding/UX and presentation patterns for the xvision rese...
+[16:18:57] [agent-fan-16] DONE: $0.001608 | 20700ms | 7004 chars
+[16:18:57] Progress: 1/20 (5%) | Cost: $0.001608
+[16:18:57] [agent-fan-03] DONE: $0.001713 | 20748ms | 7290 chars
+[16:18:57] Progress: 2/20 (10%) | Cost: $0.003320
+[16:18:59] [agent-fan-18] DONE: $0.001612 | 22608ms | 7506 chars
+[16:18:59] Progress: 3/20 (15%) | Cost: $0.004932
+[16:18:59] [agent-fan-01] DONE: $0.001935 | 23240ms | 8192 chars
+[16:18:59] Progress: 4/20 (20%) | Cost: $0.006868
+[16:19:00] [agent-fan-04] DONE: $0.001887 | 24393ms | 8685 chars
+[16:19:00] Progress: 5/20 (25%) | Cost: $0.008755
+[16:19:00] [agent-fan-10] DONE: $0.001820 | 24410ms | 8279 chars
+[16:19:00] Progress: 6/20 (30%) | Cost: $0.010575
+[16:19:00] [agent-fan-14] DONE: $0.001846 | 24453ms | 8109 chars
+[16:19:00] Progress: 7/20 (35%) | Cost: $0.012421
+[16:19:01] [agent-fan-13] DONE: $0.001837 | 24661ms | 8473 chars
+[16:19:01] Progress: 8/20 (40%) | Cost: $0.014258
+[16:19:01] [agent-fan-09] DONE: $0.001871 | 24956ms | 7995 chars
+[16:19:01] Progress: 9/20 (45%) | Cost: $0.016129
+[16:19:01] [agent-fan-12] DONE: $0.002041 | 25444ms | 9284 chars
+[16:19:01] Progress: 10/20 (50%) | Cost: $0.018170
+[16:19:02] [agent-fan-06] DONE: $0.002165 | 25597ms | 9701 chars
+[16:19:02] Progress: 11/20 (55%) | Cost: $0.020335
+[16:19:02] [agent-fan-20] DONE: $0.002016 | 25900ms | 9177 chars
+[16:19:02] Progress: 12/20 (60%) | Cost: $0.022351
+[16:19:02] [agent-fan-05] DONE: $0.002006 | 26485ms | 9015 chars
+[16:19:02] Progress: 13/20 (65%) | Cost: $0.024357
+[16:19:03] [agent-fan-15] DONE: $0.002058 | 26725ms | 9216 chars
+[16:19:03] Progress: 14/20 (70%) | Cost: $0.026415
+[16:19:04] [agent-fan-08] DONE: $0.002167 | 27939ms | 9877 chars
+[16:19:04] Progress: 15/20 (75%) | Cost: $0.028582
+[16:19:05] [agent-fan-07] DONE: $0.002254 | 28890ms | 9723 chars
+[16:19:05] Progress: 16/20 (80%) | Cost: $0.030836
+[16:19:06] [agent-fan-17] DONE: $0.002382 | 29857ms | 10261 chars
+[16:19:06] Progress: 17/20 (85%) | Cost: $0.033218
+[16:19:06] [agent-fan-02] DONE: $0.002286 | 30020ms | 10325 chars
+[16:19:06] Progress: 18/20 (90%) | Cost: $0.035504
+[16:19:07] [agent-fan-19] DONE: $0.002309 | 31026ms | 10420 chars
+[16:19:07] Progress: 19/20 (95%) | Cost: $0.037813
+[16:19:07] [agent-fan-11] DONE: $0.002298 | 31136ms | 10221 chars
+[16:19:07] Progress: 20/20 (100%) | Cost: $0.040111
+[16:19:07] Phase 1 complete: 20 success, 0 failed
+[16:19:07] Synthesizing phase 1 results...
+[16:19:30] 
+Pipeline complete in 54.0s
+[16:19:30] Total cost: $0.061393
+[16:19:30] Results: /home/agents/xvision/research/100x/onboarding-ux-presentation-2026-05-31

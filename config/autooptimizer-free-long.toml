@@ -1,0 +1,21 @@
+# Long-window AutoOptimizer configuration.
+# All model calls must be overridden by the supervisor's explicit free-only flags.
+min_improvement = 0.01
+experiments_per_cycle = 2
+
+[day_window]
+start = "2024-07-01"
+end   = "2024-10-01"
+
+[baseline_untouched_window]
+start = "2024-11-01"
+end   = "2024-12-01"
+
+[mutator]
+provider    = "opencode-zen"
+model       = "muse-spark-1.3-contributor-free"
+max_retries = 2
+
+[judge]
+provider    = "opencode-zen"
+model       = "muse-spark-1.3-contributor-free"
