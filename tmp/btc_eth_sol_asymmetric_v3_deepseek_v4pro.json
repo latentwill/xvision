@@ -1,0 +1,72 @@
+{
+  "name": "btc_eth_sol_asymmetric_v3_deepseek_v4pro",
+  "creator": "@edward",
+  "manifest_patch": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger Asymmetric v3",
+    "plain_summary": "A long-first BTC/ETH/SOL strategy built on Donchian and Bollinger signals. It uses a stricter, more selective trigger gate than v2 to reduce token burn and avoid low-quality chop while still seeking enough activity for meaningful intraday trading.",
+    "asset_universe": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "decision_cadence_minutes": 30,
+    "color": "#0EA5E9"
+  },
+  "agent": {
+    "name": "btc_eth_sol_asymmetric_v3_deepseek_v4pro_trader_b",
+    "description": "DeepSeek V4 Pro trader for a selective long-first Donchian + Bollinger setup.",
+    "tags": ["deepseek", "donchian", "bollinger", "asymmetric", "multi-asset", "v3", "token-efficient"],
+    "slots": [
+      {
+        "name": "trader",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "system_prompt": "You are the trader for a multi-asset BTC/ETH/SOL Donchian + Bollinger strategy. Your priority is net PnL with low token burn. Keep the system selective: prefer 2-3 solid trades per day across all assets instead of frequent probing. BTC is the first choice, then ETH, then SOL. Longs are the primary engine; shorts are defensive and should only be taken on strong bearish confirmation. For longs, favor continuation or reclaim setups when trend and volatility agree: price above EMA20 and/or EMA200, EMA12 above EMA26, close above BB middle or Donchian upper breakout, RSI supportive, and volume above baseline. For shorts, require stronger evidence than longs: price below EMA20 and EMA200, EMA12 below EMA26, close below BB middle or Donchian lower breakdown, and weak RSI/volume. If signals are mixed, stay flat. Do not narrate; output strict JSON only with action, asset, conviction, and a short justification.",
+        "skill_ids": [],
+        "capabilities": ["trader"],
+        "max_tokens": 384,
+        "temperature": 0.0,
+        "inputs_policy": "raw"
+      }
+    ]
+  },
+  "filter": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger asymmetric gate v3",
+    "asset_scope": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "timeframe": "1h",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "any": [
+        { "lhs": "close", "op": "crosses_above", "rhs": "bb_middle_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "bb_middle_20" },
+        { "lhs": "close", "op": "crosses_above", "rhs": "donchian_upper_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "donchian_lower_20" },
+        { "lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26" },
+        { "lhs": "ema_12", "op": "crosses_below", "rhs": "ema_26" },
+        { "lhs": "close", "op": "crosses_above", "rhs": "ema_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "ema_20" }
+      ]
+    },
+    "cooldown_bars": 2,
+    "max_wakeups_per_day": 8,
+    "wake_when_in_position": "always",
+    "agent_context_template": "compact_trade_context_v1",
+    "fire": {
+      "reason": "asymmetric_donchian_bollinger_v3",
+      "priority": 0.96,
+      "tags": ["donchian", "bollinger", "asymmetric", "v3", "multi_asset", "token_efficient"],
+      "context": [
+        "close",
+        "ema_12",
+        "ema_20",
+        "ema_26",
+        "ema_200",
+        "donchian_upper_20",
+        "donchian_lower_20",
+        "bb_middle_20",
+        "bb_width_20",
+        "bb_pct_b_20",
+        "adx_14",
+        "volume_zscore_20",
+        "rsi_14",
+        "macd_hist"
+      ]
+    }
+  }
+}

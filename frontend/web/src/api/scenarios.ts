@@ -100,16 +100,16 @@ export function createScenario(req: CreateScenarioRequest): Promise<Scenario> {
 
 export function cloneScenario(
   id: string,
-  mutations: ScenarioMutations,
+  updates: ScenarioMutations,
 ): Promise<Scenario> {
   const trace = createTrace("scenario", { scenario_id: id });
   const started = performance.now();
   trace.info("scenario.clone.start", {
-    mutation_keys: Object.keys(mutations),
+    mutation_keys: Object.keys(updates),
   });
   return apiFetch<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/clone`, {
     method: "POST",
-    body: JSON.stringify(mutations),
+    body: JSON.stringify(updates),
   })
     .then((scenario) => {
       trace.info("scenario.clone.ok", {

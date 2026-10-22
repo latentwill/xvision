@@ -1,0 +1,50 @@
+{
+  "display_name": "Crypto bull — Jan 2025 30d",
+  "description": "Thirty-day bull-market smoke test for comparing a regime-split Donchian + Bollinger prompt against an asymmetric long/short thesis. Used as the first lightweight comparison before widening into longer 90-180 day windows.",
+  "asset_class": "Crypto",
+  "quote_currency": "Usd",
+  "time_window": {
+    "start": "2025-01-01T00:00:00Z",
+    "end": "2025-01-31T00:00:00Z"
+  },
+  "capital": {
+    "initial": 100000,
+    "currency": "USD"
+  },
+  "granularity": "1h",
+  "timezone": "UTC",
+  "calendar": "Continuous24x7",
+  "venue": {
+    "venue": "Alpaca",
+    "fees": {
+      "maker_bps": 10,
+      "taker_bps": 25
+    },
+    "slippage": {
+      "model": "linear",
+      "bps": 5
+    },
+    "latency": {
+      "decision_to_fill_ms": 500
+    },
+    "fill_model": {
+      "market_order_fill": "FullAtClose",
+      "limit_order_fill": "NeverFills",
+      "partial_fills": false,
+      "volume_constraints": null
+    }
+  },
+  "data_source": {
+    "type": "AlpacaHistorical",
+    "feed": null,
+    "adjustment": "Raw"
+  },
+  "replay_mode": {
+    "mode": "Continuous"
+  },
+  "tags": ["source:custom", "regime:bull", "duration:30d"],
+  "notes": "30-day smoke-test window for strategy comparison.",
+  "parent_scenario_id": null,
+  "source": "Generated",
+  "warmup_bars": 200
+}

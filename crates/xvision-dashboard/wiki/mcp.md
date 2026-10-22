@@ -73,7 +73,7 @@ explicit operator decision:
   tool is a footgun.
 - **Filesystem writes outside `$XVN_HOME`** — authoring tools write strategy
   files to `$XVN_HOME/strategies/`; nothing writes outside that root.
-- **Direct store mutations** (`insert_decision`, `insert_briefing`,
+- **Direct store writes** (`insert_decision`, `insert_briefing`,
   `insert_trace`) — these break the replay and metrics reproducibility
   guarantee. Write paths happen only inside the run harness.
 - **Live-money trader paths** — `xvn fire-trade --venue orderly` against

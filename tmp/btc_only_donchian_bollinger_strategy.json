@@ -1,0 +1,70 @@
+{
+  "name": "btc_donchian_bollinger_breakout",
+  "creator": "@edward",
+  "manifest_patch": {
+    "display_name": "BTC Donchian + Bollinger Breakout",
+    "plain_summary": "BTC-only filter-gated breakout strategy. It minimizes LLM tokens by waking Gemini Flash Lite 3.1 only on BTC Donchian + Bollinger breakout or pullback conditions, with a focus on finding a profitable trade edge before widening back out to the multi-asset basket.",
+    "asset_universe": ["BTC/USD"],
+    "decision_cadence_minutes": 15,
+    "color": "#0EA5E9"
+  },
+  "agent": {
+    "name": "btc_donchian_bollinger_trader",
+    "description": "Gemini Flash Lite 3.1 trader for a BTC-only Donchian + Bollinger breakout gate.",
+    "tags": ["gemini", "btc", "donchian", "bollinger", "breakout"],
+    "slots": [
+      {
+        "name": "trader",
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite",
+        "system_prompt": "You are the BTC-only trader for a breakout/pullback strategy. Trade only BTC/USD. The filter already screens for actionable setups, so when it fires, prefer clean continuation or retest entries instead of staying flat by default. Longs should only be taken when BTC is above the short-term trend and the breakout/reclaim is clean; shorts should mirror that logic below trend. Be terse and token-efficient. Output strict JSON only with action, conviction, and a short justification.",
+        "skill_ids": [],
+        "capabilities": ["trader"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+        "inputs_policy": "raw"
+      }
+    ]
+  },
+  "filter": {
+    "display_name": "BTC Donchian + Bollinger trend-pullback gate",
+    "asset_scope": ["BTC/USD"],
+    "timeframe": "15m",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "any": [
+        { "lhs": "close", "op": "crosses_above", "rhs": "donchian_upper_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "donchian_lower_20" },
+        { "lhs": "close", "op": "above", "rhs": "ema_20" },
+        { "lhs": "close", "op": "below", "rhs": "ema_20" },
+        { "lhs": "bb_pct_b_20", "op": "below", "rhs": 0.35 },
+        { "lhs": "bb_pct_b_20", "op": "above", "rhs": 0.65 },
+        { "lhs": "rsi_14", "op": "below", "rhs": 45 },
+        { "lhs": "rsi_14", "op": "above", "rhs": 55 },
+        { "lhs": "volume_zscore_20", "op": "above", "rhs": 0.0 },
+        { "lhs": "adx_14", "op": "above", "rhs": 10 }
+      ]
+    },
+    "cooldown_bars": 2,
+    "max_wakeups_per_day": 6,
+    "wake_when_in_position": "always",
+    "agent_context_template": "compact_trade_context_v1",
+    "fire": {
+      "reason": "btc_donchian_bollinger_breakout_pullback",
+      "priority": 0.95,
+      "tags": ["btc", "donchian", "bollinger", "breakout", "pullback"],
+      "context": [
+        "donchian_upper_20",
+        "donchian_lower_20",
+        "bb_middle_20",
+        "bb_width_20",
+        "bb_pct_b_20",
+        "adx_14",
+        "volume_zscore_20",
+        "rsi_14",
+        "macd_hist",
+        "ema_20"
+      ]
+    }
+  }
+}

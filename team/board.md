@@ -4,14 +4,10 @@
 > verification, and acceptance. This file is conductor-owned; see
 > `team/CONDUCTOR.md`.
 >
-> Last updated: 2026-05-22 (sweep 6 + sweep-5 rebase) —
-> `indicator-tool-wiring` (#521), Orderly multi-asset expansion (#540),
-> CLI test fixture tail (#541), eval model override (#538), and model
-> bakeoff (#537) merged in the cascade. Sweep 5 archives
-> `eval-token-efficiency-tail` (#528) and consolidates the
-> `multi-asset-alpaca-unlock` (#533/#536) archive. Agent-graph Phase B-E
-> contracts are authored and deferred behind Phase A (#527). Remaining
-> live owned PRs: #527 and #523.
+> Last updated: 2026-05-29 — cleanup sweep. Merged active items removed.
+> Remaining live tracks: agent-graph-unified-recorder,
+> agent-graph-template-capabilities, memory-aware-eval-findings,
+> cli-strategy-clone-model-override, and charts-section-2026-05-23.
 
 V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 `team/board-v2.md`.
@@ -20,9 +16,6 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ### agent-graph-2026-05-22 — capability-first refactor cascade
 
-- [agent-graph-capability-schema](contracts/agent-graph-capability-schema.md) — **P1 foundation** · in flight (PR #527) · `Capability` enum + `AgentSlot.capabilities` + `AgentRef.activates` + `PipelineEdge.condition` + migration 033.
-- [agent-graph-capability-dispatch](contracts/agent-graph-capability-dispatch.md) — **P1 seam** · deferred behind #527 · `dispatch_capability` seam, `AgentOutput` typed sum, `EdgePredicate` evaluator. Lifts both eval executors onto unified seam. Router shipped in v1.
-- [agent-graph-filter-capability](contracts/agent-graph-filter-capability.md) — **P1 filter runtime** · deferred behind Phase A + Phase B · LLM Filter dispatcher + `FilterGranularity` runtime (Bar/Minute/Decision) + in-memory signal cache + DSL filter bridge + multi-Filter cardinality knob (`multi_fire_bar_threshold_minutes`, default 30; operator Q3 resolution).
 - [agent-graph-unified-recorder](contracts/agent-graph-unified-recorder.md) — **P1 recorder** · deferred behind Phase B · `Recorder` trait + `HarnessRecorder` + `EvalRecorder`; closes F-11(f) structurally so eval-driven runs produce non-empty rows in all 7 recorder tables.
 - [agent-graph-template-capabilities](contracts/agent-graph-template-capabilities.md) — **P2 leaf** · deferred behind Phase A · explicit `capabilities` + `activates` on every starter template; flips `validate_draft_succeeds_for_fresh_template` from expected-fail to expected-pass (closes the longest-standing QA carryover, red since 2026-05-20).
 

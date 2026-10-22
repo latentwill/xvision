@@ -143,14 +143,28 @@ path = "runbook.md"
 slug = "research-index"
 title = "Research Index"
 section = "Research"
-last_reviewed = "2026-05-28"
+last_reviewed = "2026-05-29"
 path = "research-index.md"
+
+[[page]]
+slug = "business-and-app-ideas"
+title = "Business and App Ideas"
+section = "Research"
+last_reviewed = "2026-05-29"
+path = "business-and-app-ideas.md"
+
+[[page]]
+slug = "xvn-roadmap"
+title = "XVN Roadmap"
+section = "Research"
+last_reviewed = "2026-05-29"
+path = "xvn-roadmap.md"
 
 [[page]]
 slug = "xvision"
 title = "XVision / Agentic Trading"
 section = "Research"
-last_reviewed = "2026-05-28"
+last_reviewed = "2026-05-29"
 path = "xvision.md"
 
 [[page]]

@@ -6,28 +6,15 @@
 > Same rules as the main board (`team/board.md`): one line per active track,
 > each linking to a `team/contracts/<slug>.md`. Conductor-owned.
 >
-> Last updated: 2026-05-21 — conductor sweep. V2B wave (all three
+> Last updated: 2026-05-29 — cleanup sweep. V2B wave (all three
 > tracks) merged and archived. V2D agent-memory foundation merged
-> (commit `81007d1`); V2D v1.1 memory-ops follow-up is active. V2E
-> and V2F also complete. Next major phase is V2C (marketplace),
-> waiting on operator intake.
+> (commit `81007d1`); the V2D memory ops + audit and memory-safety /
+> observability follow-ups are archived. V2E and V2F are complete. Next
+> major phase is V2C (marketplace), waiting on operator intake.
 
 ## Active
 
-### V2D follow-up (memory ops + audit, v1.1)
-
-Decomposed 2026-05-21 from
-`team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md`. V2D
-itself (PR #404, merged 2026-05-21) shipped the storage, recorder,
-selector, and eval-review panel, but no operator surface for managing
-memory items. This follow-up wave adds the CLI verbs, HTTP API, and
-dashboard UI so an operator can browse Observations, seed Patterns,
-and forget memory without editing SQLite directly.
-
-Single-contract decomposition (mirroring V2D's shape): CLI / API / UI
-are three sequential phases on one branch.
-
-- [v2d-memory-cli-and-api](contracts/v2d-memory-cli-and-api.md) — foundation · ready · single-contract wave · no migration
+_No active V2 tracks. V2C (marketplace) is the next intake once the conductor decomposes it._
 
 ## Recently closed
 
@@ -50,14 +37,9 @@ Single-contract wave shipped as commit `81007d1` ("v2d: agent memory
 + cortex tier split (F+L+T)"). All five planned phases landed on the
 same branch. Contract archived under
 `team/archive/2026-05-21-conductor-sweep/contracts/v2d-agent-memory.md`.
-
-Open follow-up PRs (V2D v1.1 wave — track via PR review, no new
-contracts decomposed):
-
-- **#453** — v2d-followup: decompose v1.1 memory ops + audit wave
-- **#455** — chore(v2d): reconcile docs — migration 027→029 + drop third-party adapter mentions
-- **#460** — v2d-followup: memory ops + audit (CLI + API + UI + docs)
-- **#458** — Memory scope triage (D5 kills, D2 cross-symbol add)
+The V2D follow-up v1.1 wave (`v2d-memory-cli-and-api`) also merged on
+2026-05-22 (PRs #453, #455, #458, #460), adding the memory management
+CLI, HTTP API, memory tab, workspace memory page, and docs.
 
 ### V2E (eval accuracy & trace surface) — complete 2026-05-21
 
@@ -194,15 +176,7 @@ The conductor decomposes one phase at a time. Items below are roadmap-only;
 no contracts exist yet. Do **not** freelance contracts from this list — go
 through `team/intake/<date>-<phase>.md` first.
 
-### V2B — security & operability (next intake)
-
-| # | Item | Source |
-|---|---|---|
-| 4 | Dashboard mutating-route auth boundary | F35 |
-| 5 | Remote CLI orphan recovery + audit trail | F37, remote CLI specs |
-| 6 | Broker/wallet/testnet kill switch + limits | security + blockchain plans |
-
-### V2C — on-chain identity (after V2B)
+### V2C — on-chain identity (next intake)
 
 | # | Item | Source |
 |---|---|---|
@@ -210,73 +184,6 @@ through `team/intake/<date>-<phase>.md` first.
 | 8 | Strategy NFT mint + readback flow | SLF3 |
 | 9 | Testnet marketplace list/buy/sell/delegate flow | marketplace spec |
 | 10 | Reputation + validation receipt write/readback | SLF4, SLF5 |
-
-### V2D — agent memory (decomposed 2026-05-21 — see "Active — V2D" above)
-
-| # | Item | Source |
-|---|---|---|
-| 15 | Rust cortex memory + per-agent memory toggle (off / global / agent-specific) | Decomposed: contract `v2d-agent-memory`, plan `docs/superpowers/plans/2026-05-21-cortex-memory-integration-plan.md` |
-
-V2D is a prerequisite for the V3 autoresearcher: a mutator/judge loop without
-persistent memory keeps re-discovering the same lessons. Land before V3 unless
-the autoresearcher track is explicitly scoped as stateless v1.
-
-### V2E — eval accuracy & trace surface (new phase; also enables V3 autoresearcher)
-
-| # | Item | Source |
-|---|---|---|
-| 17 | Trace-surface foundation — schema enrichment, cycle features parquet, determinism receipts, findings ↔ cycle backreference | `docs/superpowers/research/2026-05-19-eval-data-and-execution-accuracy.md` §5 |
-| 18 | Candle integrity validator — OHLC sanity, gap detection, timestamp monotonicity, duplicate-bar guard | Research doc §3.1 |
-| 19 | Per-bar cost arrays — scenario fees/slippage/spread as per-bar arrays, not flat scenario constants | Research doc §4.2 |
-| 20 | Volume-share slippage — zipline-style `price * (1 ± impact * volume_share²)` with 2.5% volume cap | Research doc §4.3 |
-| 21 | Pinned canonical fixtures + content-hash receipts + data manifest (feed / adjustment / calendar / timezone) | Research doc §3.2 |
-| 22 | Lookahead-bias prober — freqtrade-style two-pass diff | Research doc §3.5 |
-| 23 | Broker-rule findings (crypto-first) — emit findings for orders that would be rejected at the live venue | Research doc §4.12 |
-| 24 | Adaptive intra-bar fill ordering — NautilusTrader-style `O→H→L→C` / gap-past-trigger logic; minimal `OrderState` enum; maker/taker aggressor classification | Research doc §4.7 + §4.5 (promoted from follow-up via 2026-05-20 intake update) |
-| 25 | Net-of-inference-cost profitability metric — `net_return_pct = gross_return_pct − (inference_cost_quote_total / capital_initial)`; new `inference_cost_dominates_return` finding | Operator review of LLM strategy eval results (2026-05-20 intake update) |
-
-V2E is the second prerequisite for V3 autoresearcher (alongside V2D memory).
-The autoresearcher's diff harness, failed-decision reservoir, and feature-vector
-ML hooks all assume the trace shape from item 17 already exists; building it
-once up front avoids retrofitting traces for every emitted finding kind.
-
-The §4.9b live-micro-calibration harness gates **signed marketplace
-attestations** (V2C item 10 readback flow needs honest cost-model inputs);
-schedule it pre-marketplace. The §4.9 paper-parity calibration is a parity
-test only — useful for software regression, not a truth claim for live
-execution.
-
-Pre-existing equities-only items (§3.4 corporate-action ledger, §3.6
-point-in-time universe, §4.10 funding/borrow accrual, §4.11 market-impact
-research) are punted to a separate equities-readiness follow-up; not in V2E.
-
-See "V2E notes" below for the wave's dependency graph and the review-derived
-accept/defer table.
-
-### V2F — strategy authoring & user knowledge (new phase; small, runs parallel with V2E)
-
-| # | Item | Source |
-|---|---|---|
-| 26 | Strategies folder (read-only): per-workspace `<workspace>/.xvn/strategies/` tree with `notes/`, `docs/`, `strategy-files/`, `evals/`, `library/`; agent tool pair `list_strategies_folder` / `read_strategies_file` | `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` track 1 |
-| 27 | Strategies folder pre-population from `docs/strategies/` + `xvn strategies init` CLI | Intake track 2 |
-| 28 | Expanded agent-pipeline template library (4–8 new templates beyond the current 3 in `crates/xvision-engine/src/agents/templates.rs`) | Intake track 3 |
-| 29 | Strategy ideas tool surface for the wizard (`list_strategy_ideas`) | Intake track 4 |
-| 30 | Wizard prompt refresh for strategies folder + expanded templates; closes the loop on the template-optional relaxation from #275 | Intake track 5 |
-| 31 | User import flow (`xvn strategies import` + dashboard drop-zone; minimal PDF/CSV → `.summary.md` parse) | Intake track 6 |
-
-V2F is a small, mostly-independent phase. It builds on the already-
-merged `wizard-strategy-template-optional` (#275) by giving agents
-*more references to consult* (expanded templates + a user-curated
-knowledge folder) without re-imposing the requirement that was just
-removed.
-
-Conductor's call on phase label: V2F as a standalone phase, or folded
-into V2D as an additional "agent-facing knowledge surface" item.
-
-Pre-existing alternative placement: this could ride alongside V2D
-(memory) since both are agent-facing knowledge surfaces. The
-distinction is user-curated (V2F) vs agent-learned (V2D). They don't
-share files; safe to run in parallel either way.
 
 ### V3 — autoresearcher
 
@@ -365,10 +272,10 @@ embedder config UI, memory diff CLI, mem0/Honcho/mempalace adapters,
 cortex-http sidecar, cross-host sharing, embedding model swap CLI —
 is closed. Do not re-open these as tracks without a new D-row.
 
-**Follow-on intake** for V2D safety + observability:
-`team/intake/2026-05-21-memory-safety-and-observability.md` — three
-small tracks (forget-undo, per-decision provenance, memory-aware
-findings) that layer on V2D once it lands.
+**Follow-on intake** for V2D safety + observability: archived.
+`team/intake/2026-05-21-memory-safety-and-observability.md` decomposed
+into three tracks (forget-undo, per-decision provenance, memory-aware
+findings) and all three merged as PRs #510, #523, and #569.
 
 ## V2E notes — eval accuracy & trace surface
 
@@ -445,9 +352,9 @@ Intake doc when this opens: `team/intake/2026-05-19-eval-accuracy-and-trace-surf
 - V2A intake: `team/intake/2026-05-16-eval-review-and-v2a.md` (closed).
 - V2E intake: `team/intake/2026-05-19-eval-accuracy-and-trace-surface.md` (closed; 7 contracts merged).
 - V2F intake: `team/intake/2026-05-20-strategies-folder-and-template-refactor.md` (closed; 6 contracts merged).
-- V2B intake: `team/intake/2026-05-21-v2b-security-operability.md` (active — 3 contracts ready, dispatch pending operator review).
+- V2B intake: `team/intake/2026-05-21-v2b-security-operability.md` (closed; all three contracts merged as PRs #465, #447, and #466 on 2026-05-21).
 - V2D intake: `team/intake/2026-05-21-v2d-agent-memory.md` (closed; single-contract wave merged as PR #404 on 2026-05-21).
-- V2D follow-up intake: `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` (active — single-contract wave `v2d-memory-cli-and-api`; CLI verbs + HTTP API + dashboard memory tab + workspace memory page).
+- V2D follow-up intake: `team/intake/2026-05-21-v2d-memory-manual-ops-and-audit.md` (closed — `v2d-memory-cli-and-api` merged; memory safety / observability follow-up archived).
 - V2C/V3/V4: no intake yet.
 
 ## Closeout

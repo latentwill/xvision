@@ -48,7 +48,7 @@ The full route table lives in `src/server.rs::build_router`. Highlights:
 
 - `GET /api/health` — server + DB + strategy dir probes
 - `GET /api/agents` (+ create/update/archive/validate)
-- `GET /api/strategies`, `GET /api/strategy/:id` (+ slot, AgentRef, pipeline, risk, validation mutations)
+- `GET /api/strategies`, `GET /api/strategy/:id` (+ slot, AgentRef, pipeline, risk, validation updates)
 - `GET /api/scenarios` (+ create, preview, clone, archive/delete, chart)
 - `GET /api/eval/runs`, `GET /api/eval/runs/:id`, `GET /api/eval/runs/:id/chart`, `GET /api/eval/runs/:id/stream`, `GET /api/eval/compare`
 - `POST /api/cli/jobs` (+ output/events/cancel) — remote CLI job runner

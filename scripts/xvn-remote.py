@@ -63,7 +63,7 @@ def build_url_error(method: str, url: str, code: int, reason: str, raw: str) -> 
         detail = payload.get("error") or payload.get("message") or detail
     hint = ""
     if "not allowed over remote cli" in detail or "not a supported remote cli subcommand" in detail:
-        hint = " (remote CLI is allowlisted; use local xvn or a dashboard API helper for intentional mutations)"
+        hint = " (remote CLI is allowlisted; use local xvn or a dashboard API helper for intentional writes)"
     return RemoteCliError(f"{method} {url} -> {code}: {detail}{hint}")
 
 

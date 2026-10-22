@@ -245,15 +245,15 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       expect(scenarioApi.cloneScenario).toHaveBeenCalled();
     });
     const args = vi.mocked(scenarioApi.cloneScenario).mock.calls[0]!;
-    const mutations = args[1] as Record<string, unknown>;
+    const updates = args[1] as Record<string, unknown>;
     // The operator only opened the form and hit submit without
     // touching structural fields → those must be null (inherit
     // parent). display_name diverges from parent ("(clone)" suffix
     // pre-filled) so it's a non-null override.
-    expect(mutations.granularity).toBeNull();
-    expect(mutations.time_window).toBeNull();
-    expect(mutations.venue).toBeNull();
-    expect(mutations.warmup_bars).toBeNull();
+    expect(updates.granularity).toBeNull();
+    expect(updates.time_window).toBeNull();
+    expect(updates.venue).toBeNull();
+    expect(updates.warmup_bars).toBeNull();
   });
 
   it("archives a scenario without leaving the detail view", async () => {

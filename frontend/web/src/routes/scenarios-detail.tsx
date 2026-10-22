@@ -58,7 +58,7 @@ function fmtSlippage(model: SlippageModel): string {
   return `linear ${model.bps} bps`;
 }
 
-// ── equality helpers (clone-mutations diff) ───────────────────────────────
+// ── equality helpers (clone-updates diff) ────────────────────────────────
 //
 // JSON-equality fallback for unchanged-vs-changed detection. These are
 // structurally small (≤ a few hundred bytes) so JSON.stringify is fine
@@ -109,8 +109,8 @@ export function ScenariosDetailRoute() {
   // before submitting. Per the workspace no-popups rule the form is
   // an inline accordion, not a modal.
   const cloneMut = useMutation({
-    mutationFn: (mutations: Parameters<typeof cloneScenario>[1]) =>
-      cloneScenario(id, mutations),
+    mutationFn: (updates: Parameters<typeof cloneScenario>[1]) =>
+      cloneScenario(id, updates),
     onSuccess: (newScenario) => {
       qc.invalidateQueries({ queryKey: scenarioKeys.all });
       navigate(`/scenarios/${newScenario.id}`);
@@ -161,7 +161,7 @@ export function ScenariosDetailRoute() {
           onTabChange={setActiveTab}
           deleteError={deleteError}
           onClearDeleteError={() => setDeleteError(null)}
-          onClone={(mutations) => cloneMut.mutate(mutations)}
+          onClone={(updates) => cloneMut.mutate(updates)}
           onArchive={() => archiveMut.mutate()}
           onDelete={() => { setDeleteError(null); deleteMut.mutate(); }}
           isCloning={cloneMut.isPending}
@@ -195,7 +195,7 @@ function DetailView({
   onTabChange: (t: Tab) => void;
   deleteError: string | null;
   onClearDeleteError: () => void;
-  onClone: (mutations: CloneMutations) => void;
+  onClone: (updates: CloneMutations) => void;
   onArchive: () => void;
   onDelete: () => void;
   isCloning: boolean;

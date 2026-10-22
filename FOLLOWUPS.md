@@ -4,6 +4,7 @@
 
 The active V2-V4 execution plan lives in
 `docs/superpowers/plans/2026-05-13-v2-v4-action-plan.md`.
+V2B, V2D, V2E, and V2F are complete; the only V2 intake still pending decomposition is V2C (marketplace).
 
 | Phase | Theme | Key followup anchors |
 |---|---|---|
@@ -344,7 +345,7 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Blocking:** non-blocking; safety net + observability over V2D. `memory-forget-undo-snapshot` should land close to V2D.
 
 > Note: F43 was assigned to trace-dock-emitters (shipped 2026-05-22, #524) on
-> the board but never landed in this file; the next free slot is therefore F44.
+> the board but never landed in this file; the preserved section starts at F44.
 
 ### F44 [Shared]. Orderly market refresh — periodic `GET /v1/public/info` poll
 
@@ -352,3 +353,17 @@ Infrastructure used by both tracks. Lives on `main`.
 - **Scope:** schedule a background poll of Orderly's `GET /v1/public/info` (or `GET /v1/public/futures_info`) into a SQLite cache, then have `orderly_symbol_for` short-circuit against the cache instead of the inline constant. Delisted markets should be rejected pre-submit by the executor with `NotActionable` and a clear "delisted" hint, not surface only when the broker returns an opaque rejection. Cache TTL: 24h.
 - **Why noted:** the hardcoded set is fine until Orderly adds or removes a market; without this, a delisted symbol would silently route to the broker and the order would fail at submit-time. Quality-of-life over correctness — the executor already rejects with `NotActionable` for assets not in the inline set.
 - **Blocking:** non-blocking.
+
+### F45 [XVision]. Chart context — scenario-aware chart prompt surface
+
+- **Trigger:** once scenario details and chart surfaces need a shared context model for prompt-based analysis.
+- **Scope:** thread scenario metadata into chart views so the active chart can answer prompt queries like "what is the setup here?" with the right scenario name, timeframe, strategy, and live state. This likely belongs on the scenario surface first, then fans out to compare / live cockpit / eval detail.
+- **Why noted:** the TradingView-style idea needs a chart context layer before it can feel like an agentic copilot instead of a generic chat box.
+- **Blocking:** non-blocking; this is a product / UX follow-up that can be shaped alongside the chart rework.
+
+### F46 [Shared]. xvn CLI accessibility — base URL env var + remote command parity
+
+- **Trigger:** operator workflows need easier access to live xvn nodes and less friction on remote command surfaces.
+- **Scope:** add a first-class environment variable for the xvn dashboard/base URL, then relax the remote-command allowlist so safe remote operator commands are available without the current hard restrictions. Keep destructive actions gated, but let the supported read/authoring verbs flow through the same remote path as the local CLI.
+- **Why noted:** current remote-CLI restrictions make the operator path harder to discover and force extra helper scripts or API detours; a stable URL env plus a clearer remote command policy would make xvn easier to use in practice.
+- **Blocking:** non-blocking; this is an accessibility / operator-UX follow-up.

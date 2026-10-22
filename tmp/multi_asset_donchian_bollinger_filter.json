@@ -1,0 +1,41 @@
+{
+  "display_name": "BTC/ETH/SOL Donchian + Bollinger breakout/pullback gate",
+  "asset_scope": ["BTC/USD", "ETH/USD", "SOL/USD"],
+  "timeframe": "15m",
+  "scan_cadence": "bar_close",
+  "conditions": {
+    "any": [
+      { "lhs": "close", "op": "above", "rhs": "donchian_upper_20" },
+      { "lhs": "close", "op": "below", "rhs": "donchian_lower_20" },
+      { "lhs": "close", "op": "above", "rhs": "ema_20" },
+      { "lhs": "close", "op": "below", "rhs": "ema_20" },
+      { "lhs": "bb_pct_b_20", "op": "below", "rhs": 0.35 },
+      { "lhs": "bb_pct_b_20", "op": "above", "rhs": 0.65 },
+      { "lhs": "rsi_14", "op": "below", "rhs": 45 },
+      { "lhs": "rsi_14", "op": "above", "rhs": 55 },
+      { "lhs": "volume_zscore_20", "op": "above", "rhs": 0.0 },
+      { "lhs": "adx_14", "op": "above", "rhs": 10 }
+    ]
+  },
+  "cooldown_bars": 1,
+  "max_wakeups_per_day": 4,
+  "wake_when_in_position": "always",
+  "agent_context_template": "compact_trade_context_v1",
+  "fire": {
+    "reason": "multi_asset_donchian_bollinger_breakout_pullback",
+    "priority": 0.9,
+    "tags": ["donchian", "bollinger", "breakout", "pullback", "multi_asset"],
+    "context": [
+      "donchian_upper_20",
+      "donchian_lower_20",
+      "bb_middle_20",
+      "bb_width_20",
+      "bb_pct_b_20",
+      "adx_14",
+      "volume_zscore_20",
+      "rsi_14",
+      "macd_hist",
+      "ema_20"
+    ]
+  }
+}

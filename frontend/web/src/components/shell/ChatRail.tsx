@@ -954,7 +954,7 @@ export function invalidateForToolResult(qc: QueryClient, ev: WizardEvent): void 
     case "validate_draft":
       return;
     default:
-      // Unknown tool: be conservative and skip. New mutating tools must
+      // Unknown tool: be conservative and skip. New write tools must
       // opt in explicitly so we don't spam refetches for every read.
       return;
   }

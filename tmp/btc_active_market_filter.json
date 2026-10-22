@@ -1,0 +1,43 @@
+{
+  "filter": {
+    "id": "01KT3M6P6ANH30C3DF647SCDQR",
+    "strategy_id": "01KT3M6NP4BQJS6A9YXRRAQ6B9",
+    "display_name": "BTC Donchian + Bollinger active-market gate",
+    "description": "Broad BTC-only filter that wakes on active-market conditions so the trader can choose Donchian/Bollinger direction with ema_200 regime context.",
+    "status": "draft",
+    "asset_scope": ["BTC/USD"],
+    "timeframe": "15m",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "all": [
+        { "lhs": "bb_width_20", "op": ">", "rhs": 0.02 },
+        { "lhs": "bb_width_20", "op": "<", "rhs": 0.12 },
+        { "lhs": "adx_14", "op": ">", "rhs": 12.0 },
+        { "lhs": "volume_zscore_20", "op": ">", "rhs": 0.0 },
+        { "lhs": "rsi_14", "op": "between", "rhs": [40.0, 60.0] }
+      ]
+    },
+    "fire": {
+      "reason": "btc_active_market_donchian_bollinger",
+      "priority": 0.9,
+      "tags": ["btc", "donchian", "bollinger", "active_market"],
+      "context": [
+        "donchian_upper_20",
+        "donchian_lower_20",
+        "bb_middle_20",
+        "bb_width_20",
+        "bb_pct_b_20",
+        "adx_14",
+        "volume_zscore_20",
+        "rsi_14",
+        "macd_hist",
+        "ema_20",
+        "ema_200"
+      ]
+    },
+    "cooldown_bars": 2,
+    "max_wakeups_per_day": 6,
+    "wake_when_in_position": "always",
+    "agent_context_template": "compact_trade_context_v1"
+  }
+}

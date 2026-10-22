@@ -120,7 +120,7 @@ fact.
 | `create --name <name> --strategy <id> --scenarios <id,…> [--question <text>] [--decision-budget <n>] [--json]` | Create a new experiment in the ledger; alias `new`. |
 | `ls [--json]` | List all experiments, most-recent first. |
 | `show <id> [--json]` | Show a single experiment by id; alias `get`. |
-| `update <id> [--conclusion <text>] [--next-recommendation <text>] [--bind-batch <batch-id>] [--json]` | Apply partial mutations; at least one flag is required. |
+| `update <id> [--conclusion <text>] [--next-recommendation <text>] [--bind-batch <batch-id>] [--json]` | Apply partial updates; at least one flag is required. |
 | `run --name <name> --strategy <id> [--scenarios <id,…>] [--assets <a,…> --timeframe <tf> --target-decisions <n>] [--decision-budget <n>] [--wait] [--review-with <profile>] [--compare [--markdown]] [--json]` | Full orchestration in one command: create experiment → run batch → bind → write `result_json`. Scenario selection either via explicit `--scenarios` or via the scenario selector flags. Emits `{experiment_id, strategy_ids, scenario_ids, batch_id, result: {profitable_count, best_scenario, worst_scenario, runs}, compare_markdown?}` when `--json` is set. |
 
 ---

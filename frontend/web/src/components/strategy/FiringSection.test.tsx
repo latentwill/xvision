@@ -110,7 +110,7 @@ describe("FiringSection", () => {
     expect(
       screen.getByTestId(`inline-filter-composer-${traderRef.role}`),
     ).toBeInTheDocument();
-    // No mutations yet — composer hasn't been submitted.
+    // No actions yet — composer hasn't been submitted.
     expect(onMutated).not.toHaveBeenCalled();
   });
 });

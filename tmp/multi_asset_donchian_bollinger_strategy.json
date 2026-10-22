@@ -1,0 +1,60 @@
+{
+  "name": "btc_eth_sol_donchian_bollinger_breakout",
+  "creator": "@edward",
+  "manifest_patch": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger Breakout",
+    "plain_summary": "Filter-gated multi-asset BTC/ETH/SOL breakout strategy. It minimizes LLM tokens by only waking Gemini Flash Lite 3.1 on tight Donchian + Bollinger compression breakouts, targeting roughly 2-3 trades per day and $5,000 USD total PnL in backtests.",
+    "asset_universe": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "decision_cadence_minutes": 60,
+    "color": "#7C3AED"
+  },
+  "agent": {
+    "name": "btc_eth_sol_donchian_bollinger_trader",
+    "description": "Gemini Flash Lite 3.1 trader for a multi-asset Donchian + Bollinger breakout gate.",
+    "tags": ["gemini", "donchian", "bollinger", "breakout", "multi-asset"],
+    "slots": [
+      {
+        "name": "trader",
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite",
+        "system_prompt": "You are the trader for a multi-asset BTC/ETH/SOL breakout strategy. The filter already screens for Donchian + Bollinger compression breakouts, so only answer on high-quality continuation or retest setups. Be terse and token-efficient. Longs require a clean break/reclaim above Donchian upper with BB compression/expansion confirmation, trend confirmation, and volume expansion; shorts mirror that logic. Prefer flat/hold unless the setup is clean. Output strict JSON only with action, conviction, and a short justification.",
+        "skill_ids": [],
+        "capabilities": ["trader"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+        "inputs_policy": "raw"
+      }
+    ]
+  },
+  "filter": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger squeeze breakout gate",
+    "asset_scope": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "timeframe": "1h",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "any": [
+        { "lhs": "close", "op": "crosses_above", "rhs": "donchian_upper_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "donchian_lower_20" }
+      ]
+    },
+    "cooldown_bars": 6,
+    "max_wakeups_per_day": 6,
+    "wake_when_in_position": "on_invalidation_or_target_only",
+    "agent_context_template": "compact_trade_context_v1",
+    "fire": {
+      "reason": "multi_asset_donchian_bollinger_breakout",
+      "priority": 0.9,
+      "tags": ["donchian", "bollinger", "breakout", "squeeze", "multi_asset"],
+      "context": [
+        "donchian_upper_20",
+        "donchian_lower_20",
+        "bb_middle_20",
+        "bb_width_20",
+        "adx_14",
+        "volume_zscore_20",
+        "rsi_14",
+        "ema_20"
+      ]
+    }
+  }
+}

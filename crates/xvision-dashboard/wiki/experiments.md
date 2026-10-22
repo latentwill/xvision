@@ -189,7 +189,7 @@ See [CLI Reference](/docs?slug=cli-reference) for full flag documentation.
 | `xvn experiment run` | Orchestrator: create record → run batch → bind batch → write result summary. |
 | `xvn experiment ls` | List all experiments, most-recent first. |
 | `xvn experiment show <id>` (`get`) | Show a single experiment; add `--json` to see the full record including result summary. |
-| `xvn experiment update <id>` | Apply partial mutations: `--conclusion`, `--next-recommendation`, `--bind-batch <id>`. |
+| `xvn experiment update <id>` | Apply partial updates: `--conclusion`, `--next-recommendation`, `--bind-batch <id>`. |
 
 ---
 

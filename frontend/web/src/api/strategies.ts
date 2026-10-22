@@ -1,5 +1,5 @@
 // Strategies API — wraps `engine::api::strategy::*` (PR #4 list/get,
-// PR #47 mutations). Strategy / slot / risk / validation types are
+// PR #47 changes). Strategy / slot / risk / validation types are
 // hand-rolled because the strategy module doesn't have ts-rs derives yet;
 // if those land later, replace these with `import type { ... } from
 // "./types.gen"`.

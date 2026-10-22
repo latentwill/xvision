@@ -170,6 +170,6 @@ export const CANONICAL_AGENT_PROFILES: ReadonlyArray<{
   {
     id: "research-agent",
     label: "Research",
-    blurb: "Next experiments and mutations.",
+    blurb: "Next experiments and variants.",
   },
 ];

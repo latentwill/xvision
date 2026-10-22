@@ -1,0 +1,84 @@
+{
+  "manifest": {
+    "id": "01KT1GX4XX868JKRFYFZ8EXSMH",
+    "display_name": "btc_15m_gemini_flash_lite_scalper",
+    "plain_summary": "Filter-gated BTC/USD 15m scalp bot: a deterministic momentum/volatility gate wakes Gemini Flash Lite 3.1 only around active intraday bursts, aiming for roughly 5-6 trade opportunities per day while skipping mixed or low-volatility bars.",
+    "creator": "@edward",
+    "template": "custom",
+    "regime_fit": ["high_vol", "trending_bull", "trending_bear"],
+    "asset_universe": ["BTC/USD"],
+    "decision_cadence_minutes": 15,
+    "required_models": ["openrouter.google/gemini-3.1-flash-lite"],
+    "required_tools": ["ohlcv", "indicator_panel"],
+    "risk_preset_or_config": "conservative",
+    "published_at": null,
+    "min_warmup_bars": 60,
+    "color": null,
+    "execution_mode": "per_asset",
+    "capital_mode": "pooled"
+  },
+  "trader_slot": {
+    "role": "trader",
+    "prompt": "You are a BTC/USD 15m scalp trader. The filter already restricts you to active momentum/volatility bursts, so do NOT force a trade on every wakeup. Your job is to make a fast, disciplined decision: long_open, short_open, flat, or hold.\n\nInputs you should emphasize: close, ema_20, rsi_14, macd_hist, atr_pct_14, bb_width_20, volume_zscore_20, and the recent 15m price structure.\n\nTrade only when the setup is crisp and the reward/risk is at least 1.5:1. Prefer flat/hold when price is chopping, momentum is mixed, or the move has already extended too far. For longs, look for bullish reclaim / continuation after the gate fires; for shorts, look for failed impulse / exhaustion after the gate fires. Keep stops tight and exits quick. Output strict JSON only: {\"action\": \"long_open|short_open|flat|hold\", \"conviction\": 0-1, \"justification\": \"...\" }",
+    "model_requirement": "openrouter.google/gemini-3.1-flash-lite",
+    "allowed_tools": ["ohlcv", "indicator_panel"]
+  },
+  "risk": {
+    "risk_pct_per_trade": 0.005,
+    "max_concurrent_positions": 1,
+    "max_leverage": 1.5,
+    "stop_loss_atr_multiple": 1.5,
+    "daily_loss_kill_pct": 0.02
+  },
+  "mechanical_params": {
+    "asset": "BTC/USD",
+    "timeframe": "15m",
+    "fast_ema_period": 20,
+    "trend_ema_period": 50,
+    "rsi_period": 14,
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+    "atr_period": 14,
+    "bb_period": 20,
+    "volume_zscore_period": 20,
+    "target_wakeups_per_day": 6,
+    "min_reward_risk": 1.5
+  },
+  "activation_mode": "filter_gated",
+  "filter": {
+    "display_name": "BTC 15m scalp gate (5-6/day)",
+    "asset_scope": ["BTC/USD"],
+    "timeframe": "15m",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "any": [
+        {
+          "all": [
+            { "lhs": "close", "op": "crosses_above", "rhs": "ema_20" },
+            { "lhs": "rsi_14", "op": "between", "rhs": [50, 72] },
+            { "lhs": "macd_hist", "op": ">", "rhs": 0 },
+            { "lhs": "atr_pct_14", "op": ">", "rhs": 0.6 },
+            { "lhs": "bb_width_20", "op": ">", "rhs": 0.03 },
+            { "lhs": "volume_zscore_20", "op": ">", "rhs": 0.8 }
+          ]
+        },
+        {
+          "all": [
+            { "lhs": "close", "op": "crosses_below", "rhs": "ema_20" },
+            { "lhs": "rsi_14", "op": "between", "rhs": [28, 50] },
+            { "lhs": "macd_hist", "op": "<", "rhs": 0 },
+            { "lhs": "atr_pct_14", "op": ">", "rhs": 0.6 },
+            { "lhs": "bb_width_20", "op": ">", "rhs": 0.03 },
+            { "lhs": "volume_zscore_20", "op": ">", "rhs": 0.8 }
+          ]
+        }
+      ]
+    },
+    "cooldown_bars": 3,
+    "max_wakeups_per_day": 6,
+    "wake_when_in_position": "on_invalidation_or_target_only",
+    "agent_context_template": "compact_trade_context_v1"
+  },
+  "acknowledge_no_filter": false
+}

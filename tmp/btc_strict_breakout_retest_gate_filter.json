@@ -1,0 +1,34 @@
+{
+  "filter": {
+    "display_name": "BTC strict long breakout retest gate",
+    "asset_scope": ["BTC/USD"],
+    "timeframe": "1h",
+    "conditions": {
+      "all": [
+        { "lhs": "close", "op": "crosses_above", "rhs": "opening_range_high_30" },
+        { "lhs": "close", "op": ">", "rhs": "vwap_20" },
+        { "lhs": "adx_14", "op": ">", "rhs": 25 },
+        { "lhs": "di_plus_14", "op": "above_for_3", "rhs": "di_minus_14" },
+        { "lhs": "volume", "op": ">", "rhs": "volume_sma_20" },
+        { "lhs": "atr_pct_14", "op": ">", "rhs": 0.6 },
+        { "lhs": "rsi_14", "op": "between", "rhs": [52, 72] }
+      ]
+    },
+    "fire": {
+      "reason": "strict_long_breakout_retest_gate",
+      "priority": 0.95,
+      "tags": ["orb", "vwap", "adx", "volume", "atr", "rsi", "session"],
+      "context": [
+        "opening_range_high_30",
+        "vwap_20",
+        "adx_14",
+        "di_plus_14",
+        "di_minus_14",
+        "volume_sma_20",
+        "atr_pct_14",
+        "rsi_14"
+      ]
+    },
+    "cooldown_bars": 16
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "name": "btc_eth_sol_regime_split_v2",
+  "creator": "@edward",
+  "manifest_patch": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger Regime Split v2",
+    "plain_summary": "A more active filter-gated BTC/ETH/SOL strategy with separate long and short regime logic. It keeps longs and shorts distinct, but wakes more often on EMA, Donchian, Bollinger midline, and EMA12/EMA26 transition events so it can actually capture enough PnL opportunity.",
+    "asset_universe": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "decision_cadence_minutes": 30,
+    "color": "#1D4ED8"
+  },
+  "agent": {
+    "name": "btc_eth_sol_regime_split_v2_trader",
+    "description": "Gemini Flash Lite 3.1 trader for a more active regime-split Donchian + Bollinger setup.",
+    "tags": ["gemini", "donchian", "bollinger", "regime-split", "multi-asset", "v2"],
+    "slots": [
+      {
+        "name": "trader",
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite",
+        "system_prompt": "You are the trader for a multi-asset BTC/ETH/SOL Donchian + Bollinger strategy. Your job is to make the strategy actually trade enough to matter while keeping the long and short modules distinct. Step 1: classify regime. Bullish only when EMA200 is rising or price is above EMA200 and EMA12 is above EMA26. Bearish only when EMA200 is falling or price is below EMA200 and EMA12 is below EMA26. Otherwise neutral. Step 2: act by regime. In bullish regime, prefer longs on Donchian upper breakouts, close reclaiming EMA20 or BB middle, and EMA12/EMA26 bullish crosses. In bearish regime, prefer shorts on Donchian lower breakdowns, failed EMA20/BB middle reclaims, and EMA12/EMA26 bearish crosses. Step 3: do not overfit perfection. If the setup is clean enough, take it; do not default to flat just because the move is not ideal. Prefer BTC when signals are similar, then ETH, then SOL. Output strict JSON only with action, asset, conviction, and a short justification.",
+        "skill_ids": [],
+        "capabilities": ["trader"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+        "inputs_policy": "raw"
+      }
+    ]
+  },
+  "filter": {
+    "display_name": "BTC/ETH/SOL Donchian + Bollinger regime split gate v2",
+    "asset_scope": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "timeframe": "1h",
+    "scan_cadence": "bar_close",
+    "conditions": {
+      "any": [
+        { "lhs": "close", "op": "crosses_above", "rhs": "ema_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "ema_20" },
+        { "lhs": "ema_12", "op": "crosses_above", "rhs": "ema_26" },
+        { "lhs": "ema_12", "op": "crosses_below", "rhs": "ema_26" },
+        { "lhs": "close", "op": "crosses_above", "rhs": "donchian_upper_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "donchian_lower_20" },
+        { "lhs": "close", "op": "crosses_above", "rhs": "bb_middle_20" },
+        { "lhs": "close", "op": "crosses_below", "rhs": "bb_middle_20" },
+        { "lhs": "rsi_14", "op": "above", "rhs": 55 },
+        { "lhs": "rsi_14", "op": "below", "rhs": 45 },
+        { "lhs": "volume_zscore_20", "op": "above", "rhs": 0.5 }
+      ]
+    },
+    "cooldown_bars": 1,
+    "max_wakeups_per_day": 12,
+    "wake_when_in_position": "always",
+    "agent_context_template": "compact_trade_context_v1",
+    "fire": {
+      "reason": "regime_split_donchian_bollinger_v2",
+      "priority": 0.95,
+      "tags": ["donchian", "bollinger", "regime_split", "v2", "multi_asset"],
+      "context": [
+        "ema_12",
+        "ema_26",
+        "ema_20",
+        "donchian_upper_20",
+        "donchian_lower_20",
+        "bb_middle_20",
+        "bb_width_20",
+        "bb_pct_b_20",
+        "adx_14",
+        "volume_zscore_20",
+        "rsi_14",
+        "macd_hist"
+      ]
+    }
+  }
+}

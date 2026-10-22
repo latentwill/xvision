@@ -3,7 +3,7 @@
 //
 // Save flow:
 //   1. Operator edits fields → local state changes
-//   2. "Save" button POSTs (create) or PUTs (update) via TanStack mutations
+//   2. "Save" button POSTs (create) or PUTs (update) via TanStack request hooks
 //   3. On success, run validate() and surface diagnostics inline
 //   4. Errors (Validation/Conflict) surface as inline messages above Save
 

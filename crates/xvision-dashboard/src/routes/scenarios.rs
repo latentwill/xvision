@@ -103,15 +103,15 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(scenario)))
 }
 
-/// Clone an existing scenario, optionally applying mutations. An empty body
+/// Clone an existing scenario, optionally applying updates. An empty body
 /// (or no body) means "inherit all fields from parent".
 pub async fn clone(
     State(state): State<AppState>,
     Path(id): Path<String>,
     body: Option<Json<ScenarioMutations>>,
 ) -> Result<(StatusCode, Json<Scenario>), DashboardError> {
-    let mutations = body.map(|Json(m)| m).unwrap_or_default();
-    let scenario = api_scenario::clone(&state.api_context(), &id, mutations).await?;
+    let updates = body.map(|Json(m)| m).unwrap_or_default();
+    let scenario = api_scenario::clone(&state.api_context(), &id, updates).await?;
     Ok((StatusCode::CREATED, Json(scenario)))
 }
 

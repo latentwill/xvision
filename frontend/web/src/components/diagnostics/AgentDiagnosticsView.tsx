@@ -4,7 +4,7 @@
 // Renders the dashboard's `GET /api/agents/:id/diagnostics` payload: an
 // agent-readiness verdict plus, per slot, the typed status of every
 // declared capability with remediation copy for the blockers. Pure read —
-// no mutations, no popups. The layout is a vertical stack of cards that
+//   no writes, no popups. The layout is a vertical stack of cards that
 // collapses cleanly on a phone (so the mobile read-only view reuses it
 // verbatim).
 
