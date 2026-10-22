@@ -53,6 +53,8 @@
 - Modify: `.dockerignore`
 
 - [ ] Exclude frontend dependency/build/cache outputs and coverage artifacts.
+- [ ] Explicitly re-include `docs/xvnwiki/**` so the dashboard build script can read `docs/xvnwiki/index.toml` and referenced markdown during GHCR builds.
+- [ ] Verify the Docker context still excludes the rest of `docs/`.
 
 ### Task 6: Verify
 

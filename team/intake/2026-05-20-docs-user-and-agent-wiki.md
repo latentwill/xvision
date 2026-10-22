@@ -59,8 +59,10 @@ Verified on 2026-05-20 in this worktree:
   - `docs/superpowers/specs/` — design history (mostly internal, but the
     last 3 months hold real "why we built it this way" context).
   - `docs/QA/2026-05-11-xvision-web-qa.md` — single QA pass record.
-- `docs/xvnwiki/` does **not** exist in repo. Treat this intake as the
-  proposal to create it as the curated wiki source-of-truth directory.
+- `docs/xvnwiki/` is the curated wiki source-of-truth directory on the
+  current `main` branch. Treat it as build-critical: the dashboard build
+  script reads `docs/xvnwiki/index.toml` plus the referenced markdown at
+  compile time, so the Docker build context must include that subtree.
 - New CLI verbs landed since the baked `cli-reference.md` was written
   (each verified by reading the command module in
   `crates/xvision-cli/src/commands/`):
@@ -114,7 +116,7 @@ unbaking yet)
 
 | # | Severity | Track | One-line scope |
 |---|---|---|---|
-| 8 | P1 | `docs-wiki-filesystem-source` | Promote the `/api/docs/*` handler from a hard-coded `PAGES` array to a manifest-driven load from `docs/xvnwiki/`. New layout: `docs/xvnwiki/index.toml` (ordered `[[page]] slug=… title=… path=…` entries) plus `docs/xvnwiki/*.md` files. Bake the manifest + content via `include_str!`/`include_dir!` at build time so the deployed image still has no runtime filesystem dependency. Acceptance: existing five pages continue to render under the same slugs; adding a new file to `docs/xvnwiki/` + a manifest entry surfaces it in `/docs` after rebuild. **No runtime filesystem read** — preserves the V2A onboarding contract that docs are baked |
+| 8 | P1 | `docs-wiki-filesystem-source` | Promote the `/api/docs/*` handler from a hard-coded `PAGES` array to a manifest-driven load from `docs/xvnwiki/`. New layout: `docs/xvnwiki/index.toml` (ordered `[[page]] slug=… title=… path=…` entries) plus `docs/xvnwiki/*.md` files. Bake the manifest + content via `include_str!`/`include_dir!` at build time so the deployed image still has no runtime filesystem dependency. Acceptance: existing five pages continue to render under the same slugs; adding a new file to `docs/xvnwiki/` + a manifest entry surfaces it in `/docs` after rebuild. **No runtime filesystem read** — preserves the V2A onboarding contract that docs are baked. **Deploy note:** `.dockerignore` / Docker build context must explicitly include `docs/xvnwiki/**`, or GHCR builds will fail when the dashboard build script looks for the manifest.
 | 9 | P2 | `docs-wiki-content-migration` | First curated `docs/xvnwiki/` payload beyond the five baked pages: a `manual.md` distilled from `MANUAL.md` (Tier 2 + Tier 3 operator tasks), `runbook/dashboard-auth.md` and `runbook/observability-otel.md` pulled into the wiki tree, `remote-cli.md` consolidated from `MANUAL.md` + the `scripts/xvn-remote.py` posture. Each page rewritten for the in-app reader — no internal-only references, no FOLLOWUPS cross-refs. Depends on #8 |
 | 10 | P2 | `docs-wiki-section-headers` | Sidebar grouping in `/docs`: introduce `section` field in `index.toml` (`Quickstart`, `CLI`, `Concepts`, `Operator`, `Agent`) and render the sidebar as collapsed section headers + page list. Search filter stays flat. Depends on #8 |
 
