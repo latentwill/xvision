@@ -1,0 +1,33 @@
+{
+  "display_name": "BTC 1h sparse momentum and exhaustion gate",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "conditions": {
+    "all": [
+      { "lhs": "adx_14", "op": ">", "rhs": 20 },
+      { "lhs": "di_plus_14", "op": ">", "rhs": "di_minus_14" },
+      { "lhs": "macd_hist", "op": ">", "rhs": 0 }
+    ]
+  },
+  "fire": {
+    "reason": "sparse_long_momentum",
+    "priority": 0.82,
+    "tags": ["momentum", "exhaustion", "volume"],
+    "context": [
+      "close",
+      "ema_20",
+      "ema_50",
+      "adx_14",
+      "di_plus_14",
+      "di_minus_14",
+      "macd_hist",
+      "rsi_14",
+      "bb_pct_b_20",
+      "volume_zscore_20",
+      "atr_pct_14"
+    ]
+  },
+  "cooldown_bars": 8,
+  "max_wakeups_per_day": 3,
+  "wake_when_in_position": "always"
+}

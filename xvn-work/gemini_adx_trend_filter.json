@@ -1,0 +1,29 @@
+{
+  "display_name": "BTC 1h broad ADX trend gate",
+  "asset_scope": ["BTC/USD"],
+  "timeframe": "1h",
+  "conditions": {
+    "all": [
+      { "lhs": "adx_14", "op": ">", "rhs": 15 }
+    ]
+  },
+  "fire": {
+    "reason": "adx_trend_check",
+    "priority": 0.75,
+    "tags": ["trend", "long_short", "adx"],
+    "context": [
+      "close",
+      "ema_20",
+      "ema_50",
+      "adx_14",
+      "di_plus_14",
+      "di_minus_14",
+      "macd_hist",
+      "rsi_14",
+      "atr_pct_14"
+    ]
+  },
+  "cooldown_bars": 4,
+  "max_wakeups_per_day": 6,
+  "wake_when_in_position": "always"
+}

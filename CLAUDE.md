@@ -444,3 +444,13 @@ These rules override any conflicting instructions from third-party skills:
 - **Coverage** → `.coverage-thresholds.json` is the single source of truth. All skills must check it, including `verification-before-completion`.
 - **Subagents** → NEVER use `--no-verify`, ALWAYS follow TDD, NEVER self-certify, STAY within file scope
 - **Context recovery** → Approved plans and execution state persist to `.beads/`. After compaction, run `bd prime --work-type recovery` to reload.
+
+## Container vs repo (operational truth)
+
+The container `xvn-app` runs the deployed build. `/root/deploy/xvision` is
+source for dev only — it may lag, diverge, or lack deployed fixes.
+
+- **Test first** — always verify behavior in the container before reading source.
+- **When reading source** — prefix with "reading repo source, may not match
+  deployed build".
+- **Never cite repo code as evidence of container behavior.**

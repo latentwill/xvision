@@ -233,14 +233,21 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
     if (phase === "filtered") {
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
     }
-    const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
     // exit_reason: either a future DTO field or extracted from the "sltp: <reason>" justification prefix
     const exit_reason =
       extractSltpExitReason(row.justification);
+    // Management no-ops: the agent reaffirmed its stop/target but no fill
+    // occurred (order_size is null). These are position-management actions,
+    // not exits — show as HOLD so the dashboard doesn't misrepresent them
+    // as 152 SELL flags when the position is still open.
+    const isManagementNoop = row.order_size == null || row.order_size === 0;
     let action: ActionPillAction;
-    if (exit_reason) {
+    if (exit_reason && !isManagementNoop) {
       // Position was force-closed by risk engine; show actual closing action
       action = priorSideForRow === "short" ? "CLOSE" : "SELL";
+    } else if (isManagementNoop && (row.action === "stop_loss" || row.action === "take_profit" || row.action === "trailing_stop" || row.action === "partial_tp1" || row.action === "partial_tp2")) {
+      // Management action with no fill — show as HOLD
+      action = "HOLD";
     } else {
       action = mapAction(row.action, priorSideForRow);
     }

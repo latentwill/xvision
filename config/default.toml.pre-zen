@@ -1,0 +1,80 @@
+# XVISION v1 default runtime configuration.
+#
+# Override per-environment with XVN_CONFIG_PATH=path/to/override.toml
+# (or the compatibility alias XVN_CONFIG=path/to/override.toml), or
+# XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).
+
+# Agent runtime for LLM-backed slots. "cline" routes every slot dispatch
+# through the xvision-agentd sidecar (the unified live + eval + replay path);
+# the sidecar binary is resolved from XVN_AGENTD_BIN (set in the deploy image).
+# This line is deliberately EXPLICIT: the eval resolver treats a missing field
+# as "not opted in" and silently falls back to the legacy llm-dispatch path
+# when XVN_AGENTD_BIN is unset. Emergency rollback to the legacy path:
+# XVN_EMERGENCY_LLM_DISPATCH=1 (see MANUAL.md, "Emergency rollback").
+agent_runtime = "cline"
+
+[runtime]
+mode        = "backtest"        # backtest | paper | live
+executor    = "alpaca"          # alpaca | orderly
+random_seed = 42
+
+# Registered LLM providers. Two OpenAI-compatible starters (Gemini and Nous
+# Research) ship seeded but key-less — they appear in Settings → Providers as
+# "missing key" until you paste a key (stored in
+# `$XVN_HOME/secrets/providers.toml`, mode 0600, and loaded into the process env
+# at startup). Add more via Settings → Providers (or `xvn provider add …`).
+
+[[providers]]
+name        = "gemini"
+kind        = "openai-compat"
+# Google Gemini's OpenAI-compatible endpoint. Chat posts to
+# `{base}/chat/completions`; the catalog is at `{base}/models`.
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+
+[[providers]]
+name        = "nous-research"
+kind        = "openai-compat"
+base_url    = "https://inference-api.nousresearch.com/v1"
+api_key_env = "NOUS_API_KEY"
+
+[default_llm]
+# Workspace-level default LLM. Used by the chat rail, the setup wizard, and
+# as a fallback for any agent slot that doesn't override its own provider/
+# model. Renamed from [intern] on 2026-05-12 — old configs with [intern]
+# still parse (one-release deprecation alias).
+provider          = "anthropic"  # anthropic | openai-compat | local-candle
+base_url          = "https://api.anthropic.com"
+model             = "claude-haiku-4-5"
+api_key_env       = "ANTHROPIC_API_KEY"
+temperature       = 0.0          # MUST be 0 for backtest pairing — Tier 1 fix #1
+reasoning_effort  = "low"        # forwarded when provider supports it
+max_tokens        = 1024
+
+[trader]
+model_path                = "models/qwen3-32b-q4-gguf/Qwen_Qwen3-32B-Q4_K_M.gguf"
+temperature               = 0.0  # MUST be 0 for backtest — Tier 1 fix #2
+forward_paper_temperature = 0.4
+max_tokens                = 512
+
+[trader.vectors]
+enabled = true
+config  = "off"                  # off | on | random | orthogonal | regime_conditioned
+
+[backtest]
+step    = 24                     # MUST be >= horizon — Tier 1 fix #4
+horizon = 16
+bootstrap_resamples = 10000
+bootstrap_block_size = 8         # for time-series-correct CIs
+
+[paths]
+data_root  = "data"
+vectors    = "data/vectors"
+probes     = "data/probes"
+sqlite_url = "sqlite://data/decisions.db"
+
+# Alpaca market-data fetcher knobs. Default rate limit matches Alpaca's free
+# tier (~200 rpm); bump for paid plans. Read by `ApiContext::open_with_config`
+# and passed to `AlpacaBarsFetcher::with_rate_limit`.
+[data.alpaca]
+rate_limit_rpm = 200
